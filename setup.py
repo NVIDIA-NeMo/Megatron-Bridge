@@ -17,7 +17,6 @@
 
 """Setup for pip package."""
 
-import codecs
 import importlib.util
 import os
 import subprocess
@@ -55,6 +54,7 @@ with open("README.md", "r", encoding='utf-8') as fh:
 
 
 def req_file(filename, folder="requirements"):
+    """Loads a requirements file and returns a list of requirements"""
     files = [filename] if not isinstance(filename, list) else filename
     ans = []
     for file in files:
@@ -104,6 +104,7 @@ extras_require['multimodal'] = list(
 
 
 class StyleCommand(distutils_cmd.Command):
+    """Checks overall project code style"""
     __ISORT_BASE = 'isort'
     __BLACK_BASE = 'black'
     description = 'Checks overall project code style.'
@@ -130,6 +131,7 @@ class StyleCommand(distutils_cmd.Command):
         return return_code
 
     def _isort(self, scope, check):
+        """Checks import order"""
         return self.__call_checker(
             base_command=self.__ISORT_BASE.split(),
             scope=scope,
@@ -137,6 +139,7 @@ class StyleCommand(distutils_cmd.Command):
         )
 
     def _black(self, scope, check):
+        """Checks code formatting"""
         return self.__call_checker(
             base_command=self.__BLACK_BASE.split(),
             scope=scope,
@@ -144,17 +147,21 @@ class StyleCommand(distutils_cmd.Command):
         )
 
     def _pass(self):
+        """Announces a successful check"""
         self.announce(msg='\033[32mPASS\x1b[0m', level=distutils_log.INFO)
 
     def _fail(self):
+        """Announces a failed check"""
         self.announce(msg='\033[31mFAIL\x1b[0m', level=distutils_log.INFO)
 
     # noinspection PyAttributeOutsideInit
     def initialize_options(self):
+        """Initializes options"""
         self.scope = '.'
         self.fix = ''
 
     def run(self):
+        """Runs the check"""
         scope, check = self.scope, not self.fix
         isort_return = self._isort(scope=scope, check=check)
         black_return = self._black(scope=scope, check=check)
@@ -166,6 +173,7 @@ class StyleCommand(distutils_cmd.Command):
             exit(isort_return if isort_return != 0 else black_return)
 
     def finalize_options(self):
+        """Finalizes options"""
         pass
 
 
