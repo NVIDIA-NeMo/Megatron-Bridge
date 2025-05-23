@@ -13,9 +13,6 @@
 # limitations under the License.
 FROM nvcr.io/nvidia/pytorch:25.03-py3
 
-# Set venv as default
-ENV PATH="/opt/venv/bin:$PATH"
-
 # Install all
 WORKDIR /workspace
 RUN --mount=type=bind,source=setup.py,target=/workspace/setup.py \
