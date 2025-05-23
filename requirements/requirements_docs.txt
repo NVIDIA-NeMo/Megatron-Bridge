@@ -1,0 +1,12 @@
+boto3
+Jinja2
+latexcodec
+numpy
+pydata-sphinx-theme
+Sphinx
+sphinx-book-theme
+sphinx-copybutton
+sphinxcontrib-bibtex
+sphinxext-opengraph
+urllib3
+wrapt

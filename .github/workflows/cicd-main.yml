@@ -1,0 +1,326 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: CICD NeMo
+on:
+  schedule:
+    - cron: 0 0 * * *
+  push:
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  pre-flight:
+    runs-on: ubuntu-latest
+    outputs:
+      is_ci_workload: ${{ steps.is_ci_workload.outputs.main }}
+      no_fail_fast: ${{ steps.no_fail_fast.outputs.main }}
+    env:
+      TESTS_TO_RUN: ${{ inputs.test_to_run }}
+      EVENT_NAME: ${{ github.event_name }}
+      HAS_LABEL: ${{ github.event.label.name == 'Run CICD' }}
+    steps:
+      - name: Check if this is a CI workload
+        shell: bash
+        id: is_ci_workload
+        run: |
+          branch_name=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}
+
+          if [[ "$branch_name" =~ ^bump-ci-container || "$EVENT_NAME" == "schedule" ]]; then
+            is_ci_workload=true
+            echo "main=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            is_ci_workload=false
+          fi
+
+          echo "main=$is_ci_workload" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Check if no-fail-fast is set
+        shell: bash
+        id: no_fail_fast
+        env:
+          HAS_FAIL_FAST_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'no-fail-fast') }}
+        run: |
+          if [[ "$HAS_FAIL_FAST_LABEL" == "true" || "$EVENT_NAME" == "schedule" ]]; then
+            no_fail_fast=true
+          else
+            no_fail_fast=false
+          fi
+
+          echo "main=$no_fail_fast" | tee -a "$GITHUB_OUTPUT"
+
+  cicd-wait-in-queue:
+    needs: [pre-flight]
+    runs-on: ubuntu-latest
+    environment: test
+    if: |
+      needs.pre-flight.outputs.test_to_run != '[]'
+      && needs.pre-flight.outputs.components_to_run != '[]'
+      && needs.pre-flight.outputs.is_ci_workload == 'false'
+    steps:
+      - name: Running CI tests
+        run: |
+          echo "Running CI tests"
+
+  # cicd-container-build:
+  #   uses: ./.github/workflows/_build_container.yml
+  #   needs: [pre-flight, cicd-wait-in-queue]
+  #   if: |
+  #     needs.pre-flight.outputs.test_to_run != '[]'
+  #     && needs.pre-flight.outputs.components_to_run != '[]'
+  #     && (
+  #       success()
+  #       || (
+  #         needs.cicd-wait-in-queue.result == 'skipped'
+  #         && needs.pre-flight.outputs.is_ci_workload == 'true'
+  #       )
+  #     )
+  #     && !cancelled()
+  #   with:
+  #     image-name: nemo_container
+  #     dockerfile: docker/Dockerfile.ci
+  #   secrets:
+  #     AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  #     AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  #     AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  # cicd-unit-tests:
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - script: L0_Unit_Tests_GPU_Export_Deploy
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #           timeout: 30
+  #         - script: L0_Unit_Tests_CPU_Export_Deploy
+  #           runner: linux-amd64-cpu16
+  #           cpu-only: true
+  #   needs: [cicd-container-build]
+  #   runs-on: ${{ matrix.runner }}
+  #   name: ${{ matrix.script }}
+  #   environment: nemo-ci
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         path: ${{ github.run_id }}
+  #     - name: main
+  #       uses: NVIDIA/NeMo-Export-Deploy/.github/actions/test-template@main
+  #       with:
+  #         runner: ${{ runner.name }}
+  #         script: ${{ matrix.script }}
+  #         timeout: ${{ matrix.timeout || 10 }}
+  #         is_unit_test: "true"
+  #         image: nemo_container
+  #         cpu-only: ${{ matrix.cpu-only || false }}
+  #         has-azure-credentials: "true"
+  #         azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+  #         azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+  #         azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  # cicd-e2e-tests:
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - script: L2_NeMo_2_Export_HF_TRT_LLM
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #         - script: L2_NeMo_2_Export_Deploy_Query_In_Framework
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #         - script: L2_ONNX_TRT_LLM_Embedding_Export
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #         - script: L2_NeMo_2_Export_TRT_LLM
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #         - script: L2_NeMo_2_VLLM_EXPORT
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #         - script: L2_NeMo_2_Export_In_Framework
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #         - script: L2_NeMo_2_VLLM_VISION
+  #           runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+  #   needs: [cicd-unit-tests]
+  #   runs-on: ${{ matrix.runner }}
+  #   name: ${{ matrix.is_optional && 'PLEASEFIXME_' || '' }}${{ matrix.script }}
+  #   environment: nemo-ci
+  #   steps:
+  #     - name: main
+  #       uses: NVIDIA/NeMo-Export-Deploy/.github/actions/test-template@ko3n1g/ci/build-and-test
+  #       with:
+  #         runner: ${{ runner.name }}
+  #         script: ${{ matrix.script }}
+  #         image: nemo_container
+  #         is_optional: ${{ matrix.is_optional || false }}
+  #         azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+  #         azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+  #         azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  #         has-azure-credentials: true
+
+  Nemo_CICD_Test:
+    needs:
+      - pre-flight
+      # - cicd-test-container-build
+      # - cicd-main-unit-tests
+      # - cicd-main-e2e-tests
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get workflow result
+        id: result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          HAS_LABEL: ${{ github.event.label.name == 'Run CICD' }}
+          IS_SCHEDULED: ${{ github.event_name == 'schedule' }}
+        run: |
+          # Get workflow run details and check job conclusions
+          LATEST_ATTEMPT=$(gh run view $RUN_ID --json jobs -q '[.jobs[] | select(.conclusion != null) | .conclusion] | last')
+          NUM_FAILED=$(gh run view $RUN_ID --json jobs -q '[.jobs[] | select(.conclusion == "failure") | .name] | length')
+          NUM_CANCELLED=$(gh run view $RUN_ID --json jobs -q '[.jobs[] | select(.conclusion == "cancelled") | .name] | length')
+
+          if [[ $NUM_FAILED -eq 0 && $NUM_CANCELLED -eq 0 && ("$HAS_LABEL" == "true" || "$IS_SCHEDULED" == "true") ]]; then
+            RESULT="success"
+          elif [[ $NUM_CANCELLED -gt 0 ]]; then
+            RESULT="cancelled"
+          else
+            RESULT="failure"
+          fi
+
+          # Output the final status
+          echo "code=$RESULT" | tee -a $GITHUB_OUTPUT
+
+      - name: Checkout for GH CLI
+        uses: actions/checkout@v4
+
+      - name: Remove label if not cancelled
+        if: |
+          steps.result.outputs.code != 'cancelled'
+          && github.event.label.name == 'Run CICD'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: gh pr edit "$PR_NUMBER" --remove-label "Run CICD"
+
+      - name: Pipeline successful, add PR comment
+        if: |
+          steps.result.outputs.code == 'success'
+          && github.event_name == 'pull_request'
+          && env.SLACK_WEBHOOK != ''
+        uses: peter-evans/create-or-update-comment@v4
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        with:
+          issue-number: ${{ github.event.number }}
+          body: |
+            [🤖]: Hi @${{ github.event.pull_request.user.login }} 👋,
+
+            We wanted to let you know that a [CICD pipeline](https://github.com/${{ env.REPOSITORY }}/actions/runs/${{ env.RUN_ID }}) for this PR just finished successfully.
+
+            So it might be time to merge this PR or get some approvals.
+
+            //cc @chtruong814 @ko3n1g @pablo-garay @thomasdhc
+
+      - name: "Pipeline not successful and not cancelled: Send Slack alert & create step summary"
+        if: |
+          steps.result.outputs.code == 'failure'
+          && github.event.label.name == 'Run CICD'
+          && env.SLACK_WEBHOOK != ''
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.number }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -x
+          pip install PyGithub
+          export BRANCH_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}
+
+          python .github/scripts/notify.py
+
+      - name: Exit
+        if: ${{ always() }}
+        env:
+          RESULT: ${{ steps.result.outputs.code }}
+        run: |
+          if [ $RESULT == "success" ]; then
+            exit 0
+          else
+            exit 1
+          fi
+
+  # Coverage:
+  #   runs-on: ubuntu-latest
+  #   needs: [pre-flight, Nemo_CICD_Test]
+  #   if: |
+  #     needs.pre-flight.outputs.test_to_run != '[]'
+  #     && needs.pre-flight.outputs.components_to_run != '[]'
+  #     && (
+  #       success()
+  #       || needs.Nemo_CICD_Test.result == 'success'
+  #     )
+  #     && !cancelled()
+  #   strategy:
+  #     matrix:
+  #       flag: [unit-test, e2e]
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+
+  #     - name: Download coverage reports of current branch
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         pattern: coverage-${{ matrix.flag }}-*
+
+  #     - name: Get total coverage of current branch
+  #       shell: bash -x -e -u -o pipefail {0}
+  #       if: always()
+  #       run: |
+  #         pip install coverage
+
+  #         ls -al .
+  #         ls -al coverage-*/
+  #         coverage combine --keep $(ls coverage-*/.coverage)
+  #         coverage report -i
+  #         rm -rf coverage-*
+  #         ls -al
+
+  #     - name: Upload coverage reports to Codecov
+  #       uses: codecov/codecov-action@v5
+  #       with:
+  #         token: ${{ secrets.CODECOV_TOKEN }}
+  #         verbose: true
+  #         flags: ${{ matrix.flag }}
+
+  #     - name: Upload artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: coverage-${{ matrix.flag }}-aggregated
+  #         path: |
+  #           .coverage
+  #         include-hidden-files: true
