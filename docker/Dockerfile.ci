@@ -13,11 +13,13 @@
 # limitations under the License.
 FROM nvcr.io/nvidia/pytorch:25.03-py3
 
+ENV PIP_CONSTRAINT=""
+
 # Install all
 WORKDIR /workspace
 RUN --mount=type=bind,source=setup.py,target=/workspace/setup.py \
     --mount=type=bind,source=nemo_lm/__init__.py,target=/workspace/nemo_lm/__init__.py \
-    --mount=type=bind,source=package_info.py,target=/workspace/package_info.py \
+    --mount=type=bind,source=nemo_lm/package_info.py,target=/workspace/nemo_lm/package_info.py \
     --mount=type=bind,source=README.md,target=/workspace/README.md \
     --mount=type=bind,source=requirements,target=/workspace/requirements \
     pip install --no-build-isolation --no-cache-dir '.[all]'
