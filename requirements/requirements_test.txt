@@ -3,6 +3,7 @@ click>=8.1
 coverage
 isort>5.1.0,<6.0.0
 parameterized
+pylint
 pytest
 pytest-mock
 pytest-runner
