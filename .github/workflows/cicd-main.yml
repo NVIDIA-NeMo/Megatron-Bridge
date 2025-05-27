@@ -123,7 +123,7 @@ jobs:
         with:
           path: ${{ github.run_id }}
       - name: main
-        uses: ${{ github.run_id }}/.github/actions/test-template/action.yml
+        uses: NVIDIA/NeMo-LM/.github/actions/test-template@chtruong/ci-tests
         with:
           runner: ${{ runner.name }}
           script: ${{ matrix.script }}
