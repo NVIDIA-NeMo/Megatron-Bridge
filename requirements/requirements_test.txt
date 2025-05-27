@@ -1,6 +1,7 @@
 black~=24.3
 click>=8.1
 coverage
+flake8
 isort>5.1.0,<6.0.0
 parameterized
 pylint
