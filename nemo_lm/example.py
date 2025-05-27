@@ -4,4 +4,5 @@ import sys
 
 print(sys.argv)
 print(os.environ)
-print('Hello, world!')
+print(
+    'Hello, world!')
