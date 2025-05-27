@@ -175,9 +175,9 @@ jobs:
   Nemo_CICD_Test:
     needs:
       - pre-flight
-      - cicd-test-container-build
+      - cicd-container-build
       - cicd-unit-tests
-      # - cicd-main-e2e-tests
+      # - cicd-e2e-tests
     if: always()
     runs-on: ubuntu-latest
     permissions: write-all
