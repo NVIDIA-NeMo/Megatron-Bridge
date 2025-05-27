@@ -105,6 +105,7 @@ extras_require['multimodal'] = list(
 
 class StyleCommand(distutils_cmd.Command):
     """Checks overall project code style"""
+
     __ISORT_BASE = 'isort'
     __BLACK_BASE = 'black'
     description = 'Checks overall project code style.'
