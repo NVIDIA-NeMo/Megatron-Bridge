@@ -46,6 +46,7 @@ def device(request):
 
 @pytest.fixture(autouse=True)
 def run_only_on_device_fixture(request, device):
+    """Fixture to skip tests based on the device"""
     if request.node.get_closest_marker('run_only_on'):
         if request.node.get_closest_marker('run_only_on').args[0] != device:
             pytest.skip('skipped on this device: {}'.format(device))
@@ -53,6 +54,7 @@ def run_only_on_device_fixture(request, device):
 
 @pytest.fixture(autouse=True)
 def downloads_weights(request, device):
+    """Fixture to validate if the with_downloads flag is passed if necessary"""
     if request.node.get_closest_marker('with_downloads'):
         if not request.config.getoption("--with_downloads"):
             pytest.skip(
@@ -62,6 +64,7 @@ def downloads_weights(request, device):
 
 @pytest.fixture(autouse=True)
 def cleanup_local_folder():
+    """Cleanup local experiments folder"""
     # Asserts in fixture are not recommended, but I'd rather stop users from deleting expensive training runs
     assert not Path("./NeMo_experiments").exists()
     assert not Path("./nemo_experiments").exists()
@@ -76,6 +79,7 @@ def cleanup_local_folder():
 
 @pytest.fixture(autouse=True)
 def reset_env_vars():
+    """Reset environment variables"""
     # Store the original environment variables before the test
     original_env = dict(os.environ)
 
