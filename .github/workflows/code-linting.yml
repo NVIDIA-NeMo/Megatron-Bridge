@@ -25,6 +25,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: |
+          pip install -r requirements/requirements_test.txt
+
       - name: Get changed files
         id: changed-files
         uses: step-security/changed-files@v45.0.1
@@ -55,7 +59,6 @@ jobs:
             ADDITIONAL_PYLINT_ARGS="--exit-zero"
           fi
 
-          pip install pylint
           set +e
           pylint $ADDITIONAL_PYLINT_ARGS --output "pylintrc.txt" --rcfile ".pylintrc" ${CHANGED_FILES[@]}
           echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
@@ -78,7 +81,6 @@ jobs:
             ADDITIONAL_FLAKE8_ARGS=""
           fi
 
-          pip install flake8
           set +e
           flake8 $ADDITIONAL_FLAKE8_ARGS --output "flake8.txt" --config ".flake8" ${CHANGED_FILES[@]}
           echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
@@ -95,7 +97,6 @@ jobs:
             exit 0
           fi
 
-          pip install isort
           set +e
           isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt
           ISORT_EXIT_CODE=$?
@@ -118,7 +119,6 @@ jobs:
             exit 0
           fi
 
-          pip install black
           set +e
           black --check --diff ${CHANGED_FILES[@]} > black.txt
           BLACK_EXIT_CODE=$?
