@@ -176,7 +176,7 @@ jobs:
     needs:
       - pre-flight
       - cicd-test-container-build
-      - cicd-main-unit-tests
+      - cicd-unit-tests
       # - cicd-main-e2e-tests
     if: always()
     runs-on: ubuntu-latest
