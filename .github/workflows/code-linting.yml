@@ -83,12 +83,60 @@ jobs:
           flake8 $ADDITIONAL_FLAKE8_ARGS --output "flake8.txt" --config ".flake8" ${CHANGED_FILES[@]}
           echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
 
+      - name: Run isort
+        id: isort
+        env:
+          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+          SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
+        run: |
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo Nothing to lint.
+            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pip install isort
+          set +e
+          isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt
+          ISORT_EXIT_CODE=$?
+
+          if [[ $SKIP_LINTING == true ]]; then
+            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "exit-code=$ISORT_EXIT_CODE" | tee -a "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run black
+        id: black
+        env:
+          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+          SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
+        run: |
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo Nothing to lint.
+            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pip install black
+          set +e
+          black --check --diff ${CHANGED_FILES[@]} > black.txt
+          BLACK_EXIT_CODE=$?
+
+          if [[ $SKIP_LINTING == true ]]; then
+            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "exit-code=$BLACK_EXIT_CODE" | tee -a "$GITHUB_OUTPUT"
+          fi
+
       - name: Summary
         env:
           PYLINT: ${{ steps.pylint.outputs.exit-code == 0 }}
           FLAKE8: ${{ steps.flake8.outputs.exit-code == 0 }}
+          ISORT: ${{ steps.isort.outputs.exit-code == 0 }}
+          BLACK: ${{ steps.black.outputs.exit-code == 0 }}
+          SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
         run: |
-
           if [[ "$PYLINT" != "true" ]]; then
             echo "Pylint output:" | tee -a $GITHUB_STEP_SUMMARY
 
@@ -105,7 +153,23 @@ jobs:
             echo '```' | tee -a $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "$PYLINT" != "true" ||  "$FLAKE8" != "true" ]]; then
+          if [[ "$ISORT" != "true" ]]; then
+            echo "isort output:" | tee -a $GITHUB_STEP_SUMMARY
+
+            echo '```' | tee -a $GITHUB_STEP_SUMMARY
+            cat isort.txt | tee -a $GITHUB_STEP_SUMMARY
+            echo '```' | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "$BLACK" != "true" ]]; then
+            echo "black output:" | tee -a $GITHUB_STEP_SUMMARY
+
+            echo '```' | tee -a $GITHUB_STEP_SUMMARY
+            cat black.txt | tee -a $GITHUB_STEP_SUMMARY
+            echo '```' | tee -a $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "$PYLINT" != "true" || "$FLAKE8" != "true" || "$ISORT" != "true" || "$BLACK" != "true" ]]; then
             echo "The following directories got scanned:" | tee -a $GITHUB_STEP_SUMMARY
 
             echo '```' | tee -a $GITHUB_STEP_SUMMARY
