@@ -171,10 +171,9 @@ runs:
         RUN_TEST_EOF
         )
 
-        docker exec -t nemo_container_${{ github.run_id }} bash -c 'pip install -e .'
-
         echo "$cmd" | tee "retry_job.sh"
         bash retry_job.sh
+        docker exec -t nemo_container_${{ github.run_id }} bash -c 'pip install -e .'
 
     - name: Create run-script
       id: create

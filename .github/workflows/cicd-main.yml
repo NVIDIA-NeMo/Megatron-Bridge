@@ -120,10 +120,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          path: ${{ github.run_id }}
       - name: main
-        uses: NVIDIA/NeMo-LM/.github/actions/test-template@chtruong/ci-tests
+        uses: ./.github/actions/test-template/action.yml
         with:
           runner: ${{ runner.name }}
           script: ${{ matrix.script }}
