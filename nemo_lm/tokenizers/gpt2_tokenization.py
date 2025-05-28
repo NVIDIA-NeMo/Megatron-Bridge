@@ -1,3 +1,4 @@
+# pylint: disable=missing-class-docstring, missing-function-docstring
 # coding=utf-8
 # Copyright 2018 The Open AI Team Authors and The HuggingFace Inc. team.
 #

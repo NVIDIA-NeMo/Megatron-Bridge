@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from functools import partial
 from logging import Filter, LogRecord
-from typing import Callable, Optional, Union, Any
+from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.distributed

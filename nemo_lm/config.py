@@ -69,7 +69,8 @@ class DistributedInitConfig:
     """local rank passed from distributed launcher."""
 
     lazy_init: bool = False
-    """If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead. Also turns on --use-cpu-initialization flag. This is for external DDP manager."""
+    """If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead.
+    Also turns on --use-cpu-initialization flag. This is for external DDP manager."""
 
     use_torch_fsdp2: bool = False
     """Use the torch FSDP2 implementation. FSDP2 is not currently working with Pipeline Parallel.

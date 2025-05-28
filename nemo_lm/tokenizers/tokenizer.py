@@ -272,7 +272,7 @@ class _BertWordPieceTokenizer(MegatronTokenizer):
         self._additional_special_tokens = []
 
         # (dsachan) Add BOS and EOS tokens
-        SPECIAL_TOKENS = {"eos_token": "[EOS]", "bos_token": "[BOS]"}
+        # SPECIAL_TOKENS = {"eos_token": "[EOS]", "bos_token": "[BOS]"}
         self._bos_token = "[BOS]"
         self.add_token(self._bos_token)
         self._bos_token_id = self.vocab.get(self._bos_token)

@@ -405,6 +405,15 @@ def gpu_only_import_from(module, symbol, *, alt=None):
 
 
 def get_torch_version():
+    """Returns the installed PyTorch version as a packaging.version.Version object.
+
+    Handles potential exceptions during version parsing, returning a dummy version
+    ("0.0.0") if parsing fails (e.g., during documentation builds where torch
+    might not be fully imported or available).
+
+    Returns:
+        packaging.version.Version: The parsed PyTorch version, or Version("0.0.0") on error.
+    """
     try:
         _torch_version = PkgVersion(torch.__version__)
     except Exception:

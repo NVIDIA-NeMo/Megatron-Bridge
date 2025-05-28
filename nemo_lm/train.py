@@ -44,6 +44,8 @@ from nemo_lm.init import destroy_global_state
 from nemo_lm.state import GlobalState
 from nemo_lm.utils import flop_utils
 from nemo_lm.utils.async_utils import maybe_finalize_async_save
+from nemo_lm.utils.common_utils import get_world_size_safe, print_rank_0
+from nemo_lm.utils.log_utils import append_to_progress_log, barrier_and_log
 from nemo_lm.utils.train_utils import (
     calc_params_l2_norm,
     check_forward_step_func_num_args,
@@ -52,8 +54,6 @@ from nemo_lm.utils.train_utils import (
     reduce_max_stat_across_model_parallel_group,
     training_log,
 )
-from nemo_lm.utils.common_utils import get_world_size_safe, print_rank_0
-from nemo_lm.utils.log_utils import append_to_progress_log, barrier_and_log
 
 
 def train(

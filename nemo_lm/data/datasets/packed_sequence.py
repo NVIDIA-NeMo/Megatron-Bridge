@@ -117,6 +117,7 @@ class PackedSequenceSpecs:
     This class holds parameters related to sequence packing, including the size of the packed sequences,
     tokenizer information, paths to packed data files, and other related settings.
     """
+
     packed_sequence_size: int = -1
     """
     If a positive integer, this arg enables training with sequence packing and specifies the pack size
