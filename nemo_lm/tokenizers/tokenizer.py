@@ -18,7 +18,13 @@ from nemo_lm.utils.common_utils import get_rank_safe, print_rank_0
 
 
 class MegatronTokenizer(MegatronTokenizerCore):
+    """Base tokenizer class, extending the MegatronTokenizer from megatron core.
+
+    This class provides a common interface for various tokenizers used within the NeMo framework.
+    """
+
     def __call__(self, *args, **kwargs):
+        """Makes the tokenizer instance callable, synonym for `tokenize`."""
         return self.tokenize(*args, **kwargs)
 
     def text_to_ids(self, text: str) -> list[int]:

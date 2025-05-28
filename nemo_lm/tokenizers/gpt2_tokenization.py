@@ -63,7 +63,7 @@ def bytes_to_unicode():
     To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
     And avoids mapping to whitespace/control characters the bpe code barfs on.
     """
-    _chr = unichr if sys.version_info[0] == 2 else chr
+    _chr = unichr if sys.version_info[0] == 2 else chr  # noqa: F821
     bs = (
         list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
     )
@@ -247,7 +247,7 @@ class GPT2Tokenizer(object):
     def convert_tokens_to_ids(self, tokens):
         """Converts a sequence of tokens into ids using the vocab."""
         ids = []
-        if isinstance(tokens, str) or (sys.version_info[0] == 2 and isinstance(tokens, unicode)):
+        if isinstance(tokens, str) or (sys.version_info[0] == 2 and isinstance(tokens, unicode)):  # noqa: F821
             if tokens in self.special_tokens:
                 return self.special_tokens[tokens]
             else:
