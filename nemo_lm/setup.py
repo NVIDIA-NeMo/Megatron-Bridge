@@ -18,11 +18,7 @@ from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
 import torch
-from megatron.core.distributed import (
-    DistributedDataParallel,
-    DistributedDataParallelConfig,
-    finalize_model_grads,
-)
+from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
@@ -40,9 +36,8 @@ from nemo_lm.optim import setup_optimizer
 from nemo_lm.state import GlobalState
 from nemo_lm.tokenizers.tokenizer import build_tokenizer
 from nemo_lm.utils.common_utils import print_rank_0
-from nemo_lm.utils.log_utils import append_to_progress_log, barrier_and_log
 from nemo_lm.utils.import_utils import safe_import
-from nemo_lm.utils.log_utils import setup_logging
+from nemo_lm.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
@@ -255,12 +250,8 @@ def _init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str
             "checkpointing but was not found. Please ensure it is installed."
         )
 
-    from nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager import (
-        LocalCheckpointManager,
-    )
-    from nvidia_resiliency_ext.checkpointing.local.replication.strategies import (
-        CliqueReplicationStrategy,
-    )
+    from nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager import LocalCheckpointManager
+    from nvidia_resiliency_ext.checkpointing.local.replication.strategies import CliqueReplicationStrategy
 
     if checkpoint_config.replication:
         repl_strategy = CliqueReplicationStrategy.from_replication_params(

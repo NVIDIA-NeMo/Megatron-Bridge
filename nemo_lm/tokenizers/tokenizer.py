@@ -22,29 +22,56 @@ class MegatronTokenizer(MegatronTokenizerCore):
         return self.tokenize(*args, **kwargs)
 
     def text_to_ids(self, text: str) -> list[int]:
+        """Converts text to a list of token IDs."""
         return self.tokenize(text)
 
     @property
     def eod_id(self):
+        """ID for the end-of-document token."""
         return self.eod
 
     @property
     def bos_id(self):
+        """ID for the beginning-of-sentence token."""
         return self.bos
 
     @property
     def eos_id(self):
+        """ID for the end-of-sentence token."""
         return self.eos
 
     @property
     def mask_id(self):
+        """ID for the mask token."""
         return self.mask
 
 
 def build_tokenizer(
     tokenizer_config: TokenizerConfig, make_vocab_size_divisible_by: int, tensor_model_parallel_size: int, **kwargs
 ):
-    """Initialize tokenizer."""
+    """Initialize tokenizer based on the provided configuration.
+
+    This function serves as a factory to instantiate various tokenizer types
+    supported by NeMo, such as BERT, GPT2, SentencePiece, HuggingFace, etc.
+    It also handles padding the vocabulary size to be GPU-friendly.
+
+    Args:
+        tokenizer_config (TokenizerConfig): Configuration object specifying the tokenizer
+                                            type, paths to vocab/model files, and other
+                                            tokenizer-specific settings.
+        make_vocab_size_divisible_by (int): Ensures the vocabulary size is a multiple of this value.
+        tensor_model_parallel_size (int): The tensor model parallel size, used for further
+                                          adjusting vocabulary size for distributed training.
+        **kwargs: Additional keyword arguments that might be specific to certain tokenizers
+                  (e.g., passed to HuggingFace AutoTokenizer).
+
+    Returns:
+        MegatronTokenizer: An instance of the initialized tokenizer.
+
+    Raises:
+        NotImplementedError: If the specified tokenizer_type in tokenizer_config is not supported.
+        ImportError: If a required library (e.g., transformers for MultimodalTokenizer) is not installed.
+    """
     if get_rank_safe() == 0:
         print("> building {} tokenizer ...".format(tokenizer_config.tokenizer_type), flush=True)
 
@@ -150,7 +177,8 @@ class _HuggingFaceTokenizer(MegatronTokenizer):
         except ImportError:
             raise EnvironmentError("The transformers library must be installed to use huggingface_tokenizer_provider")
 
-        # TODO(bnorick): download tokenizer once to lustre and use force offline to make sure all tasks read it from there
+        # TODO(bnorick): download tokenizer once to lustre
+        # and use force offline to make sure all tasks read it from there
         self._tokenizer = transformers.AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
         )
@@ -159,29 +187,34 @@ class _HuggingFaceTokenizer(MegatronTokenizer):
 
     @property
     def vocab_size(self):
+        """Returns the size of the vocabulary."""
         return len(self._tokenizer)
 
     @property
     def vocab(self):
-        """Dictionary from vocab text token to id token."""
+        """Returns the vocabulary (token to ID mapping)."""
         return self._vocab
 
     @property
     def inv_vocab(self):
-        """Dictionary from vocab id token to text token."""
+        """Returns the inverse vocabulary (ID to token mapping)."""
         return self._inv_vocab
 
     @property
     def decoder(self):
+        """Alias for inv_vocab, for compatibility."""
         return self._inv_vocab
 
     def tokenize(self, text, **kwargs):
+        """Tokenizes a string of text into a list of token IDs."""
         return self._tokenizer(text, **kwargs).input_ids
 
     def detokenize(self, token_ids, **kwargs):
+        """Converts a list of token IDs back into a string."""
         return self._tokenizer.decode(token_ids, **kwargs)
 
     def offsets(self, ids: list[int], text: str) -> list[int]:
+        """Calculates the character offsets for each token ID in the given text."""
         retok_ids = self._tokenizer(text)
         offsets, next_start_idx = [], 0
         for i in range(len(ids)):
@@ -195,23 +228,39 @@ class _HuggingFaceTokenizer(MegatronTokenizer):
 
     @property
     def eod(self):
+        """Returns the end-of-document token ID."""
         return self._tokenizer.eos_token_id
 
     @property
     def bos(self):
+        """Returns the beginning-of-sentence token ID."""
         return self._tokenizer.bos_token_id
 
     @property
     def eos(self):
+        """Returns the end-of-sentence token ID."""
         return self._tokenizer.eos_token_id
 
     @property
     def mask(self):
+        """Returns the mask token ID."""
         return self._tokenizer.mask_token_id
 
 
 class _BertWordPieceTokenizer(MegatronTokenizer):
-    """Original BERT wordpiece tokenizer."""
+    """Original BERT wordpiece tokenizer adapted for Megatron.
+
+    This tokenizer uses the `FullBertTokenizer` from `bert_tokenization`.
+    It handles lower/upper casing and adds special tokens like [CLS], [SEP],
+    [PAD], [MASK], [BOS], and [EOS]. It also supports adding extra vocabulary IDs.
+
+    Args:
+        vocab_file (str): Path to the BERT vocabulary file.
+        lower_case (bool, optional): Whether to convert text to lower case. Defaults to True.
+        vocab_extra_ids (int, optional): Number of extra IDs to add to the vocabulary,
+                                       often used for sentinel tokens in T5-style models.
+                                       Defaults to 0.
+    """
 
     def __init__(self, vocab_file, lower_case=True, vocab_extra_ids=0):
         super().__init__(vocab_file, lower_case=lower_case, vocab_extra_ids=vocab_extra_ids)
@@ -239,6 +288,7 @@ class _BertWordPieceTokenizer(MegatronTokenizer):
         self.add_additional_special_tokens(additional_special_tokens)
 
     def add_token(self, token):
+        """Adds a single token to the vocabulary if it doesn't already exist."""
         if token not in self.vocab:
             self.inv_vocab[self.vocab_size] = token
             # self.vocab_size comes from len(vocab)
@@ -246,35 +296,42 @@ class _BertWordPieceTokenizer(MegatronTokenizer):
             self.vocab[token] = self.vocab_size
 
     def add_additional_special_tokens(self, tokens_list):
+        """Adds a list of special tokens to the vocabulary."""
         setattr(self, "additional_special_tokens", tokens_list)
         for value in tokens_list:
             self.add_token(value)
 
     @property
     def vocab_size(self):
+        """Returns the current size of the vocabulary."""
         return self.tokenizer.vocab_size()
 
     @property
     def vocab(self):
+        """Returns the vocabulary (token to ID mapping)."""
         return self.tokenizer.vocab
 
     @property
     def inv_vocab(self):
+        """Returns the inverse vocabulary (ID to token mapping)."""
         return self.tokenizer.inv_vocab
 
     def tokenize(self, text):
+        """Tokenizes a string of text into a list of token IDs."""
         text_tokens = self.tokenizer.tokenize(text)
         return self.tokenizer.convert_tokens_to_ids(text_tokens)
 
     def decode(self, ids):
+        """Converts a list of token IDs back to a string, cleaning up ## prefixes."""
         tokens = self.tokenizer.convert_ids_to_tokens(ids)
         return self.tokenizer.convert_tokens_to_string(tokens)
 
     def detokenize(self, token_ids):
-        """Copy of decode() method for inference pipeline compatibility"""
+        """Converts a list of token IDs back to a string. Alias for decode()."""
         return self.decode(token_ids)
 
     def decode_token_ids(self, token_ids):
+        """Converts token IDs to a string, excluding [PAD] and [CLS] and handling ## prefixes."""
         tokens = self.tokenizer.convert_ids_to_tokens(token_ids)
         exclude_list = ["[PAD]", "[CLS]"]
         non_pads = [t for t in tokens if t not in exclude_list]
@@ -290,53 +347,57 @@ class _BertWordPieceTokenizer(MegatronTokenizer):
 
     @property
     def cls(self):
+        """Returns the [CLS] token ID."""
         return self.cls_id
 
     @property
     def sep(self):
+        """Returns the [SEP] token ID."""
         return self.sep_id
 
     @property
     def pad(self):
+        """Returns the [PAD] token ID."""
         return self.pad_id
 
     @property
     def mask(self):
+        """Returns the [MASK] token ID."""
         return self.mask_id
 
     @property
     def bos(self):
-        """Id of the beginning of sentence token in the vocabulary."""
+        """Returns the beginning-of-sentence ([BOS]) token ID."""
         return self._bos_token_id
 
     @property
     def eos(self):
-        """Id of the end of sentence token in the vocabulary."""
+        """Returns the end-of-sentence token ID."""
         return self._eos_token_id
 
     @property
     def eod(self):
-        """Copy of eod property for inference pipeline compatibility"""
+        """Alias for eos, as BERT models typically use EOS for end-of-document."""
         return self.eos
 
     @property
     def bos_token(self):
-        """Beginning of sentence token id"""
+        """Returns the beginning-of-sentence token string ([BOS])."""
         return self._bos_token
 
     @property
     def eos_token(self):
-        """End of sentence token id"""
+        """Returns the end-of-sentence token string ([EOS])."""
         return self._eos_token
 
     @property
     def additional_special_tokens(self):
-        """All the additional special tokens you may want to use (list of strings)."""
+        """Returns a list of additional special token strings added to the tokenizer."""
         return self._additional_special_tokens
 
     @property
     def additional_special_tokens_ids(self):
-        """Ids of all the additional special tokens in the vocabulary (list of integers)."""
+        """Returns a list of IDs for the additional special tokens."""
         return [self.vocab.get(token) for token in self._additional_special_tokens]
 
     @additional_special_tokens.setter
@@ -345,7 +406,16 @@ class _BertWordPieceTokenizer(MegatronTokenizer):
 
 
 class _GPT2BPETokenizer(MegatronTokenizer):
-    """Original GPT2 BPE tokenizer."""
+    """Original GPT-2 BPE tokenizer adapted for Megatron.
+
+    This tokenizer uses the `GPT2Tokenizer` from `gpt2_tokenization`.
+    It handles BPE tokenization based on a vocabulary file and a merges file.
+    The primary special token is <|endoftext|>.
+
+    Args:
+        vocab_file (str): Path to the GPT-2 vocabulary file (e.g., vocab.json).
+        merge_file (str): Path to the GPT-2 merges file (e.g., merges.txt).
+    """
 
     def __init__(self, vocab_file, merge_file):
         super().__init__(vocab_file, merge_file)
@@ -355,29 +425,46 @@ class _GPT2BPETokenizer(MegatronTokenizer):
 
     @property
     def vocab_size(self):
+        """Returns the size of the vocabulary."""
         return len(self.tokenizer.encoder)
 
     @property
     def vocab(self):
+        """Returns the vocabulary (token to ID mapping)."""
         return self.tokenizer.encoder
 
     @property
     def inv_vocab(self):
+        """Returns the inverse vocabulary (ID to token mapping)."""
         return self.tokenizer.decoder
 
     def tokenize(self, text):
+        """Tokenizes a string of text into a list of token IDs."""
         return self.tokenizer.encode(text)
 
     def detokenize(self, token_ids):
+        """Converts a list of token IDs back into a string."""
         return self.tokenizer.decode(token_ids)
 
     @property
     def eod(self):
+        """Returns the end-of-document (<|endoftext|>) token ID."""
         return self.eod_id
 
 
 class _SentencePieceTokenizer(MegatronTokenizer):
-    """SentencePieceTokenizer-Megatron wrapper"""
+    """A wrapper for SentencePiece tokenizers used with Megatron.
+
+    This class interfaces with a pre-trained SentencePiece model.
+    It defines and manages several special tokens such as <CLS>, <SEP>, <EOD>,
+    <MASK>, <PAD>, <BOS>, and <EOS>. It also supports adding extra vocabulary
+    IDs, typically for T5-style sentinel tokens.
+
+    Args:
+        model_file (str): Path to the SentencePiece model file (e.g., tokenizer.model).
+        vocab_extra_ids (int, optional): Number of extra IDs to add to the vocabulary.
+                                       Defaults to 0.
+    """
 
     def __init__(self, model_file, vocab_extra_ids=0):
         super().__init__(model_file, vocab_extra_ids=vocab_extra_ids)
@@ -451,27 +538,44 @@ class _SentencePieceTokenizer(MegatronTokenizer):
 
     @property
     def vocab_size(self):
+        """Returns the current size of the vocabulary, including added special tokens."""
         return len(self._vocab)
 
     @property
     def vocab(self):
+        """Returns the vocabulary (token to ID mapping)."""
         return self._vocab
 
     @property
     def inv_vocab(self):
+        """Returns the inverse vocabulary (ID to token mapping)."""
         return self._inv_vocab
 
     @property
     def decoder(self):
+        """Alias for inv_vocab."""
         return self._inv_vocab
 
     @property
     def encoder(self):
+        """Alias for vocab."""
         return self._vocab
 
     # From:
-    # https://github.com/NVIDIA/NeMo/blob/c8fa217e811d60d11d014827c7f3845ff6c99ae7/nemo/collections/common/tokenizers/sentencepiece_tokenizer.py#L89
+    # https://github.com/NVIDIA/NeMo/blob/c8fa217e811d60d11d014827c7f3845ff6c99ae7/nemo/collections/common/tokenizers/sentencepiece_tokenizer.py#L89  # pylint: disable=line-too-long
     def tokenize(self, text):
+        """Tokenizes a string, handling special tokens separately.
+
+        This method first finds occurrences of special tokens (defined during
+        initialization) and tokenizes the text segments around them using the
+        SentencePiece model. Special tokens are inserted as their pre-defined IDs.
+
+        Args:
+            text (str): The input string to tokenize.
+
+        Returns:
+            list[int]: A list of token IDs.
+        """
         ids = []
         idx = 0
 
@@ -496,8 +600,20 @@ class _SentencePieceTokenizer(MegatronTokenizer):
         return ids
 
     # From:
-    # https://github.com/NVIDIA/NeMo/blob/c8fa217e811d60d11d014827c7f3845ff6c99ae7/nemo/collections/common/tokenizers/sentencepiece_tokenizer.py#L125
+    # https://github.com/NVIDIA/NeMo/blob/c8fa217e811d60d11d014827c7f3845ff6c99ae7/nemo/collections/common/tokenizers/sentencepiece_tokenizer.py#L125  # pylint: disable=line-too-long
     def detokenize(self, ids):
+        """Converts a list of token IDs back to a string, handling special tokens.
+
+        This method reconstructs the text by decoding segments of regular token IDs
+        using the SentencePiece model and inserting the string representations of
+        special tokens where their IDs appear.
+
+        Args:
+            ids (list[int]): A list of token IDs.
+
+        Returns:
+            str: The detokenized string.
+        """
         text = ""
         last_i = 0
 
@@ -511,43 +627,61 @@ class _SentencePieceTokenizer(MegatronTokenizer):
         return text
 
     def offsets(self, ids: list[int], text: str) -> list[int]:
+        """Calculates the character starting offsets for each token ID."""
         return [p.begin for p in self.tokenizer.decode_ids_as_immutable_proto(ids).pieces]
 
     @property
     def cls(self):
+        """Returns the <CLS> token ID."""
         return self._cls_id
 
     @property
     def sep(self):
+        """Returns the <SEP> token ID."""
         return self._sep_id
 
     @property
     def pad(self):
+        """Returns the padding token ID (e.g., <PAD>)."""
         return self._pad_id
 
     @property
     def bos(self):
+        """Returns the beginning-of-sentence token ID (e.g., <BOS>)."""
         return self._bos_id
 
     @property
     def eod(self):
+        """Returns the end-of-document (<EOD>) token ID."""
         return self._eod_id
 
     @property
     def eos(self):
+        """Returns the end-of-sentence token ID (e.g., <EOS>)."""
         return self._eos_id
 
     @property
     def mask(self):
+        """Returns the <MASK> token ID."""
         return self._mask_id
 
     @property
     def additional_special_tokens_ids(self):
+        """Returns a list of IDs for T5-style <extra_id_*> sentinel tokens."""
         return [self.vocab[k] for k in self._t5_tokens]
 
 
 class _GPTSentencePieceTokenizer(_SentencePieceTokenizer):
-    """SentencePieceTokenizer-Megatron wrapper"""
+    """A specialized SentencePiece tokenizer for GPT-style models.
+
+    This class inherits from `_SentencePieceTokenizer` but simplifies the special
+    token handling. It primarily uses the BOS, EOS, and PAD IDs defined by the
+    SentencePiece model itself, without adding extra tokens like <CLS>, <SEP>, etc.
+    The `eod` (end-of-document) token is mapped to the `eos_id`.
+
+    Args:
+        model_file (str): Path to the SentencePiece model file.
+    """
 
     def __init__(self, model_file):
         super().__init__(model_file, vocab_extra_ids=0)
@@ -560,42 +694,53 @@ class _GPTSentencePieceTokenizer(_SentencePieceTokenizer):
         self._eos_id = self.tokenizer.eos_id()
 
     def tokenize(self, text):
+        """Tokenizes a string of text directly using SentencePiece encode_as_ids."""
         return self.tokenizer.encode_as_ids(text)
 
     def detokenize(self, ids):
+        """Converts a list of token IDs back to a string using SentencePiece decode_ids."""
         return self.tokenizer.decode_ids(ids)
 
     @property
     def cls(self):
+        """Returns -1 as [CLS] is not typically used in this tokenizer."""
         return -1
 
     @property
     def sep(self):
+        """Returns -1 as [SEP] is not typically used in this tokenizer."""
         return -1
 
     @property
     def mask(self):
+        """Returns -1 as [MASK] is not typically used in this tokenizer."""
         return -1
 
     @property
     def eod(self):
+        """Returns the end-of-sentence token ID, used as end-of-document."""
         return self._eos_id
 
     @property
     def additional_special_tokens_ids(self):
+        """Returns None as no additional special tokens are added by default."""
         return None
 
 
 class _Llama2Tokenizer(_SentencePieceTokenizer):
-    """SentencePieceTokenizer-Megatron wrapper"""
+    """A tokenizer specifically for Llama-2 style models, using SentencePiece.
+
+    This class inherits from `_SentencePieceTokenizer` and is configured for Llama-2's
+    specific use of BOS and EOS tokens. It uses the BOS/EOS/PAD IDs directly from
+    the SentencePiece model.
+
+    Args:
+        model_file (str): Path to the SentencePiece model file for Llama-2.
+    """
 
     def __init__(self, model_file):
         super().__init__(model_file, vocab_extra_ids=0)
 
-    def _initalize(self, vocab_extra_ids):
-        self._populate_vocab()
-
-        # BOS / EOS token IDs
         self.n_words: int = self.tokenizer.vocab_size()
         self.bos_id: int = self.tokenizer.bos_id()
         self.eos_id: int = self.tokenizer.eos_id()
@@ -603,7 +748,16 @@ class _Llama2Tokenizer(_SentencePieceTokenizer):
         assert self.tokenizer.vocab_size() == self.tokenizer.get_piece_size()
 
     def tokenize(self, s: str, bos=True, eos=False):
-        """Default args for text completion, not chat/dialog."""
+        """Tokenizes a string, with options to add BOS and EOS tokens.
+
+        Args:
+            s (str): The input string to tokenize.
+            bos (bool, optional): Whether to prepend the BOS token. Defaults to True.
+            eos (bool, optional): Whether to append the EOS token. Defaults to False.
+
+        Returns:
+            list[int]: A list of token IDs.
+        """
         assert type(s) is str
         t = self.tokenizer.encode(s)
         if bos:
@@ -613,32 +767,50 @@ class _Llama2Tokenizer(_SentencePieceTokenizer):
         return t
 
     def detokenize(self, ids):
+        """Converts a list of token IDs back into a string."""
         return self.tokenizer.decode_ids(ids)
 
     @property
     def cls(self):
+        """Returns -1 as [CLS] is not typically used in this tokenizer."""
         return -1
 
     @property
     def sep(self):
+        """Returns -1 as [SEP] is not typically used in this tokenizer."""
         return -1
 
     @property
     def mask(self):
+        """Returns -1 as [MASK] is not typically used in this tokenizer."""
         return -1
 
     @property
     def eod(self):
+        """Returns the end-of-sentence token ID, used as end-of-document."""
         return self.eos_id
 
     @property
     def additional_special_tokens_ids(self):
+        """Returns None as no additional special tokens are added by default."""
         return None
 
 
 def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[bytes, int]:
     """
-    Reload our tokenizer JSON file and convert it to Tiktoken format.
+    Reloads a tokenizer vocabulary from a JSON file (NeMo format) and converts it
+    into the mergeable ranks format required by Tiktoken.
+
+    The input JSON file is expected to be a list of dictionaries, each with
+    "rank", "token_bytes" (base64 encoded), and "token_str" keys.
+
+    Args:
+        path (str): Path to the JSON vocabulary file.
+        max_vocab (Optional[int], optional): If provided, truncates the vocabulary
+                                           to this maximum size. Defaults to None.
+
+    Returns:
+        Dict[bytes, int]: A dictionary mapping token bytes to their ranks.
     """
     assert path.endswith(".json")
 
@@ -668,10 +840,28 @@ def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[b
 
 
 PATTERN_TIKTOKEN = r"[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"
-PATTERN_TIKTOKEN_V2 = "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+PATTERN_TIKTOKEN_V2 = "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"  # pylint: disable=line-too-long
 
 
 class CustomTikTokenizer(MegatronTokenizer):
+    """A custom tokenizer using the Tiktoken library with a NeMo-style vocabulary file.
+
+    This tokenizer loads a vocabulary from a JSON file (processed by
+    `reload_mergeable_ranks`) and uses it with Tiktoken for encoding and decoding.
+    It supports a configurable number of special tokens, which are placed at the
+    beginning of the vocabulary ID space.
+
+    Args:
+        path (str): Path to the JSON vocabulary file (NeMo format).
+        pattern (str): The regex pattern string for Tiktoken.
+        vocab_size (Optional[int]): The target vocabulary size. If None, defaults to 2^17.
+        num_special_tokens (int): The total number of special tokens to reserve.
+        special_tokens (Optional[List[str]]): A list of initial special token strings.
+                                            Must include "<unk>", "<s>", "</s>".
+                                            If shorter than `num_special_tokens`,
+                                            it will be padded with "<SPECIAL_id>".
+    """
+
     def __init__(
         self,
         path: str,
@@ -736,29 +926,45 @@ class CustomTikTokenizer(MegatronTokenizer):
 
     @property
     def bos(self) -> int:
+        """Returns the beginning-of-sentence (<s>) token ID."""
         return self._bos_id
 
     @property
     def eos(self) -> int:
+        """Returns the end-of-sentence (</s>) token ID."""
         return self._eos_id
 
     @property
     def unk(self) -> int:
+        """Returns the unknown (<unk>) token ID."""
         return self._unk_id
 
     @property
     def eod(self) -> int:
+        """Returns the end-of-document token ID (same as EOS for this tokenizer)."""
         return self._eos_id
 
     @property
     def vocab(self):
+        """Returns the vocabulary (token string/bytes to ID mapping)."""
         return self._token_to_id
 
     @property
     def inv_vocab(self):
+        """Returns the inverse vocabulary (ID to token string/bytes mapping)."""
         return self._id_to_token
 
     def tokenize(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
+        """Tokenizes a string, with options to add BOS and EOS tokens.
+
+        Args:
+            s (str): The input string to tokenize.
+            bos (bool, optional): Whether to prepend the BOS token. Defaults to False.
+            eos (bool, optional): Whether to append the EOS token. Defaults to False.
+
+        Returns:
+            List[int]: A list of token IDs.
+        """
         tokens = self._model.encode_ordinary(s)
         if bos:
             tokens = [self.bos, *tokens]
@@ -768,38 +974,57 @@ class CustomTikTokenizer(MegatronTokenizer):
         return tokens
 
     def detokenize(self, tokens: List[int]) -> str:
+        """Converts a list of token IDs back into a string."""
         return self._model.decode(tokens)
 
     def offsets(self, ids: list[int], text: str) -> list[int]:
+        """Calculates the character starting offsets for each token ID."""
         return self._model.decode_with_offsets(ids)[1]
 
     @property
     def vocab_size(self) -> int:
+        """Returns the total vocabulary size, including special tokens."""
         return self._vocab_size
 
     @property
     def encoder(self):
+        """Alias for vocab."""
         return self._token_to_id
 
     @property
     def decoder(self):
+        """Alias for inv_vocab."""
         return self._id_to_token
 
 
 class _NullTokenizer(MegatronTokenizer):
+    """A simple tokenizer that splits text by spaces and converts tokens to integers.
+
+    This tokenizer is primarily for testing or placeholder purposes where actual
+    linguistic tokenization is not required. It assumes tokens are space-separated
+    integers.
+
+    Args:
+        vocab_size (int): The vocabulary size, excluding the EOD token.
+                          The EOD token will be assigned `vocab_size` as its ID.
+    """
+
     def __init__(self, vocab_size):
         super().__init__(None, vocab_size=vocab_size)
         self._vocab_size_without_eod = int(vocab_size)
         self._eod_id = self._vocab_size_without_eod
 
     def tokenize(self, text):
+        """Tokenizes by splitting the string by spaces and converting parts to integers."""
         return [int(x) for x in text.split(" ")]
 
     def detokenize(self, ids):
+        """Converts a list of integer IDs back to a space-separated string."""
         text = [str(x) for x in ids]
         return " ".join(text)
 
     def offsets(self, ids: list[int], text: str) -> list[int]:
+        """Calculates character offsets, assuming space-separated integer tokens."""
         offsets, start_idx = [], 0
         for id_ in ids:
             offsets.append(start_idx)
@@ -808,32 +1033,40 @@ class _NullTokenizer(MegatronTokenizer):
 
     @property
     def vocab_size(self):
+        """Returns the vocabulary size, including the EOD token."""
         return self._vocab_size_without_eod + 1
 
     @property
     def vocab(self):
+        """Not implemented for NullTokenizer."""
         raise NotImplementedError
 
     @property
     def inv_vocab(self):
+        """Not implemented for NullTokenizer."""
         raise NotImplementedError
 
     @property
     def cls(self):
+        """Returns -1 as [CLS] is not used."""
         return -1
 
     @property
     def sep(self):
+        """Returns -1 as [SEP] is not used."""
         return -1
 
     @property
     def mask(self):
+        """Returns -1 as [MASK] is not used."""
         return -1
 
     @property
     def eod(self):
+        """Returns the end-of-document token ID."""
         return self._eod_id
 
     @property
     def additional_special_tokens_ids(self):
+        """Returns None as no additional special tokens are used."""
         return None

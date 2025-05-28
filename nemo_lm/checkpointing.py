@@ -47,19 +47,17 @@ from megatron.core.rerun_state_machine import get_rerun_state_machine
 from nemo_lm import fault_tolerance
 from nemo_lm.config import ConfigContainer
 from nemo_lm.state import GlobalState, TrainState
-from nemo_lm.utils.async_utils import is_empty_async_queue, schedule_async_save
-from nemo_lm.utils.common_utils import (
-    unwrap_model,
-    use_dist_ckpt,
-)
 from nemo_lm.utils import wandb_utils
-from nemo_lm.utils.log_utils import append_to_progress_log
+from nemo_lm.utils.async_utils import is_empty_async_queue, schedule_async_save
 from nemo_lm.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
     is_last_rank,
     print_rank_0,
+    unwrap_model,
+    use_dist_ckpt,
 )
+from nemo_lm.utils.log_utils import append_to_progress_log
 
 # [ModelOpt]: Import
 try:
@@ -1082,7 +1080,7 @@ def load_checkpoint(
                     # Can be removed once 'fully_sharded_bucket_space' loading is removed
                     for maybe_dist_opt_optim_state in (state_dict["optimizer"], *state_dict["optimizer"].values()):
                         if "param_state_sharding_type" in maybe_dist_opt_optim_state:
-                            if maybe_dist_opt_optim_state["param_state_sharding_type"] == "fully_sharded_bucket_space":  # pylint: disable=C0301
+                            if maybe_dist_opt_optim_state["param_state_sharding_type"] == "fully_sharded_bucket_space":
                                 print_rank_0(
                                     "Detected deprecated `fully_sharded_bucket_space` "
                                     "DistributedOptimizer checkpoint format"

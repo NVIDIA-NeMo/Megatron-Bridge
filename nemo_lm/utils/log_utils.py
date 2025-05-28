@@ -14,15 +14,15 @@
 
 import logging
 import os
+from datetime import datetime
 from functools import partial
 from logging import Filter, LogRecord
 from typing import Callable, Optional, Union, Any
-from datetime import datetime
 
 import torch
 import torch.distributed
 
-from nemo_lm.utils.common_utils import print_rank_0, get_rank_safe, get_world_size_safe
+from nemo_lm.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 logger = logging.getLogger(__name__)
 

@@ -658,9 +658,8 @@ def _get_samples_mapping(
             _make_indexed_dataset_compatibility(indexed_dataset)
 
         print(
-            " > WARNING: could not find index map file {}, building " "the indices on rank 0 ...".format(
-                indexmap_filename
-            )
+            " > WARNING: could not find index map file {}, building "
+            "the indices on rank 0 ...".format(indexmap_filename)"
         )
 
         # Make sure the types match the helpers input types.

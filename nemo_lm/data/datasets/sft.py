@@ -26,12 +26,7 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import Dataset
 
-from nemo_lm.data.datasets.utils import (
-    _get_samples_mapping,
-    _JSONLMemMapDataset,
-    _OnlineSampleMapping,
-    _preprocess,
-)
+from nemo_lm.data.datasets.utils import _get_samples_mapping, _JSONLMemMapDataset, _OnlineSampleMapping, _preprocess
 from nemo_lm.tokenizers.tokenizer import MegatronTokenizer
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
@@ -58,7 +53,15 @@ __idx_suffix__ = "idx"  # index file suffix
 
 
 def get_dataset_root(name: str) -> Path:
-    """ """
+    """
+    Returns the root directory for NeMo datasets, creating it if it doesn't exist.
+
+    Args:
+        name (str): The name of the dataset, used to create a subdirectory within the NeMo datasets cache.
+
+    Returns:
+        Path: The path to the dataset's root directory.
+    """
     output = Path(NEMO_DATASETS_CACHE) / name
     output.mkdir(parents=True, exist_ok=True)
 
@@ -89,7 +92,43 @@ def create_sft_dataset(
     **kwargs,
 ) -> "GPTSFTDataset":
     """
-    Create the dataset class (GPTSFTDataset, GPTSFTChatDataset or GPTSFTPackedDataset)
+    Creates and returns a supervised fine-tuning (SFT) dataset instance.
+
+    This function acts as a factory for different types of SFT datasets based on the
+    input parameters. It can create standard SFT datasets, chat-specific datasets,
+    or packed sequence datasets.
+
+    Args:
+        path (Path): Path to the dataset file. For packed datasets, this should be a .npy file.
+        tokenizer (MegatronTokenizer): The tokenizer to use for tokenizing the data.
+        seq_length (int, optional): Maximum sequence length for each example. Defaults to 2048.
+        add_bos (bool, optional): Whether to add a beginning-of-sentence token. Defaults to False.
+        add_eos (bool, optional): Whether to add an end-of-sentence token. Defaults to True.
+        add_sep (bool, optional): Whether to add a separation token between prompt and answer. Defaults to False.
+        seed (int, optional): Random seed for data shuffling. Defaults to 1234.
+        label_key (str, optional): The key in the dataset corresponding to the label/output. Defaults to "output".
+        answer_only_loss (bool, optional): If True, compute loss only on the answer part. Defaults to True.
+        truncation_field (str, optional): Field(s) to truncate if the combined length exceeds `seq_length`.
+            Comma-separated if multiple. Defaults to "input".
+        pad_to_max_length (bool, optional): Whether to pad all samples to `max_seq_length`. Defaults to False.
+        index_mapping_dir (Optional[str], optional): Directory to store/load index mapping files. Defaults to None.
+        prompt_template (str, optional): F-string template for combining input fields.
+            Example: "{input} {output}". Defaults to "{input} {output}".
+        truncation_method (str, optional): Method for truncation ('left' or 'right'). Defaults to "right".
+        memmap_workers (int, optional): Number of workers for memory-mapped dataset loading. Defaults to 2.
+        hf_dataset (bool, optional): Whether to load the dataset using HuggingFace's `datasets` library.
+            Defaults to False.
+        global_sample_mapping (bool, optional): Whether to use a global sample mapping for shuffling across all data,
+            or shuffle within each epoch. Defaults to False.
+        pack_metadata_file_path (Path, optional): Path to the metadata file for packed datasets.
+            Required if `pad_cu_seqlens` is True. Defaults to None.
+        pad_cu_seqlens (bool, optional): Whether to pad `cu_seqlens` for packed datasets,
+            required for cudagraphs. Defaults to False.
+        chat (bool, optional): If True, creates a `GPTSFTChatDataset`. Defaults to False.
+        **kwargs: Additional keyword arguments passed to the specific dataset class constructor.
+
+    Returns:
+        GPTSFTDataset | GPTSFTChatDataset | GPTSFTPackedDataset: An instance of the appropriate SFT dataset class.
     """
 
     gpt_sft_dataset_kwargs = {
@@ -328,6 +367,7 @@ class GPTSFTDataset(Dataset):
             self.samples_mapping = None
 
     def __len__(self):
+        """Return the total number of samples in this dataset."""
         if self.max_num_samples is None:
             return len(self.indexed_dataset)
         else:
@@ -597,7 +637,7 @@ class GPTSFTDataset(Dataset):
 
     @torch.no_grad()
     def _create_attention_mask(self, max_length):
-        """Create `attention_mask`.
+        """Creates an upper-triangular causal attention mask.
         Args:
             input_ids: A 1D tensor that holds the indices of tokens.
         """
@@ -608,6 +648,22 @@ class GPTSFTDataset(Dataset):
         return attention_mask
 
     def collate_fn(self, batch):
+        """
+        Collate a list of samples into a batch dictionary for model training or evaluation.
+
+        This function takes a list of individual processed samples (from `__getitem__`)
+        and groups them into a batch. It handles padding of sequences to the maximum
+        length found in the batch (or `self.max_seq_length` if `pad_to_max_length` is True),
+        and prepares all necessary tensors for the model.
+
+        Args:
+            batch (List[dict]): A list of dictionaries, where each dictionary is a
+                                sample processed by `_process_example`.
+
+        Returns:
+            dict: A dictionary of batched tensors ready for model input. Key tensors include
+                  'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
+        """
         input_ids = [item["input_ids"][:-1] for item in batch]
         labels = [item["input_ids"][1:] for item in batch]
         contexts = [item["context_ids"] for item in batch]
@@ -752,6 +808,22 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         return [item.tolist() if isinstance(item, np.ndarray) else item for item in x]
 
     def collate_fn(self, batch):
+        """
+        Collates a list of packed sequence samples into a batch for the model.
+
+        This method is specifically designed for `GPTSFTPackedDataset`. It takes a list
+        of packed sequence items (as returned by `__getitem__`) and prepares a batch
+        of tensors. This includes handling `cu_seqlens` which are crucial for the
+        efficient processing of packed sequences with kernels like THD attention.
+
+        Args:
+            batch (List[dict]): A list of packed sequence samples.
+
+        Returns:
+            dict: A dictionary of batched tensors, including 'tokens', 'labels',
+                  'loss_mask', 'position_ids', and potentially 'cu_seqlens',
+                  'cu_seqlens_argmin', 'max_seqlen' if `return_cu_seqlen` is True.
+        """
         input_ids = [
             np.concatenate(
                 [
@@ -941,6 +1013,23 @@ class GPTSFTChatDataset(GPTSFTDataset):
         return result
 
     def collate_fn(self, batch):
+        """
+        Collates a list of processed chat examples into a batch for model input.
+
+        This function takes a list of individual processed chat samples (from `__getitem__`,
+        which internally uses `_process_example`) and groups them into a batch. It handles
+        padding of sequences to the maximum length in the batch (or `self.max_seq_length`
+        if `pad_to_max_length` is True), and prepares all necessary tensors for the model,
+        similar to the base class collate_fn but specific to chat data structure.
+
+        Args:
+            batch (List[dict]): A list of dictionaries, where each dictionary is a
+                                sample processed by `_process_example`.
+
+        Returns:
+            dict: A dictionary of batched tensors ready for model input. Key tensors include
+                  'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
+        """
         input_ids = [item["input_ids"][:-1].tolist() for item in batch]
         labels = [item["input_ids"][1:].tolist() for item in batch]
         contexts = [item["context_ids"].tolist() for item in batch]

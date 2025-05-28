@@ -16,8 +16,7 @@ import enum
 import functools
 import inspect
 from contextlib import contextmanager
-from typing import Generator
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 
 import yaml
 
