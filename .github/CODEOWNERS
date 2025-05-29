@@ -2,6 +2,6 @@
 docker/ @ko3n1g @chtruong814 @thomasdhc @pablo-garay
 .pylintrc.* @ko3n1g @chtruong814 @thomasdhc @pablo-garay
 .flake8.* @ko3n1g @chtruong814 @thomasdhc @pablo-garay
-setup.py @ko3n1g @chtruong814 @thomasdhc @pablo-garay
+/setup.py @ko3n1g @chtruong814 @thomasdhc @pablo-garay
 pyproject.toml @ko3n1g @chtruong814 @thomasdhc @pablo-garay
 requirements/ @ko3n1g @chtruong814 @thomasdhc @pablo-garay
