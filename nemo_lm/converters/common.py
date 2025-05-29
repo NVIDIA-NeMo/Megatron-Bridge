@@ -28,12 +28,14 @@ from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShard
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
 
-from nemo_lm.checkpointing import save_checkpoint
-from nemo_lm.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
-from nemo_lm.model.gpt import GPTConfig, torch_dtype_from_mcore_config
-from nemo_lm.model.t5 import T5Config
-from nemo_lm.state import GlobalState
+from nemo_lm.utils import common_utils
+from nemo_lm.utils.config_utils import ConfigContainer as Container
+from nemo_lm.training.checkpointing import save_checkpoint
+from nemo_lm.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
+from nemo_lm.models.gpt import GPTConfig, torch_dtype_from_mcore_config
+from nemo_lm.models.t5 import T5Config
 from nemo_lm.tokenizers.tokenizer import _HuggingFaceTokenizer
+from nemo_lm.training.state import GlobalState
 from nemo_lm.utils.instantiate_utils import instantiate
 
 if TYPE_CHECKING:

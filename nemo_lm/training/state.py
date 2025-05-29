@@ -25,8 +25,8 @@ from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
 
-from nemo_lm.config import ConfigContainer
 from nemo_lm.tokenizers.tokenizer import build_tokenizer
+from nemo_lm.training.config import ConfigContainer
 from nemo_lm.utils.common_utils import get_rank_safe, get_world_size_safe
 from nemo_lm.utils.sig_utils import DistributedSignalHandler
 from nemo_lm.utils.yaml_utils import dump_dataclass_to_yaml

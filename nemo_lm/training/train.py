@@ -36,12 +36,12 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 
-from nemo_lm import fault_tolerance
-from nemo_lm.checkpointing import save_checkpoint
-from nemo_lm.config import ConfigContainer
-from nemo_lm.eval import evaluate_and_print_results
-from nemo_lm.init import destroy_global_state
-from nemo_lm.state import GlobalState
+from nemo_lm.training.checkpointing import save_checkpoint
+from nemo_lm.training.config import ConfigContainer
+from nemo_lm.training.eval import evaluate_and_print_results
+from nemo_lm.training import fault_tolerance
+from nemo_lm.training.initialize import destroy_global_state
+from nemo_lm.training.state import GlobalState
 from nemo_lm.utils import flop_utils
 from nemo_lm.utils.async_utils import maybe_finalize_async_save
 from nemo_lm.utils.common_utils import get_world_size_safe, print_rank_0

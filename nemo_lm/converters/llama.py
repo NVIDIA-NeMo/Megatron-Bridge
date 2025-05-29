@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from nemo_lm.converter.common import BaseExporter, BaseImporter, dtype_from_hf
-from nemo_lm.converter.state_transform import TransformFns, apply_transforms, state_transform
-from nemo_lm.model.llama import Llama4Config, Llama31Config, LlamaConfig
+from nemo_lm.converters.common import BaseExporter, BaseImporter, dtype_from_hf
+from nemo_lm.converters.state_transform import TransformFns, apply_transforms, state_transform
+from nemo_lm.models.llama import Llama4Config, Llama31Config, LlamaConfig
 
 if TYPE_CHECKING:
     from transformers import LlamaConfig as HFLlamaConfig

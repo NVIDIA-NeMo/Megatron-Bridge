@@ -24,10 +24,10 @@ from typing import Any, Callable, Optional, Protocol, TypedDict, Union, cast
 from datasets import Dataset, DatasetDict, load_dataset
 from tqdm import tqdm
 
-from nemo_lm.config import FinetuningDatasetConfig
 from nemo_lm.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from nemo_lm.data.datasets.sft import get_dataset_root
 from nemo_lm.tokenizers.tokenizer import MegatronTokenizer
+from nemo_lm.training.config import FinetuningDatasetConfig
 from nemo_lm.utils.common_utils import print_rank_0
 
 logger = logging.getLogger(__name__)

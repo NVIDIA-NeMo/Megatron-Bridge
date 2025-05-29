@@ -30,9 +30,9 @@ from megatron.core.num_microbatches_calculator import (
 )
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
-from nemo_lm.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
-from nemo_lm.model.gpt import GPTConfig
-from nemo_lm.model.t5 import T5Config
+from nemo_lm.models.gpt import GPTConfig
+from nemo_lm.models.t5 import T5Config
+from nemo_lm.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
 from nemo_lm.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
 
 

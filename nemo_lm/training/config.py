@@ -24,8 +24,8 @@ from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatas
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from nemo_lm.model.gpt import GPTConfig
-from nemo_lm.model.t5 import T5Config
+from nemo_lm.models.gpt import GPTConfig
+from nemo_lm.models.t5 import T5Config
 from nemo_lm.utils.common_utils import get_world_size_safe
 from nemo_lm.utils.config_utils import ConfigContainer as Container
 

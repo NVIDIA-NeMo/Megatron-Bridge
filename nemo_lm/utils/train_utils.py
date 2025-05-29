@@ -25,8 +25,8 @@ from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from nemo_lm.config import ConfigContainer
-from nemo_lm.state import GlobalState
+from nemo_lm.training.config import ConfigContainer
+from nemo_lm.training.state import GlobalState
 from nemo_lm.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_last
 from nemo_lm.utils.theoretical_memory_utils import report_theoretical_memory
 

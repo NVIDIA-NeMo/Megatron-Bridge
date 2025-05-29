@@ -14,7 +14,7 @@
 
 import torch.nn.functional as F
 
-from nemo_lm.config import ConfigContainer
+from nemo_lm.training.config import ConfigContainer
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> float:

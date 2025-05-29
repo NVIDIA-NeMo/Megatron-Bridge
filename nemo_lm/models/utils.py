@@ -20,10 +20,11 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.utils import get_batch_on_this_cp_rank
+from megatron.core.transformer.spec_utils import ModuleSpec
 
-from nemo_lm.config import ConfigContainer, FinetuningDatasetConfig
-from nemo_lm.losses import masked_next_token_loss
-from nemo_lm.state import GlobalState
+from nemo_lm.training.config import ConfigContainer, FinetuningDatasetConfig
+from nemo_lm.training.losses import masked_next_token_loss
+from nemo_lm.training.state import GlobalState
 
 logger = logging.getLogger(__name__)
 

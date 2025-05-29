@@ -23,9 +23,9 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 
-from nemo_lm import fault_tolerance
-from nemo_lm.config import ConfigContainer
-from nemo_lm.state import GlobalState
+from nemo_lm.training import fault_tolerance
+from nemo_lm.training.config import ConfigContainer
+from nemo_lm.training.state import GlobalState
 from nemo_lm.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 from nemo_lm.utils.train_utils import check_forward_step_func_num_args, maybe_inject_state
 

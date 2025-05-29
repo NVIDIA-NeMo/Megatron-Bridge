@@ -44,9 +44,9 @@ from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 
-from nemo_lm import fault_tolerance
-from nemo_lm.config import ConfigContainer
-from nemo_lm.state import GlobalState, TrainState
+from nemo_lm.training import fault_tolerance
+from nemo_lm.training.config import ConfigContainer
+from nemo_lm.training.state import GlobalState, TrainState
 from nemo_lm.utils import wandb_utils
 from nemo_lm.utils.async_utils import is_empty_async_queue, schedule_async_save
 from nemo_lm.utils.common_utils import (

@@ -23,8 +23,8 @@ from megatron.core.enums import ModelType
 from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.transformer.module import Float16Module, MegatronModule
 
-from nemo_lm.model.gpt import GPTConfig
-from nemo_lm.model.t5 import T5Config
+from nemo_lm.models.gpt import GPTConfig
+from nemo_lm.models.t5 import T5Config
 
 
 def get_model_from_config(

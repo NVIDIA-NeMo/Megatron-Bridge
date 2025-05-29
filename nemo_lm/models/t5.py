@@ -21,7 +21,7 @@ from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from nemo_lm.model.gpt import get_vocab_size
+from nemo_lm.models.gpt import get_vocab_size
 from nemo_lm.utils.import_utils import safe_import
 
 _, HAVE_TE = safe_import("transformer_engine")

@@ -14,12 +14,12 @@
 
 from typing import Callable, Optional
 
-from nemo_lm.checkpointing import save_checkpoint
-from nemo_lm.config import ConfigContainer
 from nemo_lm.data.utils import get_dataset_provider
-from nemo_lm.eval import evaluate_and_print_results
-from nemo_lm.setup import setup
-from nemo_lm.train import _finish_train, train
+from nemo_lm.training.checkpointing import save_checkpoint
+from nemo_lm.training.config import ConfigContainer
+from nemo_lm.training.eval import evaluate_and_print_results
+from nemo_lm.training.setup import setup
+from nemo_lm.training.train import _finish_train, train
 from nemo_lm.utils.common_utils import print_rank_0
 from nemo_lm.utils.decorators import experimental_fn
 from nemo_lm.utils.log_utils import barrier_and_log

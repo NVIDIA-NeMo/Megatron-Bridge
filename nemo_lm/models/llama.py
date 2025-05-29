@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 import torch
 import torch.nn.functional as F
 
-from nemo_lm.model.gpt import GPTConfig
-from nemo_lm.model.llama4_utils import get_llama4_layer_spec
+from nemo_lm.models.gpt import GPTConfig
+from nemo_lm.models.llama4_utils import get_llama4_layer_spec
 
 try:
     from megatron.core.transformer.spec_utils import ModuleSpec
