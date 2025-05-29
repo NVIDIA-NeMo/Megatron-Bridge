@@ -16,7 +16,6 @@ import enum
 import inspect
 from dataclasses import dataclass
 from functools import partial
-from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 
 import pytest
@@ -499,6 +498,7 @@ def test_custom_safe_yaml_representers():
 
     # Create a custom class
     class CustomClass:  # Defined in this scope
+        """Custom class for testing."""
         pass
 
     # Test with a custom representer
@@ -655,7 +655,7 @@ def test_enum_representer():
         mapping_data[key_node.value] = value_node.value
 
     # inspect.getmodule(Color) is correct here
-    expected_target = f"{inspect.getmodule(Color).__name__}.{Color.__qualname__}"  
+    expected_target = f"{inspect.getmodule(Color).__name__}.{Color.__qualname__}"
     assert mapping_data["_target_"] == expected_target
     assert mapping_data["_call_"] is True or mapping_data["_call_"] == "true"
     assert mapping_data["_args_"] == [1]  # Check the value of the enum
