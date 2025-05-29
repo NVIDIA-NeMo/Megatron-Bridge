@@ -499,6 +499,7 @@ def test_custom_safe_yaml_representers():
     # Create a custom class
     class CustomClass:  # Defined in this scope
         """Custom class for testing."""
+
         pass
 
     # Test with a custom representer
