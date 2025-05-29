@@ -21,7 +21,6 @@ from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
-from megatron.core.transformer.module import MegatronModule
 from nemo_lm.data.samplers import build_pretraining_data_loader
 from nemo_lm.training.config import ConfigContainer
 from nemo_lm.training.state import TrainState

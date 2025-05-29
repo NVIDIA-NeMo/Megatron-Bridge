@@ -14,7 +14,7 @@ from nemo_lm.tokenizers.bert_tokenization import FullTokenizer as FullBertTokeni
 from nemo_lm.tokenizers.gpt2_tokenization import GPT2Tokenizer
 from nemo_lm.tokenizers.multimodal_tokenizer import MultimodalTokenizer
 from nemo_lm.training.config import TokenizerConfig
-from nemo_lm.utils.common_utils import get_rank_safe, print_rank_0, ensure_bool
+from nemo_lm.utils.common_utils import get_rank_safe, print_rank_0
 
 
 class MegatronTokenizer(MegatronTokenizerCore):
@@ -680,4 +680,385 @@ class _SentencePieceTokenizer(MegatronTokenizer):
 class _GPTSentencePieceTokenizer(_SentencePieceTokenizer):
     """A specialized SentencePiece tokenizer for GPT-style models.
 
-    This class inherits from `
+    This class inherits from `_SentencePieceTokenizer` but simplifies the special
+    token handling. It primarily uses the BOS, EOS, and PAD IDs defined by the
+    SentencePiece model itself, without adding extra tokens like <CLS>, <SEP>, etc.
+    The `eod` (end-of-document) token is mapped to the `eos_id`.
+    Args:
+        model_file (str): Path to the SentencePiece model file.
+    """
+
+    def __init__(self, model_file):
+        super().__init__(model_file, vocab_extra_ids=0)
+
+    def _initalize(self, vocab_extra_ids):
+        self._populate_vocab()
+
+        self._pad_id = self.tokenizer.pad_id()
+        self._bos_id = self.tokenizer.bos_id()
+        self._eos_id = self.tokenizer.eos_id()
+
+    def tokenize(self, text):
+        """Tokenizes a string of text directly using SentencePiece encode_as_ids."""
+        return self.tokenizer.encode_as_ids(text)
+
+    def detokenize(self, ids):
+        """Converts a list of token IDs back to a string using SentencePiece decode_ids."""
+        return self.tokenizer.decode_ids(ids)
+
+    @property
+    def cls(self):
+        """Returns -1 as [CLS] is not typically used in this tokenizer."""
+        return -1
+
+    @property
+    def sep(self):
+        """Returns -1 as [SEP] is not typically used in this tokenizer."""
+        return -1
+
+    @property
+    def mask(self):
+        """Returns -1 as [MASK] is not typically used in this tokenizer."""
+        return -1
+
+    @property
+    def eod(self):
+        """Returns the end-of-sentence token ID, used as end-of-document."""
+        return self._eos_id
+
+    @property
+    def additional_special_tokens_ids(self):
+        """Returns None as no additional special tokens are added by default."""
+        return None
+
+
+class _Llama2Tokenizer(_SentencePieceTokenizer):
+    """A tokenizer specifically for Llama-2 style models, using SentencePiece.
+    This class inherits from `_SentencePieceTokenizer` and is configured for Llama-2's
+    specific use of BOS and EOS tokens. It uses the BOS/EOS/PAD IDs directly from
+    the SentencePiece model.
+    Args:
+        model_file (str): Path to the SentencePiece model file for Llama-2.
+    """
+
+    def __init__(self, model_file):
+        super().__init__(model_file, vocab_extra_ids=0)
+
+        self.n_words: int = self.tokenizer.vocab_size()
+        self.bos_id: int = self.tokenizer.bos_id()
+        self.eos_id: int = self.tokenizer.eos_id()
+        self.pad_id: int = self.tokenizer.pad_id()
+        assert self.tokenizer.vocab_size() == self.tokenizer.get_piece_size()
+
+    def tokenize(self, s: str, bos=True, eos=False):
+        """Tokenizes a string, with options to add BOS and EOS tokens.
+        Args:
+            s (str): The input string to tokenize.
+            bos (bool, optional): Whether to prepend the BOS token. Defaults to True.
+            eos (bool, optional): Whether to append the EOS token. Defaults to False.
+        Returns:
+            list[int]: A list of token IDs.
+        """
+        assert type(s) is str
+        t = self.tokenizer.encode(s)
+        if bos:
+            t = [self.bos_id] + t
+        if eos:
+            t = t + [self.eos_id]
+        return t
+
+    def detokenize(self, ids):
+        """Converts a list of token IDs back into a string."""
+        return self.tokenizer.decode_ids(ids)
+
+    @property
+    def cls(self):
+        """Returns -1 as [CLS] is not typically used in this tokenizer."""
+        return -1
+
+    @property
+    def sep(self):
+        """Returns -1 as [SEP] is not typically used in this tokenizer."""
+        return -1
+
+    @property
+    def mask(self):
+        """Returns -1 as [MASK] is not typically used in this tokenizer."""
+        return -1
+
+    @property
+    def eod(self):
+        """Returns the end-of-sentence token ID, used as end-of-document."""
+        return self.eos_id
+
+    @property
+    def additional_special_tokens_ids(self):
+        """Returns None as no additional special tokens are added by default."""
+        return None
+
+
+def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[bytes, int]:
+    """
+    Reloads a tokenizer vocabulary from a JSON file (NeMo format) and converts it
+    into the mergeable ranks format required by Tiktoken.
+    The input JSON file is expected to be a list of dictionaries, each with
+    "rank", "token_bytes" (base64 encoded), and "token_str" keys.
+    Args:
+        path (str): Path to the JSON vocabulary file.
+        max_vocab (Optional[int], optional): If provided, truncates the vocabulary
+                                           to this maximum size. Defaults to None.
+    Returns:
+        Dict[bytes, int]: A dictionary mapping token bytes to their ranks.
+    """
+    assert path.endswith(".json")
+
+    # reload vocab
+    with open(path, "r") as f:
+        vocab = json.load(f)
+    assert isinstance(vocab, list)
+    print_rank_0(f"Vocab size: {len(vocab)}")
+    if max_vocab is not None:
+        vocab = vocab[:max_vocab]
+        print_rank_0(f"Cutting vocab to first {len(vocab)} tokens.")
+
+    # build ranks
+    ranks: Dict[bytes, int] = {}
+    for i, x in enumerate(vocab):
+        assert x.keys() == {"rank", "token_bytes", "token_str"}
+        assert x["rank"] == i
+        merge = base64.b64decode(x["token_bytes"])
+        assert i >= 256 or merge == bytes([i])
+        ranks[merge] = x["rank"]
+
+    # sanity check
+    assert len(ranks) == len(vocab)
+    assert set(ranks.values()) == set(range(len(ranks)))
+
+    return ranks
+
+
+PATTERN_TIKTOKEN = r"[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"
+PATTERN_TIKTOKEN_V2 = "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"  # pylint: disable=line-too-long
+
+
+class CustomTikTokenizer(MegatronTokenizer):
+    """A custom tokenizer using the Tiktoken library with a NeMo-style vocabulary file.
+    This tokenizer loads a vocabulary from a JSON file (processed by
+    `reload_mergeable_ranks`) and uses it with Tiktoken for encoding and decoding.
+    It supports a configurable number of special tokens, which are placed at the
+    beginning of the vocabulary ID space.
+    Args:
+        path (str): Path to the JSON vocabulary file (NeMo format).
+        pattern (str): The regex pattern string for Tiktoken.
+        vocab_size (Optional[int]): The target vocabulary size. If None, defaults to 2^17.
+        num_special_tokens (int): The total number of special tokens to reserve.
+        special_tokens (Optional[List[str]]): A list of initial special token strings.
+                                            Must include "<unk>", "<s>", "</s>".
+                                            If shorter than `num_special_tokens`,
+                                            it will be padded with "<SPECIAL_id>".
+    """
+
+    def __init__(
+        self,
+        path: str,
+        pattern: str,
+        vocab_size: Optional[int],
+        num_special_tokens: int,
+        special_tokens: Optional[List[str]],
+    ):
+        super().__init__(
+            path,
+            pattern=pattern,
+            vocab_size=vocab_size,
+            num_special_tokens=num_special_tokens,
+            special_tokens=special_tokens,
+        )
+        import tiktoken
+
+        if vocab_size is None:
+            vocab_size = 2**17  # Fallback vocab size is 131072.
+        self._vocab_size = vocab_size
+
+        SPECIAL_TOKENS = ["<unk>", "<s>", "</s>"]
+        if special_tokens is None:
+            special_tokens = SPECIAL_TOKENS.copy()
+        assert len(special_tokens) == len(set(special_tokens)), f"Special tokens should be unique: {special_tokens}"
+        assert len(special_tokens) <= num_special_tokens < self._vocab_size
+        assert set(SPECIAL_TOKENS) <= set(special_tokens), f"Custom special tokens should include {SPECIAL_TOKENS}"
+
+        special_filler = ["<SPECIAL_{id}>".format(id=i) for i in range(len(special_tokens), num_special_tokens)]
+        if special_filler:
+            print_rank_0(f"Adding special tokens {special_filler[0]}, ..., {special_filler[-1]}")
+        special_tokens = special_tokens + special_filler
+        assert len(set(special_tokens)) == len(special_tokens) == num_special_tokens, special_tokens
+        inner_vocab_size = self._vocab_size - num_special_tokens
+
+        token_to_id_without_special_tokens = reload_mergeable_ranks(path, max_vocab=inner_vocab_size)
+        # Create space for special tokens.
+        token_to_id_without_special_tokens = {
+            t: i + num_special_tokens for t, i in token_to_id_without_special_tokens.items()
+        }
+
+        special_tokens = {t: i for i, t in enumerate(special_tokens)}
+        self._unk_id = special_tokens["<unk>"]
+        self._bos_id = special_tokens["<s>"]
+        self._eos_id = special_tokens["</s>"]
+
+        # Create tiktoken model.
+        self._model = tiktoken.Encoding(
+            name=Path(path).parent.name,
+            pat_str=pattern,
+            mergeable_ranks=token_to_id_without_special_tokens,
+            special_tokens=special_tokens,
+        )
+
+        # Create final _id_to_token and _token_to_id data structures with special tokens inserted
+        # into appropriate locations.
+        assert set(token_to_id_without_special_tokens.keys()).isdisjoint(set(special_tokens.keys()))
+        self._token_to_id = token_to_id_without_special_tokens.copy()
+        self._token_to_id.update(special_tokens)
+        self._id_to_token = {v: k for k, v in self._token_to_id.items()}
+        assert set(range(self._vocab_size)) == set(self._id_to_token.keys())
+
+    @property
+    def bos(self) -> int:
+        """Returns the beginning-of-sentence (<s>) token ID."""
+        return self._bos_id
+
+    @property
+    def eos(self) -> int:
+        """Returns the end-of-sentence (</s>) token ID."""
+        return self._eos_id
+
+    @property
+    def unk(self) -> int:
+        """Returns the unknown (<unk>) token ID."""
+        return self._unk_id
+
+    @property
+    def eod(self) -> int:
+        """Returns the end-of-document token ID (same as EOS for this tokenizer)."""
+        return self._eos_id
+
+    @property
+    def vocab(self):
+        """Returns the vocabulary (token string/bytes to ID mapping)."""
+        return self._token_to_id
+
+    @property
+    def inv_vocab(self):
+        """Returns the inverse vocabulary (ID to token string/bytes mapping)."""
+        return self._id_to_token
+
+    def tokenize(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
+        """Tokenizes a string, with options to add BOS and EOS tokens.
+        Args:
+            s (str): The input string to tokenize.
+            bos (bool, optional): Whether to prepend the BOS token. Defaults to False.
+            eos (bool, optional): Whether to append the EOS token. Defaults to False.
+        Returns:
+            List[int]: A list of token IDs.
+        """
+        tokens = self._model.encode_ordinary(s)
+        if bos:
+            tokens = [self.bos, *tokens]
+        if eos:
+            tokens = [*tokens, self.eos]
+
+        return tokens
+
+    def detokenize(self, tokens: List[int]) -> str:
+        """Converts a list of token IDs back into a string."""
+        return self._model.decode(tokens)
+
+    def offsets(self, ids: list[int], text: str) -> list[int]:
+        """Calculates the character starting offsets for each token ID."""
+        return self._model.decode_with_offsets(ids)[1]
+
+    @property
+    def vocab_size(self) -> int:
+        """Returns the total vocabulary size, including special tokens."""
+        return self._vocab_size
+
+    @property
+    def encoder(self):
+        """Alias for vocab."""
+        return self._token_to_id
+
+    @property
+    def decoder(self):
+        """Alias for inv_vocab."""
+        return self._id_to_token
+
+
+class _NullTokenizer(MegatronTokenizer):
+    """A simple tokenizer that splits text by spaces and converts tokens to integers.
+    This tokenizer is primarily for testing or placeholder purposes where actual
+    linguistic tokenization is not required. It assumes tokens are space-separated
+    integers.
+    Args:
+        vocab_size (int): The vocabulary size, excluding the EOD token.
+                          The EOD token will be assigned `vocab_size` as its ID.
+    """
+
+    def __init__(self, vocab_size):
+        super().__init__(None, vocab_size=vocab_size)
+        self._vocab_size_without_eod = int(vocab_size)
+        self._eod_id = self._vocab_size_without_eod
+
+    def tokenize(self, text):
+        """Tokenizes by splitting the string by spaces and converting parts to integers."""
+        return [int(x) for x in text.split(" ")]
+
+    def detokenize(self, ids):
+        """Converts a list of integer IDs back to a space-separated string."""
+        text = [str(x) for x in ids]
+        return " ".join(text)
+
+    def offsets(self, ids: list[int], text: str) -> list[int]:
+        """Calculates character offsets, assuming space-separated integer tokens."""
+        offsets, start_idx = [], 0
+        for id_ in ids:
+            offsets.append(start_idx)
+            start_idx += 1 + len(str(id_))
+        return offsets
+
+    @property
+    def vocab_size(self):
+        """Returns the vocabulary size, including the EOD token."""
+        return self._vocab_size_without_eod + 1
+
+    @property
+    def vocab(self):
+        """Not implemented for NullTokenizer."""
+        raise NotImplementedError
+
+    @property
+    def inv_vocab(self):
+        """Not implemented for NullTokenizer."""
+        raise NotImplementedError
+
+    @property
+    def cls(self):
+        """Returns -1 as [CLS] is not used."""
+        return -1
+
+    @property
+    def sep(self):
+        """Returns -1 as [SEP] is not used."""
+        return -1
+
+    @property
+    def mask(self):
+        """Returns -1 as [MASK] is not used."""
+        return -1
+
+    @property
+    def eod(self):
+        """Returns the end-of-document token ID."""
+        return self._eod_id
+
+    @property
+    def additional_special_tokens_ids(self):
+        """Returns None as no additional special tokens are used."""
+        return None

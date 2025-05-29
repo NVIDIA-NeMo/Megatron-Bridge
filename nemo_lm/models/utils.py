@@ -20,7 +20,6 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.utils import get_batch_on_this_cp_rank
-from megatron.core.transformer.spec_utils import ModuleSpec
 
 from nemo_lm.training.config import ConfigContainer, FinetuningDatasetConfig
 from nemo_lm.training.losses import masked_next_token_loss

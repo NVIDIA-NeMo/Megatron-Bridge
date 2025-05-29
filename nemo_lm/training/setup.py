@@ -28,13 +28,13 @@ from nemo_lm.data.loaders import setup_data_iterators
 from nemo_lm.models import get_model_from_config
 from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.t5 import T5Config
+from nemo_lm.tokenizers.tokenizer import build_tokenizer
 from nemo_lm.training import fault_tolerance
 from nemo_lm.training.checkpointing import checkpoint_exists, load_checkpoint
 from nemo_lm.training.config import CheckpointConfig, ConfigContainer
 from nemo_lm.training.initialize import initialize_megatron, set_jit_fusion_options
 from nemo_lm.training.optim import setup_optimizer
 from nemo_lm.training.state import GlobalState
-from nemo_lm.tokenizers.tokenizer import build_tokenizer
 from nemo_lm.utils.common_utils import print_rank_0
 from nemo_lm.utils.import_utils import safe_import
 from nemo_lm.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
