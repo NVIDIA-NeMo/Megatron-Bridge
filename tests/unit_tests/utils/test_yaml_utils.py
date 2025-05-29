@@ -35,29 +35,38 @@ from nemo_lm.utils.yaml_utils import (
 
 # Test fixtures
 class DummyClass:
+    """Dummy class for testing."""
+
     def test_method(self):
+        """Dummy method for testing."""
         pass
 
     @staticmethod
     def static_method():
+        """Dummy static method for testing."""
         pass
 
     @classmethod
     def class_method(cls):
+        """Dummy class method for testing."""
         pass
 
 
 @dataclass
 class DummyDataClass:
+    """Dummy dataclass for testing."""
+
     name: str
     value: int
 
 
 def dummy_function():
+    """Dummy function for testing."""
     pass
 
 
 def dummy_function_with_args(a, b=2, c=3):
+    """Dummy function with args for testing."""
     return a + b + c
 
 
@@ -253,6 +262,8 @@ def test_torch_dtype_representer():
 
 # Custom class for testing that properly triggers the first branch
 class CustomObjWithQualName:
+    """Custom object with __qualname__ for testing."""
+
     pass
 
 
@@ -265,12 +276,9 @@ CustomObjWithQualName.__qualname__ = "CustomQualname"
 def test_safe_object_representer(mock_getmodule):
     """Test the safe object representer."""
     # Set up the mock to return a module with a name
-    mock_module = SimpleNamespace(__name__="custom_module") # This mock is for general inspect.getmodule
-    
     # However, for objects defined *within* this test file, inspect.getmodule will correctly get their module
     # So, we need to make sure the expected target reflects the new module path
-    current_test_module_name = __name__ # This will be tests.unit_tests.utils.test_yaml_utils
-
+    current_test_module_name = __name__  # This will be tests.unit_tests.utils.test_yaml_utils
 
     # Create a dummy dumper
     dumper = yaml.SafeDumper(None)
@@ -279,8 +287,8 @@ def test_safe_object_representer(mock_getmodule):
     # Create a callable function-like object that has __qualname__
     def test_func():
         pass
-    
-    mock_getmodule.return_value = inspect.getmodule(test_func) # Ensure it uses the correct module for test_func
+
+    mock_getmodule.return_value = inspect.getmodule(test_func)  # Ensure it uses the correct module for test_func
 
     obj = test_func
 
@@ -298,9 +306,11 @@ def test_safe_object_representer(mock_getmodule):
 
     # Test case 2: Regular class instance (falls back to __class__)
     class SimpleTestClass:
+        """Simple test class for testing."""
+
         pass
 
-    mock_getmodule.return_value = inspect.getmodule(SimpleTestClass) # Ensure correct module for SimpleTestClass
+    mock_getmodule.return_value = inspect.getmodule(SimpleTestClass)  # Ensure correct module for SimpleTestClass
     obj = SimpleTestClass()
 
     # When serializing normal instances, _call_ should be True
@@ -356,7 +366,7 @@ def test_full_yaml_dump():
     assert "_call_: false" in yaml_str
     assert "_call_: true" in yaml_str  # For class instance
     assert f"{current_test_module_name}.dummy_function" in yaml_str
-    assert f"{current_test_module_name}.local_function" in yaml_str # for nested local_function
+    assert f"{current_test_module_name}.local_function" in yaml_str  # for nested local_function
 
 
 def test_serialize_methods():
@@ -424,10 +434,13 @@ def test_torch_dtype_representer_direct():
 
         # Create a mock dumper that will record the calls
         class MockDumper:
+            """Mock dumper for testing."""
+
             def __init__(self):
                 self.represented_data = None
 
             def represent_data(self, data):
+                """Represent data."""
                 self.represented_data = data
                 return data
 
@@ -454,7 +467,9 @@ def test_safe_object_representer_edge_cases(mock_representer):
     dumper = yaml.SafeDumper(None)
 
     # Create a test object
-    class CustomObj: # Defined in this scope, so its module is this test file
+    class CustomObj:  # Defined in this scope, so its module is this test file
+        """Custom object for testing."""
+
         pass
 
     obj = CustomObj()
@@ -474,7 +489,7 @@ def test_safe_object_representer_edge_cases(mock_representer):
         mock_representer.assert_called_once()
 
         # Verify the output
-        assert CustomObj.__qualname__ in result # Check for class name
+        assert CustomObj.__qualname__ in result  # Check for class name
         assert "_call_: true" in result
 
 
@@ -483,7 +498,7 @@ def test_custom_safe_yaml_representers():
     current_test_module_name = __name__
 
     # Create a custom class
-    class CustomClass: # Defined in this scope
+    class CustomClass:  # Defined in this scope
         pass
 
     # Test with a custom representer
@@ -502,7 +517,6 @@ def test_custom_safe_yaml_representers():
         # If we dump CustomClass itself (the type), it should use the default obj representer.
         type_result = yaml.safe_dump(CustomClass)
         assert f"{current_test_module_name}.{CustomClass.__qualname__}" in type_result
-
 
     # Verify our custom representer was removed
     with pytest.raises(yaml.representer.RepresenterError):
@@ -587,7 +601,7 @@ def test_dump_dataclass_to_yaml_file():
     instance = DummyDataClass(name="test_file", value=123)
     mock_file = mock_open()
     with patch("builtins.open", mock_file):
-        with safe_yaml_representers(): # Ensure representers are active for dump_dataclass_to_yaml
+        with safe_yaml_representers():  # Ensure representers are active for dump_dataclass_to_yaml
             dump_dataclass_to_yaml(instance, "dummy.yaml")
 
     mock_file.assert_called_once_with("dummy.yaml", "w+")
@@ -609,7 +623,7 @@ def test_dump_dataclass_to_yaml_string():
     """Test dump_dataclass_to_yaml without a filename (returns string)."""
     current_test_module_name = __name__
     instance = DummyDataClass(name="test_string", value=456)
-    with safe_yaml_representers(): # Ensure representers are active
+    with safe_yaml_representers():  # Ensure representers are active
         yaml_string = dump_dataclass_to_yaml(instance)
 
     assert isinstance(yaml_string, str)
@@ -620,6 +634,8 @@ def test_dump_dataclass_to_yaml_string():
 
 
 class Color(enum.Enum):
+    """Color enum for testing."""
+
     RED = 1
     GREEN = 2
     BLUE = 3
@@ -638,18 +654,19 @@ def test_enum_representer():
     for key_node, value_node in result.value:
         mapping_data[key_node.value] = value_node.value
 
-    expected_target = f"{inspect.getmodule(Color).__name__}.{Color.__qualname__}" # inspect.getmodule(Color) is correct here
+    # inspect.getmodule(Color) is correct here
+    expected_target = f"{inspect.getmodule(Color).__name__}.{Color.__qualname__}"  
     assert mapping_data["_target_"] == expected_target
     assert mapping_data["_call_"] is True or mapping_data["_call_"] == "true"
-    assert mapping_data["_args_"] == [1] # Check the value of the enum
+    assert mapping_data["_args_"] == [1]  # Check the value of the enum
 
     # Test directly with safe_dump
     with safe_yaml_representers():
         yaml_str = yaml.safe_dump(Color.GREEN)
         assert "_target_:" in yaml_str
-        assert f"{current_test_module_name}.Color" in yaml_str # __name__ should be the current module path
+        assert f"{current_test_module_name}.Color" in yaml_str  # __name__ should be the current module path
         assert "_call_: true" in yaml_str
-        assert "_args_:[2]" in yaml_str or "_args_: [2]" in yaml_str # PyYAML might add space
+        assert "_args_:[2]" in yaml_str or "_args_: [2]" in yaml_str  # PyYAML might add space
 
 
 def test_generation_config_representer():
@@ -666,21 +683,19 @@ def test_generation_config_representer():
         mapping_data = {}
         for key_node, value_node in result.value:
             # Handle the case where config_dict is a Representer instance itself
-            if hasattr(value_node, 'tag'): # It's a node, so extract its value
-                 if isinstance(key_node.value, str) and key_node.value == "config_dict":
+            if hasattr(value_node, "tag"):  # It's a node, so extract its value
+                if isinstance(key_node.value, str) and key_node.value == "config_dict":
                     # It's the config_dict, which is a mapping node
                     config_dict_val = {}
                     for k_node, v_node in value_node.value:
                         config_dict_val[k_node.value] = v_node.value
                     mapping_data[key_node.value] = config_dict_val
-                 else:
+                else:
                     mapping_data[key_node.value] = value_node.value
-            else: # It's a direct value
+            else:  # It's a direct value
                 mapping_data[key_node.value] = value_node
 
-        expected_target = (
-            f"{inspect.getmodule(GenerationConfig).__name__}.{GenerationConfig.__qualname__}.from_dict"
-        )
+        expected_target = f"{inspect.getmodule(GenerationConfig).__name__}.{GenerationConfig.__qualname__}.from_dict"
         assert mapping_data["_target_"] == expected_target
         assert mapping_data["_call_"] is True or mapping_data["_call_"] == "true"
         assert mapping_data["config_dict"]["max_length"] == 50
@@ -705,6 +720,7 @@ def test_generation_config_module_not_found():
     original_multi_representers = yaml.SafeDumper.yaml_multi_representers.copy()
 
     import builtins
+
     original_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
@@ -724,11 +740,11 @@ def test_generation_config_module_not_found():
         # Check that GenerationConfig is not in the representers (indirectly)
         # A more robust check would be to try to dump an object that ONLY GenerationConfig would handle
         # but that's hard to set up if the module is truly absent.
-        # We can assert that the representer for a known type (like function) is still there, 
+        # We can assert that the representer for a known type (like function) is still there,
         # and that no new error occurred.
         assert type(lambda: ...) in yaml.SafeDumper.yaml_representers
 
     finally:
         builtins.__import__ = original_import
         yaml.SafeDumper.yaml_representers = original_representers
-        yaml.SafeDumper.yaml_multi_representers = original_multi_representers 
+        yaml.SafeDumper.yaml_multi_representers = original_multi_representers
