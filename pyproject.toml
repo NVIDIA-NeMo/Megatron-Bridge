@@ -12,13 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[build-system]
-requires = ["setuptools >= 61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "nemo-lm"
-dynamic = ["dependencies", "optional-dependencies", "version"]
+dynamic = ["version"]
 description = "NeMo - a toolkit for Conversational AI"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -59,6 +55,25 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Utilities",
 ]
+dependencies = [
+    "accelerate>=1.6.0",
+    "datasets>=3.5.1",
+    "numpy>=2.2.5",
+    "omegaconf>=2.3.0",
+    "packaging>=25.0",
+    "tensorboard>=2.19.0",
+    "torch>=2.7.0",
+    "transformers>=4.51.3",
+    "wandb>=0.19.10",
+    "megatron-core",
+]
+
+[tool.uv.sources]
+megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git" }
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["nemo_lm"]
@@ -80,7 +95,6 @@ known_third_party = ["examples", "scripts"]  # THIRDPARTY section
 sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 default_section = "THIRDPARTY"
 extend_skip = ["setup.py", "docs/source/conf.py"]
-
 
 [tool.black]
 line_length = 119
