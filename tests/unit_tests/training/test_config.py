@@ -15,11 +15,9 @@
 """Unit tests for configuration validation in nemo_lm.training.config."""
 
 import pytest
-from dataclasses import field
-from typing import Union, Optional, Literal, Any
+from typing import Any, Optional, Union
 
 import torch
-from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
