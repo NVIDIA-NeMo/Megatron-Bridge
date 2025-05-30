@@ -1301,7 +1301,24 @@ def load_checkpoint(
 
 
 def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str, Any]:
-    # Context used for persisting some state between checkpoint saves.
+    """Initialize the checkpointing context, primarily for local checkpointing support.
+
+    If `non_persistent_ckpt_type` is set to "local", this function sets up
+    the `LocalCheckpointManager` and replication strategy based on the provided
+    `checkpoint_config`.
+
+    Args:
+        checkpoint_config: The checkpoint configuration object.
+
+    Returns:
+        A dictionary containing the checkpointing context. This will include
+        a `local_checkpoint_manager` if local checkpointing is enabled,
+        otherwise it will be an empty dictionary.
+
+    Raises:
+        RuntimeError: If local checkpointing is configured but the
+                      `nvidia_resiliency_ext` module is not found.
+    """
     if checkpoint_config.non_persistent_ckpt_type != "local":
         return {}
 
