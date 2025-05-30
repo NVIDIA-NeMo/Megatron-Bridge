@@ -14,8 +14,9 @@
 
 """Unit tests for configuration validation in nemo_lm.training.config."""
 
-import pytest
 from typing import Any, Optional, Union
+
+import pytest
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
