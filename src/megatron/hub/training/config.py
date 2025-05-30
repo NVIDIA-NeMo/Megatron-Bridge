@@ -376,7 +376,7 @@ class CheckpointConfig:
     distributed checkpoint iff args.ckpt_format != "torch". Might slow down loading a bit
     (double rank0 ckpt load)."""
 
-    ckpt_format: Literal["torch", "torch_dist", "zarr"] = "torch_dist"
+    ckpt_format: Literal["torch_dist", "zarr"] = "torch_dist"
     """Checkpoint format to use."""
 
     ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
