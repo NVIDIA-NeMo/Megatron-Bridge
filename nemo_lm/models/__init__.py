@@ -37,9 +37,7 @@ def get_model_from_config(
 ) -> list[MegatronModule]:
     """Get a model from the given configuration.
 
-    This method should only be called after `init_distributed()`.
-    model_provider_func is equivalent to llm.gpt.GPTConfig.configure_model()
-    model_type is inferred from the model_config class
+    This method should be called only after the distributed initialization.
 
     Args:
         model_config: The model configuration
@@ -51,6 +49,32 @@ def get_model_from_config(
 
     Returns:
         list of model modules, potentially wrapped with DistributedDataParallel or TorchFullyShardedDataParallel
+    """
+    model = get_base_model(model_config)
+    model = get_distributed_model(
+        model,
+        model_config,
+        ddp_config,
+        overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
+        use_torch_fsdp2=use_torch_fsdp2,
+        wrap_with_ddp=wrap_with_ddp,
+        data_parallel_random_init=data_parallel_random_init,
+    )
+    return model
+
+
+def get_base_model(model_config: GPTConfig | T5Config) -> list[MegatronModule]:
+    """Creates and returns the base model(s) before DDP/FSDP wrapping.
+
+    Handles pipeline parallelism and virtual pipeline parallelism by creating
+    multiple model chunks if necessary. Sets pre_process and post_process flags
+    based on pipeline stage.
+
+    Args:
+        model_config: The model configuration (GPTConfig or T5Config).
+
+    Returns:
+        A list of MegatronModule instances representing the model or model chunks.
     """
     model_type = _get_model_type(model_config)
     if (
@@ -75,29 +99,42 @@ def get_model_from_config(
             model.append(this_model)
     else:
         pre_process = parallel_state.is_pipeline_first_stage()
-        post_process = parallel_state.is_pipeline_last_stage()
-        if model_type == ModelType.encoder_and_decoder:
-            assert isinstance(model_config, T5Config)
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-                rank = parallel_state.get_pipeline_model_parallel_rank()
-                first_decoder_rank = parallel_state.get_pipeline_model_parallel_decoder_start()
-                world_size = parallel_state.get_pipeline_model_parallel_world_size()
-                pre_process = rank == 0 or rank == first_decoder_rank
-                post_process = (rank == (first_decoder_rank - 1)) or (rank == (world_size - 1))
-            model = model_config.configure_model(
-                tokenizer=None,
-            )
-        else:
-            model = model_config.configure_model(
-                tokenizer=None,
-                pre_process=pre_process,
-                post_process=post_process,
-            )
-        model.model_type = model_type
-
     if not isinstance(model, list):
         model = [model]
 
+    return model
+
+
+def get_distributed_model(
+    model: list[MegatronModule],
+    model_config: GPTConfig | T5Config,
+    ddp_config: DistributedDataParallelConfig,
+    overlap_param_gather_with_optimizer_step: bool = False,
+    use_torch_fsdp2: bool = False,
+    wrap_with_ddp: bool = True,
+    data_parallel_random_init: bool = True,
+) -> list[MegatronModule]:
+    """Applies distributed wrappers (DDP/FSDP) and handles precision.
+
+    Sets tensor model parallel attributes, moves model to CUDA, applies FP16/BF16
+    precision if configured, and wraps the model with DistributedDataParallel or
+    FullyShardedDataParallel.
+
+    Args:
+        model: A list of MegatronModule instances (base model chunks).
+        model_config: The model configuration.
+        ddp_config: The distributed data parallel configuration.
+        overlap_param_gather_with_optimizer_step: Whether to overlap parameter
+            gathering with optimizer step for DDP.
+        use_torch_fsdp2: Whether to use PyTorch's Fully Sharded Data Parallel 2.
+        wrap_with_ddp: Whether to wrap the model with DDP/FSDP.
+        data_parallel_random_init: Whether to broadcast parameters from data
+            parallel source rank if DDP is used.
+
+    Returns:
+        A list of MegatronModule instances, potentially wrapped with DDP/FSDP
+        and converted to lower precision.
+    """
     # Set tensor model parallel attributes if not set.
     # Only parameters that are already tensor model parallel have these
     # attributes set for them. We should make sure the default attributes
@@ -105,7 +142,6 @@ def get_model_from_config(
     for model_module in model:
         for param in model_module.parameters():
             tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
-
     # Print number of parameters.
     if parallel_state.get_data_parallel_rank() == 0:
         print(
@@ -116,15 +152,12 @@ def get_model_from_config(
             ),
             flush=True,
         )
-
     # GPU allocation.
     for model_module in model:
         model_module.cuda(torch.cuda.current_device())
-
     # Fp16 conversion.
     if model_config.fp16 or model_config.bf16:
         model = [Float16Module(model_config, model_module) for model_module in model]
-
     # The model_module.bfloat16()/model_module.half() above will call the inplace copy of TE's
     # Float8Tensor, which will write an unwanted value (amax calculated from the current fp8
     # param) to its amax_history. The following logic will correct the amax_history back.
@@ -137,13 +170,11 @@ def get_model_from_config(
                     fp8_meta.amax_history[0][fp8_meta_index].copy_(param.get_high_precision_init_val().abs().max())
                 else:
                     fp8_meta.amax_history[0][fp8_meta_index] = 0
-
     if wrap_with_ddp:
         if use_torch_fsdp2:
             DP = TorchFullyShardedDataParallel
         else:
             DP = DistributedDataParallel
-
         model = [
             DP(
                 config=model_config,
@@ -155,7 +186,6 @@ def get_model_from_config(
             )
             for (model_chunk_idx, model_chunk) in enumerate(model)
         ]
-
         # Broadcast params from data parallel src rank to other data parallel ranks.
         if data_parallel_random_init:
             for model_module in model:
