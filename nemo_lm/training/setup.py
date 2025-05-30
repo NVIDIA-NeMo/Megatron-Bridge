@@ -31,15 +31,13 @@ from nemo_lm.models.t5 import T5Config
 from nemo_lm.tokenizers.tokenizer import build_tokenizer
 from nemo_lm.training import fault_tolerance
 from nemo_lm.training.checkpointing import checkpoint_exists, init_checkpointing_context, load_checkpoint
-from nemo_lm.training.config import CheckpointConfig, ConfigContainer
+from nemo_lm.training.config import ConfigContainer
 from nemo_lm.training.initialize import initialize_megatron, set_jit_fusion_options
 from nemo_lm.training.optim import setup_optimizer
 from nemo_lm.training.state import GlobalState
 from nemo_lm.utils.common_utils import print_rank_0
-from nemo_lm.utils.import_utils import safe_import
 from nemo_lm.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 
-_, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel  # noqa: F401 pylint: disable=unused-import
