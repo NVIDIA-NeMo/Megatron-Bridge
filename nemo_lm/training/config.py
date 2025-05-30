@@ -600,6 +600,12 @@ class ProfilingConfig:
     record_shapes: bool = False
     """Record shapes of tensors."""
 
+    def __post_init__(self) -> None:
+        """Validate profiling configuration."""
+        assert not (
+            self.use_pytorch_profiler and self.use_nsys_profiler
+        ), "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
+
 
 @dataclass
 class FaultToleranceConfig:
@@ -727,9 +733,3 @@ class ConfigContainer(Container):
             self.scheduler_config.lr_warmup_steps = (
                 self.scheduler_config.lr_warmup_iters * self.train_config.global_batch_size
             )
-
-        # Profiling
-        if self.profiling_config is not None:
-            assert (
-                self.profiling_config.use_pytorch_profiler != self.profiling_config.use_nsys_profiler
-            ), "Exactly one of pytorch or nsys profiler should be enabled, not both or neither"
