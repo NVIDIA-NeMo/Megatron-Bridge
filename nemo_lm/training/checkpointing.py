@@ -45,7 +45,7 @@ from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 
 from nemo_lm.training import fault_tolerance
-from nemo_lm.training.config import ConfigContainer
+from nemo_lm.training.config import CheckpointConfig, ConfigContainer
 from nemo_lm.training.state import GlobalState, TrainState
 from nemo_lm.utils import wandb_utils
 from nemo_lm.utils.async_utils import is_empty_async_queue, schedule_async_save
@@ -1295,6 +1295,37 @@ def load_checkpoint(
         fault_tolerance.on_checkpoint_loaded(is_local_chkpt=is_local_chkpt, global_state=state)
 
     return state.train_state.step, state.train_state.floating_point_operations_so_far
+
+
+def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str, Any]:
+    # Context used for persisting some state between checkpoint saves.
+    if checkpoint_config.non_persistent_ckpt_type != "local":
+        return {}
+
+    if not HAVE_RESIL:
+        raise RuntimeError(
+            "The 'nvidia_resiliency_ext' module is required for local "
+            "checkpointing but was not found. Please ensure it is installed."
+        )
+
+    from nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager import LocalCheckpointManager
+    from nvidia_resiliency_ext.checkpointing.local.replication.strategies import CliqueReplicationStrategy
+
+    if checkpoint_config.replication:
+        repl_strategy = CliqueReplicationStrategy.from_replication_params(
+            checkpoint_config.replication_jump,
+            checkpoint_config.replication_factor,
+        )
+    else:
+        repl_strategy = None
+
+    checkpointing_context = {
+        "local_checkpoint_manager": LocalCheckpointManager(
+            checkpoint_config.non_persistent_local_ckpt_dir,
+            repl_strategy=repl_strategy,
+        )
+    }
+    return checkpointing_context
 
 
 def fix_fp8_params_lose_precision_when_loading_dist_ckpt(state_dict: dict[str, Any]) -> None:
