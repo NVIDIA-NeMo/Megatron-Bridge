@@ -233,33 +233,21 @@ runs:
         queue_service = QueueServiceClient(account_url=account_url, credential=credential)
         queue_client = queue_service.get_queue_client(queue_name)
 
-        # Wait for messages to be available (with timeout)
-        max_attempts = 30
-        attempt = 0
-        while attempt < max_attempts:
-            try:
-                # Try to peek at messages
-                messages = queue_client.peek_messages(max_messages=1)
-                if messages:
-                    break
-                print(f"Worker {worker_id}: No messages yet, attempt {attempt + 1}/{max_attempts}")
-                time.sleep(2)  # Wait 2 seconds between attempts
-                attempt += 1
-            except Exception as e:
-                print(f"Worker {worker_id}: Error peeking messages: {e}")
-                time.sleep(2)
-                attempt += 1
+        # Calculate overall timeout
+        overall_timeout_minutes = int(os.environ.get('TIMEOUT', '10'))
+        end_time = time.time() + (overall_timeout_minutes * 60)
+        print(f"Worker {worker_id}: Will poll for messages until {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}")
 
-        if attempt >= max_attempts:
-            print(f"Worker {worker_id}: No messages found in queue after waiting - exiting successfully")
-            exit(0)
-
-        # Receive and process messages
-        while True:
+        # Receive and process messages until overall timeout
+        while time.time() < end_time:
             try:
                 messages = queue_client.receive_messages(messages_per_page=1)
                 if not messages:
-                    print(f"Worker {worker_id}: No messages in queue - waiting for more")
+                    remaining_time = int(end_time - time.time())
+                    if remaining_time <= 0:
+                        print(f"Worker {worker_id}: Overall timeout reached - exiting")
+                        exit(0)
+                    print(f"Worker {worker_id}: No messages in queue - waiting for more (timeout in {remaining_time} seconds)")
                     time.sleep(2)  # Wait before checking for more messages
                     continue
 
@@ -293,5 +281,6 @@ runs:
                 time.sleep(2)  # Wait before retrying after an error
                 continue
 
-        print(f"Worker {worker_id}: Finished processing all messages")
+        print(f"Worker {worker_id}: Overall timeout reached - exiting")
+        exit(0)
         EOF
