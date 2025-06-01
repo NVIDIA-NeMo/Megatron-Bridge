@@ -1,0 +1,74 @@
+name: 'Create Azure Queue'
+description: 'Creates an Azure Storage Queue for event processing'
+
+inputs:
+  queue-name:
+    description: 'Name of the queue to create'
+    required: true
+  azure-client-id:
+    description: 'Azure Client ID'
+    required: true
+  azure-tenant-id:
+    description: 'Azure Tenant ID'
+    required: true
+  azure-subscription-id:
+    description: 'Azure Subscription ID'
+    required: true
+  azure-queue-storage-account:
+    description: 'Azure Queue Storage Account name'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install Azure Storage SDK
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install azure-storage-queue azure-identity
+
+    - name: Create Queue
+      shell: bash
+      env:
+        AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
+        QUEUE_NAME: ${{ inputs.queue-name }}
+      run: |
+        python - <<EOF
+        import os
+        from azure.storage.queue import QueueServiceClient
+        from azure.identity import DefaultAzureCredential
+
+        # Create storage clients using managed identity
+        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
+        queue_name = os.environ.get('QUEUE_NAME')
+
+        # Use DefaultAzureCredential which will automatically use the managed identity
+        credential = DefaultAzureCredential()
+
+        # Create queue client
+        queue_service = QueueServiceClient(account_url=account_url, credential=credential)
+        queue_client = queue_service.get_queue_client(queue_name)
+
+        try:
+            # Create the queue if it doesn't exist
+            queue_client.create_queue()
+            print(f"Successfully created queue: {queue_name}")
+        except Exception as e:
+            if "QueueAlreadyExists" in str(e):
+                print(f"Queue {queue_name} already exists")
+            else:
+                print(f"Error creating queue: {e}")
+                exit(1)
+        EOF

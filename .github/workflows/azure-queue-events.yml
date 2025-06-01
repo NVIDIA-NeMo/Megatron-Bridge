@@ -43,12 +43,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - name: Create Azure Queue
+        uses: ./.github/actions/create-azure-queue
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -88,7 +90,6 @@ jobs:
           # Create queue client
           queue_service = QueueServiceClient(account_url=account_url, credential=credential)
           queue_client = queue_service.get_queue_client(queue_name)
-          queue_client.create_queue()
 
           # Send each event to the queue
           for event in events_list:
