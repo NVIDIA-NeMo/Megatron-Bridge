@@ -127,21 +127,23 @@ runs:
             container_client = blob_service.get_container_client(container_name)
             blob_client = container_client.get_blob_client(blob_name)
 
-            max_attempts = int(os.environ.get('TIMEOUT', '10')) * 30  # 30 attempts per minute
-            attempt = 0
-            while attempt < max_attempts:
+            # Calculate end time based on timeout
+            timeout_minutes = int(os.environ.get('TIMEOUT', '10'))
+            end_time = time.time() + (timeout_minutes * 60)
+            print(f"Will poll for logs until {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}")
+
+            while time.time() < end_time:
                 try:
                     if blob_client.exists():
                         return blob_client.download_blob().readall()
-                    print(f"Log not found yet, attempt {attempt + 1}/{max_attempts}")
+                    remaining_time = int(end_time - time.time())
+                    print(f"Log not found yet, timeout in {remaining_time} seconds")
                     time.sleep(2)
-                    attempt += 1
                 except Exception as e:
                     print(f"Error checking for log: {e}")
                     time.sleep(2)
-                    attempt += 1
 
-            raise TimeoutError(f"Log not found after {max_attempts} attempts")
+            raise TimeoutError(f"Log not found after {timeout_minutes} minutes")
 
         def check_coverage_exists():
             """Check if coverage tarball exists in blob storage"""
