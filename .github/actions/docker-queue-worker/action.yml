@@ -9,7 +9,7 @@ inputs:
     description: "Name of the Azure queue"
     required: true
   image:
-    description: "Docker image to use for processing events"
+    description: "Full Docker image path (e.g. nemoci.azurecr.io/nemo_lm:123)"
     required: true
   azure-client-id:
     description: "Azure Client ID"
@@ -95,7 +95,7 @@ runs:
     - name: Docker pull image
       shell: bash
       run: |
-        docker pull nemoci.azurecr.io/${{ inputs.image }}:${{ github.run_id }}
+        docker pull ${{ inputs.image }}
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -110,6 +110,15 @@ runs:
 
     - name: Process Queue Events
       shell: bash
+      env:
+        WORKER_ID: ${{ inputs.worker-id }}
+        QUEUE_NAME: ${{ inputs.queue-name }}
+        IMAGE: ${{ inputs.image }}
+        TIMEOUT: ${{ inputs.timeout }}
+        CPU_ONLY: ${{ inputs.cpu-only }}
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
+        AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
+        AZURE_BLOB_STORAGE: ${{ inputs.azure-blob-storage }}
       run: |
         python - <<EOF
         import os
@@ -129,6 +138,7 @@ runs:
                 # Prepare Docker run command
                 gpu_args = "" if os.environ.get('CPU_ONLY') == "true" else "--runtime=nvidia --gpus all"
                 mnt_path = os.environ.get('MNT_PATH')
+                image = os.environ.get('IMAGE')
 
                 cmd = f"""
                 docker container rm -f {container_name} || true
@@ -143,10 +153,11 @@ runs:
                   --env RUN_ID={os.environ.get('GITHUB_RUN_ID')} \\
                   --volume $(pwd)/NeMo-LM:/workspace \\
                   --volume {mnt_path}/TestData:/home/TestData \\
-                  nemoci.azurecr.io/{os.environ.get('IMAGE')}:{os.environ.get('GITHUB_RUN_ID')} \\
+                  {image} \\
                   bash -c "sleep $(( {os.environ.get('TIMEOUT')} * 60 + 60 ))"
                 """
 
+                print(f"Running container with image: {image}")
                 # Run container
                 subprocess.run(cmd, shell=True, check=True)
 
@@ -282,12 +293,3 @@ runs:
 
         print(f"Worker {worker_id}: Finished processing all messages")
         EOF
-      env:
-        WORKER_ID: ${{ inputs.worker-id }}
-        QUEUE_NAME: ${{ inputs.queue-name }}
-        IMAGE: ${{ inputs.image }}
-        TIMEOUT: ${{ inputs.timeout }}
-        CPU_ONLY: ${{ inputs.cpu-only }}
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
-        AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
-        AZURE_BLOB_STORAGE: ${{ inputs.azure-blob-storage }}
