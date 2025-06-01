@@ -139,6 +139,8 @@ runs:
                 gpu_args = "" if os.environ.get('CPU_ONLY') == "true" else "--runtime=nvidia --gpus all"
                 mnt_path = os.environ.get('MNT_PATH')
                 image = os.environ.get('IMAGE')
+                timeout_minutes = int(os.environ.get('TIMEOUT', '10'))
+                sleep_seconds = (timeout_minutes * 60) + 60  # Add 60 seconds buffer
 
                 cmd = f"""
                 docker container rm -f {container_name} || true
@@ -154,7 +156,7 @@ runs:
                   --volume $(pwd)/NeMo-LM:/workspace \\
                   --volume {mnt_path}/TestData:/home/TestData \\
                   {image} \\
-                  bash -c "sleep $(( {os.environ.get('TIMEOUT')} * 60 + 60 ))"
+                  bash -c "sleep {sleep_seconds}"
                 """
 
                 print(f"Running container with image: {image}")
