@@ -64,6 +64,9 @@ jobs:
       matrix:
         worker: ${{ fromJson(inputs.worker_configs) }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Run Docker Queue Worker
         uses: ./.github/actions/docker-queue-worker
         with:
