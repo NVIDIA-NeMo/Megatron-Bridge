@@ -1,0 +1,293 @@
+name: "Docker Queue Worker"
+description: "Processes events from an Azure queue using Docker containers"
+
+inputs:
+  worker-id:
+    description: "ID of the worker"
+    required: true
+  queue-name:
+    description: "Name of the Azure queue"
+    required: true
+  image:
+    description: "Docker image to use for processing events"
+    required: true
+  azure-client-id:
+    description: "Azure Client ID"
+    required: true
+  azure-tenant-id:
+    description: "Azure Tenant ID"
+    required: true
+  azure-subscription-id:
+    description: "Azure Subscription ID"
+    required: true
+  azure-queue-storage-account:
+    description: "Azure Queue Storage Account"
+    required: true
+  azure-blob-storage:
+    description: "Azure Blob Storage Container"
+    required: true
+  timeout:
+    description: "Max runtime of container in minutes"
+    required: false
+    default: "10"
+  cpu-only:
+    description: "Run containers on CPU only"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Azure ACR Login
+      shell: bash
+      run: |
+        az acr login --name nemoci
+
+    - name: Azure Fileshare
+      shell: bash
+      id: azure-fileshare
+      run: |
+        sudo apt update
+        sudo apt install -y cifs-utils
+
+        RESOURCE_GROUP_NAME="azure-gpu-vm-runner_group"
+        STORAGE_ACCOUNT_NAME="nemocistorageaccount2"
+        FILE_SHARE_NAME="fileshare"
+
+        MNT_ROOT="/media"
+        MNT_PATH="$MNT_ROOT/$STORAGE_ACCOUNT_NAME/$FILE_SHARE_NAME"
+
+        echo "MNT_PATH=$MNT_PATH" | tee -a "$GITHUB_OUTPUT"
+
+        sudo mkdir -p $MNT_PATH
+
+        CREDENTIAL_ROOT="/etc/smbcredentials"
+        sudo mkdir -p "/etc/smbcredentials"
+
+        STORAGE_ACCOUNT_KEY=$(az storage account keys list \
+            --resource-group $RESOURCE_GROUP_NAME \
+            --account-name $STORAGE_ACCOUNT_NAME \
+            --query "[0].value" --output tsv | tr -d '"')
+
+        SMB_CREDENTIAL_FILE="$CREDENTIAL_ROOT/$STORAGE_ACCOUNT_NAME.cred"
+        if [ ! -f $SMB_CREDENTIAL_FILE ]; then
+            echo "username=$STORAGE_ACCOUNT_NAME" | sudo tee $SMB_CREDENTIAL_FILE > /dev/null
+            echo "password=$STORAGE_ACCOUNT_KEY" | sudo tee -a $SMB_CREDENTIAL_FILE > /dev/null
+        fi
+
+        sudo chmod 600 $SMB_CREDENTIAL_FILE
+
+        HTTP_ENDPOINT=$(az storage account show --resource-group $RESOURCE_GROUP_NAME --name $STORAGE_ACCOUNT_NAME --query "primaryEndpoints.file" --output tsv | tr -d '"')
+        SMB_PATH=$(echo $HTTP_ENDPOINT | cut -c7-${#HTTP_ENDPOINT})$FILE_SHARE_NAME
+
+        sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks
+
+    - name: Docker pull image
+      shell: bash
+      run: |
+        docker pull nemoci.azurecr.io/${{ inputs.image }}:${{ github.run_id }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install Azure Storage SDK
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install azure-storage-queue azure-storage-blob azure-identity
+
+    - name: Process Queue Events
+      shell: bash
+      run: |
+        python - <<EOF
+        import os
+        import json
+        import time
+        import subprocess
+        from azure.storage.queue import QueueServiceClient
+        from azure.storage.blob import BlobServiceClient
+        from azure.identity import DefaultAzureCredential
+
+        def run_container(event_data):
+            """Run the event in a new Docker container"""
+            try:
+                # Create container name
+                container_name = f"nemo_container_{os.environ.get('GITHUB_RUN_ID')}_{event_data.get('type', 'unknown')}"
+
+                # Prepare Docker run command
+                gpu_args = "" if os.environ.get('CPU_ONLY') == "true" else "--runtime=nvidia --gpus all"
+                mnt_path = os.environ.get('MNT_PATH')
+
+                cmd = f"""
+                docker container rm -f {container_name} || true
+                docker run \\
+                  --rm \\
+                  -d \\
+                  --name {container_name} {gpu_args} \\
+                  --shm-size=64g \\
+                  --env TRANSFORMERS_OFFLINE=0 \\
+                  --env HYDRA_FULL_ERROR=1 \\
+                  --env HF_HOME=/home/TestData/HF_HOME \\
+                  --env RUN_ID={os.environ.get('GITHUB_RUN_ID')} \\
+                  --volume $(pwd)/NeMo-LM:/workspace \\
+                  --volume {mnt_path}/TestData:/home/TestData \\
+                  nemoci.azurecr.io/{os.environ.get('IMAGE')}:{os.environ.get('GITHUB_RUN_ID')} \\
+                  bash -c "sleep $(( {os.environ.get('TIMEOUT')} * 60 + 60 ))"
+                """
+
+                # Run container
+                subprocess.run(cmd, shell=True, check=True)
+
+                # Execute the event command
+                if 'script' in event_data:
+                    result = subprocess.run(
+                        f"docker exec -t {container_name} bash -c '{event_data['script']}'",
+                        shell=True,
+                        capture_output=True,
+                        text=True
+                    )
+
+                    # Create log content
+                    log_content = json.dumps({
+                        "event": {
+                            "type": event_data.get('type', 'unknown'),
+                            "name": event_data.get('name', 'unknown')
+                        },
+                        "execution": {
+                            "worker_id": os.environ.get('WORKER_ID'),
+                            "run_id": os.environ.get('GITHUB_RUN_ID'),
+                            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
+                            "exit_code": result.returncode
+                        },
+                        "output": {
+                            "stdout": result.stdout,
+                            "stderr": result.stderr
+                        }
+                    }, indent=2)
+
+                    # Upload log to blob storage
+                    account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.blob.core.windows.net"
+                    container_name = os.environ.get('AZURE_BLOB_STORAGE')
+                    blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{event_data.get('type', 'unknown')}.json"
+
+                    blob_service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
+                    container_client = blob_service.get_container_client(container_name)
+                    blob_client = container_client.get_blob_client(blob_name)
+
+                    blob_client.upload_blob(log_content, overwrite=True)
+                    print(f"Uploaded log to {blob_name}")
+
+                    # Handle test coverage
+                    if result.returncode == 0:
+                        try:
+                            # Combine and export coverage data
+                            subprocess.run(f"docker exec {container_name} coverage combine", shell=True)
+                            subprocess.run(f"docker exec {container_name} coverage xml", shell=True)
+
+                            # Copy coverage files
+                            subprocess.run(f"docker cp {container_name}:/workspace/.coverage .coverage", shell=True)
+                            subprocess.run(f"docker cp {container_name}:/workspace/coverage.xml coverage.xml", shell=True)
+
+                            print(f"Uploaded coverage data for {event_data.get('type', 'unknown')}")
+                        except Exception as e:
+                            print(f"Error handling coverage data: {e}")
+
+                    return result.returncode == 0
+
+            except Exception as e:
+                print(f"Error running container: {e}")
+                return False
+
+        # Create queue service client using managed identity
+        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
+        queue_name = os.environ.get('QUEUE_NAME')
+        worker_id = os.environ.get('WORKER_ID')
+
+        # Use DefaultAzureCredential which will automatically use the managed identity
+        credential = DefaultAzureCredential()
+        queue_service = QueueServiceClient(account_url=account_url, credential=credential)
+        queue_client = queue_service.get_queue_client(queue_name)
+
+        # Wait for messages to be available (with timeout)
+        max_attempts = 30
+        attempt = 0
+        while attempt < max_attempts:
+            try:
+                # Try to peek at messages
+                messages = queue_client.peek_messages(max_messages=1)
+                if messages:
+                    break
+                print(f"Worker {worker_id}: No messages yet, attempt {attempt + 1}/{max_attempts}")
+                time.sleep(2)  # Wait 2 seconds between attempts
+                attempt += 1
+            except Exception as e:
+                print(f"Worker {worker_id}: Error peeking messages: {e}")
+                time.sleep(2)
+                attempt += 1
+
+        if attempt >= max_attempts:
+            print(f"Worker {worker_id}: No messages found in queue after waiting - exiting successfully")
+            exit(0)
+
+        # Receive and process messages
+        while True:
+            try:
+                messages = queue_client.receive_messages(messages_per_page=1)
+                if not messages:
+                    print(f"Worker {worker_id}: No messages in queue - waiting for more")
+                    time.sleep(2)  # Wait before checking for more messages
+                    continue
+
+                for message in messages:
+                    try:
+                        content = json.loads(message.content)
+                        print(f"Worker {worker_id}: Received message: {json.dumps(content, indent=2)}")
+
+                        # Check if this is a stop event
+                        if content.get('type') == 'stop':
+                            print(f"Worker {worker_id}: Received stop event - exiting")
+                            queue_client.delete_message(message.id, message.pop_receipt)
+                            exit(0)
+
+                        # Process the event in a container
+                        print(f"Worker {worker_id}: Processing event type: {content.get('type', 'unknown')}")
+                        success = run_container(content)
+
+                        if not success:
+                            print(f"Worker {worker_id}: Event processing failed, skipping message deletion")
+                            continue
+
+                        # Delete the message after processing
+                        queue_client.delete_message(message.id, message.pop_receipt)
+
+                    except json.JSONDecodeError as e:
+                        print(f"Worker {worker_id}: Error decoding message: {e}")
+                        print(f"Worker {worker_id}: Raw message content: {message.content}")
+            except Exception as e:
+                print(f"Worker {worker_id}: Error processing messages: {e}")
+                time.sleep(2)  # Wait before retrying after an error
+                continue
+
+        print(f"Worker {worker_id}: Finished processing all messages")
+        EOF
+      env:
+        WORKER_ID: ${{ inputs.worker-id }}
+        QUEUE_NAME: ${{ inputs.queue-name }}
+        IMAGE: ${{ inputs.image }}
+        TIMEOUT: ${{ inputs.timeout }}
+        CPU_ONLY: ${{ inputs.cpu-only }}
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
+        AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
+        AZURE_BLOB_STORAGE: ${{ inputs.azure-blob-storage }}

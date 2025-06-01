@@ -64,164 +64,17 @@ jobs:
       matrix:
         worker: ${{ fromJson(inputs.worker_configs) }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
+      - name: Run Docker Queue Worker
+        uses: ./.github/actions/docker-queue-worker
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
-      - name: Install Azure Storage SDK
-        run: |
-          python -m pip install --upgrade pip
-          pip install azure-storage-queue azure-storage-blob azure-identity requests
-
-      - name: Read Events
-        env:
-          WORKER_ID: ${{ matrix.worker }}
-        run: |
-          python - <<EOF
-          import os
-          import json
-          import time
-          import requests
-          import subprocess
-          from azure.storage.queue import QueueServiceClient
-          from azure.storage.blob import BlobServiceClient
-          from azure.identity import DefaultAzureCredential
-
-          def run_script(script_content, event_data):
-              """Run the script from the event message"""
-              try:
-                  # Run the script directly with bash
-                  result = subprocess.run(
-                      ['bash', '-c', script_content],
-                      capture_output=True,
-                      text=True
-                  )
-
-
-                  # Create log content
-                  log_content = json.dumps({
-                      "event": {
-                          "type": event_data.get('type', 'unknown'),
-                          "name": event_data.get('name', 'unknown')
-                      },
-                      "execution": {
-                          "worker_id": os.environ.get('WORKER_ID'),
-                          "run_id": os.environ.get('GITHUB_RUN_ID'),
-                          "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
-                          "exit_code": result.returncode
-                      },
-                      "output": {
-                          "stdout": result.stdout,
-                          "stderr": result.stderr
-                      }
-                  }, indent=2)
-
-                  # Upload log to blob storage
-                  account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.blob.core.windows.net"
-                  container_name = os.environ.get('AZURE_BLOB_STORAGE')
-                  blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{event_data.get('type', 'unknown')}.json"
-
-                  blob_service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
-                  container_client = blob_service.get_container_client(container_name)
-                  blob_client = container_client.get_blob_client(blob_name)
-
-                  blob_client.upload_blob(log_content, overwrite=True)
-                  print(f"Uploaded log to {blob_name}")
-
-                  if result.returncode != 0:
-                      print(f"Script execution failed with error: {result.stderr}")
-                      return False
-
-                  print(f"Script output: {result.stdout}")
-                  return True
-
-              except Exception as e:
-                  print(f"Error running script: {e}")
-                  return False
-
-          # Create queue service client using managed identity
-          account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
-          queue_name = os.environ.get('AZURE_STORAGE_QUEUE_NAME')
-          worker_id = os.environ.get('WORKER_ID')
-
-          # Use DefaultAzureCredential which will automatically use the managed identity
-          credential = DefaultAzureCredential()
-          queue_service = QueueServiceClient(account_url=account_url, credential=credential)
-          queue_client = queue_service.get_queue_client(queue_name)
-
-          # Wait for messages to be available (with timeout)
-          max_attempts = 30
-          attempt = 0
-          while attempt < max_attempts:
-              try:
-                  # Try to peek at messages
-                  messages = queue_client.peek_messages(max_messages=1)
-                  if messages:
-                      break
-                  print(f"Worker {worker_id}: No messages yet, attempt {attempt + 1}/{max_attempts}")
-                  time.sleep(2)  # Wait 2 seconds between attempts
-                  attempt += 1
-              except Exception as e:
-                  print(f"Worker {worker_id}: Error peeking messages: {e}")
-                  time.sleep(2)
-                  attempt += 1
-
-          if attempt >= max_attempts:
-              print(f"Worker {worker_id}: No messages found in queue after waiting - exiting successfully")
-              exit(0)
-
-          # Receive and process messages
-          while True:
-              try:
-                  messages = queue_client.receive_messages(messages_per_page=1)
-                  if not messages:
-                      print(f"Worker {worker_id}: No messages in queue - waiting for more")
-                      time.sleep(2)  # Wait before checking for more messages
-                      continue
-
-                  for message in messages:
-                      try:
-                          content = json.loads(message.content)
-                          print(f"Worker {worker_id}: Received message: {json.dumps(content, indent=2)}")
-
-                          # Check if this is a stop event
-                          if content.get('type') == 'stop':
-                              print(f"Worker {worker_id}: Received stop event - exiting")
-                              queue_client.delete_message(message.id, message.pop_receipt)
-                              exit(0)
-
-                          # Check if the message has a script to execute
-                          if 'script' in content:
-                              print(f"Worker {worker_id}: Executing script for event type: {content.get('type', 'unknown')}")
-                              script_success = run_script(content['script'], content)
-                              if not script_success:
-                                  print(f"Worker {worker_id}: Script execution failed, skipping message deletion")
-                                  continue
-
-                          # Delete the message after processing
-                          queue_client.delete_message(message.id, message.pop_receipt)
-
-                      except json.JSONDecodeError as e:
-                          print(f"Worker {worker_id}: Error decoding message: {e}")
-                          print(f"Worker {worker_id}: Raw message content: {message.content}")
-              except Exception as e:
-                  print(f"Worker {worker_id}: Error processing messages: {e}")
-                  time.sleep(2)  # Wait before retrying after an error
-                  continue
-
-          print(f"Worker {worker_id}: Finished processing all messages")
-          EOF
+          worker-id: ${{ matrix.worker }}
+          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
+          image: ubuntu
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+          azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
 
   monitor-logs:
     name: monitor-logs-${{ matrix.event.type }}
