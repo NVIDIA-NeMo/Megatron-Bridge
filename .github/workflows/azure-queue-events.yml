@@ -78,6 +78,7 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
           azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
+          cpu-only: true
 
   monitor-logs:
     name: monitor-logs-${{ matrix.event.type }}
