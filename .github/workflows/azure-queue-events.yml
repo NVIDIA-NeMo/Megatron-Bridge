@@ -386,7 +386,7 @@ jobs:
         uses: ./.github/actions/emit-stop-events
         with:
           queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
-          num-workers: ${{ length(fromJson(inputs.worker_configs)) }}
+          num-workers: 3
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
