@@ -52,52 +52,6 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
-      - name: Install Azure Storage SDK
-        run: |
-          python -m pip install --upgrade pip
-          pip install azure-storage-queue azure-storage-blob azure-identity
-
-      - name: Process Events
-        run: |
-          python - <<EOF
-          import os
-          import json
-          from azure.storage.queue import QueueServiceClient
-          from azure.storage.blob import BlobServiceClient
-          from azure.identity import DefaultAzureCredential
-
-          # Get events list from input and parse JSON
-          try:
-              events_list = json.loads('''${{ inputs.events }}''')
-              if not isinstance(events_list, list):
-                  raise ValueError("Events input must be a JSON array")
-          except json.JSONDecodeError as e:
-              print(f"Error parsing events JSON: {e}")
-              exit(1)
-
-          # Create storage clients using managed identity
-          account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
-          queue_name = os.environ.get('AZURE_STORAGE_QUEUE_NAME')
-
-          # Use DefaultAzureCredential which will automatically use the managed identity
-          credential = DefaultAzureCredential()
-
-          # Create queue client
-          queue_service = QueueServiceClient(account_url=account_url, credential=credential)
-          queue_client = queue_service.get_queue_client(queue_name)
-
-          # Send each event to the queue
-          for event in events_list:
-              queue_client.send_message(json.dumps(event))
-
-          print(f"Successfully sent {len(events_list)} events to queue {queue_name}")
-          EOF
-
   read-events:
     name: read-events-${{ matrix.worker }}
     needs: process-events
@@ -299,7 +253,33 @@ jobs:
       - name: Install Azure Storage SDK
         run: |
           python -m pip install --upgrade pip
-          pip install azure-storage-blob azure-identity
+          pip install azure-storage-queue azure-storage-blob azure-identity
+
+      - name: Emit Event to Queue
+        run: |
+          python - <<EOF
+          import os
+          import json
+          from azure.storage.queue import QueueServiceClient
+          from azure.identity import DefaultAzureCredential
+
+          # Get event from matrix
+          event = json.loads('''${{ toJSON(matrix.event) }}''')
+          print(f"Emitting event: {json.dumps(event, indent=2)}")
+
+          # Create queue client using managed identity
+          account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
+          queue_name = os.environ.get('AZURE_STORAGE_QUEUE_NAME')
+
+          # Use DefaultAzureCredential which will automatically use the managed identity
+          credential = DefaultAzureCredential()
+          queue_service = QueueServiceClient(account_url=account_url, credential=credential)
+          queue_client = queue_service.get_queue_client(queue_name)
+
+          # Send event to queue
+          queue_client.send_message(json.dumps(event))
+          print(f"Successfully sent event to queue {queue_name}")
+          EOF
 
       - name: Monitor Event Log
         run: |
