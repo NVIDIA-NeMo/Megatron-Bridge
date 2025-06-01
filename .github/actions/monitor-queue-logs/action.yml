@@ -5,6 +5,12 @@ inputs:
   event-type:
     description: "Type of event being monitored"
     required: true
+  event-name:
+    description: "Name of the event"
+    required: true
+  event-script:
+    description: "Script to execute in the container"
+    required: true
   azure-client-id:
     description: "Azure Client ID"
     required: true
@@ -19,6 +25,9 @@ inputs:
     required: true
   azure-blob-storage:
     description: "Azure Blob Storage Container"
+    required: true
+  azure-queue-name:
+    description: "Name of the Azure queue"
     required: true
   is-unit-test:
     description: "Upload coverage as unit test"
@@ -52,6 +61,43 @@ runs:
       run: |
         python -m pip install --upgrade pip
         pip install azure-storage-queue azure-storage-blob azure-identity
+
+    - name: Emit Event to Queue
+      shell: bash
+      env:
+        EVENT_TYPE: ${{ inputs.event-type }}
+        EVENT_NAME: ${{ inputs.event-name }}
+        EVENT_SCRIPT: ${{ inputs.event-script }}
+        AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
+        AZURE_QUEUE_NAME: ${{ inputs.azure-queue-name }}
+      run: |
+        python - <<EOF
+        import os
+        import json
+        from azure.storage.queue import QueueServiceClient
+        from azure.identity import DefaultAzureCredential
+
+        # Create event data
+        event = {
+            "type": os.environ.get('EVENT_TYPE'),
+            "name": os.environ.get('EVENT_NAME'),
+            "script": os.environ.get('EVENT_SCRIPT')
+        }
+        print(f"Emitting event: {json.dumps(event, indent=2)}")
+
+        # Create queue client using managed identity
+        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
+        queue_name = os.environ.get('AZURE_QUEUE_NAME')
+
+        # Use DefaultAzureCredential which will automatically use the managed identity
+        credential = DefaultAzureCredential()
+        queue_service = QueueServiceClient(account_url=account_url, credential=credential)
+        queue_client = queue_service.get_queue_client(queue_name)
+
+        # Send event to queue
+        queue_client.send_message(json.dumps(event))
+        print(f"Successfully sent event to queue {queue_name}")
+        EOF
 
     - name: Monitor Event Log
       id: monitor
