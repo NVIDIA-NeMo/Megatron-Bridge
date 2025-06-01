@@ -26,8 +26,12 @@ inputs:
   azure-blob-storage:
     description: "Azure Blob Storage Container"
     required: true
-  timeout:
-    description: "Max runtime of container in minutes"
+  worker-timeout:
+    description: "Max runtime of the overall worker"
+    required: false
+    default: "10"
+  test-timeout:
+    description: "Max runtime of a test container in minutes"
     required: false
     default: "10"
   cpu-only:
@@ -114,7 +118,8 @@ runs:
         WORKER_ID: ${{ inputs.worker-id }}
         QUEUE_NAME: ${{ inputs.queue-name }}
         IMAGE: ${{ inputs.image }}
-        TIMEOUT: ${{ inputs.timeout }}
+        WORKER_TIMEOUT: ${{ inputs.worker-timeout }}
+        TEST_TIMEOUT: ${{ inputs.test-timeout }}
         CPU_ONLY: ${{ inputs.cpu-only }}
         MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
@@ -139,7 +144,7 @@ runs:
                 gpu_args = "" if os.environ.get('CPU_ONLY') == "true" else "--runtime=nvidia --gpus all"
                 mnt_path = os.environ.get('MNT_PATH')
                 image = os.environ.get('IMAGE')
-                timeout_minutes = int(os.environ.get('TIMEOUT', '10'))
+                timeout_minutes = int(os.environ.get('TEST_TIMEOUT', '10'))
                 sleep_seconds = (timeout_minutes * 60) + 60  # Add 60 seconds buffer
 
                 cmd = f"""
@@ -234,7 +239,7 @@ runs:
         queue_client = queue_service.get_queue_client(queue_name)
 
         # Calculate overall timeout
-        overall_timeout_minutes = int(os.environ.get('TIMEOUT', '10'))
+        overall_timeout_minutes = int(os.environ.get('WORKER_TIMEOUT', '10'))
         end_time = time.time() + (overall_timeout_minutes * 60)
         print(f"Worker {worker_id}: Will poll for messages until {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}")
 
