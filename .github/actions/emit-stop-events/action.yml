@@ -1,0 +1,84 @@
+name: 'Emit Stop Events'
+description: 'Emits stop events to an Azure Storage Queue to gracefully stop workers'
+
+inputs:
+  queue-name:
+    description: 'Name of the queue to send stop events to'
+    required: true
+  num-workers:
+    description: 'Number of workers to stop (number of stop events to emit)'
+    required: true
+  azure-client-id:
+    description: 'Azure Client ID'
+    required: true
+  azure-tenant-id:
+    description: 'Azure Tenant ID'
+    required: true
+  azure-subscription-id:
+    description: 'Azure Subscription ID'
+    required: true
+  azure-queue-storage-account:
+    description: 'Azure Queue Storage Account name'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install Azure Storage SDK
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install azure-storage-queue azure-identity
+
+    - name: Emit Stop Events
+      shell: bash
+      env:
+        AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
+        QUEUE_NAME: ${{ inputs.queue-name }}
+        NUM_WORKERS: ${{ inputs.num-workers }}
+      run: |
+        python - <<EOF
+        import os
+        import json
+        from azure.storage.queue import QueueServiceClient
+        from azure.identity import DefaultAzureCredential
+
+        # Create storage clients using managed identity
+        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
+        queue_name = os.environ.get('QUEUE_NAME')
+        num_workers = int(os.environ.get('NUM_WORKERS', 1))
+
+        # Use DefaultAzureCredential which will automatically use the managed identity
+        credential = DefaultAzureCredential()
+
+        # Create queue client
+        queue_service = QueueServiceClient(account_url=account_url, credential=credential)
+        queue_client = queue_service.get_queue_client(queue_name)
+
+        # Create stop event message
+        stop_event = {"type": "stop"}
+
+        # Send stop events for each worker
+        for i in range(num_workers):
+            try:
+                # Send the stop event
+                queue_client.send_message(json.dumps(stop_event))
+                print(f"Sent stop event {i+1}/{num_workers} to queue {queue_name}")
+            except Exception as e:
+                print(f"Error sending stop event {i+1}: {e}")
+                exit(1)
+
+        print(f"Successfully sent {num_workers} stop events to queue {queue_name}")
+        EOF
