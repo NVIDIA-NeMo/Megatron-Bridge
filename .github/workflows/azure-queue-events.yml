@@ -371,7 +371,7 @@ jobs:
           EVENT_TYPE: ${{ matrix.event.type }}
 
   cleanup-queue:
-    needs: [read-events, monitor-logs]
+    needs: [monitor-logs]
     if: always()  # Run even if other jobs were cancelled
     runs-on: ubuntu-latest
     environment: nemo-ci
