@@ -350,6 +350,27 @@ jobs:
         env:
           EVENT_TYPE: ${{ matrix.event.type }}
 
+  delete-queue:
+    needs: [read-events]
+    if: always()  # Run even if other jobs were cancelled
+    runs-on: ubuntu-latest
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Delete Queue
+        uses: ./.github/actions/delete-azure-queue
+        with:
+          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+
   stop-workers:
     needs: [monitor-logs]
     if: always()  # Run even if other jobs were cancelled
@@ -371,33 +392,3 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-
-      - name: Delete Queue
-        uses: ./.github/actions/delete-azure-queue
-        with:
-          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-
-delete-queue:
-  needs: [read-events]
-  if: always()  # Run even if other jobs were cancelled
-  runs-on: ubuntu-latest
-  environment: nemo-ci
-  permissions:
-    id-token: write
-    contents: read
-  steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Delete Queue
-      uses: ./.github/actions/delete-azure-queue
-      with:
-        queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
-        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
