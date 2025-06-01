@@ -5,7 +5,7 @@ on:
 
 jobs:
   process-queue:
-    uses: ./.github/workflows/azure-queue-events.yaml
+    uses: ./.github/workflows/azure-queue-events.yml
     with:
       # Example 1: Simple worker configs (just numbers)
       worker_configs: |
