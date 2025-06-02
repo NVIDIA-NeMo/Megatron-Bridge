@@ -50,6 +50,8 @@ runs:
       shell: bash
       env:
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
+        WORKER_CONFIGS: ${{ inputs.worker_configs }}
+        QUEUE_NAMES: ${{ inputs.queue_names }}
       run: |
         python - <<EOF
         import json
@@ -57,27 +59,43 @@ runs:
         from azure.identity import DefaultAzureCredential
         from azure.storage.queue import QueueClient
 
-        # Parse inputs
-        worker_configs = json.loads('''${{ inputs.worker_configs }}''')
-        queue_names = json.loads('''${{ inputs.queue_names }}''')
+        # Debug: Print raw inputs
+        print("Raw worker_configs input:", os.environ.get('WORKER_CONFIGS'))
+        print("Raw queue_names input:", os.environ.get('QUEUE_NAMES'))
 
-        # Get Azure credentials
-        credential = DefaultAzureCredential()
-        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
+        try:
+            # Parse inputs
+            worker_configs = json.loads(os.environ.get('WORKER_CONFIGS', '[]'))
+            queue_names = json.loads(os.environ.get('QUEUE_NAMES', '{}'))
 
-        # Emit stop event for each worker
-        for worker in worker_configs:
-            runner = worker.get('runner', 'ubuntu-latest')
-            queue_name = queue_names[runner]
-            queue_client = QueueClient(account_url=account_url, queue_name=queue_name, credential=credential)
+            print("Parsed worker_configs:", worker_configs)
+            print("Parsed queue_names:", queue_names)
 
-            # Create stop event
-            stop_event = {
-                "type": "stop",
-                "worker_id": worker['id']
-            }
+            # Get Azure credentials
+            credential = DefaultAzureCredential()
+            account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
 
-            # Send message to queue
-            queue_client.send_message(json.dumps(stop_event))
-            print(f"Sent stop event for worker {worker['id']} to queue {queue_name}")
+            # Emit stop event for each worker
+            for worker in worker_configs:
+                runner = worker.get('runner', 'ubuntu-latest')
+                queue_name = queue_names[runner]
+                queue_client = QueueClient(account_url=account_url, queue_name=queue_name, credential=credential)
+
+                # Create stop event
+                stop_event = {
+                    "type": "stop",
+                    "worker_id": worker['id']
+                }
+
+                # Send message to queue
+                queue_client.send_message(json.dumps(stop_event))
+                print(f"Sent stop event for worker {worker['id']} to queue {queue_name}")
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON: {e}")
+            print(f"Error occurred at line {e.lineno}, column {e.colno}")
+            print(f"Error message: {e.msg}")
+            exit(1)
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            exit(1)
         EOF
