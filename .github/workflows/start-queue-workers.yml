@@ -36,7 +36,7 @@ env:
   AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
 
 jobs:
-  create-queues:
+  generate-queue-names:
     runs-on: ubuntu-latest
     environment: nemo-ci
     permissions:
@@ -75,17 +75,28 @@ jobs:
           print(f"queue_names={json.dumps(queue_names)}")
           EOF
 
-      - name: Create Azure Queues
+  create-queues:
+    needs: generate-queue-names
+    runs-on: ubuntu-latest
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        runner: ${{ fromJson(needs.generate-queue-names.outputs.queue_names) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Azure Queue
         uses: ./.github/actions/create-azure-queue
         with:
-          queue-name: ${{ fromJson(steps.set-queues.outputs.queue_names)[matrix.runner] }}
+          queue-name: ${{ fromJson(needs.generate-queue-names.outputs.queue_names)[matrix.runner] }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-        strategy:
-          matrix:
-            runner: ${{ fromJson(steps.set-queues.outputs.queue_names) }}
 
   start-workers:
     needs: create-queues
@@ -105,15 +116,15 @@ jobs:
         uses: ./.github/actions/docker-queue-worker
         with:
           worker-id: ${{ matrix.worker.id }}
-          queue-name: ${{ fromJson(needs.create-queues.outputs.queue_names)[matrix.worker.runner] }}
+          queue-name: ${{ fromJson(needs.generate-queue-names.outputs.queue_names)[matrix.worker.runner] }}
           image: ubuntu
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
           azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
-          timeout: ${{ inputs.timeout }}
-          cpu-only: ${{ inputs.cpu-only }}
+          worker-timeout: ${{ inputs.worker-timeout }}
+          cpu-only: ${{ matrix.worker.cpu-only }}
 
   delete-queues:
     needs: [start-workers]
@@ -123,6 +134,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    strategy:
+      matrix:
+        runner: ${{ fromJson(needs.generate-queue-names.outputs.queue_names) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -130,11 +144,8 @@ jobs:
       - name: Delete Queue
         uses: ./.github/actions/delete-azure-queue
         with:
-          queue-name: ${{ fromJson(needs.create-queues.outputs.queue_names)[matrix.runner] }}
+          queue-name: ${{ fromJson(needs.generate-queue-names.outputs.queue_names)[matrix.runner] }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-        strategy:
-          matrix:
-            runner: ${{ fromJson(needs.create-queues.outputs.queue_names) }}
