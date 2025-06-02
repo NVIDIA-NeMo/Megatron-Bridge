@@ -181,7 +181,8 @@ runs:
                     log_content = json.dumps({
                         "event": {
                             "type": event_data.get('type', 'unknown'),
-                            "name": event_data.get('name', 'unknown')
+                            "name": event_data.get('name', 'unknown'),
+                            "runner": event_data.get('runner', 'unknown')
                         },
                         "execution": {
                             "worker_id": os.environ.get('WORKER_ID'),
