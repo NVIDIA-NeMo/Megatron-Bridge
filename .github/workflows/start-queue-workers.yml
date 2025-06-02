@@ -44,6 +44,7 @@ jobs:
       contents: read
     outputs:
       queue_names: ${{ steps.set-queues.outputs.queue_names }}
+      runners: ${{ steps.set-queues.outputs.runners }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -63,7 +64,7 @@ jobs:
 
           # Parse worker configs to get unique runners
           worker_configs = json.loads('''${{ inputs.worker_configs }}''')
-          runners = set(config.get('runner', 'ubuntu-latest') for config in worker_configs)
+          runners = sorted(list(set(config.get('runner', 'ubuntu-latest') for config in worker_configs)))
 
           # Create queue names for each runner
           queue_names = {
@@ -74,6 +75,7 @@ jobs:
           # Output as JSON string using environment file
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"queue_names={json.dumps(queue_names)}\n")
+              f.write(f"runners={json.dumps(runners)}\n")
           EOF
 
   create-queues:
@@ -85,7 +87,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        runner: ${{ keys(fromJson(needs.generate-queue-names.outputs.queue_names)) }}
+        runner: ${{ fromJson(needs.generate-queue-names.outputs.runners) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -137,7 +139,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        runner: ${{ keys(fromJson(needs.generate-queue-names.outputs.queue_names)) }}
+        runner: ${{ fromJson(needs.generate-queue-names.outputs.runners) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
