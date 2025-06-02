@@ -71,8 +71,9 @@ jobs:
               for runner in runners
           }
 
-          # Output as JSON string using GitHub's output syntax
-          print(f"::set-output name=queue_names::{json.dumps(queue_names)}")
+          # Output as JSON string using environment file
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"queue_names={json.dumps(queue_names)}\n")
           EOF
 
   create-queues:
