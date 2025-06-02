@@ -29,7 +29,6 @@ from nemo_lm.utils.log_utils import barrier_and_log
 def megatron_pretrain(
     config: ConfigContainer,
     forward_step_func: Callable,
-    dataset_provider: Optional[Callable] = None,
 ) -> None:
     """Main function to run the pretraining pipeline.
 
@@ -41,9 +40,6 @@ def megatron_pretrain(
         config: The main configuration container holding all necessary parameters.
         forward_step_func: A callable that performs a single forward and backward
                            step, returning the loss and any computed metrics.
-        dataset_provider: Optional callable to provide train/validation/test
-                          datasets. If None, it's assumed the dataset
-                          configuration is self-contained within `config`.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
@@ -51,9 +47,7 @@ def megatron_pretrain(
     """
     config.validate()
 
-    # SETUP
-    if dataset_provider is None:
-        dataset_provider = get_dataset_provider(config.dataset_config)
+    dataset_provider = get_dataset_provider(config.dataset_config)
 
     setup_output = setup(config, dataset_provider)
     state = setup_output.state
