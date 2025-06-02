@@ -15,12 +15,12 @@
 
 import argparse
 import dataclasses
+import logging
 import os
 import sys
-import logging
 from typing import Any, Dict, TypeVar
 
-from omegaconf import OmegaConf, DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from nemo_lm.models.utils import forward_step
 from nemo_lm.recipes.llm.llama3_8b import pretrain_config
@@ -60,6 +60,7 @@ def apply_overrides_recursively(config_obj: DataclassInstance, overrides_dict: D
 
 
 def main() -> None:
+    """Entry point for the script."""
     parser = argparse.ArgumentParser(description="Pretrain Llama3 8B model using NeMo-LM")
     parser.add_argument(
         "--config-file",
@@ -74,7 +75,6 @@ def main() -> None:
     logger.info("------------------------------------")
 
     # 1. Load base configuration from the recipe - this is our primary Python object
-    logger.info(f"Loading base configuration using 'pretrain_config' from nemo_lm.recipes.llm.llama3_8b...")
     final_cfg_container: ConfigContainer = pretrain_config()
 
     # 2. Load YAML overrides into an OmegaConf dictionary

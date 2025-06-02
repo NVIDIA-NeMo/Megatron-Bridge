@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Optional
 
-import os
 import torch
 
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -24,7 +24,6 @@ from nemo_lm.models.llama import Llama3Config8B
 from nemo_lm.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    FinetuningDatasetConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
