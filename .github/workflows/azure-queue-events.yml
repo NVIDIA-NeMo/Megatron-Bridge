@@ -100,7 +100,7 @@ jobs:
           timeout: 10
 
   stop-workers:
-    needs: [monitor-logs]
+    needs: [monitor-logs, create-queues]
     if: always()  # Run even if other jobs were cancelled
     runs-on: ubuntu-latest
     environment: nemo-ci
