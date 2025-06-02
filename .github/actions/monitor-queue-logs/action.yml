@@ -11,10 +11,6 @@ inputs:
   event-script:
     description: "Script to execute in the container"
     required: true
-  runner:
-    description: "Runner type (e.g. ubuntu-latest, windows-latest)"
-    required: true
-    default: "ubuntu-latest"
   azure-client-id:
     description: "Azure Client ID"
     required: true
@@ -73,7 +69,7 @@ runs:
         EVENT_NAME: ${{ inputs.event-name }}
         EVENT_SCRIPT: ${{ inputs.event-script }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
-        AZURE_QUEUE_NAME: ${{ inputs.azure-queue-name }}-${{ inputs.runner }}
+        AZURE_QUEUE_NAME: ${{ inputs.azure-queue-name }}
         RUNNER: ${{ inputs.runner }}
       run: |
         python - <<EOF
