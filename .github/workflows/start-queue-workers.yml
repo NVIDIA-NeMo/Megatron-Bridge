@@ -85,7 +85,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        runner: ${{ fromJson(needs.generate-queue-names.outputs.queue_names) }}
+        runner: ${{ keys(fromJson(needs.generate-queue-names.outputs.queue_names)) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -137,7 +137,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        runner: ${{ fromJson(needs.generate-queue-names.outputs.queue_names) }}
+        runner: ${{ keys(fromJson(needs.generate-queue-names.outputs.queue_names)) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
