@@ -71,7 +71,7 @@ jobs:
 
   monitor-logs:
     name: monitor-logs-${{ matrix.event.type }}
-    needs: start-queue-workers
+    needs: create-queues
     runs-on: ubuntu-latest
     environment: nemo-ci
     permissions:
