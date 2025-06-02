@@ -20,6 +20,16 @@ on:
         required: true
       AZURE_SUBSCRIPTION_ID:
         required: true
+    outputs:
+      queue_names:
+        description: "JSON string containing mapping of runners to queue names"
+        value: ${{ jobs.generate-queue-names.outputs.queue_names }}
+      runners:
+        description: "JSON string containing list of runners"
+        value: ${{ jobs.generate-queue-names.outputs.runners }}
+      worker_configs:
+        description: "JSON string containing worker configurations"
+        value: ${{ jobs.generate-queue-names.outputs.worker_configs }}
 
 env:
   AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
@@ -67,12 +77,8 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"queue_names={json.dumps(queue_names)}\n")
               f.write(f"runners={json.dumps(runners)}\n")
+              f.write(f"worker_configs={json.dumps(worker_configs)}\n")
           EOF
-
-      - name: Debug Outputs
-        run: |
-          echo "Queue Names: ${{ steps.set-queues.outputs.queue_names }}"
-          echo "Runners: ${{ steps.set-queues.outputs.runners }}"
 
   create-queues:
     needs: generate-queue-names
