@@ -6,13 +6,13 @@ on:
       worker_configs:
         description: |
           JSON string containing list of worker configurations for the matrix.
-          Example: '[1, 2, 3]' or '[{"id": 1, "config": "value"}, {"id": 2, "config": "value"}]'
+          Example: '[{"id": 1, "runner": "ubuntu-latest", "cpu-only": true}, {"id": 2, "runner": "windows-latest", "cpu-only": false}]'
         required: true
         type: string
       events:
         description: |
           JSON string containing list of events to add to the queue.
-          Example: '[{"type": "event1", "data": "value1"}, {"type": "event2", "data": "value2"}]'
+          Example: '[{"type": "event1", "name": "test1", "script": "echo test1"}]'
         required: true
         type: string
     secrets:
@@ -33,56 +33,22 @@ env:
   AZURE_STORAGE_QUEUE_NAME: events-queue-${{ github.run_id }}
 
 jobs:
-  process-events:
-    runs-on: ubuntu-latest
-    environment: nemo-ci
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Create Azure Queue
-        uses: ./.github/actions/create-azure-queue
-        with:
-          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-
-  read-events:
-    name: read-events-${{ matrix.worker }}
-    needs: process-events
-    runs-on: ubuntu-latest
-    environment: nemo-ci
-    permissions:
-      id-token: write
-      contents: read
-    strategy:
-      matrix:
-        worker: ${{ fromJson(inputs.worker_configs) }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Docker Queue Worker
-        uses: ./.github/actions/docker-queue-worker
-        with:
-          worker-id: ${{ matrix.worker }}
-          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
-          image: ubuntu
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-          azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
-          cpu-only: true
+  start-queue-workers:
+    uses: ./.github/workflows/start-queue-workers.yml
+    with:
+      worker_configs: ${{ inputs.worker_configs }}
+      worker-timeout: "10"
+      test-timeout: "10"
+    secrets:
+      AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
+      AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   monitor-logs:
     name: monitor-logs-${{ matrix.event.type }}
-    needs: process-events
+    needs: start-queue-workers
     runs-on: ubuntu-latest
     environment: nemo-ci
     permissions:
@@ -109,27 +75,6 @@ jobs:
           azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
           is-unit-test: false
           timeout: 10
-
-  delete-queue:
-    needs: [read-events]
-    if: always()  # Run even if other jobs were cancelled
-    runs-on: ubuntu-latest
-    environment: nemo-ci
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Delete Queue
-        uses: ./.github/actions/delete-azure-queue
-        with:
-          queue-name: ${{ env.AZURE_STORAGE_QUEUE_NAME }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
 
   stop-workers:
     needs: [monitor-logs]

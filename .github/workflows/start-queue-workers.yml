@@ -1,0 +1,140 @@
+name: Start Queue Workers
+
+on:
+  workflow_call:
+    inputs:
+      worker_configs:
+        description: |
+          JSON string containing list of worker configurations for the matrix.
+          Example: '[{"id": 1, "runner": "ubuntu-latest", "cpu-only": true}, {"id": 2, "runner": "windows-latest", "cpu-only": false}]'
+        required: true
+        type: string
+      worker-timeout:
+        description: "Max runtime of workers in minutes"
+        required: false
+        default: "10"
+        type: string
+      test-timeout:
+        description: "Max runtime of tests in minutes"
+        required: false
+        default: "10"
+        type: string
+    secrets:
+      AZURE_BLOB_STORAGE:
+        required: true
+      AZURE_QUEUE_STORAGE_ACCOUNT:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+env:
+  AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+  AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
+
+jobs:
+  create-queues:
+    runs-on: ubuntu-latest
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      queue_names: ${{ steps.set-queues.outputs.queue_names }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Create Queue Names
+        id: set-queues
+        shell: bash
+        run: |
+          python - <<EOF
+          import json
+          import os
+
+          # Parse worker configs to get unique runners
+          worker_configs = json.loads('''${{ inputs.worker_configs }}''')
+          runners = set(config.get('runner', 'ubuntu-latest') for config in worker_configs)
+
+          # Create queue names for each runner
+          queue_names = {
+              runner: f"events-queue-{os.environ.get('GITHUB_RUN_ID')}-{runner}"
+              for runner in runners
+          }
+
+          # Output as JSON string
+          print(f"queue_names={json.dumps(queue_names)}")
+          EOF
+
+      - name: Create Azure Queues
+        uses: ./.github/actions/create-azure-queue
+        with:
+          queue-name: ${{ fromJson(steps.set-queues.outputs.queue_names)[matrix.runner] }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+        strategy:
+          matrix:
+            runner: ${{ fromJson(steps.set-queues.outputs.queue_names) }}
+
+  start-workers:
+    needs: create-queues
+    strategy:
+      matrix:
+        worker: ${{ fromJson(inputs.worker_configs) }}
+    runs-on: ${{ matrix.worker.runner }}
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Docker Queue Worker
+        uses: ./.github/actions/docker-queue-worker
+        with:
+          worker-id: ${{ matrix.worker.id }}
+          queue-name: ${{ fromJson(needs.create-queues.outputs.queue_names)[matrix.worker.runner] }}
+          image: ubuntu
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+          azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
+          timeout: ${{ inputs.timeout }}
+          cpu-only: ${{ inputs.cpu-only }}
+
+  delete-queues:
+    needs: [start-workers]
+    if: always()
+    runs-on: ubuntu-latest
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Delete Queue
+        uses: ./.github/actions/delete-azure-queue
+        with:
+          queue-name: ${{ fromJson(needs.create-queues.outputs.queue_names)[matrix.runner] }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+        strategy:
+          matrix:
+            runner: ${{ fromJson(needs.create-queues.outputs.queue_names) }}

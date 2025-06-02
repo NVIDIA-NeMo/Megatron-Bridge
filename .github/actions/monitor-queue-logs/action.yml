@@ -11,6 +11,10 @@ inputs:
   event-script:
     description: "Script to execute in the container"
     required: true
+  runner:
+    description: "Runner type (e.g. ubuntu-latest, windows-latest)"
+    required: true
+    default: "ubuntu-latest"
   azure-client-id:
     description: "Azure Client ID"
     required: true
@@ -69,7 +73,8 @@ runs:
         EVENT_NAME: ${{ inputs.event-name }}
         EVENT_SCRIPT: ${{ inputs.event-script }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
-        AZURE_QUEUE_NAME: ${{ inputs.azure-queue-name }}
+        AZURE_QUEUE_NAME: ${{ inputs.azure-queue-name }}-${{ inputs.runner }}
+        RUNNER: ${{ inputs.runner }}
       run: |
         python - <<EOF
         import os
@@ -81,7 +86,8 @@ runs:
         event = {
             "type": os.environ.get('EVENT_TYPE'),
             "name": os.environ.get('EVENT_NAME'),
-            "script": os.environ.get('EVENT_SCRIPT')
+            "script": os.environ.get('EVENT_SCRIPT'),
+            "runner": os.environ.get('RUNNER')
         }
         print(f"Emitting event: {json.dumps(event, indent=2)}")
 
@@ -108,6 +114,7 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
         AZURE_BLOB_STORAGE: ${{ inputs.azure-blob-storage }}
+        RUNNER: ${{ inputs.runner }}
       run: |
         python - <<EOF
         import os
@@ -170,6 +177,7 @@ runs:
             print("\n=== Event Information ===")
             print(f"Type: {log_data['event']['type']}")
             print(f"Name: {log_data['event']['name']}")
+            print(f"Runner: {log_data['event']['runner']}")
             print(f"\n=== Execution Information ===")
             print(f"Worker ID: {log_data['execution']['worker_id']}")
             print(f"Run ID: {log_data['execution']['run_id']}")
