@@ -78,6 +78,11 @@ jobs:
               f.write(f"runners={json.dumps(runners)}\n")
           EOF
 
+      - name: Debug Outputs
+        run: |
+          echo "Queue Names: ${{ steps.set-queues.outputs.queue_names }}"
+          echo "Runners: ${{ steps.set-queues.outputs.runners }}"
+
   create-queues:
     needs: generate-queue-names
     runs-on: ubuntu-latest
@@ -91,6 +96,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Debug Matrix
+        run: |
+          echo "Matrix Runner: ${{ matrix.runner }}"
+          echo "Queue Names: ${{ needs.generate-queue-names.outputs.queue_names }}"
 
       - name: Create Azure Queue
         uses: ./.github/actions/create-azure-queue
@@ -114,6 +124,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Debug Worker Config
+        run: |
+          echo "Worker Runner: ${{ matrix.worker.runner }}"
+          echo "Queue Names: ${{ needs.generate-queue-names.outputs.queue_names }}"
 
       - name: Run Docker Queue Worker
         uses: ./.github/actions/docker-queue-worker
