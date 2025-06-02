@@ -1,12 +1,16 @@
 name: 'Emit Stop Events'
-description: 'Emits stop events to an Azure Storage Queue to gracefully stop workers'
+description: 'Emit stop events to the queue for each worker'
 
 inputs:
-  queue-name:
-    description: 'Name of the queue to send stop events to'
+  worker_configs:
+    description: |
+      JSON string containing list of worker configurations.
+      Example: '[{"id": 1, "runner": "ubuntu-latest", "cpu-only": true}, {"id": 2, "runner": "windows-latest", "cpu-only": false}]'
     required: true
-  num-workers:
-    description: 'Number of workers to stop (number of stop events to emit)'
+  queue_names:
+    description: |
+      JSON string containing mapping of runners to queue names.
+      Example: '{"ubuntu-latest": "queue1", "windows-latest": "queue2"}'
     required: true
   azure-client-id:
     description: 'Azure Client ID'
@@ -18,7 +22,7 @@ inputs:
     description: 'Azure Subscription ID'
     required: true
   azure-queue-storage-account:
-    description: 'Azure Queue Storage Account name'
+    description: 'Azure Queue Storage Account'
     required: true
 
 runs:
@@ -46,39 +50,34 @@ runs:
       shell: bash
       env:
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
-        QUEUE_NAME: ${{ inputs.queue-name }}
-        NUM_WORKERS: ${{ inputs.num-workers }}
       run: |
         python - <<EOF
-        import os
         import json
-        from azure.storage.queue import QueueServiceClient
+        import os
         from azure.identity import DefaultAzureCredential
+        from azure.storage.queue import QueueClient
 
-        # Create storage clients using managed identity
-        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
-        queue_name = os.environ.get('QUEUE_NAME')
-        num_workers = int(os.environ.get('NUM_WORKERS', 1))
+        # Parse inputs
+        worker_configs = json.loads('''${{ inputs.worker_configs }}''')
+        queue_names = json.loads('''${{ inputs.queue_names }}''')
 
-        # Use DefaultAzureCredential which will automatically use the managed identity
+        # Get Azure credentials
         credential = DefaultAzureCredential()
+        account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.queue.core.windows.net"
 
-        # Create queue client
-        queue_service = QueueServiceClient(account_url=account_url, credential=credential)
-        queue_client = queue_service.get_queue_client(queue_name)
+        # Emit stop event for each worker
+        for worker in worker_configs:
+            runner = worker.get('runner', 'ubuntu-latest')
+            queue_name = queue_names[runner]
+            queue_client = QueueClient(account_url=account_url, queue_name=queue_name, credential=credential)
 
-        # Create stop event message
-        stop_event = {"type": "stop"}
+            # Create stop event
+            stop_event = {
+                "type": "stop",
+                "worker_id": worker['id']
+            }
 
-        # Send stop events for each worker
-        for i in range(num_workers):
-            try:
-                # Send the stop event
-                queue_client.send_message(json.dumps(stop_event))
-                print(f"Sent stop event {i+1}/{num_workers} to queue {queue_name}")
-            except Exception as e:
-                print(f"Error sending stop event {i+1}: {e}")
-                exit(1)
-
-        print(f"Successfully sent {num_workers} stop events to queue {queue_name}")
+            # Send message to queue
+            queue_client.send_message(json.dumps(stop_event))
+            print(f"Sent stop event for worker {worker['id']} to queue {queue_name}")
         EOF
