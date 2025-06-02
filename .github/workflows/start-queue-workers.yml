@@ -112,7 +112,7 @@ jobs:
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
 
   start-workers:
-    needs: create-queues
+    needs: [create-queues, generate-queue-names]
     strategy:
       matrix:
         worker: ${{ fromJson(inputs.worker_configs) }}
