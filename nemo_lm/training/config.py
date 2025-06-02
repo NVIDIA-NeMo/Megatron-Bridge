@@ -25,6 +25,7 @@ from megatron.core.optimizer import OptimizerConfig
 
 from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.t5 import T5Config
+from nemo_lm.training.comm_overlap import MegatronCommOverlapConfig
 from nemo_lm.utils.common_utils import get_world_size_safe
 from nemo_lm.utils.config_utils import ConfigContainer as Container
 
@@ -671,6 +672,7 @@ class ConfigContainer(Container):
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
+    comm_overlap: Optional[MegatronCommOverlapConfig] = None
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
@@ -721,3 +723,9 @@ class ConfigContainer(Container):
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
         else:
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+
+        # Profiling
+        if self.profiling is not None:
+            assert self.profiling.use_pytorch_profiler != self.profiling.use_nsys_profiler, (
+                "Exactly one of pytorch or nsys profiler should be enabled, not both or neither"
+            )
