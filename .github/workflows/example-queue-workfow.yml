@@ -8,7 +8,7 @@ jobs:
     uses: ./.github/workflows/azure-queue-events.yml
     with:
       # Example 1: Simple worker configs (just numbers)
-      worker_configs: |
+      worker-configs: |
         [
           {"id": 1, "runner": "ubuntu-latest", "cpu-only": true},
           {"id": 2, "runner": "ubuntu-latest", "cpu-only": true},
