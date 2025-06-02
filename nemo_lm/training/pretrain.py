@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional
+from typing import Callable
 
 from nemo_lm.data.utils import get_dataset_provider
 from nemo_lm.training.checkpointing import save_checkpoint
