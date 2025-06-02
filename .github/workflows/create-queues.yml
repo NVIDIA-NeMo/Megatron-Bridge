@@ -1,0 +1,103 @@
+name: Create Queues
+
+on:
+  workflow_call:
+    inputs:
+      worker_configs:
+        description: |
+          JSON string containing list of worker configurations for the matrix.
+          Example: '[{"id": 1, "runner": "ubuntu-latest", "cpu-only": true}, {"id": 2, "runner": "windows-latest", "cpu-only": false}]'
+        required: true
+        type: string
+    secrets:
+      AZURE_BLOB_STORAGE:
+        required: true
+      AZURE_QUEUE_STORAGE_ACCOUNT:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+env:
+  AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+  AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
+
+jobs:
+  generate-queue-names:
+    runs-on: ubuntu-latest
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      queue_names: ${{ steps.set-queues.outputs.queue_names }}
+      runners: ${{ steps.set-queues.outputs.runners }}
+      worker_configs: ${{ inputs.worker_configs }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Create Queue Names
+        id: set-queues
+        shell: bash
+        run: |
+          python - <<EOF
+          import json
+          import os
+
+          # Parse worker configs to get unique runners
+          worker_configs = json.loads('''${{ inputs.worker_configs }}''')
+          runners = sorted(list(set(config.get('runner', 'ubuntu-latest') for config in worker_configs)))
+
+          # Create queue names for each runner
+          queue_names = {
+              runner: f"events-queue-{os.environ.get('GITHUB_RUN_ID')}-{runner}"
+              for runner in runners
+          }
+
+          # Output as JSON string using environment file
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"queue_names={json.dumps(queue_names)}\n")
+              f.write(f"runners={json.dumps(runners)}\n")
+          EOF
+
+      - name: Debug Outputs
+        run: |
+          echo "Queue Names: ${{ steps.set-queues.outputs.queue_names }}"
+          echo "Runners: ${{ steps.set-queues.outputs.runners }}"
+
+  create-queues:
+    needs: generate-queue-names
+    runs-on: ubuntu-latest
+    environment: nemo-ci
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        runner: ${{ fromJson(needs.generate-queue-names.outputs.runners) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debug Matrix
+        run: |
+          echo "Matrix Runner: ${{ matrix.runner }}"
+          echo "Queue Names: ${{ needs.generate-queue-names.outputs.queue_names }}"
+
+      - name: Create Azure Queue
+        uses: ./.github/actions/create-azure-queue
+        with:
+          queue-name: ${{ fromJson(needs.generate-queue-names.outputs.queue_names)[matrix.runner] }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
