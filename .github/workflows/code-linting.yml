@@ -25,10 +25,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.7.10"
+
       - name: Install dependencies
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv
-          uv pip install --group test
+          uv sync --only-group test
 
       - name: Get changed files
         id: changed-files
@@ -61,7 +65,7 @@ jobs:
           fi
 
           set +e
-          pylint $ADDITIONAL_PYLINT_ARGS --output "pylintrc.txt" --rcfile ".pylintrc" ${CHANGED_FILES[@]}
+          uv run --only-group test pylint $ADDITIONAL_PYLINT_ARGS --output "pylintrc.txt" --rcfile ".pylintrc" ${CHANGED_FILES[@]}
           echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
 
       - name: Run flake8
@@ -83,7 +87,7 @@ jobs:
           fi
 
           set +e
-          flake8 $ADDITIONAL_FLAKE8_ARGS --output "flake8.txt" --config ".flake8" ${CHANGED_FILES[@]}
+          uv run --only-group test flake8 $ADDITIONAL_FLAKE8_ARGS --output "flake8.txt" --config ".flake8" ${CHANGED_FILES[@]}
           echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
 
       - name: Run isort
@@ -99,7 +103,7 @@ jobs:
           fi
 
           set +e
-          isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt
+          uv run --only-group test isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt
           ISORT_EXIT_CODE=$?
 
           if [[ $SKIP_LINTING == true ]]; then
@@ -121,7 +125,7 @@ jobs:
           fi
 
           set +e
-          black --check --diff ${CHANGED_FILES[@]} > black.txt
+          uv run --only-group test black --check --diff ${CHANGED_FILES[@]} > black.txt
           BLACK_EXIT_CODE=$?
 
           if [[ $SKIP_LINTING == true ]]; then
