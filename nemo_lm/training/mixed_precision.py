@@ -75,22 +75,22 @@ class MegatronMixedPrecisionConfig:
             ddp_config: Optional DDP configuration to update
         """
         # Update model config
-        model_config = update_config_with_dtype_overrides(self, model_config)
+        model_config = update_config_with_precision_overrides(self, model_config)
 
         # Update optimizer config if provided
         if optimizer_config is not None:
-            optimizer_config = update_config_with_dtype_overrides(self, optimizer_config)
+            optimizer_config = update_config_with_precision_overrides(self, optimizer_config)
 
         # Update DDP config if provided
         if ddp_config is not None:
-            ddp_config = update_config_with_dtype_overrides(self, ddp_config)
+            ddp_config = update_config_with_precision_overrides(self, ddp_config)
 
 
-def update_config_with_dtype_overrides(mixed_precision_config: DtypeConfig, config):
-    """Update a config object with dtype settings from dtype_config.
+def update_config_with_precision_overrides(mixed_precision_config: MegatronMixedPrecisionConfig, config):
+    """Update a config object with precision settings from mixed_precision_config.
 
     Args:
-        dtype_config: Source of dtype settings
+        mixed_precision_config: Source of precision settings
         config: Config object to update
 
     Returns:
