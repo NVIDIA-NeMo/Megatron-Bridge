@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import types
 from unittest.mock import MagicMock, patch
 
 import pytest
-import torch
 from packaging.version import Version as PkgVersion
 
 from nemo_lm.utils.import_utils import (
@@ -141,11 +139,6 @@ class TestUnavailableMeta:
         """Test that descriptor operations raise UnavailableError."""
         TestClass = UnavailableMeta("TestClass", (), {})
 
-        class DummyClass:
-            prop = TestClass
-
-        dummy = DummyClass()
-
         with pytest.raises(UnavailableError):
             TestClass.__get__(None, None)
 
@@ -154,6 +147,8 @@ class TestUnavailableMeta:
 
 
 class TestSafeImport:
+    """Test suite for the safe_import function."""
+
     def test_successful_import(self):
         """Test safe_import with a module that exists."""
         module, success = safe_import("os")
@@ -209,6 +204,8 @@ class TestSafeImport:
 
 
 class TestSafeImportFrom:
+    """Test suite for the safe_import_from function."""
+
     def test_successful_import_from(self):
         """Test safe_import_from with a symbol that exists."""
         symbol, success = safe_import_from("os", "path")
