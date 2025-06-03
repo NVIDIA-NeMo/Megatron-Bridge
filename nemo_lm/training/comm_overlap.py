@@ -530,7 +530,6 @@ class MegatronCommOverlapConfig:
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:
-        """Apply configs set in comm_overlap_cfg on trainer config."""
         comm_overlap_cfg = self._get_model_comm_overlap_cfgs(model_config)
         self._apply_cfgs(comm_overlap_cfg, model_config)
         if model_config.tp_comm_overlap:
