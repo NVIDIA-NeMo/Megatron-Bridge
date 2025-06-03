@@ -13,10 +13,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+NeMo Run Launcher for Llama3 8B Pretraining.
+
+This script launches the pretrain_llama3_8b.py script using NeMo Run with TorchRun,
+while forwarding any additional command line arguments to the target script.
+
+Examples:
+    Basic usage with default config:
+        $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8
+
+    Using a custom config file:
+        $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 --config-file=my_config.yaml
+
+    Passing additional overrides to the target script:
+        $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 \
+            model_config.tensor_model_parallel_size=4 \
+            train_config.train_iters=100000
+
+    Using both custom config and CLI overrides:
+        $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 \
+            --config-file=conf/my_custom_config.yaml \
+            optimizer_config.lr=0.0002 \
+            train_config.global_batch_size=512
+
+    Dry run to see what would be executed:
+        $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 --dryrun \
+            model_config.pipeline_dtype=torch.float16
+
+Argument Forwarding:
+    Any arguments not recognized by this launcher script will be forwarded
+    to the target pretrain_llama3_8b.py script as Hydra-style overrides.
+"""
+
 import argparse
 import logging
 import os
+import sys
 from pathlib import Path
+from typing import Tuple
 
 import nemo_run as run
 
@@ -33,43 +68,13 @@ DEFAULT_CONFIG_FILENAME: str = "llama3_8b_pretrain_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
-def main(args: argparse.Namespace) -> None:
-    """
-    Main function for script demonstrating how to use the NeMo Run executor.
-    """
-    logger.info(f"Nemo Run Launcher for Llama3 8B Pretraining")
-    logger.info(f"===========================================")
-
-    if not PRETRAIN_SCRIPT_PATH.is_file():
-        logger.error(f"Target pretraining script not found: {PRETRAIN_SCRIPT_PATH}")
-        logger.error(f"Please ensure '{PRETRAIN_SCRIPT_FILENAME}' exists in the same directory as this launcher.")
-        sys.exit(1)
-
-    config_file_to_use = Path(args.config_file).resolve()
-    if not config_file_to_use.is_file():
-        logger.error(f"Specified YAML config file not found: {config_file_to_use}")
-        logger.error(f"Ensure the path passed to --config_file is correct.")
-        sys.exit(1)
-
-    train_script = run.Script(
-        path=str(PRETRAIN_SCRIPT_PATH),
-        entrypoint="python",
-        args=[
-            "--config-file",
-            str(config_file_to_use),
-        ],
+def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
+    """Parse command line arguments, separating launcher args from target script args."""
+    parser = argparse.ArgumentParser(
+        description="Launcher for Llama3 8B pretraining using nemo_run and TorchRun. "
+        "Additional arguments will be forwarded to pretrain_llama3_8b.py",
+        formatter_class=argparse.RawTextHelpFormatter,
     )
-
-    # Define the executor
-    logger.info(f"Launching locally with TorchRun with nproc_per_node={args.nproc_per_node}")
-    executor = run.LocalExecutor(ntasks_per_node=args.nproc_per_node, launcher="torchrun")
-
-    # Execute the run
-    run.run(train_script, executor=executor, dryrun=args.dryrun)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Launcher for Llama3 8B pretraining using nemo_run and TorchRun.")
     parser.add_argument(
         "--nproc-per-node",
         type=int,
@@ -88,5 +93,58 @@ if __name__ == "__main__":
         help="Dry run the script without actually running it.",
     )
 
-    cmd_args = parser.parse_args()
-    main(cmd_args)
+    # Parse known args for the launcher, remaining will be forwarded to target script
+    args, forwarded_args = parser.parse_known_args()
+    return args, forwarded_args
+
+
+def main() -> None:
+    """
+    Main function for script demonstrating how to use the NeMo Run executor.
+    """
+    args, forwarded_args = parse_cli_args()
+
+    logger.info(f"Nemo Run Launcher for Llama3 8B Pretraining")
+    logger.info(f"===========================================")
+
+    if not PRETRAIN_SCRIPT_PATH.is_file():
+        logger.error(f"Target pretraining script not found: {PRETRAIN_SCRIPT_PATH}")
+        logger.error(f"Please ensure '{PRETRAIN_SCRIPT_FILENAME}' exists in the same directory as this launcher.")
+        sys.exit(1)
+
+    config_file_to_use = Path(args.config_file).resolve()
+    if not config_file_to_use.is_file():
+        logger.error(f"Specified YAML config file not found: {config_file_to_use}")
+        logger.error(f"Ensure the path passed to --config_file is correct.")
+        sys.exit(1)
+
+    # Build the arguments list for the target script
+    target_script_args = [
+        "--config-file",
+        str(config_file_to_use),
+    ]
+
+    # Add any forwarded arguments (Hydra-style overrides and other target script args)
+    if forwarded_args:
+        target_script_args.extend(forwarded_args)
+        logger.info(f"Forwarding additional arguments to target script: {forwarded_args}")
+
+    logger.info(f"Target script: {PRETRAIN_SCRIPT_PATH}")
+    logger.info(f"Target script arguments: {target_script_args}")
+
+    train_script = run.Script(
+        path=str(PRETRAIN_SCRIPT_PATH),
+        entrypoint="python",
+        args=target_script_args,
+    )
+
+    # Define the executor
+    logger.info(f"Launching locally with TorchRun with nproc_per_node={args.nproc_per_node}")
+    executor = run.LocalExecutor(ntasks_per_node=args.nproc_per_node, launcher="torchrun")
+
+    # Execute the run
+    run.run(train_script, executor=executor, dryrun=args.dryrun)
+
+
+if __name__ == "__main__":
+    main()

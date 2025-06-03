@@ -17,7 +17,7 @@
 
 import dataclasses
 import functools
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from unittest.mock import Mock
 
 import pytest
@@ -26,16 +26,15 @@ from omegaconf import DictConfig, OmegaConf
 
 from nemo_lm.utils.omegaconf_utils import (
     OverridesError,
+    _apply_overrides,
+    _dataclass_to_omegaconf_dict,
+    _is_omegaconf_problematic,
     _restore_excluded_fields,
     _track_excluded_fields,
     _verify_no_callables,
-    apply_overrides_recursively,
-    apply_overrides_with_preservation,
-    dataclass_to_dict_for_omegaconf,
-    is_problematic_callable,
+    apply_overrides,
+    create_omegaconf_dict_config,
     parse_hydra_overrides,
-    safe_create_omegaconf,
-    safe_create_omegaconf_with_preservation,
 )
 
 
@@ -65,6 +64,17 @@ class NestedConfig:
     with_callable: ConfigWithCallable = dataclasses.field(default_factory=ConfigWithCallable)
 
 
+@dataclasses.dataclass
+class ConfigWithOptionalFields:
+    """Config with optional fields for testing None handling."""
+
+    name: str = "test"
+    optional_str: Optional[str] = None  # Should be preserved
+    optional_int: Optional[int] = None  # Should be preserved
+    activation_func: Any = torch.nn.functional.relu  # Should be excluded
+    value: int = 42
+
+
 def dummy_function():
     """Dummy function for testing callable detection."""
     return "dummy"
@@ -75,39 +85,39 @@ def another_function(x: int) -> int:
     return x * 2
 
 
-class TestIsProblematicCallable:
-    """Test is_problematic_callable function."""
+class TestIsOmegaconfProblematic:
+    """Test _is_omegaconf_problematic function."""
 
     def test_non_callable(self):
         """Test with non-callable values."""
-        assert not is_problematic_callable(42)
-        assert not is_problematic_callable("string")
-        assert not is_problematic_callable([1, 2, 3])
-        assert not is_problematic_callable({"key": "value"})
-        assert not is_problematic_callable(None)
+        assert not _is_omegaconf_problematic(42)
+        assert not _is_omegaconf_problematic("string")
+        assert not _is_omegaconf_problematic([1, 2, 3])
+        assert not _is_omegaconf_problematic({"key": "value"})
+        assert not _is_omegaconf_problematic(None)
 
     def test_class_types_allowed(self):
         """Test that class types are allowed (not problematic)."""
-        assert not is_problematic_callable(str)
-        assert not is_problematic_callable(int)
-        assert not is_problematic_callable(SimpleConfig)
-        assert not is_problematic_callable(torch.nn.ReLU)
+        assert not _is_omegaconf_problematic(str)
+        assert not _is_omegaconf_problematic(int)
+        assert not _is_omegaconf_problematic(SimpleConfig)
+        assert not _is_omegaconf_problematic(torch.nn.ReLU)
 
     def test_function_objects_problematic(self):
         """Test that function objects are problematic."""
-        assert is_problematic_callable(dummy_function)
-        assert is_problematic_callable(another_function)
-        assert is_problematic_callable(torch.nn.functional.relu)
+        assert _is_omegaconf_problematic(dummy_function)
+        assert _is_omegaconf_problematic(another_function)
+        assert _is_omegaconf_problematic(torch.nn.functional.relu)
 
     def test_partial_functions_problematic(self):
         """Test that partial functions are problematic."""
         partial_func = functools.partial(another_function, x=5)
-        assert is_problematic_callable(partial_func)
+        assert _is_omegaconf_problematic(partial_func)
 
     def test_lambda_functions_problematic(self):
         """Test that lambda functions are problematic."""
         lambda_func = lambda x: x * 2
-        assert is_problematic_callable(lambda_func)
+        assert _is_omegaconf_problematic(lambda_func)
 
     def test_methods_problematic(self):
         """Test that instance methods are problematic."""
@@ -127,27 +137,27 @@ class TestIsProblematicCallable:
         obj = TestClass()
 
         # Instance methods should be problematic
-        assert is_problematic_callable(obj.instance_method)
+        assert _is_omegaconf_problematic(obj.instance_method)
 
         # Class methods should be problematic (they're bound methods)
-        assert is_problematic_callable(obj.class_method)
+        assert _is_omegaconf_problematic(obj.class_method)
 
         # Static methods should be problematic (they're function objects)
-        assert is_problematic_callable(obj.static_method)
+        assert _is_omegaconf_problematic(obj.static_method)
 
         # But accessing them from the class should behave differently
-        assert is_problematic_callable(TestClass.instance_method)  # unbound method
-        assert is_problematic_callable(TestClass.class_method)  # bound class method
-        assert is_problematic_callable(TestClass.static_method)  # function object
+        assert _is_omegaconf_problematic(TestClass.instance_method)  # unbound method
+        assert _is_omegaconf_problematic(TestClass.class_method)  # bound class method
+        assert _is_omegaconf_problematic(TestClass.static_method)  # function object
 
 
-class TestDataclassToDict:
-    """Test dataclass_to_dict_for_omegaconf function."""
+class TestDataclassToOmegaconfDict:
+    """Test _dataclass_to_omegaconf_dict function."""
 
     def test_simple_dataclass(self):
         """Test conversion of simple dataclass."""
         config = SimpleConfig(name="test", value=100)
-        result = dataclass_to_dict_for_omegaconf(config)
+        result = _dataclass_to_omegaconf_dict(config)
 
         expected = {"name": "test", "value": 100}
         assert result == expected
@@ -155,7 +165,7 @@ class TestDataclassToDict:
     def test_torch_dtype_conversion(self):
         """Test that torch.dtype is converted to string."""
         config = ConfigWithCallable(dtype=torch.float16)
-        result = dataclass_to_dict_for_omegaconf(config)
+        result = _dataclass_to_omegaconf_dict(config)
 
         assert result["dtype"] == "torch.float16"
         assert result["name"] == "test"
@@ -165,7 +175,7 @@ class TestDataclassToDict:
     def test_callable_exclusion(self):
         """Test that callable fields are excluded."""
         config = ConfigWithCallable(activation_func=torch.nn.functional.gelu)
-        result = dataclass_to_dict_for_omegaconf(config)
+        result = _dataclass_to_omegaconf_dict(config)
 
         assert "activation_func" not in result
         assert "name" in result
@@ -174,7 +184,7 @@ class TestDataclassToDict:
     def test_nested_dataclass(self):
         """Test conversion of nested dataclasses."""
         config = NestedConfig()
-        result = dataclass_to_dict_for_omegaconf(config)
+        result = _dataclass_to_omegaconf_dict(config)
 
         assert "simple" in result
         assert "with_callable" in result
@@ -185,7 +195,7 @@ class TestDataclassToDict:
     def test_list_handling(self):
         """Test handling of lists."""
         test_list = [SimpleConfig(name="item1"), SimpleConfig(name="item2")]
-        result = dataclass_to_dict_for_omegaconf(test_list)
+        result = _dataclass_to_omegaconf_dict(test_list)
 
         assert len(result) == 2
         assert result[0]["name"] == "item1"
@@ -194,7 +204,7 @@ class TestDataclassToDict:
     def test_tuple_handling(self):
         """Test handling of tuples."""
         test_tuple = (SimpleConfig(name="item1"), "string", 42)
-        result = dataclass_to_dict_for_omegaconf(test_tuple)
+        result = _dataclass_to_omegaconf_dict(test_tuple)
 
         assert len(result) == 3
         assert result[0]["name"] == "item1"
@@ -204,7 +214,7 @@ class TestDataclassToDict:
     def test_dict_handling(self):
         """Test handling of dictionaries."""
         test_dict = {"config": SimpleConfig(name="test"), "value": 42, "func": dummy_function}  # Should be excluded
-        result = dataclass_to_dict_for_omegaconf(test_dict)
+        result = _dataclass_to_omegaconf_dict(test_dict)
 
         assert "config" in result
         assert "value" in result
@@ -213,14 +223,14 @@ class TestDataclassToDict:
 
     def test_primitive_types(self):
         """Test handling of primitive types."""
-        assert dataclass_to_dict_for_omegaconf(42) == 42
-        assert dataclass_to_dict_for_omegaconf("string") == "string"
-        assert dataclass_to_dict_for_omegaconf(True) is True
-        assert dataclass_to_dict_for_omegaconf(None) is None
+        assert _dataclass_to_omegaconf_dict(42) == 42
+        assert _dataclass_to_omegaconf_dict("string") == "string"
+        assert _dataclass_to_omegaconf_dict(True) is True
+        assert _dataclass_to_omegaconf_dict(None) is None
 
 
-class TestDataclassToDict_ErrorHandling:
-    """Test error handling in dataclass_to_dict_for_omegaconf function."""
+class TestDataclassToOmegaconfDict_ErrorHandling:
+    """Test error handling in _dataclass_to_omegaconf_dict function."""
 
     def test_error_handling_specific_exceptions(self):
         """Test that specific exceptions are caught gracefully."""
@@ -236,7 +246,7 @@ class TestDataclassToDict_ErrorHandling:
         config = ProblematicConfig()
 
         # Should handle AttributeError gracefully and continue processing
-        result = dataclass_to_dict_for_omegaconf(config)
+        result = _dataclass_to_omegaconf_dict(config)
 
         # Should still get the valid field
         assert result["name"] == "test"
@@ -249,16 +259,19 @@ class TestDataclassToDict_ErrorHandling:
         @dataclasses.dataclass
         class BadConfig:
             name: str = "test"
+            explosive_field: str = "boom"
 
-            @property
-            def explosive_property(self):
-                raise ValueError("This should not be caught!")
+            def __getattribute__(self, name):
+                if name == "explosive_field":
+                    raise ValueError("This should not be caught!")
+                return super().__getattribute__(name)
 
         config = BadConfig()
 
-        # ValueError should not be caught and should bubble up
+        # Now when getattr(config, "explosive_field") is called, it will raise ValueError
+        # and this should bubble up through _dataclass_to_omegaconf_dict
         with pytest.raises(ValueError, match="This should not be caught!"):
-            dataclass_to_dict_for_omegaconf(config)
+            _dataclass_to_omegaconf_dict(config)
 
 
 class TestTrackExcludedFields:
@@ -363,45 +376,13 @@ class TestVerifyNoCallables:
         assert not _verify_no_callables(test_list)
 
 
-class TestSafeCreateOmegaconf:
-    """Test safe_create_omegaconf function."""
-
-    def test_simple_config_creation(self):
-        """Test creating OmegaConf from simple dataclass."""
-        config = SimpleConfig()
-        omega_conf = safe_create_omegaconf(config)
-
-        assert isinstance(omega_conf, DictConfig)
-        assert omega_conf.name == "test"
-        assert omega_conf.value == 42
-
-    def test_config_with_exclusions(self):
-        """Test creating OmegaConf with callable exclusions."""
-        config = ConfigWithCallable()
-        omega_conf = safe_create_omegaconf(config)
-
-        assert isinstance(omega_conf, DictConfig)
-        assert omega_conf.name == "test"
-        assert "activation_func" not in omega_conf
-
-    def test_nested_config_creation(self):
-        """Test creating OmegaConf from nested dataclass."""
-        config = NestedConfig()
-        omega_conf = safe_create_omegaconf(config)
-
-        assert isinstance(omega_conf, DictConfig)
-        assert omega_conf.simple.name == "test"
-        assert omega_conf.with_callable.name == "test"
-        assert "activation_func" not in omega_conf.with_callable
-
-
 class TestSafeCreateOmegaconfWithPreservation:
-    """Test safe_create_omegaconf_with_preservation function."""
+    """Test create_omegaconf_dict_config function."""
 
     def test_preservation_tracking(self):
         """Test that callable preservation tracking works."""
         config = ConfigWithCallable()
-        omega_conf, excluded = safe_create_omegaconf_with_preservation(config)
+        omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
         assert len(excluded) > 0
@@ -411,21 +392,21 @@ class TestSafeCreateOmegaconfWithPreservation:
     def test_nested_preservation(self):
         """Test preservation with nested configs."""
         config = NestedConfig()
-        omega_conf, excluded = safe_create_omegaconf_with_preservation(config)
+        omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
         assert "root.with_callable.activation_func" in excluded
 
 
-class TestApplyOverridesRecursively:
-    """Test apply_overrides_recursively function."""
+class TestApplyOverrides:
+    """Test _apply_overrides function."""
 
     def test_simple_override(self):
         """Test applying simple overrides."""
         config = SimpleConfig()
         overrides = {"name": "updated", "value": 100}
 
-        apply_overrides_recursively(config, overrides)
+        _apply_overrides(config, overrides)
 
         assert config.name == "updated"
         assert config.value == 100
@@ -435,7 +416,7 @@ class TestApplyOverridesRecursively:
         config = NestedConfig()
         overrides = {"simple": {"name": "nested_updated", "value": 200}, "with_callable": {"name": "callable_updated"}}
 
-        apply_overrides_recursively(config, overrides)
+        _apply_overrides(config, overrides)
 
         assert config.simple.name == "nested_updated"
         assert config.simple.value == 200
@@ -446,7 +427,7 @@ class TestApplyOverridesRecursively:
         config = ConfigWithCallable()
         overrides = {"dtype": "torch.float16"}
 
-        apply_overrides_recursively(config, overrides)
+        _apply_overrides(config, overrides)
 
         assert config.dtype == torch.float16
 
@@ -456,7 +437,7 @@ class TestApplyOverridesRecursively:
         overrides = {"nonexistent": "value"}
 
         # Should not raise exception, just log warning
-        apply_overrides_recursively(config, overrides)
+        _apply_overrides(config, overrides)
 
         # Original values should be unchanged
         assert config.name == "test"
@@ -464,7 +445,7 @@ class TestApplyOverridesRecursively:
 
 
 class TestApplyOverridesWithPreservation:
-    """Test apply_overrides_with_preservation function."""
+    """Test apply_overrides function."""
 
     def test_preservation_workflow(self):
         """Test complete override workflow with preservation."""
@@ -476,7 +457,7 @@ class TestApplyOverridesWithPreservation:
 
         # Apply overrides
         overrides = {"name": "preserved_test"}
-        apply_overrides_with_preservation(config, overrides, excluded)
+        apply_overrides(config, overrides, excluded)
 
         # Check that overrides were applied and callables restored
         assert config.name == "preserved_test"
@@ -551,7 +532,7 @@ class TestIntegration:
         original_dtype = config.with_callable.dtype
 
         # 2. Convert to OmegaConf with preservation
-        omega_conf, excluded = safe_create_omegaconf_with_preservation(config)
+        omega_conf, excluded = create_omegaconf_dict_config(config)
 
         # Verify initial OmegaConf state
         assert omega_conf.simple.name == "test"
@@ -582,8 +563,7 @@ class TestIntegration:
 
         # 5. Convert back to dict and apply to original config
         final_dict = OmegaConf.to_container(final_conf, resolve=True)
-        assert isinstance(final_dict, dict)
-        apply_overrides_with_preservation(config, final_dict, excluded)
+        apply_overrides(config, final_dict, excluded)
 
         # 6. Verify final results
         assert config.simple.name == "yaml_updated"  # From YAML
@@ -605,7 +585,7 @@ class TestIntegration:
         original_dtype = config.dtype
 
         # Convert to OmegaConf
-        omega_conf = safe_create_omegaconf(config)
+        omega_conf, _ = create_omegaconf_dict_config(config)
 
         # Verify dtype was converted to string
         assert omega_conf.dtype == "torch.float16"
@@ -613,7 +593,7 @@ class TestIntegration:
 
         # Convert back and apply
         config_dict = OmegaConf.to_container(omega_conf, resolve=True)
-        apply_overrides_recursively(config, config_dict)
+        _apply_overrides(config, config_dict)
 
         # Verify dtype was converted back correctly
         assert config.dtype == torch.float16
@@ -625,7 +605,7 @@ class TestIntegration:
         # 1. Create config and convert to OmegaConf
         config = NestedConfig()
         original_func = config.with_callable.activation_func
-        omega_conf, excluded = safe_create_omegaconf_with_preservation(config)
+        omega_conf, excluded = create_omegaconf_dict_config(config)
 
         # 2. Apply Hydra overrides with addition syntax
         cli_overrides = ["simple.value=999", "+new_section.param=added_value", "+new_section.nested.deep=deep_value"]
@@ -648,7 +628,7 @@ class TestIntegration:
         assert final_dict["new_section"]["param"] == "added_value"
         assert final_dict["new_section"]["nested"]["deep"] == "deep_value"
 
-        apply_overrides_with_preservation(config, final_dict, excluded)
+        apply_overrides(config, final_dict, excluded)
 
         # 5. Verify dataclass behavior:
         # - Existing fields are updated
@@ -663,3 +643,75 @@ class TestIntegration:
         assert hasattr(config, "with_callable")
         assert isinstance(config.simple, SimpleConfig)
         assert isinstance(config.with_callable, ConfigWithCallable)
+
+
+class TestNoneHandling:
+    """Test proper handling of None values vs callable exclusions."""
+
+    def test_legitimate_none_values_preserved(self):
+        """Test that legitimate None values are preserved while callables are excluded."""
+        config = ConfigWithOptionalFields()
+
+        # Verify initial state
+        assert config.optional_str is None
+        assert config.optional_int is None
+        assert config.activation_func == torch.nn.functional.relu
+
+        # Convert to OmegaConf
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        # Verify legitimate None values are preserved in OmegaConf
+        assert omega_conf.optional_str is None
+        assert omega_conf.optional_int is None
+        assert omega_conf.name == "test"
+        assert omega_conf.value == 42
+
+        # Verify callable was excluded from OmegaConf
+        assert "activation_func" not in omega_conf
+
+        # Verify callable was tracked for restoration
+        assert "root.activation_func" in excluded
+        assert excluded["root.activation_func"] == torch.nn.functional.relu
+
+    def test_none_values_roundtrip_correctly(self):
+        """Test that None values survive the full conversion roundtrip."""
+        config = ConfigWithOptionalFields()
+        original_func = config.activation_func
+
+        # Convert to OmegaConf with preservation
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        # Apply some overrides but leave None values alone
+        overrides = {"name": "updated", "value": 100}
+        merged_conf = OmegaConf.merge(omega_conf, OmegaConf.create(overrides))
+
+        # Convert back to dict and apply to original config
+        final_dict = OmegaConf.to_container(merged_conf, resolve=True)
+        apply_overrides(config, final_dict, excluded)
+
+        # Verify None values were preserved
+        assert config.optional_str is None
+        assert config.optional_int is None
+
+        # Verify overrides were applied
+        assert config.name == "updated"
+        assert config.value == 100
+
+        # Verify callable was restored
+        assert config.activation_func == original_func
+
+    def test_setting_none_explicitly_works(self):
+        """Test that explicitly setting fields to None works correctly."""
+        config = ConfigWithOptionalFields(name="test", optional_str="initially_set", optional_int=42, value=100)
+
+        # Now set them to None explicitly
+        config.optional_str = None
+        config.optional_int = None
+
+        # Convert and verify None values are preserved
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        assert omega_conf.optional_str is None
+        assert omega_conf.optional_int is None
+        assert omega_conf.name == "test"
+        assert omega_conf.value == 100

@@ -13,38 +13,96 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Llama3 8B Pretraining Script with YAML and CLI Configuration Overrides.
+
+This script provides a flexible way to pretrain Llama3 8B models using NeMo-LM with support for
+both YAML configuration files and command-line overrides using Hydra-style syntax.
+
+Examples:
+    Basic usage with default configuration:
+        $ python pretrain_llama3_8b.py
+
+    Using a custom YAML config file:
+        $ python pretrain_llama3_8b.py --config-file my_custom_config.yaml
+
+    Using CLI overrides only:
+        $ python pretrain_llama3_8b.py model_config.tensor_model_parallel_size=4 train_config.train_iters=100000
+
+    Combining YAML and CLI overrides (CLI takes precedence):
+        $ python pretrain_llama3_8b.py --config-file conf/my_config.yaml \
+        model_config.pipeline_dtype=torch.float16 \
+        train_config.global_batch_size=512
+
+    Adding new parameters with Hydra syntax:
+        $ python pretrain_llama3_8b.py +experiment_name=my_experiment +tags=[experiment,test]
+
+    Nested parameter overrides:
+        $ python pretrain_llama3_8b.py \
+        optimizer_config.lr=0.0001 \
+        scheduler_config.lr_warmup_iters=2000 \
+        checkpoint_config.save_interval=500
+
+    Multiple CLI overrides:
+        $ python pretrain_llama3_8b.py \
+            model_config.tensor_model_parallel_size=8 \
+            model_config.pipeline_model_parallel_size=1 \
+            train_config.train_iters=1000000 \
+            train_config.global_batch_size=1024 \
+            optimizer_config.lr=0.0003 \
+            dataset_config.num_workers=8
+
+Configuration Precedence:
+    1. Base configuration from pretrain_config() recipe
+    2. YAML overrides from --config-file (if provided)
+    3. CLI overrides (highest precedence)
+
+Supported Override Syntax:
+    - Standard assignment: key=value
+    - Nested assignment: section.subsection.key=value  
+    - Addition: +new_key=value
+    - Deletion: ~key_to_remove
+    - Type conversion: Automatic for basic types (int, float, bool, str)
+    - Complex types: torch.dtype, enums, etc. are supported
+"""
+
 import argparse
 import logging
 import os
 import sys
-from typing import List as TypingList
+from pathlib import Path
 from typing import Tuple
 
 from omegaconf import DictConfig, OmegaConf
 
-# It's expected that NeMo-LM is installed or PYTHONPATH is set correctly.
 from nemo_lm.models.utils import forward_step
 from nemo_lm.recipes.llm.llama3_8b import pretrain_config
 from nemo_lm.training.config import ConfigContainer
 from nemo_lm.training.pretrain import megatron_pretrain
-from nemo_lm.utils.omegaconf_utils import (
-    OverridesError,
-    apply_overrides_with_preservation,
-    parse_hydra_overrides,
-    safe_create_omegaconf_with_preservation,
-)
+from nemo_lm.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def parse_cli_args() -> Tuple[argparse.Namespace, TypingList[str]]:
+# Define paths relative to this script's location
+# Assumes this script (pretrain_llama3_8b.py) is in NeMo-LM/examples/llm/llama3_8b/
+# and the config is in a 'conf' subdirectory.
+SCRIPT_DIR: Path = Path(__file__).parent.resolve()
+DEFAULT_CONFIG_FILENAME: str = "llama3_8b_pretrain_override_example.yaml"
+DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
+
+
+def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
         description="Pretrain Llama3 8B model using NeMo-LM with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "--config-file", type=str, default=None, help="Path to the YAML OmegaConf override file. Optional."
+        "--config-file",
+        type=str,
+        default=str(DEFAULT_CONFIG_FILE_PATH),
+        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
@@ -54,7 +112,31 @@ def parse_cli_args() -> Tuple[argparse.Namespace, TypingList[str]]:
 
 
 def main() -> None:
-    """Entry point for the script."""
+    """
+    Entry point for the Llama3 8B pretraining script.
+    
+    This function orchestrates the complete configuration workflow:
+    1. Loads the base configuration from pretrain_config() recipe
+    2. Applies YAML overrides from --config-file (if exists)  
+    3. Applies CLI overrides using Hydra-style syntax
+    4. Starts Megatron pretraining with the final merged configuration
+    
+    Configuration merging preserves callable fields (like activation functions)
+    and handles type conversions automatically.
+    
+    Examples of CLI usage:
+        # Use default config with custom learning rate
+        python pretrain_llama3_8b.py optimizer_config.lr=0.0002
+        
+        # Custom config file with additional overrides  
+        python pretrain_llama3_8b.py --config-file my_config.yaml train_config.train_iters=50000
+        
+        # Multiple overrides for distributed training
+        python pretrain_llama3_8b.py \
+            model_config.tensor_model_parallel_size=4 \
+            model_config.pipeline_model_parallel_size=2 \
+            train_config.global_batch_size=512
+    """
     args, cli_overrides = parse_cli_args()
 
     logger.info("Nemo-LM Llama3 8B Pretraining Script with YAML & CLI Overrides")
@@ -66,7 +148,7 @@ def main() -> None:
     cfg.to_yaml()
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
-    merged_omega_conf, excluded_callables = safe_create_omegaconf_with_preservation(cfg)
+    merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
 
     # Load and merge YAML overrides if a config file is provided
     if args.config_file:
@@ -87,9 +169,8 @@ def main() -> None:
     # Apply the final merged OmegaConf configuration back to the original ConfigContainer
     logger.debug("Applying final merged configuration back to Python ConfigContainer...")
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
-    if isinstance(final_overrides_as_dict, dict):
-        # Apply overrides while preserving excluded callable fields
-        apply_overrides_with_preservation(cfg, final_overrides_as_dict, excluded_callables)
+    # Apply overrides while preserving excluded fields
+    apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
     # Display final configuration
     logger.info("--- Final Merged Configuration ---")

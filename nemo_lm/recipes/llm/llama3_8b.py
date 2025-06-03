@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import os
-from typing import Optional
+from typing import List, Optional
 
 import torch
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
+from nemo_lm.data.utils import get_blend_and_blend_per_split
 from nemo_lm.models.llama import Llama3Config8B
 from nemo_lm.training.config import (
     CheckpointConfig,
@@ -68,6 +69,15 @@ def model_config(
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "default",
+    # Dataset configuration
+    data_paths: Optional[List[str]] = None,
+    data_args_path: Optional[str] = None,
+    train_data_path: Optional[List[str]] = None,
+    valid_data_path: Optional[List[str]] = None,
+    test_data_path: Optional[List[str]] = None,
+    per_split_data_args_path: Optional[str] = None,
+    mock: bool = False,
+    # Model configuration
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_type: Optional[torch.dtype] = None,
@@ -89,6 +99,13 @@ def pretrain_config(
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
+        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
+        data_args_path (Optional[str]): Path to file containing data arguments.
+        train_data_path (Optional[List[str]]): List of training data paths.
+        valid_data_path (Optional[List[str]]): List of validation data paths.
+        test_data_path (Optional[List[str]]): List of test data paths.
+        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
+        mock (bool): Whether to use mock data. If True, ignores data_paths.
         tensor_parallelism (int): Degree of tensor model parallelism.
         pipeline_parallelism (int): Degree of pipeline model parallelism.
         pipeline_parallelism_type (Optional[torch.dtype]): Data type for pipeline parallelism.
@@ -110,6 +127,53 @@ def pretrain_config(
     run_output_dir = os.path.join(base_output_dir, name)
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Dataset configuration logic based on mock vs real data
+    has_any_data_config = any(
+        [data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path]
+    )
+
+    if mock or not has_any_data_config:
+        # Mock data configuration
+        mock = True
+        blend = [1.0]  # Single mock dataset, 100% weight
+        blend_per_split = [[1.0], [1.0], [1.0]]  # Equal weighting for train/val/test
+        split = "1,1,1"  # Equal splits for testing
+        data_path = None  # No real data path needed
+    else:
+        # Real data configuration
+        mock = False
+        blend, blend_per_split = get_blend_and_blend_per_split(
+            data_paths=data_paths,
+            data_args_path=data_args_path,
+            train_data_path=train_data_path,
+            valid_data_path=valid_data_path,
+            test_data_path=test_data_path,
+            per_split_data_args_path=per_split_data_args_path,
+        )
+
+        if blend is None and blend_per_split is None:
+            blend = [1.0]
+            blend_per_split = [[1.0], [1.0], [1.0]]
+            split = "1,1,1"
+            data_path = None
+            mock = True
+        else:
+            split = "9999,8,2"
+            if data_paths is not None:
+                data_path = data_paths
+            elif data_args_path is not None:
+                data_path = data_args_path
+            else:
+                data_path = []
+                if train_data_path:
+                    data_path.extend(train_data_path)
+                if valid_data_path:
+                    data_path.extend(valid_data_path)
+                if test_data_path:
+                    data_path.extend(test_data_path)
+                if per_split_data_args_path:
+                    data_path = per_split_data_args_path
 
     model_cfg = model_config(
         tensor_parallelism=tensor_parallelism,
@@ -173,6 +237,11 @@ def pretrain_config(
             data_sharding=True,
             dataloader_type="single",
             num_workers=1,
+            mock=mock,
+            data_path=data_path,
+            data_blend=blend,
+            data_blend_per_split=blend_per_split,
+            train_val_test_split=split,
         ),
         logger_config=LoggerConfig(
             log_interval=10,

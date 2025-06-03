@@ -29,6 +29,94 @@ logger = logging.getLogger(__name__)
 
 DataclassInstance = TypeVar('DataclassInstance')
 
+# Sentinel object to distinguish between "exclude this field" and "field is legitimately None"
+_EXCLUDE_FIELD = object()
+
+
+def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
+    """Create OmegaConf while tracking excluded fields for later restoration.
+
+    This function combines the conversion to OmegaConf with tracking of excluded
+    callable fields, allowing them to be restored after override processing.
+
+    Args:
+        config_container: The dataclass instance to convert
+
+    Returns:
+        Tuple of (OmegaConf DictConfig, excluded fields dictionary)
+
+    Raises:
+        ValueError: If the conversion fails
+    """
+    logger.debug("Starting safe OmegaConf conversion with callable preservation...")
+
+    # Track all callable fields that will be excluded
+    excluded_callables = _track_excluded_fields(config_container, "root")
+    logger.debug(f"Found {len(excluded_callables)} callable fields to preserve")
+
+    # Convert to OmegaConf (excluding callables)
+    base_dict = _dataclass_to_omegaconf_dict(config_container, "root")
+
+    if base_dict is _EXCLUDE_FIELD:
+        raise ValueError("Root configuration object was excluded (likely a callable)")
+
+    # Verify no callables remain
+    if not _verify_no_callables(base_dict, "root"):
+        raise ValueError("Callable objects found in converted dictionary")
+
+    # Create OmegaConf
+    omega_conf = OmegaConf.create(base_dict)
+
+    return omega_conf, excluded_callables
+
+
+def apply_overrides(
+    config_obj: DataclassInstance, overrides_dict: Dict[str, Any], excluded_fields: Dict[str, Any]
+) -> None:
+    """Apply overrides while preserving excluded callable fields.
+
+    This function first applies the overrides using the standard recursive approach,
+    then restores the callable fields that were excluded during OmegaConf conversion.
+
+    Args:
+        config_obj: The dataclass instance to modify
+        overrides_dict: Dictionary of override values to apply
+        excluded_fields: Dictionary of excluded callable fields to restore
+    """
+    # Apply normal overrides
+    _apply_overrides(config_obj, overrides_dict)
+
+    # Restore excluded fields
+    _restore_excluded_fields(config_obj, excluded_fields)
+
+    logger.debug("Configuration updated with overrides and excluded fields preserved")
+
+
+def parse_hydra_overrides(cfg: DictConfig, overrides: list[str]) -> DictConfig:
+    """Parse and apply Hydra overrides to an OmegaConf config.
+
+    This function uses Hydra's override parser to support advanced override syntax
+    including additions (+), deletions (~), and complex nested operations.
+
+    Args:
+        cfg: OmegaConf config to apply overrides to
+        overrides: List of Hydra override strings
+
+    Returns:
+        Updated config with overrides applied
+
+    Raises:
+        OverridesError: If there's an error parsing or applying overrides
+    """
+    try:
+        OmegaConf.set_struct(cfg, True)
+        parser = OverridesParser.create()
+        parsed = parser.parse_overrides(overrides=overrides)
+        ConfigLoaderImpl._apply_overrides_to_config(overrides=parsed, cfg=cfg)
+        return cfg
+    except Exception as e:
+        raise OverridesError(f"Failed to parse Hydra overrides: {str(e)}") from e
+
 
 class OverridesError(Exception):
     """Custom exception for Hydra override parsing errors."""
@@ -36,7 +124,7 @@ class OverridesError(Exception):
     pass
 
 
-def is_problematic_callable(val: Any) -> bool:
+def _is_omegaconf_problematic(val: Any) -> bool:
     """Check if a value is a callable that OmegaConf cannot handle.
 
     OmegaConf cannot serialize function objects, methods, or partial functions.
@@ -63,7 +151,7 @@ def is_problematic_callable(val: Any) -> bool:
     )
 
 
-def dataclass_to_dict_for_omegaconf(val_to_convert: Any, path: str = "") -> Any:
+def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
     """Recursively convert a dataclass instance to a dictionary suitable for OmegaConf.create.
 
     This function completely excludes problematic callable objects to prevent OmegaConf errors.
@@ -75,19 +163,19 @@ def dataclass_to_dict_for_omegaconf(val_to_convert: Any, path: str = "") -> Any:
         path: Current path for debugging (e.g., "model_config.activation_func")
 
     Returns:
-        Converted value suitable for OmegaConf, or None for excluded callables
+        Converted value suitable for OmegaConf, or _EXCLUDE_FIELD for excluded callables
     """
     current_path = path
 
-    # Handle torch.dtype - convert to string
+    # Explicitly handle torch.dtype - convert to string
     if isinstance(val_to_convert, torch.dtype):
         logger.debug(f"Converting torch.dtype at {current_path}: {val_to_convert}")
         return str(val_to_convert)
 
-    # Handle problematic callables - EXCLUDE them completely
-    elif is_problematic_callable(val_to_convert):
-        logger.info(f"Excluding callable at {current_path}: {type(val_to_convert)} - {val_to_convert}")
-        return None  # Signal to exclude this field
+    # Handle callables - exclude them completely
+    elif _is_omegaconf_problematic(val_to_convert):
+        logger.debug(f"Excluding callable at {current_path}: {type(val_to_convert)} - {val_to_convert}")
+        return _EXCLUDE_FIELD
 
     # Handle dataclasses
     elif dataclasses.is_dataclass(val_to_convert) and not isinstance(val_to_convert, type):
@@ -98,10 +186,10 @@ def dataclass_to_dict_for_omegaconf(val_to_convert: Any, path: str = "") -> Any:
 
             try:
                 field_value = getattr(val_to_convert, field_name)
-                converted_value = dataclass_to_dict_for_omegaconf(field_value, field_path)
+                converted_value = _dataclass_to_omegaconf_dict(field_value, field_path)
 
-                # Only include non-None values (excludes callables)
-                if converted_value is not None:
+                # Only exclude fields marked with sentinel (not legitimate None values)
+                if converted_value is not _EXCLUDE_FIELD:
                     res[field_name] = converted_value
                 else:
                     logger.debug(f"Excluded field {field_path}")
@@ -118,10 +206,10 @@ def dataclass_to_dict_for_omegaconf(val_to_convert: Any, path: str = "") -> Any:
         result = []
         for i, item in enumerate(val_to_convert):
             item_path = f"{current_path}[{i}]"
-            converted_item = dataclass_to_dict_for_omegaconf(item, item_path)
+            converted_item = _dataclass_to_omegaconf_dict(item, item_path)
 
-            # Only include non-None values
-            if converted_item is not None:
+            # Only exclude items marked with sentinel (not legitimate None values)
+            if converted_item is not _EXCLUDE_FIELD:
                 result.append(converted_item)
 
         return result
@@ -131,10 +219,10 @@ def dataclass_to_dict_for_omegaconf(val_to_convert: Any, path: str = "") -> Any:
         converted_items = []
         for i, item in enumerate(val_to_convert):
             item_path = f"{current_path}[{i}]"
-            converted_item = dataclass_to_dict_for_omegaconf(item, item_path)
+            converted_item = _dataclass_to_omegaconf_dict(item, item_path)
 
-            # Only include non-None values
-            if converted_item is not None:
+            # Only exclude items marked with sentinel (not legitimate None values)
+            if converted_item is not _EXCLUDE_FIELD:
                 converted_items.append(converted_item)
 
         return tuple(converted_items)
@@ -144,15 +232,15 @@ def dataclass_to_dict_for_omegaconf(val_to_convert: Any, path: str = "") -> Any:
         result = {}
         for key, value in val_to_convert.items():
             key_path = f"{current_path}.{key}" if current_path else str(key)
-            converted_value = dataclass_to_dict_for_omegaconf(value, key_path)
+            converted_value = _dataclass_to_omegaconf_dict(value, key_path)
 
-            # Only include non-None values
-            if converted_value is not None:
+            # Only exclude values marked with sentinel (not legitimate None values)
+            if converted_value is not _EXCLUDE_FIELD:
                 result[key] = converted_value
 
         return result
 
-    # Return primitive types as-is
+    # Return primitive types as-is (including legitimate None values)
     else:
         return val_to_convert
 
@@ -179,7 +267,7 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
             field_path = f"{path}.{field_name}" if path else field_name
             field_value = getattr(obj, field_name)
 
-            if is_problematic_callable(field_value):
+            if _is_omegaconf_problematic(field_value):
                 excluded_fields[field_path] = field_value
                 logger.debug(f"Tracking excluded callable: {field_path}")
             elif dataclasses.is_dataclass(field_value):
@@ -187,7 +275,7 @@ def _track_excluded_fields(obj: Any, path: str = "") -> Dict[str, Any]:
                 excluded_fields.update(nested_excluded)
             elif isinstance(field_value, dict):
                 for key, value in field_value.items():
-                    if is_problematic_callable(value):
+                    if _is_omegaconf_problematic(value):
                         excluded_fields[f"{field_path}.{key}"] = value
 
     return excluded_fields
@@ -239,7 +327,7 @@ def _verify_no_callables(obj: Any, path: str = "") -> bool:
     Returns:
         True if no problematic callables are found, False otherwise
     """
-    if is_problematic_callable(obj):
+    if _is_omegaconf_problematic(obj):
         logger.error(f"Found problematic callable at {path}: {obj}")
         return False
 
@@ -258,104 +346,7 @@ def _verify_no_callables(obj: Any, path: str = "") -> bool:
     return True
 
 
-def safe_create_omegaconf(config_container: Any) -> DictConfig:
-    """Safely create OmegaConf from dataclass, with comprehensive error handling.
-
-    This function converts a dataclass to OmegaConf while excluding problematic
-    callable fields. It provides detailed error reporting and debugging information
-    if the conversion fails.
-
-    Args:
-        config_container: The dataclass instance to convert
-
-    Returns:
-        OmegaConf DictConfig created from the input dataclass
-
-    Raises:
-        ValueError: If the conversion fails or problematic callables are found
-    """
-    logger.info("Starting safe OmegaConf conversion...")
-
-    # Step 1: Convert dataclass to dictionary
-    logger.info("Converting dataclass to dictionary (excluding callables)...")
-    base_dict = dataclass_to_dict_for_omegaconf(config_container, "root")
-
-    if base_dict is None:
-        raise ValueError("Root configuration object was excluded (likely a callable)")
-
-    # Step 2: Verify no callables remain
-    logger.info("Verifying no problematic callables remain...")
-    if not _verify_no_callables(base_dict, "root"):
-        raise ValueError("Callable objects found in converted dictionary")
-
-    # Step 3: Create OmegaConf
-    logger.info("Creating OmegaConf from clean dictionary...")
-    try:
-        omega_conf = OmegaConf.create(base_dict)
-        logger.info("✓ Successfully created OmegaConf configuration")
-        return omega_conf
-
-    except Exception as e:
-        logger.error(f"Failed to create OmegaConf even after cleaning: {e}")
-
-        # Additional debugging: try to identify the exact problematic field
-        if hasattr(e, 'full_key'):
-            logger.error(f"Problematic key: {e.full_key}")
-
-        # Try creating smaller pieces to isolate the issue
-        logger.info("Attempting to isolate problematic section...")
-        if isinstance(base_dict, dict):
-            for key, value in base_dict.items():
-                try:
-                    test_dict = {key: value}
-                    test_omega = OmegaConf.create(test_dict)
-                    logger.info(f"  ✓ Section '{key}' is OK")
-                except Exception as section_error:
-                    logger.error(f"  ✗ Section '{key}' failed: {section_error}")
-                    if hasattr(section_error, 'full_key'):
-                        logger.error(f"    Full key: {section_error.full_key}")
-
-        raise
-
-
-def safe_create_omegaconf_with_preservation(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
-    """Create OmegaConf while tracking excluded callables for later restoration.
-
-    This function combines the conversion to OmegaConf with tracking of excluded
-    callable fields, allowing them to be restored after override processing.
-
-    Args:
-        config_container: The dataclass instance to convert
-
-    Returns:
-        Tuple of (OmegaConf DictConfig, excluded callables dictionary)
-
-    Raises:
-        ValueError: If the conversion fails
-    """
-    logger.info("Starting safe OmegaConf conversion with callable preservation...")
-
-    # Step 1: Track all callable fields that will be excluded
-    excluded_callables = _track_excluded_fields(config_container, "root")
-    logger.info(f"Found {len(excluded_callables)} callable fields to preserve")
-
-    # Step 2: Convert to OmegaConf (excluding callables)
-    base_dict = dataclass_to_dict_for_omegaconf(config_container, "root")
-
-    if base_dict is None:
-        raise ValueError("Root configuration object was excluded (likely a callable)")
-
-    # Step 3: Verify no callables remain
-    if not _verify_no_callables(base_dict, "root"):
-        raise ValueError("Callable objects found in converted dictionary")
-
-    # Step 4: Create OmegaConf
-    omega_conf = OmegaConf.create(base_dict)
-
-    return omega_conf, excluded_callables
-
-
-def apply_overrides_recursively(config_obj: DataclassInstance, overrides_dict: Dict[str, Any]) -> None:
+def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, Any]) -> None:
     """Recursively apply overrides from a Python dictionary to a dataclass instance.
 
     This function traverses nested dataclass structures and applies override values
@@ -379,7 +370,7 @@ def apply_overrides_recursively(config_obj: DataclassInstance, overrides_dict: D
         current_attr: Any = getattr(config_obj, key)
 
         if isinstance(value, dict) and dataclasses.is_dataclass(current_attr) and not isinstance(current_attr, type):
-            apply_overrides_recursively(current_attr, value)
+            _apply_overrides(current_attr, value)
         else:
             try:
                 # Handle special case conversions if needed
@@ -400,51 +391,3 @@ def apply_overrides_recursively(config_obj: DataclassInstance, overrides_dict: D
                 logger.warning(
                     f"Could not set attribute {type(config_obj).__name__}.{key} to value '{value}'. Error: {e}"
                 )
-
-
-def apply_overrides_with_preservation(
-    config_obj: DataclassInstance, overrides_dict: Dict[str, Any], excluded_callables: Dict[str, Any]
-) -> None:
-    """Apply overrides while preserving excluded callable fields.
-
-    This function first applies the overrides using the standard recursive approach,
-    then restores the callable fields that were excluded during OmegaConf conversion.
-
-    Args:
-        config_obj: The dataclass instance to modify
-        overrides_dict: Dictionary of override values to apply
-        excluded_callables: Dictionary of excluded callable fields to restore
-    """
-    # Step 1: Apply normal overrides
-    apply_overrides_recursively(config_obj, overrides_dict)
-
-    # Step 2: Restore excluded callable fields
-    _restore_excluded_fields(config_obj, excluded_callables)
-
-    logger.info("Configuration updated with overrides and callable fields preserved")
-
-
-def parse_hydra_overrides(cfg: DictConfig, overrides: list[str]) -> DictConfig:
-    """Parse and apply Hydra overrides to an OmegaConf config.
-
-    This function uses Hydra's override parser to support advanced override syntax
-    including additions (+), deletions (~), and complex nested operations.
-
-    Args:
-        cfg: OmegaConf config to apply overrides to
-        overrides: List of Hydra override strings
-
-    Returns:
-        Updated config with overrides applied
-
-    Raises:
-        OverridesError: If there's an error parsing or applying overrides
-    """
-    try:
-        OmegaConf.set_struct(cfg, True)
-        parser = OverridesParser.create()
-        parsed = parser.parse_overrides(overrides=overrides)
-        ConfigLoaderImpl._apply_overrides_to_config(overrides=parsed, cfg=cfg)
-        return cfg
-    except Exception as e:
-        raise OverridesError(f"Failed to parse Hydra overrides: {str(e)}") from e
