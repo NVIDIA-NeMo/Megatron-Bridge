@@ -22,6 +22,7 @@ model_config:
   tensor_model_parallel_size: 2
   pipeline_model_parallel_size: 2
   context_parallel_size: 1
+  pipeline_dtype: torch.bfloat16
 
 train_config:
   train_iters: 500000

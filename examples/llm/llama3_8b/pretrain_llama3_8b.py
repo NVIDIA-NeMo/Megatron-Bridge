@@ -62,6 +62,8 @@ def main() -> None:
 
     # Load base configuration from the recipe as a Python dataclass
     cfg: ConfigContainer = pretrain_config()
+    logger.info(f"Loaded base configuration")
+    cfg.to_yaml()
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_callables = safe_create_omegaconf_with_preservation(cfg)
@@ -80,7 +82,7 @@ def main() -> None:
     if cli_overrides:
         logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
         merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
-        logger.debug("✓ Hydra-style command-line overrides applied successfully.")
+        logger.debug("Hydra-style command-line overrides applied successfully.")
 
     # Apply the final merged OmegaConf configuration back to the original ConfigContainer
     logger.debug("Applying final merged configuration back to Python ConfigContainer...")
@@ -94,7 +96,7 @@ def main() -> None:
     cfg.to_yaml()
     logger.info("----------------------------------")
 
-    Start training
+    # Start training
     logger.debug("Starting Megatron pretraining...")
     megatron_pretrain(config=cfg, forward_step_func=forward_step)
 
