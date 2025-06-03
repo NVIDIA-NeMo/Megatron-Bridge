@@ -242,6 +242,7 @@ class TestDataclassToOmegaconfDict_ErrorHandling:
         @dataclasses.dataclass
         class ProblematicConfig:
             """Problematic config for testing."""
+
             name: str = "test"
 
             @property
