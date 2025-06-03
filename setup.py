@@ -68,25 +68,11 @@ install_requires = req_file("requirements.txt")
 extras_require = {
     # User packages
     'test': req_file("requirements_test.txt"),
-    'common': req_file('requirements_common.txt'),
-    'nlp': req_file("requirements_nlp.txt"),
+    'docs': req_file("requirements_docs.txt")
 }
 
 
 extras_require['all'] = list(chain(extras_require.values()))
-extras_require['test'] = list(
-    chain(
-        extras_require['test'],
-        extras_require['common'],
-    )
-)
-extras_require['nlp'] = list(
-    chain(
-        extras_require['nlp'],
-        extras_require['common'],
-    )
-)
-extras_require['llm'] = extras_require['nlp']
 
 
 ###############################################################################
