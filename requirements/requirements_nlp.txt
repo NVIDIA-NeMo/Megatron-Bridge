@@ -1,5 +1,0 @@
-megatron_core
-numpy
-nvidia-modelopt[torch]>=0.25.0,<=0.29.0 ; platform_system != 'Darwin'
-nvidia-resiliency-ext>=0.3.0,<1.0.0; platform_system != 'Darwin'
-tiktoken==0.7.0
