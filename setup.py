@@ -68,10 +68,8 @@ install_requires = req_file("requirements.txt")
 extras_require = {
     # User packages
     'test': req_file("requirements_test.txt"),
-    'run': req_file("requirements_run.txt"),
     'common': req_file('requirements_common.txt'),
     'nlp': req_file("requirements_nlp.txt"),
-    'multimodal': req_file("requirements_multimodal.txt"),
 }
 
 
@@ -89,13 +87,6 @@ extras_require['nlp'] = list(
     )
 )
 extras_require['llm'] = extras_require['nlp']
-extras_require['multimodal'] = list(
-    chain(
-        extras_require['multimodal'],
-        extras_require['nlp'],
-        extras_require['common'],
-    )
-)
 
 
 ###############################################################################

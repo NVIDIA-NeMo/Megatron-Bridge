@@ -1,12 +1,6 @@
-boto3
-Jinja2
-latexcodec
-numpy
-pydata-sphinx-theme
-Sphinx
-sphinx-book-theme
+sphinx
+sphinx-autobuild
+sphinx-autodoc2
 sphinx-copybutton
-sphinxcontrib-bibtex
-sphinxext-opengraph
-urllib3
-wrapt
+myst_parser
+nvidia-sphinx-theme
