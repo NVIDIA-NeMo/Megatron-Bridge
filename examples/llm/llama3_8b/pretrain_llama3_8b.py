@@ -14,99 +14,92 @@
 # limitations under the License.
 
 import argparse
-import dataclasses
 import logging
 import os
 import sys
-from typing import Any, Dict, TypeVar
+from typing import List as TypingList, Tuple
 
 from omegaconf import DictConfig, OmegaConf
 
+# It's expected that NeMo-LM is installed or PYTHONPATH is set correctly.
 from nemo_lm.models.utils import forward_step
 from nemo_lm.recipes.llm.llama3_8b import pretrain_config
 from nemo_lm.training.config import ConfigContainer
 from nemo_lm.training.pretrain import megatron_pretrain
+from nemo_lm.utils.omegaconf_utils import (
+    OverridesError,
+    apply_overrides_with_preservation,
+    parse_hydra_overrides,
+    safe_create_omegaconf_with_preservation,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-DataclassInstance = TypeVar('DataclassInstance')
 
+def parse_cli_args() -> Tuple[argparse.Namespace, TypingList[str]]:
+    """Parse command line arguments, separating known script args from OmegaConf overrides."""
+    parser = argparse.ArgumentParser(
+        description="Pretrain Llama3 8B model using NeMo-LM with YAML and CLI overrides",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    parser.add_argument(
+        "--config-file", type=str, default=None, help="Path to the YAML OmegaConf override file. Optional."
+    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    # Add other script-specific arguments here if any in the future
 
-def apply_overrides_recursively(config_obj: DataclassInstance, overrides_dict: Dict[str, Any]) -> None:
-    """
-    Recursively applies overrides from a dictionary to a Python object (typically a dataclass instance).
-    """
-    if not dataclasses.is_dataclass(config_obj):
-        return
-
-    for key, value in overrides_dict.items():
-        if not hasattr(config_obj, key):
-            logger.warning(
-                f"Key '{key}' in overrides not found in config object {type(config_obj).__name__}. Skipping."
-            )
-            continue
-
-        current_attr: Any = getattr(config_obj, key)
-
-        if isinstance(value, dict) and dataclasses.is_dataclass(current_attr):
-            apply_overrides_recursively(current_attr, value)
-        else:
-            try:
-                setattr(config_obj, key, value)
-            except Exception as e:
-                logger.warning(
-                    f"Could not set attribute {type(config_obj).__name__}.{key} to value {value}. Error: {e}"
-                )
+    # Parse known args for the script, remaining will be treated as overrides
+    args, cli_dotlist_overrides = parser.parse_known_args()
+    return args, cli_dotlist_overrides
 
 
 def main() -> None:
     """Entry point for the script."""
-    parser = argparse.ArgumentParser(description="Pretrain Llama3 8B model using NeMo-LM")
-    parser.add_argument(
-        "--config-file",
-        type=str,
-        required=True,
-        help="Path to the YAML OmegaConf override file (e.g., conf/llama3_8b_pretrain_override.yaml).",
-    )
+    args, cli_overrides = parse_cli_args()
 
-    args: argparse.Namespace = parser.parse_args()
+    logger.info("Nemo-LM Llama3 8B Pretraining Script with YAML & CLI Overrides")
+    logger.info("------------------------------------------------------------------")
 
-    logger.info("Nemo-LM Llama3 8B Pretraining Script")
-    logger.info("------------------------------------")
+    # Load base configuration from the recipe as a Python dataclass
+    cfg: ConfigContainer = pretrain_config()
 
-    # 1. Load base configuration from the recipe - this is our primary Python object
-    final_cfg_container: ConfigContainer = pretrain_config()
+    # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
+    merged_omega_conf, excluded_callables = safe_create_omegaconf_with_preservation(cfg)
 
-    # 2. Load YAML overrides into an OmegaConf dictionary
-    logger.info(f"Loading overrides from YAML file: {args.config_file}")
-    if not os.path.exists(args.config_file):
-        logger.error(f"Override YAML file not found: {args.config_file}")
-        sys.exit(1)
+    # Load and merge YAML overrides if a config file is provided
+    if args.config_file:
+        logger.debug(f"Loading YAML overrides from: {args.config_file}")
+        if not os.path.exists(args.config_file):
+            logger.error(f"Override YAML file not found: {args.config_file}")
+            sys.exit(1)
+        yaml_overrides_omega = OmegaConf.load(args.config_file)
+        merged_omega_conf = OmegaConf.merge(merged_omega_conf, yaml_overrides_omega)
+        logger.debug("YAML overrides merged successfully.")
 
-    overrides_py_dict: Dict[str, Any]
-    try:
-        yaml_overrides_omega: DictConfig = OmegaConf.load(args.config_file)
-        overrides_py_dict = OmegaConf.to_container(yaml_overrides_omega, resolve=True)
-    except Exception as e:
-        logger.exception(f"Failed to load or convert YAML override file '{args.config_file}': {e}")
-        sys.exit(1)
+    # Apply command-line overrides using Hydra-style parsing
+    if cli_overrides:
+        logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
+        merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
+        logger.debug("✓ Hydra-style command-line overrides applied successfully.")
 
-    # 3. Apply overrides directly to the Python config object (final_cfg_container)
-    logger.info("Applying overrides to the configuration object...")
-    if isinstance(overrides_py_dict, dict):
-        apply_overrides_recursively(final_cfg_container, overrides_py_dict)
-    else:
-        logger.warning(
-            f"Overrides file '{args.config_file}' did not result in a dictionary. Skipping override application."
-        )
+    # Apply the final merged OmegaConf configuration back to the original ConfigContainer
+    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
+    final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
+    if isinstance(final_overrides_as_dict, dict):
+        # Apply overrides while preserving excluded callable fields
+        apply_overrides_with_preservation(cfg, final_overrides_as_dict, excluded_callables)
 
-    # For debugging the final configuration:
-    logger.info("--- Final Merged Configuration (YAML output of Python object) ---")
-    final_cfg_container.to_yaml()
-    logger.info("-----------------------------------------------------------------")
+    # 7. Display final configuration
+    logger.info("--- Final Merged Configuration ---")
+    cfg.to_yaml()
+    logger.info("----------------------------------")
 
-    logger.info("Starting Megatron pretraining...")
-    megatron_pretrain(config=final_cfg_container, forward_step_func=forward_step)
+    # Start training
+    # logger.debug("Starting Megatron pretraining...")
+    # megatron_pretrain(
+    #     config=cfg,
+    #     forward_step_func=forward_step
+    # )
 
 
 if __name__ == "__main__":
