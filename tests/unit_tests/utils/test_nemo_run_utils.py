@@ -16,25 +16,43 @@
 """Tests for nemo_run_utils module."""
 
 import dataclasses
+import enum
 import functools
 from unittest.mock import Mock, patch
 
-import pytest
-from megatron.core.optimizer import OptimizerConfig
 import nemo_run as run
+import pytest
 import torch.nn.init as init
+from megatron.core.optimizer import OptimizerConfig
 
 from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.training.config import (
+    CheckpointConfig,
     ConfigContainer,
-    TrainingConfig,
     GPTDatasetConfig,
     LoggerConfig,
-    TokenizerConfig,
-    CheckpointConfig,
     SchedulerConfig,
+    TokenizerConfig,
+    TrainingConfig,
 )
 from nemo_lm.utils.nemo_run_utils import prepare_config_for_nemo_run
+
+
+# Test enums for enum handling tests
+class MockAttnBackend(enum.Enum):
+    """Mock attention backend enum for testing."""
+
+    AUTO = 5
+    FUSED = 1
+    FLASH = 2
+
+
+class MockPrecision(enum.Enum):
+    """Mock precision enum for testing."""
+
+    FP16 = "fp16"
+    FP32 = "fp32"
+    BF16 = "bf16"
 
 
 # Test dataclasses and utilities
@@ -57,6 +75,16 @@ class MockModelConfig:
     output_layer_init_method: any = None
     bias_init_method: any = None
     weight_init_method: any = None
+    attn_backend: any = None
+    attention_backend: any = None
+
+
+@dataclasses.dataclass
+class MockTrainConfig:
+    """Mock train config for testing."""
+
+    precision: any = None
+    backend: any = None
 
 
 @dataclasses.dataclass
@@ -64,6 +92,7 @@ class MockConfigContainer:
     """Mock config container for testing."""
 
     model_config: MockModelConfig = dataclasses.field(default_factory=MockModelConfig)
+    train_config: MockTrainConfig = dataclasses.field(default_factory=MockTrainConfig)
 
 
 class TestPrepareConfigForNemoRun:
@@ -95,7 +124,7 @@ class TestPrepareConfigForNemoRun:
 
         # Should wrap the partial with run.Partial
         assert isinstance(result.model_config.init_method, run.Partial)
-        assert result.model_config.init_method._target_ == dummy_init_function
+        assert result.model_config.init_method.__fn_or_cls__ == dummy_init_function
 
         # Verify the original arguments are preserved
         assert result.model_config.init_method.mean == 0.0
@@ -113,11 +142,36 @@ class TestPrepareConfigForNemoRun:
 
         # Should wrap the partial with run.Partial
         assert isinstance(result.model_config.output_layer_init_method, run.Partial)
-        assert result.model_config.output_layer_init_method._target_ == dummy_init_function
+        assert result.model_config.output_layer_init_method.__fn_or_cls__ == dummy_init_function
 
         # Verify the original arguments are preserved
         assert result.model_config.output_layer_init_method.mean == 0.0
         assert result.model_config.output_layer_init_method.std == 0.00125
+
+    def test_enum_conversion_model_config(self):
+        """Test that enum objects in model config are converted to values."""
+        # Create a config with enum objects
+        model_config = MockModelConfig(attn_backend=MockAttnBackend.AUTO, attention_backend=MockAttnBackend.FLASH)
+        config = MockConfigContainer(model_config=model_config)
+
+        # Process the config
+        result = prepare_config_for_nemo_run(config)
+
+        # Enums should be converted to their values
+        assert result.model_config.attn_backend == 5  # MockAttnBackend.AUTO.value
+        assert result.model_config.attention_backend == 2  # MockAttnBackend.FLASH.value
+
+    def test_enum_conversion_train_config(self):
+        """Test that enum objects in train config are converted to values."""
+        # Create a config with enum objects
+        train_config = MockTrainConfig(precision=MockPrecision.FP16)
+        config = MockConfigContainer(train_config=train_config)
+
+        # Process the config
+        result = prepare_config_for_nemo_run(config)
+
+        # Enums should be converted to their values
+        assert result.train_config.precision == "fp16"  # MockPrecision.FP16.value
 
     def test_multiple_partial_objects(self):
         """Test that multiple functools.partial objects are all wrapped."""
@@ -140,15 +194,34 @@ class TestPrepareConfigForNemoRun:
         assert isinstance(result.model_config.bias_init_method, run.Partial)
 
         # Verify correct targets
-        assert result.model_config.init_method._target_ == dummy_init_function
-        assert result.model_config.output_layer_init_method._target_ == another_init_function
-        assert result.model_config.bias_init_method._target_ == init.constant_
+        assert result.model_config.init_method.__fn_or_cls__ == dummy_init_function
+        assert result.model_config.output_layer_init_method.__fn_or_cls__ == another_init_function
+        assert result.model_config.bias_init_method.__fn_or_cls__ == init.constant_
 
         # Verify arguments are preserved
         assert result.model_config.init_method.mean == 0.0
         assert result.model_config.init_method.std == 0.01
         assert result.model_config.output_layer_init_method.gain == 1.5
         assert result.model_config.bias_init_method.val == 0.0
+
+    def test_mixed_partial_and_enum_objects(self):
+        """Test handling when config has both partials and enums."""
+        # Create a config with both partials and enums
+        init_partial = functools.partial(dummy_init_function, mean=0.0, std=0.01)
+        model_config = MockModelConfig(init_method=init_partial, attn_backend=MockAttnBackend.FUSED)
+        train_config = MockTrainConfig(precision=MockPrecision.BF16)
+        config = MockConfigContainer(model_config=model_config, train_config=train_config)
+
+        # Process the config
+        result = prepare_config_for_nemo_run(config)
+
+        # Partial should be wrapped
+        assert isinstance(result.model_config.init_method, run.Partial)
+        assert result.model_config.init_method.__fn_or_cls__ == dummy_init_function
+
+        # Enums should be converted
+        assert result.model_config.attn_backend == 1  # MockAttnBackend.FUSED.value
+        assert result.train_config.precision == "bf16"  # MockPrecision.BF16.value
 
     def test_mixed_partial_and_non_partial(self):
         """Test handling when some fields are partials and others are not."""
@@ -167,23 +240,29 @@ class TestPrepareConfigForNemoRun:
         assert result.model_config.output_layer_init_method == regular_function  # Unchanged
 
         # Verify the partial wrapping
-        assert result.model_config.init_method._target_ == dummy_init_function
+        assert result.model_config.init_method.__fn_or_cls__ == dummy_init_function
 
     def test_with_real_gpt_config(self):
         """Test with a real GPTConfig to ensure compatibility."""
         # Import actual configs for realistic testing
-        from nemo_lm.recipes.llm.llama3_8b import get_llama3_8b_model_config
+        from nemo_lm.recipes.llm.llama3_8b import model_config
 
         # Get a real model config
-        model_config = get_llama3_8b_model_config()
+        model_cfg = model_config()
 
         # Create a minimal ConfigContainer with required fields
         config = ConfigContainer(
-            model_config=model_config,
+            model_config=model_cfg,
             train_config=TrainingConfig(micro_batch_size=1, global_batch_size=1, train_iters=10),
             optimizer_config=OptimizerConfig(),
             scheduler_config=SchedulerConfig(),
-            dataset_config=GPTDatasetConfig(seq_length=2048, random_seed=42, data_path=[]),
+            dataset_config=GPTDatasetConfig(
+                sequence_length=2048,
+                random_seed=42,
+                reset_position_ids=False,
+                reset_attention_mask=False,
+                eod_mask_loss=False,
+            ),
             logger_config=LoggerConfig(),
             tokenizer_config=TokenizerConfig(),
             checkpoint_config=CheckpointConfig(),
@@ -200,10 +279,10 @@ class TestPrepareConfigForNemoRun:
         if hasattr(result.model_config, 'init_method') and result.model_config.init_method is not None:
             # If it was a partial, it should now be a run.Partial
             if isinstance(result.model_config.init_method, run.Partial):
-                assert hasattr(result.model_config.init_method, '_target_')
+                assert hasattr(result.model_config.init_method, '__fn_or_cls__')
 
-    def test_logging_output(self, caplog):
-        """Test that the function logs which fields were wrapped."""
+    def test_logging_output_partials(self, caplog):
+        """Test that the function logs which partial fields were wrapped."""
         import logging
 
         # Create a config with functools.partial objects
@@ -222,11 +301,27 @@ class TestPrepareConfigForNemoRun:
         assert "model_config.init_method" in caplog.text
         assert "model_config.output_layer_init_method" in caplog.text
 
-    def test_no_logging_when_no_partials(self, caplog):
-        """Test that no logging occurs when there are no partials to wrap."""
+    def test_logging_output_enums(self, caplog):
+        """Test that the function logs which enum fields were converted."""
         import logging
 
-        # Create a config without any functools.partial objects
+        # Create a config with enum objects
+        model_config = MockModelConfig(attn_backend=MockAttnBackend.AUTO)
+        train_config = MockTrainConfig(precision=MockPrecision.FP32)
+        config = MockConfigContainer(model_config=model_config, train_config=train_config)
+
+        # Process the config with logging
+        with caplog.at_level(logging.INFO):
+            prepare_config_for_nemo_run(config)
+
+        # Should log which enum fields were fixed
+        assert "Fixed YAML serialization for enum fields" in caplog.text
+
+    def test_no_logging_when_no_partials_or_enums(self, caplog):
+        """Test that no logging occurs when there are no partials or enums to process."""
+        import logging
+
+        # Create a config without any functools.partial objects or enums
         model_config = MockModelConfig()
         config = MockConfigContainer(model_config=model_config)
 
@@ -234,8 +329,9 @@ class TestPrepareConfigForNemoRun:
         with caplog.at_level(logging.INFO):
             prepare_config_for_nemo_run(config)
 
-        # Should not log anything about wrapping
+        # Should not log anything about wrapping or fixing
         assert "Wrapped the following fields" not in caplog.text
+        assert "Fixed YAML serialization" not in caplog.text
 
     def test_preserves_partial_args_and_kwargs(self):
         """Test that both args and kwargs of functools.partial are preserved."""
@@ -259,7 +355,7 @@ class TestPrepareConfigForNemoRun:
 
         # Verify all arguments are preserved
         wrapped_partial = result.model_config.init_method
-        assert wrapped_partial._target_ == complex_init_function
+        assert wrapped_partial.__fn_or_cls__ == complex_init_function
         assert wrapped_partial.kwarg1 == "keyword_arg1"
         assert wrapped_partial.kwarg2 == "keyword_arg2"
 
@@ -281,6 +377,26 @@ class TestPrepareConfigForNemoRun:
         result = prepare_config_for_nemo_run(config)
         assert result is config
 
+    def test_enum_conversion_preserves_non_enum_values(self):
+        """Test that non-enum values are left unchanged during enum processing."""
+        # Create a config with mixed types
+        model_config = MockModelConfig(
+            attn_backend=MockAttnBackend.AUTO,  # Enum - should be converted
+            attention_backend="manual_string",  # String - should be unchanged
+            hidden_size=1024,  # Int - should be unchanged
+        )
+        config = MockConfigContainer(model_config=model_config)
+
+        # Process the config
+        result = prepare_config_for_nemo_run(config)
+
+        # Enum should be converted
+        assert result.model_config.attn_backend == 5  # MockAttnBackend.AUTO.value
+
+        # Non-enum values should be unchanged
+        assert result.model_config.attention_backend == "manual_string"
+        assert result.model_config.hidden_size == 1024
+
 
 # Integration test
 class TestNemoRunCompatibility:
@@ -299,10 +415,36 @@ class TestNemoRunCompatibility:
         # Test that it can be wrapped in run.Partial (basic serialization test)
         try:
             # This would fail if there are still unserializable objects
-            partial_func = run.Partial(lambda cfg: cfg, config=prepared_config)
+            # Use a function that accepts a config parameter
+            def test_func(config):
+                return config
+
+            partial_func = run.Partial(test_func, config=prepared_config)
             assert partial_func is not None
         except Exception as e:
             pytest.fail(f"NeMo Run serialization failed: {e}")
+
+    def test_serialization_compatibility_with_enums(self):
+        """Test that configs with converted enums can be serialized by NeMo Run."""
+        # Create a config with enum objects
+        model_config = MockModelConfig(attn_backend=MockAttnBackend.FUSED)
+        config = MockConfigContainer(model_config=model_config)
+
+        # Process the config
+        prepared_config = prepare_config_for_nemo_run(config)
+
+        # Test that it can be wrapped in run.Partial
+        try:
+            # Use a function that accepts a config parameter
+            def test_func(config):
+                return config
+
+            partial_func = run.Partial(test_func, config=prepared_config)
+            assert partial_func is not None
+            # Verify the enum was converted
+            assert prepared_config.model_config.attn_backend == 1  # MockAttnBackend.FUSED.value
+        except Exception as e:
+            pytest.fail(f"NeMo Run serialization with enums failed: {e}")
 
     def test_run_partial_equivalence(self):
         """Test that run.Partial wrapped functions are equivalent to original partials."""
@@ -318,7 +460,7 @@ class TestNemoRunCompatibility:
         wrapped_partial = prepared_config.model_config.init_method
 
         # Test that they have the same target function
-        assert wrapped_partial._target_ == original_partial.func
+        assert wrapped_partial.__fn_or_cls__ == original_partial.func
 
         # Test that they have the same arguments
         assert wrapped_partial.mean == original_partial.keywords['mean']

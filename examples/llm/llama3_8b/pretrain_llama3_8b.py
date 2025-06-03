@@ -17,7 +17,8 @@ import argparse
 import logging
 import os
 import sys
-from typing import List as TypingList, Tuple
+from typing import List as TypingList
+from typing import Tuple
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -46,7 +47,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, TypingList[str]]:
         "--config-file", type=str, default=None, help="Path to the YAML OmegaConf override file. Optional."
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    # Add other script-specific arguments here if any in the future
 
     # Parse known args for the script, remaining will be treated as overrides
     args, cli_dotlist_overrides = parser.parse_known_args()
@@ -89,17 +89,14 @@ def main() -> None:
         # Apply overrides while preserving excluded callable fields
         apply_overrides_with_preservation(cfg, final_overrides_as_dict, excluded_callables)
 
-    # 7. Display final configuration
+    # Display final configuration
     logger.info("--- Final Merged Configuration ---")
     cfg.to_yaml()
     logger.info("----------------------------------")
 
-    # Start training
-    # logger.debug("Starting Megatron pretraining...")
-    # megatron_pretrain(
-    #     config=cfg,
-    #     forward_step_func=forward_step
-    # )
+    Start training
+    logger.debug("Starting Megatron pretraining...")
+    megatron_pretrain(config=cfg, forward_step_func=forward_step)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,9 @@ from omegaconf import DictConfig, OmegaConf
 
 from nemo_lm.utils.omegaconf_utils import (
     OverridesError,
+    _restore_excluded_fields,
+    _track_excluded_fields,
+    _verify_no_callables,
     apply_overrides_recursively,
     apply_overrides_with_preservation,
     dataclass_to_dict_for_omegaconf,
@@ -33,9 +36,6 @@ from nemo_lm.utils.omegaconf_utils import (
     parse_hydra_overrides,
     safe_create_omegaconf,
     safe_create_omegaconf_with_preservation,
-    _track_excluded_fields,
-    _restore_excluded_fields,
-    _verify_no_callables,
 )
 
 
