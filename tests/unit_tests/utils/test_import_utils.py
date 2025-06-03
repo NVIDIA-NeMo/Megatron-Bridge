@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 from packaging.version import Version as PkgVersion
 
 from nemo_lm.utils.import_utils import (
@@ -139,6 +141,11 @@ class TestUnavailableMeta:
         """Test that descriptor operations raise UnavailableError."""
         TestClass = UnavailableMeta("TestClass", (), {})
 
+        class DummyClass:
+            prop = TestClass
+
+        dummy = DummyClass()
+
         with pytest.raises(UnavailableError):
             TestClass.__get__(None, None)
 
@@ -147,8 +154,6 @@ class TestUnavailableMeta:
 
 
 class TestSafeImport:
-    """Test suite for the safe_import function."""
-
     def test_successful_import(self):
         """Test safe_import with a module that exists."""
         module, success = safe_import("os")
@@ -204,8 +209,6 @@ class TestSafeImport:
 
 
 class TestSafeImportFrom:
-    """Test suite for the safe_import_from function."""
-
     def test_successful_import_from(self):
         """Test safe_import_from with a symbol that exists."""
         symbol, success = safe_import_from("os", "path")
@@ -249,7 +252,7 @@ class TestSafeImportFrom:
     def test_fallback_module(self):
         """Test safe_import_from with a fallback module."""
         # First import fails, but fallback succeeds
-        with patch("importlib.import_module") as mock_import:
+        with patch('importlib.import_module') as mock_import:
             # Mock the first import to fail as AttributeError
             def side_effect(name):
                 if name == "primary_module":
@@ -346,25 +349,25 @@ class TestTorchVersionUtils:
 
     def test_get_torch_version_fallback(self):
         """Test that get_torch_version falls back to '0.0.0' when torch.__version__ is unavailable."""
-        with patch("torch.__version__", side_effect=AttributeError("No version attribute")):
+        with patch('torch.__version__', side_effect=AttributeError("No version attribute")):
             version = get_torch_version()
             assert version == PkgVersion("0.0.0")
 
     def test_is_torch_min_version_true(self):
         """Test is_torch_min_version returns True when torch version meets minimum."""
-        with patch("nemo_lm.utils.import_utils.get_torch_version", return_value=PkgVersion("2.0.0")):
+        with patch('nemo_lm.utils.import_utils.get_torch_version', return_value=PkgVersion("2.0.0")):
             assert is_torch_min_version("1.9.0") is True
             assert is_torch_min_version("2.0.0") is True
 
     def test_is_torch_min_version_false(self):
         """Test is_torch_min_version returns False when torch version is below minimum."""
-        with patch("nemo_lm.utils.import_utils.get_torch_version", return_value=PkgVersion("1.8.0")):
+        with patch('nemo_lm.utils.import_utils.get_torch_version', return_value=PkgVersion("1.8.0")):
             assert is_torch_min_version("1.9.0") is False
             assert is_torch_min_version("2.0.0") is False
 
     def test_is_torch_min_version_without_equality(self):
         """Test is_torch_min_version with check_equality=False."""
-        with patch("nemo_lm.utils.import_utils.get_torch_version", return_value=PkgVersion("2.0.0")):
+        with patch('nemo_lm.utils.import_utils.get_torch_version', return_value=PkgVersion("2.0.0")):
             assert is_torch_min_version("1.9.0", check_equality=False) is True
             assert is_torch_min_version("2.0.0", check_equality=False) is False
             assert is_torch_min_version("2.1.0", check_equality=False) is False
