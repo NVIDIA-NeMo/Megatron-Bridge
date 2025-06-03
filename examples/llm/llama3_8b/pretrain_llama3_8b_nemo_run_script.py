@@ -48,7 +48,6 @@ Argument Forwarding:
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Tuple
@@ -104,8 +103,8 @@ def main() -> None:
     """
     args, forwarded_args = parse_cli_args()
 
-    logger.info(f"Nemo Run Launcher for Llama3 8B Pretraining")
-    logger.info(f"===========================================")
+    logger.info("Nemo Run Launcher for Llama3 8B Pretraining")
+    logger.info("===========================================")
 
     if not PRETRAIN_SCRIPT_PATH.is_file():
         logger.error(f"Target pretraining script not found: {PRETRAIN_SCRIPT_PATH}")
@@ -115,7 +114,7 @@ def main() -> None:
     config_file_to_use = Path(args.config_file).resolve()
     if not config_file_to_use.is_file():
         logger.error(f"Specified YAML config file not found: {config_file_to_use}")
-        logger.error(f"Ensure the path passed to --config_file is correct.")
+        logger.error("Ensure the path passed to --config_file is correct.")
         sys.exit(1)
 
     # Build the arguments list for the target script

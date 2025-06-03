@@ -73,7 +73,7 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 
 from nemo_lm.models.utils import forward_step
 from nemo_lm.recipes.llm.llama3_8b import pretrain_config
@@ -144,7 +144,7 @@ def main() -> None:
 
     # Load base configuration from the recipe as a Python dataclass
     cfg: ConfigContainer = pretrain_config()
-    logger.info(f"Loaded base configuration")
+    logger.info("Loaded base configuration")
     cfg.to_yaml()
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging

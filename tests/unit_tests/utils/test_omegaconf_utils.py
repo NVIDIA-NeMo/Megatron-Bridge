@@ -18,7 +18,6 @@
 import dataclasses
 import functools
 from typing import Any, Dict, Optional
-from unittest.mock import Mock
 
 import pytest
 import torch
@@ -123,15 +122,20 @@ class TestIsOmegaconfProblematic:
         """Test that instance methods are problematic."""
 
         class TestClass:
+            """Test class for method testing."""
+            
             def instance_method(self):
+                """Test instance method."""
                 return "instance"
 
             @classmethod
             def class_method(cls):
+                """Test class method."""
                 return "class"
 
             @staticmethod
             def static_method():
+                """Test static method."""
                 return "static"
 
         obj = TestClass()
@@ -275,7 +279,7 @@ class TestDataclassToOmegaconfDict_ErrorHandling:
 
 
 class TestTrackExcludedFields:
-    """Test track_excluded_fields function."""
+    """Test _track_excluded_fields function."""
 
     def test_simple_tracking(self):
         """Test tracking callable fields in simple config."""
@@ -315,7 +319,7 @@ class TestTrackExcludedFields:
 
 
 class TestRestoreExcludedFields:
-    """Test restore_excluded_fields function."""
+    """Test _restore_excluded_fields function."""
 
     def test_simple_restoration(self):
         """Test restoring excluded fields."""
@@ -529,7 +533,6 @@ class TestIntegration:
         # 1. Create config with callables
         config = NestedConfig()
         original_func = config.with_callable.activation_func
-        original_dtype = config.with_callable.dtype
 
         # 2. Convert to OmegaConf with preservation
         omega_conf, excluded = create_omegaconf_dict_config(config)
