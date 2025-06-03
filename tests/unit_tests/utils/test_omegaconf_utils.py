@@ -123,7 +123,7 @@ class TestIsOmegaconfProblematic:
 
         class TestClass:
             """Test class for method testing."""
-            
+
             def instance_method(self):
                 """Test instance method."""
                 return "instance"
@@ -241,10 +241,12 @@ class TestDataclassToOmegaconfDict_ErrorHandling:
 
         @dataclasses.dataclass
         class ProblematicConfig:
+            """Problematic config for testing."""
             name: str = "test"
 
             @property
             def problematic_property(self):
+                """Problematic property for testing."""
                 raise AttributeError("Intentional error")
 
         config = ProblematicConfig()
@@ -262,10 +264,13 @@ class TestDataclassToOmegaconfDict_ErrorHandling:
 
         @dataclasses.dataclass
         class BadConfig:
+            """Bad config for testing."""
+
             name: str = "test"
             explosive_field: str = "boom"
 
             def __getattribute__(self, name):
+                """Get attribute for testing."""
                 if name == "explosive_field":
                     raise ValueError("This should not be caught!")
                 return super().__getattribute__(name)
@@ -308,6 +313,8 @@ class TestTrackExcludedFields:
 
         @dataclasses.dataclass
         class ConfigWithDict:
+            """Config with dictionary fields for testing."""
+
             funcs: Dict[str, Any] = dataclasses.field(
                 default_factory=lambda: {"relu": torch.nn.functional.relu, "value": 42}
             )
