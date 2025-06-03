@@ -68,7 +68,7 @@ install_requires = req_file("requirements.txt")
 extras_require = {
     # User packages
     'test': req_file("requirements_test.txt"),
-    'docs': req_file("requirements_docs.txt")
+    'docs': req_file("requirements_docs.txt"),
 }
 
 
