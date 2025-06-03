@@ -27,7 +27,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements/requirements_test.txt
+          curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv
+          uv pip install --group test
 
       - name: Get changed files
         id: changed-files
