@@ -20,7 +20,7 @@ from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegat
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 
-from nemo_lm.data.builders import FinetuningDatasetBuilder
+from nemo_lm.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from nemo_lm.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
 from nemo_lm.tokenizers.tokenizer import MegatronTokenizer
 from nemo_lm.training.config import DataloaderConfig, FinetuningDatasetConfig, GPTDatasetConfig
