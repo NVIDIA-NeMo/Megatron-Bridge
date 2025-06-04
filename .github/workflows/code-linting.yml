@@ -98,24 +98,3 @@ jobs:
           if [[ "$SKIP_LINTING" != "true" ]]; then
             exit 1
           fi
-
-  Nemo_Linting_Test:
-    needs: [lint-check, pylint-check]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Main
-        env:
-          LINT_RESULTS: ${{ toJson(needs.lint-check) }}
-          PYLINT_RESULTS: ${{ toJson(needs.pylint-check) }}
-        run: |
-          LINT_RESULT=$(echo "$LINT_RESULTS" | jq -r '.result')
-          PYLINT_RESULT=$(echo "$PYLINT_RESULTS" | jq -r '.result')
-
-          if [[ "$LINT_RESULT" == "success" && "$PYLINT_RESULT" == "success" ]]; then
-            echo "All passed."
-            exit 0
-          else
-            echo "Some linting domains failed."
-            exit 1
-          fi
