@@ -377,6 +377,7 @@ class TestForallFunction:
 
         class BoolResult:
             """Helper class for testing bool protocol."""
+
             def __init__(self, value):
                 self.value = value
 
@@ -430,6 +431,7 @@ class TestEdgeCases:
 
         class ModuleWithMap(nn.Module):
             """Module with custom map method for testing."""
+
             def __init__(self):
                 super().__init__()
                 self.linear = nn.Linear(10, 10)
@@ -451,6 +453,7 @@ class TestEdgeCases:
 
         class ModuleWithMap(nn.Module):
             """Module with custom map method for testing skip functionality."""
+
             def __init__(self):
                 super().__init__()
                 self.linear = nn.Linear(10, 10)
