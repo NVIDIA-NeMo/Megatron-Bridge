@@ -19,7 +19,7 @@ Tests the AdapterWrapper base class and its functionality for wrapping
 modules with adapters in Parameter-Efficient Fine-Tuning scenarios.
 """
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -151,8 +151,11 @@ class TestAdapterWrapper:
         """Test base_linear_forward with invalid return type."""
 
         class InvalidLinear(nn.Module):
+            """Mock linear module that returns a tensor instead of a tuple."""
+
             def forward(self, x):
-                return x  # Returns tensor instead of tuple
+                """Return a tensor instead of a tuple."""
+                return x
 
         wrapper = ConcreteAdapterWrapper(InvalidLinear(), simple_adapter)
         x = torch.randn(5, 10)

@@ -19,9 +19,7 @@ Tests LoRA adapters, LinearAdapter, TELinearAdapter, and patch_linear_module
 functionality for Parameter-Efficient Fine-Tuning.
 """
 
-import math
 from copy import deepcopy
-from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -57,11 +55,13 @@ class MockParallelLinearAdapter(nn.Module):
     """Mock parallel linear adapter for testing LoRALinear."""
 
     def __init__(self, dim=8):
+        """Initialize mock parallel linear adapter."""
         super().__init__()
         self.linear = nn.Linear(10, 10)
         self.dim = dim
 
     def forward(self, x):
+        """Forward pass returning tuple format."""
         return self.linear(x) * 0.1  # Scale down to simulate adapter
 
 
@@ -309,8 +309,6 @@ class TestPatchLinearModule:
     def test_patch_te_linear_module(self):
         """Test patching TELinear module."""
         te_linear = te.Linear(10, 5, device="cuda")
-
-        state_init = deepcopy(te_linear.state_dict())
 
         patched_linear = patch_linear_module(te_linear, dim=4)
 

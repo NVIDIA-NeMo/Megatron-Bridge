@@ -20,7 +20,7 @@ and the ParallelLinearAdapter class for distributed PEFT scenarios.
 """
 
 import math
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -46,6 +46,7 @@ class MockModelParallelConfig:
     """Mock ModelParallelConfig for testing."""
 
     def __init__(self):
+        """Initialize mock config with default values."""
         self.sequence_parallel = False
         self.tensor_model_parallel_size = 1
         self.bf16 = False
@@ -67,6 +68,7 @@ class MockColumnParallelLinear(ColumnParallelLinear):
     """Mock ColumnParallelLinear for testing."""
 
     def __init__(self, input_size, output_size):
+        """Initialize mock column parallel linear layer."""
         # Don't call super().__init__ to avoid Megatron dependencies
         nn.Module.__init__(self)
         self.input_size = input_size
@@ -76,6 +78,7 @@ class MockColumnParallelLinear(ColumnParallelLinear):
         self.config = MockModelParallelConfig()
 
     def forward(self, x):
+        """Forward pass returning tuple format."""
         return torch.matmul(x, self.weight.t()) + self.bias, None
 
 
@@ -83,6 +86,7 @@ class MockRowParallelLinear(RowParallelLinear):
     """Mock RowParallelLinear for testing."""
 
     def __init__(self, input_size, output_size):
+        """Initialize mock row parallel linear layer."""
         # Don't call super().__init__ to avoid Megatron dependencies
         nn.Module.__init__(self)
         self.input_size = input_size
@@ -92,6 +96,7 @@ class MockRowParallelLinear(RowParallelLinear):
         self.config = MockModelParallelConfig()
 
     def forward(self, x):
+        """Forward pass returning tuple format."""
         return torch.matmul(x, self.weight.t()) + self.bias, None
 
 
@@ -368,7 +373,6 @@ class TestParallelLinearAdapter:
         """Test activation function selection."""
         # Mock the linear layers
         mock_linear_in = Mock()
-        mock_linear_out = Mock()
         mock_col_linear.return_value = mock_linear_in
 
         adapter = ParallelLinearAdapter(
@@ -414,7 +418,6 @@ class TestParallelLinearAdapter:
         """Test initialization function selection."""
         # Mock the linear layers
         mock_linear_in = Mock()
-        mock_linear_out = Mock()
         mock_col_linear.return_value = mock_linear_in
 
         adapter = ParallelLinearAdapter(
@@ -447,7 +450,6 @@ class TestParallelLinearAdapter:
         """Test alpha parameter handling."""
         # Mock the linear layers
         mock_linear_in = Mock()
-        mock_linear_out = Mock()
         mock_col_linear.return_value = mock_linear_in
 
         # Test default alpha (equals dim)
@@ -472,7 +474,6 @@ class TestParallelLinearAdapter:
         """Test dropout configuration."""
         # Mock the linear layers
         mock_linear_in = Mock()
-        mock_linear_out = Mock()
         mock_col_linear.return_value = mock_linear_in
 
         # Test no dropout
