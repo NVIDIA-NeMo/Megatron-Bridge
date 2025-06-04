@@ -20,7 +20,7 @@ from megatron.core.distributed import (
     TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
-from megatron.core.fp8_utils import is_float8tensor
+from megatron.core.fp8_utils import correct_amax_history_if_needed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 
 from megatron.hub.models.gpt import GPTConfig
