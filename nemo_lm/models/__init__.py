@@ -99,6 +99,26 @@ def get_base_model(model_config: GPTConfig | T5Config) -> list[MegatronModule]:
             model.append(this_model)
     else:
         pre_process = parallel_state.is_pipeline_first_stage()
+        post_process = parallel_state.is_pipeline_last_stage()
+        if model_type == ModelType.encoder_and_decoder:
+            assert isinstance(model_config, T5Config)
+            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+                rank = parallel_state.get_pipeline_model_parallel_rank()
+                first_decoder_rank = parallel_state.get_pipeline_model_parallel_decoder_start()
+                world_size = parallel_state.get_pipeline_model_parallel_world_size()
+                pre_process = rank == 0 or rank == first_decoder_rank
+                post_process = (rank == (first_decoder_rank - 1)) or (rank == (world_size - 1))
+            model = model_config.configure_model(
+                tokenizer=None,
+            )
+        else:
+            model = model_config.configure_model(
+                tokenizer=None,
+                pre_process=pre_process,
+                post_process=post_process,
+            )
+        model.model_type = model_type
+
     if not isinstance(model, list):
         model = [model]
 
