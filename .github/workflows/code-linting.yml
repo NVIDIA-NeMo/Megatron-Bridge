@@ -103,7 +103,7 @@ jobs:
           fi
 
           set +e
-          uv run --only-group test isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt
+          uv run --only-group test isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt 2>&1
           ISORT_EXIT_CODE=$?
 
           if [[ $SKIP_LINTING == true ]]; then
@@ -125,7 +125,7 @@ jobs:
           fi
 
           set +e
-          uv run --only-group test black --check --diff ${CHANGED_FILES[@]} > black.txt
+          uv run --only-group test black --check --diff ${CHANGED_FILES[@]} > black.txt 2>&1
           BLACK_EXIT_CODE=$?
 
           if [[ $SKIP_LINTING == true ]]; then
