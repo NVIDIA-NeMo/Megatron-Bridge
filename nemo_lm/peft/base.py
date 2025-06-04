@@ -79,7 +79,7 @@ class AdapterWrapper(nn.Module):
             A tuple containing:
                 - linear_output: The output from the linear layer
                 - bias: The bias term (if present, otherwise None)
-                - layernorm_output: The output from layernorm (differs from x only for 
+                - layernorm_output: The output from layernorm (differs from x only for
                   LayerNormColumnParallelLinear, otherwise equals x)
 
         Note:
@@ -93,10 +93,10 @@ class AdapterWrapper(nn.Module):
         assert isinstance(
             linear_output, tuple
         ), f"{self.to_wrap} should return a tuple but instead returns {linear_output}"
-        
+
         bias = None
         layernorm_output = x
-        
+
         if len(linear_output) == 2:
             linear_output, bias = linear_output
             if isinstance(linear_output, tuple) and len(linear_output) == 2:
@@ -107,10 +107,7 @@ class AdapterWrapper(nn.Module):
         return linear_output, bias, layernorm_output
 
     def state_dict(
-        self, 
-        destination: Optional[Dict[str, Any]] = None, 
-        prefix: str = '', 
-        keep_vars: bool = False
+        self, destination: Optional[Dict[str, Any]] = None, prefix: str = '', keep_vars: bool = False
     ) -> Dict[str, Any]:
         """Retrieve the state dictionary of the wrapped module and adapter.
 

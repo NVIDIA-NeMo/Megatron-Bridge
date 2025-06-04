@@ -66,21 +66,23 @@ TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
 def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool]:
-    """Return input_is_parallel, in_features, out_features, disable_sequence_parallel_comm attributes from the base layer.
-    
+    """Returns attributes from the base layer.
+
+    input_is_parallel, in_features, out_features, disable_sequence_parallel_comm
+
     This function analyzes a linear module and extracts key attributes needed for adapter configuration,
     particularly for PEFT adapters in distributed training scenarios.
-    
+
     Args:
         m: The linear module to analyze (should have a config attribute).
-        
+
     Returns:
         A tuple containing:
             - input_is_parallel: Whether the input is already parallelized
             - in_features: Input feature dimension
-            - out_features: Output feature dimension  
+            - out_features: Output feature dimension
             - disable_sequence_parallel_comm: Whether to disable sequence parallel communication
-            
+
     Raises:
         NotImplementedError: If the layer type is not recognized for LoRA adaptation.
     """
@@ -140,18 +142,18 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
 
 def is_expert_linear(fqn: str) -> bool:
     """Return whether the current base module is an expert linear module.
-    
+
     This function checks if a fully qualified name (FQN) corresponds to an expert linear
     module in a Mixture of Experts (MoE) architecture.
-    
+
     Args:
         fqn: Fully qualified name of the module.
-        
+
     Returns:
         True if the module is an expert linear module, False otherwise.
-        
+
     Example:
-        >>> is_expert_linear("model.layers.0.mlp.experts.0.linear_fc1") 
+        >>> is_expert_linear("model.layers.0.mlp.experts.0.linear_fc1")
         True
         >>> is_expert_linear("model.layers.0.mlp.linear_fc1")
         False
@@ -163,11 +165,11 @@ def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
     """Return whether the pattern (target module to add LoRA) matches the key (model weight name).
 
     This function performs wildcard matching using '*' as a placeholder for any substring.
-    
+
     Args:
         pattern: Pattern string with wildcards (*) to match against.
         key: Key string to test against the pattern.
-        
+
     Returns:
         True if the pattern matches the key, False if it doesn't, None if key is None.
 
@@ -186,13 +188,14 @@ def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
 
 def init_method_normal(sigma: float) -> Callable[[torch.Tensor], torch.Tensor]:
     """Create an initialization method based on normal distribution N(0, sigma).
-    
+
     Args:
         sigma: Standard deviation for the normal distribution.
-        
+
     Returns:
         Initialization function that applies normal distribution to a tensor.
     """
+
     def init_(tensor: torch.Tensor) -> torch.Tensor:
         return nn.init.normal_(tensor, mean=0.0, std=sigma)
 
@@ -201,13 +204,14 @@ def init_method_normal(sigma: float) -> Callable[[torch.Tensor], torch.Tensor]:
 
 def init_method_kaiming_uniform(val: float) -> Callable[[torch.Tensor], torch.Tensor]:
     """Create an initialization method based on Kaiming uniform distribution.
-    
+
     Args:
         val: The 'a' parameter for Kaiming uniform initialization.
-        
+
     Returns:
         Initialization function that applies Kaiming uniform distribution to a tensor.
     """
+
     def init_(tensor: torch.Tensor) -> torch.Tensor:
         return nn.init.kaiming_uniform_(tensor, a=val)
 
@@ -216,13 +220,14 @@ def init_method_kaiming_uniform(val: float) -> Callable[[torch.Tensor], torch.Te
 
 def init_method_const(val: float) -> Callable[[torch.Tensor], torch.Tensor]:
     """Create an initialization method that sets all values to a constant.
-    
+
     Args:
         val: Constant value to initialize the tensor with.
-        
+
     Returns:
         Initialization function that sets tensor to constant value.
     """
+
     def init_(tensor: torch.Tensor) -> torch.Tensor:
         return nn.init.constant_(tensor, val)
 
@@ -231,14 +236,14 @@ def init_method_const(val: float) -> Callable[[torch.Tensor], torch.Tensor]:
 
 def pad_seq_to_mult(x: torch.Tensor, mult: int) -> Tuple[torch.Tensor, int]:
     """Pad sequence length to be a multiple of mult.
-    
+
     This function pads the first dimension of the tensor to ensure it's divisible by mult.
     Used primarily for MoE (Mixture of Experts) operations that require specific sequence lengths.
-    
+
     Args:
         x: Input tensor to pad.
         mult: Multiple that the sequence length should be divisible by.
-        
+
     Returns:
         A tuple containing:
             - Padded tensor
@@ -255,11 +260,11 @@ def pad_seq_to_mult(x: torch.Tensor, mult: int) -> Tuple[torch.Tensor, int]:
 
 def unpad_seq_to_mult(x: torch.Tensor, pad_len: int) -> torch.Tensor:
     """Remove sequence padding that was added by pad_seq_to_mult.
-    
+
     Args:
         x: Padded tensor to unpad.
         pad_len: Number of padding elements to remove from the end.
-        
+
     Returns:
         Unpadded tensor with pad_len elements removed from the first dimension.
     """
@@ -272,21 +277,21 @@ def unpad_seq_to_mult(x: torch.Tensor, pad_len: int) -> torch.Tensor:
 
 class _All2AllHp2Sp(torch.autograd.Function):
     """All-2-All from Hidden Parallel to Sequence Parallel.
-    
+
     This is a temporary workaround for distributed communication patterns and can be updated in the future.
     It performs all-to-all communication to transform from hidden parallel to sequence parallel layout.
-    
+
     TODO: Move the functionality to MCore
     """
 
     @staticmethod
     def forward(ctx, input_: torch.Tensor) -> torch.Tensor:
         """Forward pass: All-to-All from Hidden Parallel to Sequence Parallel.
-        
+
         Args:
             ctx: Autograd context (unused but required by Function interface).
             input_: Input tensor in hidden parallel layout.
-            
+
         Returns:
             Output tensor in sequence parallel layout.
         """
@@ -303,11 +308,11 @@ class _All2AllHp2Sp(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor) -> torch.Tensor:
         """Backward pass: All-to-All from Sequence Parallel to Hidden Parallel.
-        
+
         Args:
             ctx: Autograd context (unused but required by Function interface).
             grad_output: Gradient tensor in sequence parallel layout.
-            
+
         Returns:
             Gradient tensor in hidden parallel layout.
         """
@@ -324,10 +329,10 @@ class _All2AllHp2Sp(torch.autograd.Function):
 
 def all2all_hp2sp(input_: torch.Tensor) -> torch.Tensor:
     """Perform All-to-All communication from Hidden Parallel to Sequence Parallel.
-    
+
     Args:
         input_: Input tensor in hidden parallel layout.
-        
+
     Returns:
         Output tensor in sequence parallel layout.
     """
@@ -336,14 +341,14 @@ def all2all_hp2sp(input_: torch.Tensor) -> torch.Tensor:
 
 class ParallelLinearAdapter(nn.Module):
     """Parallel Linear Adapter for Parameter-Efficient Fine-Tuning (PEFT) in distributed settings.
-    
+
     This adapter implements a low-rank adaptation pattern using two linear layers with configurable
     parallelization strategies. It supports both tensor and sequence parallelism patterns used in
     large language model training.
-    
+
     The adapter follows the pattern: input -> linear_in -> activation -> linear_out -> scaling
     where linear_in and linear_out are parallelized according to the base layer configuration.
-    
+
     Args:
         in_features: Input feature dimension.
         out_features: Output feature dimension.
@@ -384,7 +389,7 @@ class ParallelLinearAdapter(nn.Module):
         **kwargs,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
-        
+
         Args:
             in_features: Input feature dimension.
             out_features: Output feature dimension.
@@ -483,13 +488,13 @@ class ParallelLinearAdapter(nn.Module):
 
     def _get_activation_fn(self, activation: str) -> nn.Module:
         """Get activation function by name.
-        
+
         Args:
             activation: Name of the activation function.
-            
+
         Returns:
             PyTorch activation module.
-            
+
         Note:
             Defaults to Identity if activation name is not recognized.
         """
@@ -506,13 +511,13 @@ class ParallelLinearAdapter(nn.Module):
 
     def _get_init_fn(self, init_method: str) -> Callable[[torch.Tensor], torch.Tensor]:
         """Get initialization function by method name.
-        
+
         Args:
             init_method: Name of the initialization method.
-            
+
         Returns:
             Initialization function.
-            
+
         Raises:
             NotImplementedError: If init_method is not supported.
         """
@@ -530,13 +535,13 @@ class ParallelLinearAdapter(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the parallel linear adapter.
-        
+
         Performs the adaptation computation with proper handling of parallel communication
         patterns, dropout, and expert routing for MoE scenarios.
-        
+
         Args:
             x: Input tensor.
-            
+
         Returns:
             Adapted output tensor with scaling applied.
         """
@@ -591,15 +596,15 @@ class ParallelLinearAdapter(nn.Module):
         self, prefix: str = '', sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
-        
-        Special treatment is given to the linear_fc1 adapter since tensor parallelism is 
+
+        Special treatment is given to the linear_fc1 adapter since tensor parallelism is
         sharded separately for the two logical matrices (gate and up) in SwiGLU.
-        
+
         Args:
             prefix: Prefix for parameter names.
             sharded_offsets: Offsets for sharded parameters.
             metadata: Additional metadata for sharding.
-            
+
         Returns:
             Sharded state dictionary for distributed checkpointing.
         """
