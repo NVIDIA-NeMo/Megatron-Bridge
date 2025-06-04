@@ -23,7 +23,7 @@ from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.t5 import T5Config
 
 try:
-    import transformer_engine
+    import transformer_engine  # pylint: disable=unused-import
 
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
@@ -368,6 +368,12 @@ class _CommOverlapConfig:
 
 @dataclass(kw_only=True)
 class CommOverlapConfig:
+    """Configuration for communication overlap optimizations in distributed training.
+
+    This class manages tensor parallel, pipeline parallel, and data parallel
+    communication overlap settings to improve training performance.
+    """
+
     tp_comm_overlap: bool
     tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
     tp_comm_bootstrap_backend: Optional[str] = None
@@ -530,6 +536,13 @@ class CommOverlapConfig:
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:
+        """Set up communication overlap configurations for the model, optimizer, and DDP.
+
+        Args:
+            model_config: Model configuration containing parallelism settings
+            optimizer_config: Optimizer configuration for gradient overlap settings
+            ddp_config: Distributed data parallel configuration
+        """
         comm_overlap_cfg = self._get_model_comm_overlap_cfgs(model_config)
         self._apply_cfgs(comm_overlap_cfg, model_config)
         if model_config.tp_comm_overlap:
