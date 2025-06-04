@@ -94,14 +94,17 @@ docs = [
     "sphinx-copybutton>=0.5.2",
 ]
 test = [
-    "black~=24.3",
     "coverage>=7.8.1",
     "flake8>=7.2.0",
-    "isort>=6.0.1",
     "pylint>=3.3.7",
     "pytest>=8.3.5",
     "pytest-mock>=3.14.0",
     "pytest-runner>=6.0.1",
+]
+dev = [
+    "pre-commit>=3.6.0",
+    "ruff>=0.9.9",
+    "mypy>=1.8.0",
 ]
 
 [tool.setuptools]
@@ -113,26 +116,6 @@ lm = "nemo_lm"
 [project.urls]
 Download = "https://github.com/NVIDIA/NeMo-LM/releases"
 Homepage = "https://github.com/nvidia/nemo"
-
-[tool.isort]
-profile = "black"  # black-compatible
-line_length = 119  # should match black parameters
-ignore_whitespace = true  # ignore whitespace for compatibility with the initial style
-py_version = 310  # python 3.10 as a target version
-known_first_party = ["nemo"]  # FIRSTPARTY section
-known_third_party = ["examples", "scripts"]  # THIRDPARTY section
-sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
-default_section = "THIRDPARTY"
-extend_skip = ["setup.py", "docs/source/conf.py"]
-
-[tool.black]
-line_length = 119
-skip_string_normalization = true
-# major year version is stable, see details in
-# https://black.readthedocs.io/en/stable/the_black_code_style/index.html
-# `required_version` is necessary for consistency (other `black` versions will fail to reformat files)
-required_version = "24"
-target-version = ['py310', 'py311', 'py312']
 
 [tool.pytest.ini_options]
 # durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.

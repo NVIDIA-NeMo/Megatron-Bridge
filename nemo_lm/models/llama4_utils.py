@@ -27,6 +27,7 @@ from megatron.core.transformer.torch_norm import L2Norm
 from megatron.core.utils import deprecate_inference_params, is_fa_min_version
 from torch import Tensor
 
+
 try:
     from flashattn_hopper.flash_attn_interface import _flash_attn_forward
 
@@ -205,9 +206,9 @@ class Llama4SelfAttention(MCoreSelfAttention):
         inference_context = deprecate_inference_params(inference_context, inference_params)
 
         if inference_context and inference_context.is_dynamic_batching():
-            assert (HAVE_FA3 and _flash_attn_forward is not None) or is_fa_min_version(
-                "2.7.3"
-            ), "flash attn verion v2.7.3 and above is required for dynamic batching."
+            assert (HAVE_FA3 and _flash_attn_forward is not None) or is_fa_min_version("2.7.3"), (
+                "flash attn verion v2.7.3 and above is required for dynamic batching."
+            )
 
         # hidden_states: [sq, b, h]
         if self.config.flash_decode and not self.training and inference_context is not None:

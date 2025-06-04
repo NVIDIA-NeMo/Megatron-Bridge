@@ -15,7 +15,6 @@
 import logging
 import os
 import signal
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
@@ -602,9 +601,9 @@ class ProfilingConfig:
 
     def __post_init__(self) -> None:
         """Validate profiling configuration."""
-        assert not (
-            self.use_pytorch_profiler and self.use_nsys_profiler
-        ), "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
+        assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
+            "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
+        )
 
 
 @dataclass
@@ -694,9 +693,7 @@ class ConfigContainer(Container):
             * self.model_config.context_parallel_size
         )
         total_model_size = encoder_model_size + decoder_model_size
-        assert (
-            world_size % total_model_size == 0
-        ), f"""
+        assert world_size % total_model_size == 0, f"""
         world size ({world_size}) is not divisible by total_model_size ({encoder_model_size=} + {decoder_model_size=})
         """
         self.data_parallel_size = world_size // total_model_size

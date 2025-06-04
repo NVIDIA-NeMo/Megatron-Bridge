@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-name: PyLint and flake8 linting
+name: Code linting
 
 on:
   pull_request:
@@ -19,7 +19,23 @@ on:
   workflow_call:
 
 jobs:
-  linting:
+  lint-check:
+    name: Lint check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Check lint
+        run: |
+          pip install pre-commit==3.6.0
+          pre-commit install
+          pre-commit run --all-files --show-diff-on-failure --color=always
+
+  pylint-check:
+    name: PyLint check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -68,134 +84,35 @@ jobs:
           uv run --only-group test pylint $ADDITIONAL_PYLINT_ARGS --output "pylintrc.txt" --rcfile ".pylintrc" ${CHANGED_FILES[@]}
           echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
 
-      - name: Run flake8
-        id: flake8
-        env:
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-          SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
-        run: |
-          if [[ -z "$CHANGED_FILES" ]]; then
-            echo Nothing to lint.
-            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ $SKIP_LINTING == true ]]; then
-            ADDITIONAL_FLAKE8_ARGS="--exit-zero"
-          else
-            ADDITIONAL_FLAKE8_ARGS=""
-          fi
-
-          set +e
-          uv run --only-group test flake8 $ADDITIONAL_FLAKE8_ARGS --output "flake8.txt" --config ".flake8" ${CHANGED_FILES[@]}
-          echo "exit-code=$?" | tee -a "$GITHUB_OUTPUT"
-
-      - name: Run isort
-        id: isort
-        env:
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-          SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
-        run: |
-          if [[ -z "$CHANGED_FILES" ]]; then
-            echo Nothing to lint.
-            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          set +e
-          uv run --only-group test isort --check-only --diff ${CHANGED_FILES[@]} > isort.txt 2>&1
-          ISORT_EXIT_CODE=$?
-
-          if [[ $SKIP_LINTING == true ]]; then
-            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
-          else
-            echo "exit-code=$ISORT_EXIT_CODE" | tee -a "$GITHUB_OUTPUT"
-          fi
-
-      - name: Run black
-        id: black
-        env:
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-          SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
-        run: |
-          if [[ -z "$CHANGED_FILES" ]]; then
-            echo Nothing to lint.
-            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          set +e
-          uv run --only-group test black --check --diff ${CHANGED_FILES[@]} > black.txt 2>&1
-          BLACK_EXIT_CODE=$?
-
-          if [[ $SKIP_LINTING == true ]]; then
-            echo "exit-code=0" | tee -a "$GITHUB_OUTPUT"
-          else
-            echo "exit-code=$BLACK_EXIT_CODE" | tee -a "$GITHUB_OUTPUT"
-          fi
-
       - name: Summary
+        if: ${{ steps.pylint.outputs.exit-code != 0 }}
         env:
-          PYLINT: ${{ steps.pylint.outputs.exit-code == 0 }}
-          FLAKE8: ${{ steps.flake8.outputs.exit-code == 0 }}
-          ISORT: ${{ steps.isort.outputs.exit-code == 0 }}
-          BLACK: ${{ steps.black.outputs.exit-code == 0 }}
           SKIP_LINTING: ${{ contains(github.event.pull_request.labels.*.name, 'skip-linting') }}
         run: |
-          if [[ "$PYLINT" != "true" ]]; then
-            echo "Pylint output:" | tee -a $GITHUB_STEP_SUMMARY
+          echo "Pylint output:" | tee -a $GITHUB_STEP_SUMMARY
 
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-            cat pylintrc.txt | tee -a $GITHUB_STEP_SUMMARY
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-          fi
+          echo '```' | tee -a $GITHUB_STEP_SUMMARY
+          cat pylintrc.txt | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' | tee -a $GITHUB_STEP_SUMMARY
 
-          if [[ "$FLAKE8" != "true" ]]; then
-            echo "Flake8 output:" | tee -a $GITHUB_STEP_SUMMARY
-
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-            cat flake8.txt | tee -a $GITHUB_STEP_SUMMARY
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "$ISORT" != "true" ]]; then
-            echo "isort output:" | tee -a $GITHUB_STEP_SUMMARY
-
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-            cat isort.txt | tee -a $GITHUB_STEP_SUMMARY
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "$BLACK" != "true" ]]; then
-            echo "black output:" | tee -a $GITHUB_STEP_SUMMARY
-
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-            cat black.txt | tee -a $GITHUB_STEP_SUMMARY
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "$PYLINT" != "true" || "$FLAKE8" != "true" || "$ISORT" != "true" || "$BLACK" != "true" ]]; then
-            echo "The following directories got scanned:" | tee -a $GITHUB_STEP_SUMMARY
-
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-            echo ${{ steps.filter.outputs.main }} | tee -a $GITHUB_STEP_SUMMARY
-            echo '```' | tee -a $GITHUB_STEP_SUMMARY
-
+          if [[ "$SKIP_LINTING" != "true" ]]; then
             exit 1
           fi
 
   Nemo_Linting_Test:
-    needs: linting
+    needs: [lint-check, pylint-check]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Main
         env:
-          RESULTS: ${{ toJson(needs.linting) }}
+          LINT_RESULTS: ${{ toJson(needs.lint-check) }}
+          PYLINT_RESULTS: ${{ toJson(needs.pylint-check) }}
         run: |
-          RESULT=$(echo "$RESULTS" | jq -r '.result')
+          LINT_RESULT=$(echo "$LINT_RESULTS" | jq -r '.result')
+          PYLINT_RESULT=$(echo "$PYLINT_RESULTS" | jq -r '.result')
 
-          if [[ "$RESULT" == "success" ]]; then
+          if [[ "$LINT_RESULT" == "success" && "$PYLINT_RESULT" == "success" ]]; then
             echo "All passed."
             exit 0
           else

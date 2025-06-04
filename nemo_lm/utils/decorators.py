@@ -17,10 +17,11 @@ import logging
 import warnings
 from typing import Any, Callable, TypeVar
 
+
 logger = logging.getLogger(__name__)
 
 # Define a TypeVar for generic return types
-R = TypeVar('R')
+R = TypeVar("R")
 
 
 def experimental_fn(func: Callable[..., R]) -> Callable[..., R]:

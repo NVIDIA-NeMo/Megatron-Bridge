@@ -60,6 +60,7 @@ from nemo_lm.training.config import ConfigContainer, FaultToleranceConfig
 from nemo_lm.training.state import GlobalState
 from nemo_lm.utils.common_utils import get_rank_safe, print_rank_0
 
+
 _NUM_WARMUP_ITERS: int = 1
 _MIN_ITERS_FOR_STEP_TIMEOUT_UPDATE: int = 16
 

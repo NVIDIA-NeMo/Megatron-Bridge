@@ -23,6 +23,7 @@ import torch.nn.functional as F
 from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.llama4_utils import get_llama4_layer_spec
 
+
 try:
     from megatron.core.transformer.spec_utils import ModuleSpec
 

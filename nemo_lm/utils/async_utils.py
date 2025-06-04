@@ -22,6 +22,7 @@ from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQu
 from nemo_lm.training.config import CheckpointConfig
 from nemo_lm.utils.common_utils import print_rank_0
 
+
 # Singleton manager of async calls
 # The default is `TemporalAsyncCaller`
 _async_calls_queue: AsyncCallsQueue = AsyncCallsQueue()

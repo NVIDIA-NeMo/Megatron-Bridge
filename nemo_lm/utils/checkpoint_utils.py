@@ -10,6 +10,7 @@ import yaml
 from nemo_lm.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 from nemo_lm.utils.log_utils import log_single_rank
 
+
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
 CONFIG_FILE = "run_config.yaml"

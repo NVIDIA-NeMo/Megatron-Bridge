@@ -60,6 +60,7 @@ from nemo_lm.utils.common_utils import (
 from nemo_lm.utils.import_utils import safe_import
 from nemo_lm.utils.log_utils import append_to_progress_log
 
+
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
 
 # [ModelOpt]: Import
@@ -523,9 +524,9 @@ def save_checkpoint(
             ckpt_type = CheckpointType.LOCAL
             save_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
         else:
-            assert (
-                False
-            ), f"Please use local or global non-persistent checkpoints(got: {ckpt_cfg.non_persistent_ckpt_type})"
+            assert False, (
+                f"Please use local or global non-persistent checkpoints(got: {ckpt_cfg.non_persistent_ckpt_type})"
+            )
 
     ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch"
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")

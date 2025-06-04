@@ -19,6 +19,7 @@ from typing import Dict, List
 import numpy as np
 from tqdm import tqdm
 
+
 PACKING_ALGOS = ["first_fit_decreasing", "first_fit_shuffle"]
 
 logger = logging.getLogger(__name__)
@@ -178,7 +179,7 @@ def create_packing_strategy(
 
     logger.debug("Packed sequence lengths:")
     logger.debug(packed_seq_lens)
-    logger.info(f"Packing is {sum(packed_seq_lens)/len(packed_seq_lens)/pack_size*100:.2f}% efficient")
+    logger.info(f"Packing is {sum(packed_seq_lens) / len(packed_seq_lens) / pack_size * 100:.2f}% efficient")
     logger.info(
         f">>>>> For pack size {pack_size}, average number of sequences per pack is n = {packing_factor:.3f} <<<<<"
     )

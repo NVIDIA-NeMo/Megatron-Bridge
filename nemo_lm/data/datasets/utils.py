@@ -30,6 +30,7 @@ from torch.utils.data import Dataset
 from nemo_lm.tokenizers.tokenizer import MegatronTokenizer
 from nemo_lm.utils.common_utils import get_rank_safe
 
+
 logger = logging.getLogger(__name__)
 
 PREFIX_STR = (
@@ -509,7 +510,7 @@ class _OnlineSampleMapping:
         NOTE: This method will be cached using functools.lru_cache for efficiency during construction.
         """
         if block_idx >= self.num_blocks:
-            raise IndexError(f"block_idx {block_idx} is out of range. Maximum block_idx is {self.num_blocks-1}")
+            raise IndexError(f"block_idx {block_idx} is out of range. Maximum block_idx is {self.num_blocks - 1}")
 
         # recover index of original block (before shuffling)
         start_idx = self.block_idx_list[block_idx] * self.block_size
@@ -631,7 +632,7 @@ def _get_samples_mapping(
 
     if not num_epochs:
         if not max_num_samples:
-            raise ValueError("Need to specify either max_num_samples " "or num_epochs")
+            raise ValueError("Need to specify either max_num_samples or num_epochs")
         num_epochs = np.iinfo(np.int32).max - 1
     if not max_num_samples:
         max_num_samples = np.iinfo(np.int64).max - 1
@@ -658,8 +659,9 @@ def _get_samples_mapping(
             _make_indexed_dataset_compatibility(indexed_dataset)
 
         print(
-            " > WARNING: could not find index map file {}, building "
-            "the indices on rank 0 ...".format(indexmap_filename)
+            " > WARNING: could not find index map file {}, building the indices on rank 0 ...".format(
+                indexmap_filename
+            )
         )
 
         # Make sure the types match the helpers input types.
@@ -694,7 +696,7 @@ def _get_samples_mapping(
         logger.info(" > saved the index mapping in {}".format(indexmap_filename))
         # Make sure all the ranks have built the mapping
         logger.info(
-            " > elasped time to build and save samples mapping " "(seconds): {:4f}".format(time.time() - start_time)
+            " > elasped time to build and save samples mapping (seconds): {:4f}".format(time.time() - start_time)
         )
 
     if sanity_check_dist_workers:
@@ -878,7 +880,7 @@ def _mask_targets(
         elif cur_idx + tokenized_len < tgt_len:
             # Check whether the mask is applied to the correct position, the first token is turn start tokens
             if not torch.equal(target[cur_idx + 1 : cur_idx + tokenized_len], s_id[1:]):
-                logger.warning("a sentence mismatches the corresponding piece " "in the conversation")
+                logger.warning("a sentence mismatches the corresponding piece in the conversation")
         if i == 0 and (gtype == "VALUE_TO_TEXT" or gtype is None):
             # mask the first turn completely to provide at least one turn as context for the rest
             target[cur_idx : cur_idx + tokenized_len] = IGNORE_INDEX

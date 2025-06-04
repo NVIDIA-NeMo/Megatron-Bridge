@@ -20,6 +20,7 @@ import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
 
+
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
 

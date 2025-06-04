@@ -14,9 +14,8 @@
 
 import copy
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
-from dataclasses import is_dataclass
 from typing import Any, Optional, Type, TypeVar
 
 import yaml
@@ -24,6 +23,7 @@ from omegaconf import OmegaConf
 
 from nemo_lm.utils.instantiate_utils import InstantiationMode, instantiate
 from nemo_lm.utils.yaml_utils import safe_yaml_representers
+
 
 T = TypeVar("T", bound="ConfigContainer")
 

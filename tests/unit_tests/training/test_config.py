@@ -17,7 +17,6 @@
 from typing import Any, Optional, Union
 
 import pytest
-
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
@@ -229,7 +228,7 @@ def create_test_config_container(
     # Monkeypatch get_world_size_safe for this test
     import nemo_lm.training.config as config_module
 
-    original_get_world_size = getattr(config_module, 'get_world_size_safe', None)
+    original_get_world_size = getattr(config_module, "get_world_size_safe", None)
     config_module.get_world_size_safe = mock_get_world_size_safe(world_size_override)
 
     return container, original_get_world_size, config_module

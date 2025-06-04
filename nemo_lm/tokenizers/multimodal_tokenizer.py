@@ -1,6 +1,7 @@
 # Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 
 """Multimodal tokenizer."""
+
 from dataclasses import dataclass
 from typing import Dict, List, Union
 
@@ -10,6 +11,7 @@ from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer
 # Mark tokens that will be ignored in the loss function with this value.
 # Same ignore_index in https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
 from megatron.core.models.multimodal.llava_model import IGNORE_INDEX, IMAGE_TOKEN
+
 
 IMAGE_TAGS = {
     "nvlm": ("<Image>", "</Image>"),
@@ -84,9 +86,9 @@ class MultimodalTokenizer(MegatronTokenizer):
         self._vocab_size = len(tokenizer)
 
         num_added_tokens = tokenizer.add_tokens(special_tokens, special_tokens=True)
-        assert num_added_tokens == len(
-            special_tokens
-        ), f"failed to add {len(special_tokens)} special tokens; only added {num_added_tokens}"
+        assert num_added_tokens == len(special_tokens), (
+            f"failed to add {len(special_tokens)} special tokens; only added {num_added_tokens}"
+        )
 
         self._tokenizer = tokenizer
 
@@ -238,9 +240,9 @@ class MultimodalTokenizer(MegatronTokenizer):
                 if self._prompt_config.assistant_prefix_len > 0:
                     target[idx : idx + self._prompt_config.assistant_prefix_len] = IGNORE_INDEX
 
-            assert np.allclose(
-                tokens[idx : idx + turn_len], turn_tokens
-            ), f"expected turn tokens to match tokens in conversation {conversation}"
+            assert np.allclose(tokens[idx : idx + turn_len], turn_tokens), (
+                f"expected turn tokens to match tokens in conversation {conversation}"
+            )
 
             idx += turn_len
 

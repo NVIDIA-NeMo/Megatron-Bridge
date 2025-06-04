@@ -29,6 +29,7 @@ from torch.utils.data import Dataset
 from nemo_lm.data.datasets.utils import _get_samples_mapping, _JSONLMemMapDataset, _OnlineSampleMapping, _preprocess
 from nemo_lm.tokenizers.tokenizer import MegatronTokenizer
 
+
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 NEMO_CACHE_HOME = Path(os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME))
 DEFAULT_NEMO_DATASETS_CACHE = NEMO_CACHE_HOME / "datasets"
@@ -319,18 +320,18 @@ class GPTSFTDataset(Dataset):
             )
 
     def _maybe_validate_prompt_template(self):
-        assert (
-            self.prompt_template is not None
-        ), f"we need prompt_template to combine contexts and label {self.label_key}"
+        assert self.prompt_template is not None, (
+            f"we need prompt_template to combine contexts and label {self.label_key}"
+        )
         # When providing things like newlines in the prompt template via the CLI, they are escaped.
         # This line unescapes them.
         self.prompt_template = self.prompt_template.encode("utf-8").decode("unicode_escape")
         self.prompt_template_keys = re.findall(r"{(.*?)}", self.prompt_template)
 
         label_placeholder = f"{{{self.label_key}}}"
-        assert (
-            self.prompt_template[-len(label_placeholder) :] == label_placeholder
-        ), f"{label_placeholder} must be at the end of prompt_template."
+        assert self.prompt_template[-len(label_placeholder) :] == label_placeholder, (
+            f"{label_placeholder} must be at the end of prompt_template."
+        )
 
         # Legacy checkpoints has self.truncation_fields = ['context']
         # and self.prompt_template_keys = ['input', 'output']
@@ -338,9 +339,9 @@ class GPTSFTDataset(Dataset):
             if self.prompt_template_keys[0] == "input" and self.truncation_fields[0] == "context":
                 self.truncation_fields[0] = self.prompt_template_keys[0]
 
-        assert set(self.truncation_fields).issubset(
-            self.prompt_template_keys
-        ), f"truncation_fields {self.truncation_fields} must in {self.prompt_template_keys}"
+        assert set(self.truncation_fields).issubset(self.prompt_template_keys), (
+            f"truncation_fields {self.truncation_fields} must in {self.prompt_template_keys}"
+        )
 
     def _build_samples_mapping(self):
         if self.max_num_samples is not None:
@@ -738,12 +739,12 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
         self.pad_cu_seqlens = pad_cu_seqlens
         if self.pad_cu_seqlens:
-            assert (
-                pack_metadata_file_path is not None
-            ), "a metadata json file is required when pad_cu_seqlens is enabled"
-            assert (
-                self.pad_to_max_length is True
-            ), "'pad_to_max_length=True' is required when pad_cu_seqlens is enabled"
+            assert pack_metadata_file_path is not None, (
+                "a metadata json file is required when pad_cu_seqlens is enabled"
+            )
+            assert self.pad_to_max_length is True, (
+                "'pad_to_max_length=True' is required when pad_cu_seqlens is enabled"
+            )
 
         self.pack_metadata = None
         if pack_metadata_file_path is not None:
@@ -902,9 +903,9 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 pad_num = max_samples_per_bin - len(cu_seqlens[-1]) + 2
                 cu_seqlens[-1].extend([max_length] * pad_num)
 
-        assert len(input_ids[0]) == len(
-            position_ids[0]
-        ), "Dataset problem: input_ids and position_ids lengths don't match"
+        assert len(input_ids[0]) == len(position_ids[0]), (
+            "Dataset problem: input_ids and position_ids lengths don't match"
+        )
 
         input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
         labels = self._collate_item(labels, max_length=max_length, pad_id=self.tokenizer.eos_id)

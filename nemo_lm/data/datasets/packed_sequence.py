@@ -23,6 +23,7 @@ from nemo_lm.data.datasets.packing_utils import create_hist, create_packing_stra
 from nemo_lm.data.datasets.sft import create_sft_dataset
 from nemo_lm.tokenizers.tokenizer import MegatronTokenizer
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -155,18 +156,18 @@ class PackedSequenceSpecs:
     def __post_init__(self):
         if self.packed_train_data_path is not None:
             self.packed_train_data_path = Path(self.packed_train_data_path)
-            assert (
-                self.packed_train_data_path.suffix == ".npy"
-            ), f"packed training data file must be a .npy file: {self.packed_train_data_path}"
-            assert (
-                self.packed_train_data_path.exists()
-            ), f"packed training data file does not exist: {self.packed_train_data_path}"
+            assert self.packed_train_data_path.suffix == ".npy", (
+                f"packed training data file must be a .npy file: {self.packed_train_data_path}"
+            )
+            assert self.packed_train_data_path.exists(), (
+                f"packed training data file does not exist: {self.packed_train_data_path}"
+            )
 
         if self.packed_val_data_path is not None:
             self.packed_val_data_path = Path(self.packed_val_data_path)
-            assert (
-                self.packed_val_data_path.suffix == ".npy"
-            ), f"packed validation data file must be a .npy file: {self.packed_val_data_path}"
-            assert (
-                self.packed_val_data_path.exists()
-            ), f"packed validation data file does not exist: {self.packed_val_data_path}"
+            assert self.packed_val_data_path.suffix == ".npy", (
+                f"packed validation data file must be a .npy file: {self.packed_val_data_path}"
+            )
+            assert self.packed_val_data_path.exists(), (
+                f"packed validation data file does not exist: {self.packed_val_data_path}"
+            )

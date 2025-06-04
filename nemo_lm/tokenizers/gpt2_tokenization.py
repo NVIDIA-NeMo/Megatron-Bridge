@@ -26,6 +26,7 @@ from io import open
 
 import regex as re
 
+
 try:
     from functools import lru_cache
 except ImportError:
@@ -39,17 +40,17 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 PRETRAINED_VOCAB_ARCHIVE_MAP = {
-    'gpt2': "https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-vocab.json",
+    "gpt2": "https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-vocab.json",
 }
 PRETRAINED_MERGES_ARCHIVE_MAP = {
-    'gpt2': "https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-merges.txt",
+    "gpt2": "https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-merges.txt",
 }
 PRETRAINED_VOCAB_POSITIONAL_EMBEDDINGS_SIZE_MAP = {
-    'gpt2': 1024,
+    "gpt2": 1024,
 }
-VOCAB_NAME = 'vocab.json'
-MERGES_NAME = 'merges.txt'
-SPECIAL_TOKENS_NAME = 'special_tokens.txt'
+VOCAB_NAME = "vocab.json"
+MERGES_NAME = "merges.txt"
+SPECIAL_TOKENS_NAME = "special_tokens.txt"
 
 
 @lru_cache()
@@ -127,7 +128,7 @@ class GPT2Tokenizer(object):
                 "We assumed '{}' was a path or url but couldn't find files {} and {} "
                 "at this path or url.".format(
                     pretrained_model_name_or_path,
-                    ', '.join(PRETRAINED_VOCAB_ARCHIVE_MAP.keys()),
+                    ", ".join(PRETRAINED_VOCAB_ARCHIVE_MAP.keys()),
                     pretrained_model_name_or_path,
                     vocab_file,
                     merges_file,
@@ -144,17 +145,17 @@ class GPT2Tokenizer(object):
             # if we're using a pretrained model, ensure the tokenizer wont index sequences longer
             # than the number of positional embeddings
             max_len = PRETRAINED_VOCAB_POSITIONAL_EMBEDDINGS_SIZE_MAP[pretrained_model_name_or_path]
-            kwargs['max_len'] = min(kwargs.get('max_len', int(1e12)), max_len)
+            kwargs["max_len"] = min(kwargs.get("max_len", int(1e12)), max_len)
         # Instantiate tokenizer.
-        if special_tokens_file and 'special_tokens' not in kwargs:
-            with open(special_tokens_file, encoding='utf-8') as f:
-                special_tokens = f.read().split('\n')[:-1]
+        if special_tokens_file and "special_tokens" not in kwargs:
+            with open(special_tokens_file, encoding="utf-8") as f:
+                special_tokens = f.read().split("\n")[:-1]
         else:
-            special_tokens = kwargs.pop('special_tokens', [])
+            special_tokens = kwargs.pop("special_tokens", [])
         tokenizer = cls(resolved_vocab_file, resolved_merges_file, special_tokens=special_tokens, *inputs, **kwargs)
         return tokenizer
 
-    def __init__(self, vocab_file, merges_file, errors='replace', special_tokens=None, max_len=None):
+    def __init__(self, vocab_file, merges_file, errors="replace", special_tokens=None, max_len=None):
         self.max_len = max_len if max_len is not None else int(1e12)
         with open(vocab_file) as f:
             self.encoder = json.load(f)
@@ -162,8 +163,8 @@ class GPT2Tokenizer(object):
         self.errors = errors  # how to handle errors in decoding
         self.byte_encoder = bytes_to_unicode()
         self.byte_decoder = {v: k for k, v in self.byte_encoder.items()}
-        with open(merges_file, encoding='utf-8') as f:
-            bpe_data = f.read().split('\n')[1:-1]
+        with open(merges_file, encoding="utf-8") as f:
+            bpe_data = f.read().split("\n")[1:-1]
         bpe_merges = [tuple(merge.split()) for merge in bpe_data]
         self.bpe_ranks = dict(zip(bpe_merges, range(len(bpe_merges))))
         self.cache = {}
@@ -202,7 +203,7 @@ class GPT2Tokenizer(object):
             return token
 
         while True:
-            bigram = min(pairs, key=lambda pair: self.bpe_ranks.get(pair, float('inf')))
+            bigram = min(pairs, key=lambda pair: self.bpe_ranks.get(pair, float("inf")))
             if bigram not in self.bpe_ranks:
                 break
             first, second = bigram
@@ -229,7 +230,7 @@ class GPT2Tokenizer(object):
                 break
             else:
                 pairs = get_pairs(word)
-        word = ' '.join(word)
+        word = " ".join(word)
         self.cache[token] = word
         return word
 
@@ -238,10 +239,10 @@ class GPT2Tokenizer(object):
         bpe_tokens = []
         for token in re.findall(self.pat, text):
             if sys.version_info[0] == 2:
-                token = ''.join(self.byte_encoder[ord(b)] for b in token)
+                token = "".join(self.byte_encoder[ord(b)] for b in token)
             else:
-                token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
-            bpe_tokens.extend(bpe_token for bpe_token in self.bpe(token).split(' '))
+                token = "".join(self.byte_encoder[b] for b in token.encode("utf-8"))
+            bpe_tokens.extend(bpe_token for bpe_token in self.bpe(token).split(" "))
         return bpe_tokens
 
     def convert_tokens_to_ids(self, tokens):
@@ -280,8 +281,8 @@ class GPT2Tokenizer(object):
         return self.convert_tokens_to_ids(self.tokenize(text))
 
     def decode(self, tokens):
-        text = ''.join([self.decoder[token] for token in tokens])
-        text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors=self.errors)
+        text = "".join([self.decoder[token] for token in tokens])
+        text = bytearray([self.byte_decoder[c] for c in text]).decode("utf-8", errors=self.errors)
         return text
 
     def save_vocabulary(self, vocab_path):
@@ -293,12 +294,12 @@ class GPT2Tokenizer(object):
         merge_file = os.path.join(vocab_path, MERGES_NAME)
         special_tokens_file = os.path.join(vocab_path, SPECIAL_TOKENS_NAME)
 
-        with open(vocab_file, 'w', encoding='utf-8') as f:
+        with open(vocab_file, "w", encoding="utf-8") as f:
             f.write(json.dumps(self.encoder, ensure_ascii=False))
 
         index = 0
         with open(merge_file, "w", encoding="utf-8") as writer:
-            writer.write(u'#version: 0.2\n')
+            writer.write("#version: 0.2\n")
             for bpe_tokens, token_index in sorted(self.bpe_ranks.items(), key=lambda kv: kv[1]):
                 if index != token_index:
                     logger.warning(
@@ -306,11 +307,11 @@ class GPT2Tokenizer(object):
                         " Please check that the tokenizer is not corrupted!".format(merge_file)
                     )
                     index = token_index
-                writer.write(' '.join(bpe_tokens) + u'\n')
+                writer.write(" ".join(bpe_tokens) + "\n")
                 index += 1
 
         index = len(self.encoder)
-        with open(special_tokens_file, 'w', encoding='utf-8') as writer:
+        with open(special_tokens_file, "w", encoding="utf-8") as writer:
             for token, token_index in sorted(self.special_tokens.items(), key=lambda kv: kv[1]):
                 if index != token_index:
                     logger.warning(
@@ -318,7 +319,7 @@ class GPT2Tokenizer(object):
                         " Please check that the tokenizer is not corrupted!".format(special_tokens_file)
                     )
                     index = token_index
-                writer.write(token + u'\n')
+                writer.write(token + "\n")
                 index += 1
 
         return vocab_file, merge_file, special_tokens_file

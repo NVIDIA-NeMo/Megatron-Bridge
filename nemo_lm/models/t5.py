@@ -24,6 +24,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from nemo_lm.models.gpt import get_vocab_size
 from nemo_lm.utils.import_utils import safe_import
 
+
 _, HAVE_TE = safe_import("transformer_engine")
 
 
@@ -106,9 +107,9 @@ class T5Config(TransformerConfig):
         vp_size = self.virtual_pipeline_model_parallel_size
         if vp_size:
             p_size = self.pipeline_model_parallel_size
-            assert (
-                self.num_layers // p_size
-            ) % vp_size == 0, "Make sure the number of model chunks is the same across all pipeline stages."
+            assert (self.num_layers // p_size) % vp_size == 0, (
+                "Make sure the number of model chunks is the same across all pipeline stages."
+            )
 
         from megatron.core import parallel_state
 

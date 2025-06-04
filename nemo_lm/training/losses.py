@@ -18,6 +18,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 
+
 SPIKY_LOSS_FACTOR: int = 10
 
 

@@ -22,6 +22,7 @@ import numpy as np
 import torch
 from torch import nn
 
+
 SourceModuleT = TypeVar("SourceModuleT", bound=nn.Module)
 TargetModuleT = TypeVar("TargetModuleT", bound=nn.Module)
 F = TypeVar("F", bound=Callable[..., Any])
@@ -239,8 +240,8 @@ def apply_transforms(
 
     assert target_orig_dtypes == extract_dtypes(_target.named_parameters()), (
         f"dtype mismatch between source and target state dicts. "
-        f"Left side is { {k: v for k, v in target_orig_dtypes.items() if v!=torch.bfloat16} }, "
-        f"Right side is { {k: v for k, v in extract_dtypes(_target.named_parameters()).items() if v!=torch.bfloat16} }"
+        f"Left side is { {k: v for k, v in target_orig_dtypes.items() if v != torch.bfloat16} }, "
+        f"Right side is { {k: v for k, v in extract_dtypes(_target.named_parameters()).items() if v != torch.bfloat16} }"
     )
     if hasattr(target, "module") and isinstance(target.module, MegatronModule):
         target.module = _target

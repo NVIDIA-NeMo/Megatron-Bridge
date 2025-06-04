@@ -26,6 +26,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 from nemo_lm.utils.import_utils import safe_import
 
+
 _, HAVE_TE = safe_import("transformer_engine")
 
 # Gradient accumulation fusion may be enabled if available, for more information see:
@@ -181,9 +182,7 @@ def get_vocab_size(
     after = vocab_size
     multiple = make_vocab_size_divisible_by * config.tensor_model_parallel_size
     after = ((after + multiple - 1) // multiple) * multiple
-    logger.info(
-        f"Padded vocab_size: {after}, original vocab_size: {vocab_size}, dummy tokens:" f" {after - vocab_size}."
-    )
+    logger.info(f"Padded vocab_size: {after}, original vocab_size: {vocab_size}, dummy tokens: {after - vocab_size}.")
 
     return after
 
@@ -248,9 +247,9 @@ class GPTConfig(TransformerConfig):
         )
         if vp_size and not is_pipeline_asymmetric:
             p_size = self.pipeline_model_parallel_size
-            assert (
-                self.num_layers // p_size
-            ) % vp_size == 0, "Make sure the number of model chunks is the same across all pipeline stages."
+            assert (self.num_layers // p_size) % vp_size == 0, (
+                "Make sure the number of model chunks is the same across all pipeline stages."
+            )
 
         from megatron.core import parallel_state
 

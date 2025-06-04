@@ -25,6 +25,7 @@ from nemo_lm.training.config import ConfigContainer, FinetuningDatasetConfig
 from nemo_lm.training.losses import masked_next_token_loss
 from nemo_lm.training.state import GlobalState
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,7 +178,9 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
     return batch
 
 
-def get_batch(data_iterator: Iterable, cfg: ConfigContainer) -> tuple[
+def get_batch(
+    data_iterator: Iterable, cfg: ConfigContainer
+) -> tuple[
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
