@@ -35,6 +35,7 @@ class CustomMLP(nn.Module):
         self.linear2 = nn.Linear(10, 10)
 
     def forward(self, x):
+        """Forward pass of the CustomMLP."""
         return x + self.linear2(self.linear1(x))
 
 
@@ -47,6 +48,7 @@ class SharedMLP(nn.Module):
         self.linear2 = shared
 
     def forward(self, x):
+        """Forward pass of the SharedMLP."""
         return x + self.linear2(self.linear1(x))
 
 
@@ -228,6 +230,7 @@ class TestWalkListModule:
         module = module_container(modules) if module_container is nn.ModuleList else nn.Sequential(*modules)
 
         def fill_weights(module):
+            """Fill the weights of the module with 1.0."""
             if isinstance(module, nn.Linear):
                 module.weight.data.fill_(1.0)
             return module
@@ -246,6 +249,7 @@ class TestWalkListModule:
         module = module_container(modules) if module_container is nn.ModuleList else nn.Sequential(*modules)
 
         def fill_weights_value(module, value):
+            """Fill the weights of the module with the given value."""
             if isinstance(module, nn.Linear):
                 module.weight.data.fill_(value)
             return module
@@ -267,6 +271,7 @@ class TestWalkListModule:
         module = module_container(modules) if module_container is nn.ModuleList else nn.Sequential(*modules)
 
         def fill_weights(module):
+            """Fill the weights of the linear module with 1.0."""
             if isinstance(module, nn.Linear):
                 module.weight.data.fill_(1.0)
             return module
@@ -301,6 +306,7 @@ class TestWalkDictModule:
         modules = nn.ModuleDict({"linear": nn.Linear(10, 10), "conv": nn.Conv2d(1, 20, 5)})
 
         def add_relu_to_named(module: nn.Module, name=None):
+            """Add ReLU to the named module."""
             if name in ["linear", "conv"]:
                 return nn.Sequential(module, nn.ReLU())
             return module
@@ -317,6 +323,7 @@ class TestWalkDictModule:
         modules = nn.ModuleDict({"linear1": nn.Linear(10, 10), "linear2": nn.Linear(5, 5)})
 
         def add_tag(module, tag="test"):
+            """Add a tag to the module."""
             module.tag = tag
             return module
 
@@ -336,6 +343,7 @@ class TestForallFunction:
         modules = nn.ModuleList([nn.Linear(10, 10), nn.Linear(5, 5)])
 
         def is_linear(module):
+            """Check if the module is a linear module or a module list."""
             return isinstance(module, (nn.Linear, nn.ModuleList))
 
         assert fn.forall(modules, is_linear, recurse=True)
@@ -345,6 +353,7 @@ class TestForallFunction:
         modules = nn.ModuleList([nn.Linear(10, 10), nn.ReLU()])
 
         def is_linear(module):
+            """Check if the module is a linear module."""
             return isinstance(module, nn.Linear)
 
         assert not fn.forall(modules, is_linear, recurse=True)
@@ -354,6 +363,7 @@ class TestForallFunction:
         model = CustomMLP()
 
         def is_custom_mlp(module):
+            """Check if the module is a CustomMLP module."""
             return isinstance(module, CustomMLP)
 
         # Should return True for the top-level module only
@@ -366,6 +376,7 @@ class TestForallFunction:
         """Test forall with objects that implement bool protocol."""
 
         class BoolResult:
+            """Helper class for testing bool protocol."""
             def __init__(self, value):
                 self.value = value
 
@@ -373,6 +384,7 @@ class TestForallFunction:
                 return self.value
 
         def bool_predicate(module):
+            """Check if the module is a linear module."""
             return BoolResult(isinstance(module, nn.Linear))
 
         linear = nn.Linear(10, 10)
@@ -403,6 +415,7 @@ class TestEdgeCases:
         """Test that function signature matching works correctly."""
 
         def transform_with_extra_kwargs(module, used_kwarg, unused_kwarg=None):
+            """Transform the module with the given keyword arguments."""
             module.used_kwarg = used_kwarg
             return module
 
@@ -416,12 +429,14 @@ class TestEdgeCases:
         """Test handling modules that have their own map method."""
 
         class ModuleWithMap(nn.Module):
+            """Module with custom map method for testing."""
             def __init__(self):
                 super().__init__()
                 self.linear = nn.Linear(10, 10)
                 self.map_called = False
 
             def map(self, func, **kwargs):
+                """Map the function to the module."""
                 self.map_called = True
                 return self
 
@@ -435,12 +450,14 @@ class TestEdgeCases:
         """Test the _skip_map flag functionality."""
 
         class ModuleWithMap(nn.Module):
+            """Module with custom map method for testing skip functionality."""
             def __init__(self):
                 super().__init__()
                 self.linear = nn.Linear(10, 10)
                 self.map_called = False
 
             def map(self, func, **kwargs):
+                """Map the function to the module."""
                 self.map_called = True
                 return self
 
@@ -463,10 +480,8 @@ class TestParameterCounting:
         """Test that parameter counting works correctly."""
         model = CustomMLP()
 
-        # Count parameters manually
-        total_manual = sum(p.numel() for p in model.parameters())
-
         def count_params(module):
+            """Count the parameters of the module."""
             if hasattr(module, 'weight'):
                 if not hasattr(module, 'param_count'):
                     module.param_count = 0
