@@ -367,7 +367,7 @@ class _CommOverlapConfig:
 
 
 @dataclass(kw_only=True)
-class MegatronCommOverlapConfig:
+class CommOverlapConfig:
     tp_comm_overlap: bool
     tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
     tp_comm_bootstrap_backend: Optional[str] = None

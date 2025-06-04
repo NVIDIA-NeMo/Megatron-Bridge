@@ -25,8 +25,6 @@ from megatron.core.optimizer import OptimizerConfig
 
 from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.t5 import T5Config
-from nemo_lm.training.comm_overlap import MegatronCommOverlapConfig
-from nemo_lm.training.mixed_precision import MegatronMixedPrecisionConfig
 from nemo_lm.utils.common_utils import get_world_size_safe
 from nemo_lm.utils.config_utils import ConfigContainer as Container
 

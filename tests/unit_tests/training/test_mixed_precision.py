@@ -9,12 +9,12 @@ from megatron.core.optimizer import OptimizerConfig
 
 from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.t5 import T5Config
-from nemo_lm.training.mixed_precision import MegatronMixedPrecisionConfig, update_config_with_precision_overrides
+from nemo_lm.training.mixed_precision import MixedPrecisionConfig, update_config_with_precision_overrides
 
 
 class TestMegatronMixedPrecisionConfig:
     def test_fp8_configurations(self):
-        config = MegatronMixedPrecisionConfig(
+        config = MixedPrecisionConfig(
             fp8="e5m2",
             fp8_recipe="mxfp8",
             fp8_margin=1,
@@ -40,7 +40,7 @@ class TestMegatronMixedPrecisionConfig:
 
     @patch("logging.debug")
     def test_setup_with_gpt_config(self, mock_log):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             fp16=True, bf16=False, params_dtype=torch.float16, loss_scale=1024.0
         )
 
@@ -69,7 +69,7 @@ class TestMegatronMixedPrecisionConfig:
 
     @patch("logging.debug")
     def test_setup_with_t5_config(self, mock_log):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             bf16=True, params_dtype=torch.bfloat16, autocast_enabled=True, autocast_dtype=torch.bfloat16
         )
 
@@ -91,7 +91,7 @@ class TestMegatronMixedPrecisionConfig:
 
     @patch("logging.debug")
     def test_setup_with_optimizer_config(self, mock_log):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             grad_reduce_in_fp32=False, loss_scale=512.0, initial_loss_scale=1024.0
         )
 
@@ -112,7 +112,7 @@ class TestMegatronMixedPrecisionConfig:
 
     @patch("logging.debug")
     def test_setup_with_ddp_config(self, mock_log):
-        mixed_precision_config = MegatronMixedPrecisionConfig(grad_reduce_in_fp32=False, fp16=True)
+        mixed_precision_config = MixedPrecisionConfig(grad_reduce_in_fp32=False, fp16=True)
 
         # Create mock configs
         model_config = MagicMock(spec=GPTConfig)
@@ -128,7 +128,7 @@ class TestMegatronMixedPrecisionConfig:
         assert ddp_config.fp16 is True
 
     def test_setup_with_all_configs(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             bf16=True, params_dtype=torch.bfloat16, grad_reduce_in_fp32=False
         )
 
@@ -156,7 +156,7 @@ class TestMegatronMixedPrecisionConfig:
 class TestUpdateConfigWithDtypeOverrides:
     @patch("logging.debug")
     def test_update_with_matching_fields(self, mock_log):
-        mixed_precision_config = MegatronMixedPrecisionConfig(fp16=True, bf16=False, params_dtype=torch.float16)
+        mixed_precision_config = MixedPrecisionConfig(fp16=True, bf16=False, params_dtype=torch.float16)
 
         # Create mock config with matching attributes
         @dataclass
@@ -181,7 +181,7 @@ class TestUpdateConfigWithDtypeOverrides:
         assert mock_log.call_count == 3
 
     def test_update_with_no_matching_fields(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(fp16=True)
+        mixed_precision_config = MixedPrecisionConfig(fp16=True)
 
         # Create mock config with no matching attributes
         @dataclass
@@ -199,7 +199,7 @@ class TestUpdateConfigWithDtypeOverrides:
         assert updated_config.another_field == 42
 
     def test_update_with_partial_matching_fields(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(fp16=True, loss_scale=1024.0, fp8_margin=2)
+        mixed_precision_config = MixedPrecisionConfig(fp16=True, loss_scale=1024.0, fp8_margin=2)
 
         # Create mock config with some matching attributes
         @dataclass
@@ -219,7 +219,7 @@ class TestUpdateConfigWithDtypeOverrides:
         assert updated_config.unrelated_field == "unchanged"
 
     def test_update_preserves_none_values(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(params_dtype=None, loss_scale=None)
+        mixed_precision_config = MixedPrecisionConfig(params_dtype=None, loss_scale=None)
 
         @dataclass
         class MockConfig:
@@ -236,7 +236,7 @@ class TestUpdateConfigWithDtypeOverrides:
         assert updated_config.loss_scale is None
 
     def test_update_returns_same_object(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(fp16=True)
+        mixed_precision_config = MixedPrecisionConfig(fp16=True)
 
         @dataclass
         class MockConfig:
@@ -253,7 +253,7 @@ class TestUpdateConfigWithDtypeOverrides:
 
 class TestIntegration:
     def test_fp16_configuration_flow(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             fp16=True,
             params_dtype=torch.float16,
             loss_scale=1024.0,
@@ -288,7 +288,7 @@ class TestIntegration:
         assert optimizer_config.hysteresis == 2.0
 
     def test_bf16_configuration_flow(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             bf16=True,
             params_dtype=torch.bfloat16,
             autocast_enabled=True,
@@ -316,7 +316,7 @@ class TestIntegration:
         assert model_config.num_layers_at_end_in_bf16 == 2
 
     def test_fp8_configuration_flow(self):
-        mixed_precision_config = MegatronMixedPrecisionConfig(
+        mixed_precision_config = MixedPrecisionConfig(
             fp8="e4m3",
             fp8_recipe="delayed",
             fp8_margin=1,

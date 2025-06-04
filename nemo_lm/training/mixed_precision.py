@@ -25,8 +25,8 @@ from nemo_lm.models.t5 import T5Config
 
 
 @dataclass(kw_only=True)
-class MegatronMixedPrecisionConfig:
-    """Mixed precision configuration for Megatron models.
+class MixedPrecisionConfig:
+    """Mixed precision configuration for models.
 
     Handles conversion of model parameters and inputs/outputs between different precisions,
     and manages mixed precision training settings.
@@ -86,7 +86,7 @@ class MegatronMixedPrecisionConfig:
             ddp_config = update_config_with_precision_overrides(self, ddp_config)
 
 
-def update_config_with_precision_overrides(mixed_precision_config: MegatronMixedPrecisionConfig, config):
+def update_config_with_precision_overrides(mixed_precision_config: MixedPrecisionConfig, config):
     """Update a config object with precision settings from mixed_precision_config.
 
     Args:
