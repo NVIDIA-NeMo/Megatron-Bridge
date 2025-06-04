@@ -29,17 +29,17 @@ from nemo_lm.peft.base import AdapterWrapper
 
 class MockLinear(nn.Module):
     """Mock linear module that returns tuples to test base_linear_forward."""
-    
+
     def __init__(self, return_pattern="simple"):
         super().__init__()
         self.weight = nn.Parameter(torch.randn(10, 10))
         self.bias = nn.Parameter(torch.randn(10))
         self.return_pattern = return_pattern
-    
+
     def forward(self, x, *args, **kwargs):
         """Simulate different return patterns from Megatron linear layers."""
         output = torch.matmul(x, self.weight.t()) + self.bias
-        
+
         if self.return_pattern == "simple":
             # Pattern 1: (out, None)
             return output, None
@@ -58,7 +58,7 @@ class MockLinear(nn.Module):
 
 class ConcreteAdapterWrapper(AdapterWrapper):
     """Concrete implementation of AdapterWrapper for testing."""
-    
+
     def forward(self, x, *args, **kwargs):
         """Simple forward implementation for testing."""
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
@@ -68,27 +68,27 @@ class ConcreteAdapterWrapper(AdapterWrapper):
 
 class TestAdapterWrapper:
     """Test the AdapterWrapper base class."""
-    
+
     @pytest.fixture
     def simple_adapter(self):
         """Create a simple adapter for testing."""
         return nn.Linear(10, 10)
-    
+
     @pytest.fixture
     def mock_linear_simple(self):
         """Create a mock linear module with simple return pattern."""
         return MockLinear("simple")
-    
+
     @pytest.fixture
     def mock_linear_bias(self):
         """Create a mock linear module that returns bias."""
         return MockLinear("with_bias")
-    
+
     @pytest.fixture
     def mock_linear_layernorm(self):
         """Create a mock linear module that returns layernorm output."""
         return MockLinear("with_layernorm")
-    
+
     @pytest.fixture
     def mock_linear_full(self):
         """Create a mock linear module that returns full pattern."""
@@ -97,7 +97,7 @@ class TestAdapterWrapper:
     def test_adapter_wrapper_init(self, mock_linear_simple, simple_adapter):
         """Test AdapterWrapper initialization."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
-        
+
         assert wrapper.to_wrap is mock_linear_simple
         assert wrapper.adapter is simple_adapter
         assert isinstance(wrapper, nn.Module)
@@ -106,9 +106,9 @@ class TestAdapterWrapper:
         """Test base_linear_forward with simple return pattern."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
         x = torch.randn(5, 10)
-        
+
         linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
-        
+
         assert isinstance(linear_output, torch.Tensor)
         assert bias is None
         assert torch.equal(layernorm_output, x)  # Should be input when no layernorm
@@ -117,9 +117,9 @@ class TestAdapterWrapper:
         """Test base_linear_forward with bias return pattern."""
         wrapper = ConcreteAdapterWrapper(mock_linear_bias, simple_adapter)
         x = torch.randn(5, 10)
-        
+
         linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
-        
+
         assert isinstance(linear_output, torch.Tensor)
         assert bias is not None
         assert torch.equal(layernorm_output, x)
@@ -128,9 +128,9 @@ class TestAdapterWrapper:
         """Test base_linear_forward with layernorm output pattern."""
         wrapper = ConcreteAdapterWrapper(mock_linear_layernorm, simple_adapter)
         x = torch.randn(5, 10)
-        
+
         linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
-        
+
         assert isinstance(linear_output, torch.Tensor)
         assert bias is None
         assert not torch.equal(layernorm_output, x)  # Should be different from input
@@ -139,35 +139,36 @@ class TestAdapterWrapper:
         """Test base_linear_forward with full return pattern."""
         wrapper = ConcreteAdapterWrapper(mock_linear_full, simple_adapter)
         x = torch.randn(5, 10)
-        
+
         linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
-        
+
         assert isinstance(linear_output, torch.Tensor)
         assert bias is not None
         assert not torch.equal(layernorm_output, x)
 
     def test_base_linear_forward_invalid_return(self, simple_adapter):
         """Test base_linear_forward with invalid return type."""
+
         class InvalidLinear(nn.Module):
             def forward(self, x):
                 return x  # Returns tensor instead of tuple
-        
+
         wrapper = ConcreteAdapterWrapper(InvalidLinear(), simple_adapter)
         x = torch.randn(5, 10)
-        
+
         with pytest.raises(AssertionError):
             wrapper.base_linear_forward(x)
 
     def test_state_dict_includes_both_modules(self, mock_linear_simple, simple_adapter):
         """Test that state_dict includes both wrapped module and adapter."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
-        
+
         state_dict = wrapper.state_dict()
-        
+
         # Check that wrapped module parameters are included (without to_wrap prefix)
         assert 'weight' in state_dict
         assert 'bias' in state_dict
-        
+
         # Check that adapter parameters are included with prefix
         assert 'adapter.weight' in state_dict
         assert 'adapter.bias' in state_dict
@@ -175,9 +176,9 @@ class TestAdapterWrapper:
     def test_state_dict_with_custom_prefix(self, mock_linear_simple, simple_adapter):
         """Test state_dict with custom prefix."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
-        
+
         state_dict = wrapper.state_dict(prefix='custom_')
-        
+
         # Check that custom prefix is applied
         assert 'custom_weight' in state_dict
         assert 'custom_adapter.weight' in state_dict
@@ -186,9 +187,9 @@ class TestAdapterWrapper:
         """Test state_dict with existing destination dictionary."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
         destination = {'existing_key': torch.tensor([1.0])}
-        
+
         result = wrapper.state_dict(destination=destination)
-        
+
         assert result is destination
         assert 'existing_key' in result
         assert 'weight' in result
@@ -199,11 +200,11 @@ class TestAdapterWrapper:
         # Mock the sharded_state_dict methods on the modules
         mock_linear_simple.sharded_state_dict = Mock(return_value={'linear_shard': 'value1'})
         simple_adapter.sharded_state_dict = Mock(return_value={'adapter_shard': 'value2'})
-        
+
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
-        
+
         result = wrapper.sharded_state_dict(prefix='test_')
-        
+
         assert 'linear_shard' in result
         assert 'adapter_shard' in result
         mock_linear_simple.sharded_state_dict.assert_called_once_with('test_', (), None)
@@ -213,9 +214,9 @@ class TestAdapterWrapper:
         """Test full forward pass integration."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
         x = torch.randn(5, 10)
-        
+
         output, bias = wrapper(x)
-        
+
         assert isinstance(output, torch.Tensor)
         assert output.shape == (5, 10)
         # bias should be None for simple pattern
@@ -227,13 +228,13 @@ class TestAdapterWrapper:
         mock_linear = MockLinear(pattern)
         wrapper = ConcreteAdapterWrapper(mock_linear, simple_adapter)
         x = torch.randn(5, 10)
-        
+
         linear_output, bias, layernorm_output = wrapper.base_linear_forward(x)
-        
+
         # All patterns should return valid tensors
         assert isinstance(linear_output, torch.Tensor)
         assert isinstance(layernorm_output, torch.Tensor)
-        
+
         # Bias behavior depends on pattern
         if pattern in ["with_bias", "full"]:
             assert bias is not None
@@ -244,11 +245,11 @@ class TestAdapterWrapper:
         """Test that AdapterWrapper cannot be instantiated directly."""
         linear = nn.Linear(10, 10)
         adapter = nn.Linear(10, 10)
-        
+
         # This should work fine since ConcreteAdapterWrapper implements forward
         wrapper = ConcreteAdapterWrapper(linear, adapter)
         assert isinstance(wrapper, AdapterWrapper)
-        
+
         # Test that the base class has the expected methods
         assert hasattr(AdapterWrapper, 'base_linear_forward')
         assert hasattr(AdapterWrapper, 'state_dict')
