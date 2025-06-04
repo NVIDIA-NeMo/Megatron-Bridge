@@ -178,18 +178,14 @@ def get_distributed_model(
     # Fp16 conversion.
     if model_config.fp16 or model_config.bf16:
         model = [Float16Module(model_config, model_module) for model_module in model]
-    # The model_module.bfloat16()/model_module.half() above will call the inplace copy of TE's
-    # Float8Tensor, which will write an unwanted value (amax calculated from the current fp8
-    # param) to its amax_history. The following logic will correct the amax_history back.
-    for model_module in model:
-        for param in model_module.parameters():
-            if is_float8tensor(param) and param._fp8_meta is not None:
-                fp8_meta = param._fp8_meta["scaling_fwd"]
-                fp8_meta_index = param._fp8_meta_index
-                if hasattr(param, "get_high_precision_init_val"):
-                    fp8_meta.amax_history[0][fp8_meta_index].copy_(param.get_high_precision_init_val().abs().max())
-                else:
-                    fp8_meta.amax_history[0][fp8_meta_index] = 0
+
+    # Before TE2.x: The model_module.bfloat16()/model_module.half() above will call the inplace
+    #               copy of TE's Float8Tensor, which will write an unwanted value (amax calculated
+    #               from the current fp8 param) to its amax_history. The below function will correct
+    #               the amax_history back.
+    # After TE2.x: Below function is an empty function and does nothing.
+    correct_amax_history_if_needed(model)
+
     if wrap_with_ddp:
         if use_torch_fsdp2:
             DP = TorchFullyShardedDataParallel
