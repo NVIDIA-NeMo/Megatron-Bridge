@@ -23,7 +23,7 @@ from nemo_lm.models.gpt import GPTConfig
 from nemo_lm.models.t5 import T5Config
 
 try:
-    import transformer_engine  # pylint: disable=unused-import
+    import transformer_engine  # type: ignore  # noqa: F401
 
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
