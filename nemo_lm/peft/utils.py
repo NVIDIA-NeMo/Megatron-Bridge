@@ -15,7 +15,7 @@
 import math
 import re
 from importlib.metadata import version
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, Optional, Tuple
 
 import packaging
 import torch

@@ -19,10 +19,11 @@ Tests the AdapterWrapper base class and its functionality for wrapping
 modules with adapters in Parameter-Efficient Fine-Tuning scenarios.
 """
 
+from unittest.mock import MagicMock, Mock
+
 import pytest
 import torch
 import torch.nn as nn
-from unittest.mock import Mock, MagicMock
 
 from nemo_lm.peft.base import AdapterWrapper
 

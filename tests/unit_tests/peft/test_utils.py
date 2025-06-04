@@ -20,24 +20,24 @@ and the ParallelLinearAdapter class for distributed PEFT scenarios.
 """
 
 import math
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
 import torch.nn as nn
-
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
+
 from nemo_lm.peft.utils import (
+    ParallelLinearAdapter,
+    all2all_hp2sp,
     get_adapter_attributes_from_linear,
-    is_expert_linear,
-    wildcard_match,
-    init_method_normal,
-    init_method_kaiming_uniform,
     init_method_const,
+    init_method_kaiming_uniform,
+    init_method_normal,
+    is_expert_linear,
     pad_seq_to_mult,
     unpad_seq_to_mult,
-    all2all_hp2sp,
-    ParallelLinearAdapter,
+    wildcard_match,
 )
 
 

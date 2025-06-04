@@ -27,11 +27,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from nemo_lm.peft.lora import LoRALinear, LinearAdapter, patch_linear_module
+from nemo_lm.peft.lora import LinearAdapter, LoRALinear, patch_linear_module
 
 # Test if Transformer Engine is available
 try:
     import transformer_engine.pytorch as te
+
     from nemo_lm.peft.lora import TELinearAdapter
 
     HAVE_TE = True
