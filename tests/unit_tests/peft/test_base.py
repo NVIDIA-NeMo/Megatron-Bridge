@@ -252,4 +252,4 @@ class TestAdapterWrapper:
         # Test that the base class has the expected methods
         assert hasattr(AdapterWrapper, 'base_linear_forward')
         assert hasattr(AdapterWrapper, 'state_dict')
-        assert hasattr(AdapterWrapper, 'sharded_state_dict') 
+        assert hasattr(AdapterWrapper, 'sharded_state_dict')

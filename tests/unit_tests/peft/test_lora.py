@@ -433,4 +433,4 @@ class TestLoRAUtilities:
         output = adapter(x)
         expected = torch.full((1, 5), 10.4)
         
-        assert torch.allclose(output, expected, atol=1e-6) 
+        assert torch.allclose(output, expected, atol=1e-6)
