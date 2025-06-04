@@ -16,20 +16,20 @@
 MAJOR = 0
 MINOR = 1
 PATCH = 0
-PRE_RELEASE = 'rc0'
+PRE_RELEASE = "rc0"
 
 # Use the following formatting: (major, minor, patch, pre-release)
 VERSION = (MAJOR, MINOR, PATCH, PRE_RELEASE)
 
-__shortversion__ = '.'.join(map(str, VERSION[:3]))
-__version__ = '.'.join(map(str, VERSION[:3])) + ''.join(VERSION[3:])
+__shortversion__ = ".".join(map(str, VERSION[:3]))
+__version__ = ".".join(map(str, VERSION[:3])) + "".join(VERSION[3:])
 
-__package_name__ = 'nemo_lm'
-__contact_names__ = 'NVIDIA'
-__contact_emails__ = 'nemo-toolkit@nvidia.com'
-__homepage__ = 'https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/stable/'
-__repository_url__ = 'https://github.com/nvidia/nemo'
-__download_url__ = 'https://github.com/NVIDIA/NeMo-LM/releases'
-__description__ = 'NeMo-LM'
-__license__ = 'Apache2'
-__keywords__ = 'deep learning, machine learning, gpu, NLP, NeMo, NeMo-LM, nvidia, pytorch, torch, language'
+__package_name__ = "nemo_lm"
+__contact_names__ = "NVIDIA"
+__contact_emails__ = "nemo-toolkit@nvidia.com"
+__homepage__ = "https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/stable/"
+__repository_url__ = "https://github.com/nvidia/nemo"
+__download_url__ = "https://github.com/NVIDIA/NeMo-LM/releases"
+__description__ = "NeMo-LM"
+__license__ = "Apache2"
+__keywords__ = "deep learning, machine learning, gpu, NLP, NeMo, NeMo-LM, nvidia, pytorch, torch, language"

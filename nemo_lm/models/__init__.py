@@ -81,9 +81,9 @@ def get_base_model(model_config: GPTConfig | T5Config) -> list[MegatronModule]:
         parallel_state.get_pipeline_model_parallel_world_size() > 1
         and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
     ):
-        assert (
-            model_type != ModelType.encoder_and_decoder
-        ), "Interleaved schedule not supported for model with both encoder and decoder"
+        assert model_type != ModelType.encoder_and_decoder, (
+            "Interleaved schedule not supported for model with both encoder and decoder"
+        )
         model = []
         for i in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
             parallel_state.set_virtual_pipeline_model_parallel_rank(i)

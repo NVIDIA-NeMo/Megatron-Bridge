@@ -202,7 +202,7 @@ class FullTokenizer(object):
             )
             return out_string
 
-        text = ' '.join(tokens).replace(' ##', '').strip()
+        text = " ".join(tokens).replace(" ##", "").strip()
         if clean_up_tokenization_spaces:
             clean_text = clean_up_tokenization(text)
             return clean_text

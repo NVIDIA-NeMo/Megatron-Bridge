@@ -123,9 +123,9 @@ def train(
     if train_config.manual_gc:
         # Disable the default garbage collector and perform the collection manually.
         # This is to align the timing of garbage collection across ranks.
-        assert (
-            train_config.manual_gc_interval >= 0
-        ), "Manual garbage collection interval should be larger than or equal to 0"
+        assert train_config.manual_gc_interval >= 0, (
+            "Manual garbage collection interval should be larger than or equal to 0"
+        )
         gc.disable()
         gc.collect()
 
@@ -177,9 +177,9 @@ def train(
         pre_hook_enabled = False
     # Also, check weight hash across DP replicas to be very pedantic.
     if train_config.check_weight_hash_across_dp_replicas_interval is not None:
-        assert check_param_hashes_across_dp_replicas(
-            model, cross_check=True
-        ), "Parameter hashes not matching across DP replicas"
+        assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
+            "Parameter hashes not matching across DP replicas"
+        )
         torch.distributed.barrier()
         print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
 
@@ -564,9 +564,9 @@ def post_training_step_callbacks(
     ):
         if should_toggle_forward_pre_hook:
             disable_forward_pre_hook(model)
-        assert check_param_hashes_across_dp_replicas(
-            model, cross_check=True
-        ), "Parameter hashes not matching across DP replicas"
+        assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
+            "Parameter hashes not matching across DP replicas"
+        )
         torch.distributed.barrier()
         print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
         if should_toggle_forward_pre_hook:
@@ -649,9 +649,9 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
                 if start_time is None:
                     start_time = line_tokens[0]
                     start_num_floating_point_operations = latest_num_floating_point_operations
-    assert (
-        start_time is not None and start_num_floating_point_operations is not None
-    ), "Should have seen at least one 'Starting job' entry with same world_size"
+    assert start_time is not None and start_num_floating_point_operations is not None, (
+        "Should have seen at least one 'Starting job' entry with same world_size"
+    )
     return datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S"), start_num_floating_point_operations
 
 
