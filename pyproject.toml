@@ -94,7 +94,7 @@ docs = [
     "sphinx-copybutton>=0.5.2",
 ]
 test = [
-    "black>=24.0.0,<25.0.0",
+    "black~=24.3",
     "coverage>=7.8.1",
     "flake8>=7.2.0",
     "isort>=6.0.1",
