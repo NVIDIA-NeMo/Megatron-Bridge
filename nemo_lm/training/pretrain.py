@@ -47,7 +47,7 @@ def megatron_pretrain(
     """
     config.validate()
 
-    dataset_provider = get_dataset_provider(config.dataset_config)
+    dataset_provider = get_dataset_provider(config.dataset)
 
     setup_output = setup(config, dataset_provider)
     state = setup_output.state
@@ -75,7 +75,7 @@ def megatron_pretrain(
             )
 
         barrier_and_log("after training is done")
-        ckpt_config = config.checkpoint_config
+        ckpt_config = config.checkpoint
         if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
             save_checkpoint(
                 state,
