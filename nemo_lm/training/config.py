@@ -721,9 +721,3 @@ class ConfigContainer(Container):
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
         else:
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
-
-        # Profiling
-        if self.profiling is not None:
-            assert self.profiling.use_pytorch_profiler != self.profiling.use_nsys_profiler, (
-                "Exactly one of pytorch or nsys profiler should be enabled, not both or neither"
-            )
