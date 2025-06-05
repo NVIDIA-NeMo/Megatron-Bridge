@@ -25,9 +25,10 @@ from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
 from omegaconf import DictConfig, OmegaConf
 
+
 logger = logging.getLogger(__name__)
 
-DataclassInstance = TypeVar('DataclassInstance')
+DataclassInstance = TypeVar("DataclassInstance")
 
 # Sentinel object to distinguish between "exclude this field" and "field is legitimately None"
 _EXCLUDE_FIELD = object()
@@ -145,9 +146,9 @@ def _is_omegaconf_problematic(val: Any) -> bool:
 
     # Block function objects, methods, partial functions, etc.
     return (
-        hasattr(val, '__call__')
+        hasattr(val, "__call__")
         and not isinstance(val, type)
-        and (hasattr(val, '__module__') or hasattr(val, '__qualname__') or isinstance(val, functools.partial))
+        and (hasattr(val, "__module__") or hasattr(val, "__qualname__") or isinstance(val, functools.partial))
     )
 
 
@@ -294,7 +295,7 @@ def _restore_excluded_fields(config_obj: Any, excluded_fields: Dict[str, Any]) -
     for field_path, original_value in excluded_fields.items():
         try:
             # Navigate to the parent object and field name
-            path_parts = field_path.split('.')
+            path_parts = field_path.split(".")
             if path_parts[0] == "root":
                 path_parts = path_parts[1:]  # Remove "root" prefix
 
@@ -379,7 +380,7 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
                 # If the original was a torch.dtype and value is a string, convert back
                 if isinstance(current_attr, torch.dtype) and isinstance(value, str):
                     try:
-                        final_value = getattr(torch, value.split('.')[-1])
+                        final_value = getattr(torch, value.split(".")[-1])
                     except AttributeError:
                         logger.warning(f"Could not convert string '{value}' back to torch.dtype")
                         final_value = value

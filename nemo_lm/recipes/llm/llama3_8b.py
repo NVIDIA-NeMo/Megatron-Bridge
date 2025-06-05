@@ -16,7 +16,6 @@ import os
 from typing import List, Optional
 
 import torch
-
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
@@ -136,14 +135,14 @@ def pretrain_config(
     if mock or not has_any_data_config:
         # Mock data configuration
         mock = True
-        blend = [1.0]  # Single mock dataset, 100% weight
-        blend_per_split = [[1.0], [1.0], [1.0]]  # Equal weighting for train/val/test
+        blend = None  # Will trigger mock mode automatically
+        blend_per_split = None  # Will trigger mock mode automatically
         split = "1,1,1"  # Equal splits for testing
         data_path = None  # No real data path needed
     else:
         # Real data configuration
         mock = False
-        blend, blend_per_split = get_blend_and_blend_per_split(
+        blend_weights, blend_per_split_weights = get_blend_and_blend_per_split(
             data_paths=data_paths,
             data_args_path=data_args_path,
             train_data_path=train_data_path,
@@ -152,14 +151,16 @@ def pretrain_config(
             per_split_data_args_path=per_split_data_args_path,
         )
 
-        if blend is None and blend_per_split is None:
-            blend = [1.0]
-            blend_per_split = [[1.0], [1.0], [1.0]]
+        if blend_weights is None and blend_per_split_weights is None:
+            # No data provided, fall back to mock mode
+            mock = True
+            blend = None
+            blend_per_split = None
             split = "1,1,1"
             data_path = None
-            mock = True
         else:
             split = "9999,8,2"
+            # Construct data_path from the inputs
             if data_paths is not None:
                 data_path = data_paths
             elif data_args_path is not None:
@@ -174,6 +175,26 @@ def pretrain_config(
                     data_path.extend(test_data_path)
                 if per_split_data_args_path:
                     data_path = per_split_data_args_path
+
+            # Create the tuples expected by BlendedMegatronDatasetConfig
+            if blend_weights is not None:
+                blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
+            else:
+                blend = None
+
+            if blend_per_split_weights is not None:
+                # For per-split, we need to construct the paths for each split
+                train_paths = train_data_path or []
+                valid_paths = valid_data_path or []
+                test_paths = test_data_path or []
+
+                blend_per_split = [
+                    (train_paths, blend_per_split_weights[0]) if train_paths else None,
+                    (valid_paths, blend_per_split_weights[1]) if valid_paths else None,
+                    (test_paths, blend_per_split_weights[2]) if test_paths else None,
+                ]
+            else:
+                blend_per_split = None
 
     model_cfg = model_config(
         tensor_parallelism=tensor_parallelism,
@@ -200,16 +221,16 @@ def pretrain_config(
 
     # Config Container
     cfg = ConfigContainer(
-        model_config=model_cfg,
-        train_config=TrainingConfig(
+        model=model_cfg,
+        train=TrainingConfig(
             train_iters=train_iters,
             eval_interval=2000,
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
         ),
-        optimizer_config=opt_config,
-        scheduler_config=SchedulerConfig(
+        optimizer=opt_config,
+        scheduler=SchedulerConfig(
             start_weight_decay=0.033,
             end_weight_decay=0.033,
             weight_decay_incr_style="constant",
@@ -219,7 +240,7 @@ def pretrain_config(
             lr_decay_iters=train_iters,
             override_opt_param_scheduler=True,
         ),
-        ddp_config=DistributedDataParallelConfig(
+        ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
@@ -227,35 +248,34 @@ def pretrain_config(
             average_in_collective=True,
             use_distributed_optimizer=True,
         ),
-        dataset_config=GPTDatasetConfig(
+        dataset=GPTDatasetConfig(
             random_seed=1234,
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
             sequence_length=seq_length,
             num_dataset_builder_threads=1,
+            blend=blend,
+            blend_per_split=blend_per_split,
+            split=split,
+            # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
             num_workers=1,
-            mock=mock,
-            data_path=data_path,
-            data_blend=blend,
-            data_blend_per_split=blend_per_split,
-            train_val_test_split=split,
         ),
-        logger_config=LoggerConfig(
+        logger=LoggerConfig(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
         ),
-        tokenizer_config=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer"),
-        checkpoint_config=CheckpointConfig(
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer"),
+        checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
             ckpt_format="torch_dist",
             fully_parallel_save=True,
             async_save=True,
         ),
-        rng_config=RNGConfig(seed=1234),
+        rng=RNGConfig(seed=1234),
     )
 
     return cfg

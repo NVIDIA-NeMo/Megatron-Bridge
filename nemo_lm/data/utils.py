@@ -200,7 +200,7 @@ def get_blend_and_blend_per_split(
     if use_data_path:
         if data_args_path is not None:
             assert data_paths is None, "Cannot specify both data_paths and data_args_path"
-            with open(data_args_path, 'r') as f:
+            with open(data_args_path, "r") as f:
                 blend = get_blend_from_list(f.read().split())
         else:
             assert data_paths is not None, "Must specify either data_paths or data_args_path"
@@ -208,7 +208,7 @@ def get_blend_and_blend_per_split(
 
     elif use_per_split_data_path:
         if per_split_data_args_path is not None:
-            with open(per_split_data_args_path, 'r') as f:
+            with open(per_split_data_args_path, "r") as f:
                 per_split_data_args = json.load(f)
                 # Each element in blend_per_split should be a list of files (and optional
                 # weights), so split string if needed.

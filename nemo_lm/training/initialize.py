@@ -64,11 +64,11 @@ def initialize_megatron(
         # Make sure cuda is available.
         assert torch.cuda.is_available(), "Megatron requires CUDA."
 
-    model_config = cfg.model_config
-    dist_config = cfg.dist_config
-    rng_config = cfg.rng_config
-    rerun_state_machine_config = cfg.rerun_state_machine_config
-    train_config = cfg.train_config
+    model_config = cfg.model
+    dist_config = cfg.dist
+    rng_config = cfg.rng
+    rerun_state_machine_config = cfg.rerun_state_machine
+    train_config = cfg.train
 
     # Prep for checkpoint conversion.
     # if args.ckpt_convert_format is not None:

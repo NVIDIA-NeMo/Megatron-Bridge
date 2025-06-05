@@ -263,8 +263,8 @@ def training_log(
     train_state = global_state.train_state
     tb_logger = global_state.tensorboard_logger
     wandb_logger = global_state.wandb_logger
-    logger_config = config.logger_config
-    train_config = config.train_config
+    logger_config = config.logger
+    train_config = config.train
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"

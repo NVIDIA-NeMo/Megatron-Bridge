@@ -59,7 +59,7 @@ Configuration Precedence:
 
 Supported Override Syntax:
     - Standard assignment: key=value
-    - Nested assignment: section.subsection.key=value  
+    - Nested assignment: section.subsection.key=value
     - Addition: +new_key=value
     - Deletion: ~key_to_remove
     - Type conversion: Automatic for basic types (int, float, bool, str)
@@ -80,6 +80,7 @@ from nemo_lm.recipes.llm.llama3_8b import pretrain_config
 from nemo_lm.training.config import ConfigContainer
 from nemo_lm.training.pretrain import megatron_pretrain
 from nemo_lm.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -114,23 +115,23 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 def main() -> None:
     """
     Entry point for the Llama3 8B pretraining script.
-    
+
     This function orchestrates the complete configuration workflow:
     1. Loads the base configuration from pretrain_config() recipe
-    2. Applies YAML overrides from --config-file (if exists)  
+    2. Applies YAML overrides from --config-file (if exists)
     3. Applies CLI overrides using Hydra-style syntax
     4. Starts Megatron pretraining with the final merged configuration
-    
+
     Configuration merging preserves callable fields (like activation functions)
     and handles type conversions automatically.
-    
+
     Examples of CLI usage:
         # Use default config with custom learning rate
         python pretrain_llama3_8b.py optimizer_config.lr=0.0002
-        
-        # Custom config file with additional overrides  
+
+        # Custom config file with additional overrides
         python pretrain_llama3_8b.py --config-file my_config.yaml train_config.train_iters=50000
-        
+
         # Multiple overrides for distributed training
         python pretrain_llama3_8b.py \
             model_config.tensor_model_parallel_size=4 \

@@ -28,18 +28,18 @@ Examples:
 
     Passing additional overrides to the target script:
         $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 \
-            model_config.tensor_model_parallel_size=4 \
-            train_config.train_iters=100000
+            model.tensor_model_parallel_size=4 \
+            train.train_iters=100000
 
     Using both custom config and CLI overrides:
         $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 \
             --config-file=conf/my_custom_config.yaml \
-            optimizer_config.lr=0.0002 \
-            train_config.global_batch_size=512
+            optimizerg.lr=0.0002 \
+            train.global_batch_size=512
 
     Dry run to see what would be executed:
         $ python pretrain_llama3_8b_nemo_run_script.py --nproc-per-node=8 --dryrun \
-            model_config.pipeline_dtype=torch.float16
+            model.pipeline_dtype=torch.float16
 
 Argument Forwarding:
     Any arguments not recognized by this launcher script will be forwarded
@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Tuple
 
 import nemo_run as run
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
