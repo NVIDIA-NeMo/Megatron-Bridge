@@ -109,7 +109,7 @@ class TestMapFunction:
         """Test mapping with keyword arguments."""
         module = nn.Linear(10, 10)
         transformed = fn.map(module, add_custom_attribute, custom_id=123)
-        assert hasattr(transformed, 'custom_id')
+        assert hasattr(transformed, "custom_id")
         assert transformed.custom_id == 123
 
     def test_map_leaf_only(self):
@@ -125,8 +125,8 @@ class TestMapFunction:
         fn.map(model, count_parameters, leaf_only=True)
 
         # Linear layers should have param_count attribute
-        assert hasattr(model.linear1, 'param_count')
-        assert hasattr(model.linear2, 'param_count')
+        assert hasattr(model.linear1, "param_count")
+        assert hasattr(model.linear2, "param_count")
 
 
 class TestWalkFunction:
@@ -204,7 +204,7 @@ class TestWalkFunction:
 
         # Should only transform the shared linear once
         assert transform_count == 1
-        assert hasattr(shared_linear, 'transformed')
+        assert hasattr(shared_linear, "transformed")
 
     def test_walk_parameter_freezing(self):
         """Test walking to freeze parameters."""
@@ -331,7 +331,7 @@ class TestWalkDictModule:
 
         assert isinstance(walked_modules, nn.ModuleDict)
         for module in walked_modules.values():
-            assert hasattr(module, 'tag')
+            assert hasattr(module, "tag")
             assert module.tag == "custom"
 
 
@@ -423,7 +423,7 @@ class TestEdgeCases:
         model = nn.Linear(10, 10)
         result = fn.walk(model, transform_with_extra_kwargs, used_kwarg="test", extra_kwarg="ignored")
 
-        assert hasattr(result, 'used_kwarg')
+        assert hasattr(result, "used_kwarg")
         assert result.used_kwarg == "test"
 
     def test_module_with_builtin_map(self):
@@ -485,19 +485,19 @@ class TestParameterCounting:
 
         def count_params(module):
             """Count the parameters of the module."""
-            if hasattr(module, 'weight'):
-                if not hasattr(module, 'param_count'):
+            if hasattr(module, "weight"):
+                if not hasattr(module, "param_count"):
                     module.param_count = 0
                 module.param_count += module.weight.numel()
-                if hasattr(module, 'bias') and module.bias is not None:
+                if hasattr(module, "bias") and module.bias is not None:
                     module.param_count += module.bias.numel()
             return module
 
         walked_model = fn.walk(model, count_params)
 
         # Check that linear layers got param counts
-        assert hasattr(walked_model.linear1, 'param_count')
-        assert hasattr(walked_model.linear2, 'param_count')
+        assert hasattr(walked_model.linear1, "param_count")
+        assert hasattr(walked_model.linear2, "param_count")
 
         # Verify counts are reasonable
         assert walked_model.linear1.param_count > 0

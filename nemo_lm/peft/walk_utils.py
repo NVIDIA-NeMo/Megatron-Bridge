@@ -25,7 +25,7 @@ Examples:
         >>> def add_tag(module, name=None, **kwargs):
         ...     module.tag = f"transformed_{name}"
         ...     return module
-        >>> 
+        >>>
         >>> model = nn.Sequential(nn.Linear(10, 5), nn.ReLU())
         >>> transformed = walk(model, add_tag)
 
@@ -35,7 +35,7 @@ Examples:
         ...         for param in module.parameters():
         ...             param.requires_grad = False
         ...     return module
-        >>> 
+        >>>
         >>> frozen_model = walk(model, freeze_linear)
 """
 
@@ -227,9 +227,9 @@ def _map_module(
         new_module = func(new_module, **f_kwargs)
 
     prefix = kwargs.get("name", "") if not kwargs.get("prefix", "") else f"{kwargs['prefix']}.{kwargs['name']}"
-    kwargs.pop('i', None)
-    kwargs.pop('name', None)
-    kwargs.pop('prefix', None)
+    kwargs.pop("i", None)
+    kwargs.pop("name", None)
+    kwargs.pop("prefix", None)
 
     for i, (name, child) in enumerate(module.named_children()):
         setattr(
@@ -265,10 +265,10 @@ def _map_module_list(
         module_list = func(module_list, **f_kwargs)
 
     mapped_modules = []
-    prefix = kwargs.get("name", "") if not kwargs.get('prefix', "") else f"{kwargs['prefix']}.{kwargs['name']}"
-    kwargs.pop('i', None)
-    kwargs.pop('name', None)
-    kwargs.pop('prefix', None)
+    prefix = kwargs.get("name", "") if not kwargs.get("prefix", "") else f"{kwargs['prefix']}.{kwargs['name']}"
+    kwargs.pop("i", None)
+    kwargs.pop("name", None)
+    kwargs.pop("prefix", None)
     for i, module in enumerate(module_list):
         new_module = map(
             module,
