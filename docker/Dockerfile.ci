@@ -15,15 +15,6 @@ FROM nvcr.io/nvidia/pytorch:25.05-py3
 
 ENV PIP_CONSTRAINT=""
 
-# Install build dependencies for C++ dataset helpers
-RUN apt-get update && \
-    apt-get install -y \
-    build-essential \
-    make \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install all
 WORKDIR /workspace
 RUN --mount=type=bind,source=pyproject.toml,target=/workspace/pyproject.toml \
