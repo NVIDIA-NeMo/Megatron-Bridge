@@ -45,7 +45,7 @@ select = [
     "F821",  # undefined name
     "E266",  # too many leading '#' for block comment
     "I",     # isort
-    "D101",
+    "D101",  # docstring
     "D103",
 ]
 
@@ -63,6 +63,10 @@ lines-after-imports = 2
 [lint.per-file-ignores]
 # Ignore import violations in __init__ files
 "__init__.py" = ["F401", "F403"]
+# Ignore docstring requirements in test files
+"test_*.py" = ["D101", "D103"]
+"*_test.py" = ["D101", "D103"]
+"tests/*.py" = ["D101", "D103"]
 
 [format]
 # Match black configuration
