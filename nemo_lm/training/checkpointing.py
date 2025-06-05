@@ -1437,8 +1437,7 @@ def _get_non_persistent_iteration(
         return checkpointing_context["local_checkpoint_manager"].find_latest()
     else:
         raise ValueError(
-            "Please use local or global non-persistent checkpoints. "
-            f"Got: {cfg.checkpoint.non_persistent_ckpt_type})"
+            f"Please use local or global non-persistent checkpoints. Got: {cfg.checkpoint.non_persistent_ckpt_type})"
         )
 
 
@@ -1474,8 +1473,7 @@ def _load_non_persistent_base_checkpoint(
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
         raise ValueError(
-            "Please use local or global non-persistent checkpoints. "
-            f"Got: {cfg.checkpoint.non_persistent_ckpt_type})"
+            f"Please use local or global non-persistent checkpoints. Got: {cfg.checkpoint.non_persistent_ckpt_type})"
         )
 
 
