@@ -699,9 +699,7 @@ class ConfigContainer(Container):
         """
         self.data_parallel_size = world_size // total_model_size
 
-        self.model.use_cpu_initialization = (
-            self.model.use_cpu_initialization or self.dist.lazy_init
-        )
+        self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 
         # Make sure all functionality that requires Gloo process groups is disabled.
         if not self.dist.use_gloo_process_groups:
@@ -714,20 +712,12 @@ class ConfigContainer(Container):
         # Scheduler
         if self.scheduler.lr_decay_iters is None:
             self.scheduler.lr_decay_iters = self.train.train_iters
-        self.scheduler.lr_decay_steps = (
-            self.scheduler.lr_decay_iters * self.train.global_batch_size
-        )
+        self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
         self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
         self.scheduler.wsd_decay_steps = None
         if self.scheduler.lr_wsd_decay_iters is not None:
-            self.scheduler.wsd_decay_steps = (
-                self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
-            )
+            self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
         if self.scheduler.lr_warmup_fraction is not None:
-            self.scheduler.lr_warmup_steps = (
-                self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
-            )
+            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
         else:
-            self.scheduler.lr_warmup_steps = (
-                self.scheduler.lr_warmup_iters * self.train.global_batch_size
-            )
+            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size

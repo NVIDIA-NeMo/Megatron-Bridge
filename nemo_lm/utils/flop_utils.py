@@ -42,13 +42,9 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
 
     # MoE.
     num_experts_routed_to = 1 if cfg.model.num_moe_experts is None else cfg.model.moe_router_topk
-    gated_linear_multiplier = (
-        3 / 2 if cfg.model.gated_linear_unit and cfg.model.activation_func == F.silu else 1
-    )
+    gated_linear_multiplier = 3 / 2 if cfg.model.gated_linear_unit and cfg.model.activation_func == F.silu else 1
     shared_expert_ffn_hidden_size = (
-        0
-        if cfg.model.moe_shared_expert_intermediate_size is None
-        else cfg.model.moe_shared_expert_intermediate_size
+        0 if cfg.model.moe_shared_expert_intermediate_size is None else cfg.model.moe_shared_expert_intermediate_size
     )
 
     # The 12x term below comes from the following factors; for more details, see
@@ -79,17 +75,10 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
                 * query_projection_to_hidden_size_ratio
             )
             # MLP.
-            + (
-                (cfg.model.ffn_hidden_size / cfg.model.hidden_size)
-                * num_experts_routed_to
-                * gated_linear_multiplier
-            )
+            + ((cfg.model.ffn_hidden_size / cfg.model.hidden_size) * num_experts_routed_to * gated_linear_multiplier)
             # Shared Experts.
             + ((shared_expert_ffn_hidden_size / cfg.model.hidden_size) * gated_linear_multiplier)
             # Logit.
-            + (
-                cfg.tokenizer.padded_vocab_size
-                / (2 * cfg.model.num_layers * cfg.model.hidden_size)
-            )
+            + (cfg.tokenizer.padded_vocab_size / (2 * cfg.model.num_layers * cfg.model.hidden_size))
         )
     )

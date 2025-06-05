@@ -559,9 +559,7 @@ def save_checkpoint(
     )
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
-    maybe_save_dataloader_state(
-        train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None)
-    )
+    maybe_save_dataloader_state(train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None))
 
     # Save distributed optimizer's custom parameter state.
     if (
@@ -1497,9 +1495,7 @@ def _load_global_dist_base_checkpoint(
         return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
     if sharded_state_dict is None:
-        assert not cfg.checkpoint.auto_detect_ckpt_format and not use_dist_ckpt(
-            cfg.checkpoint.ckpt_format
-        ), (
+        assert not cfg.checkpoint.auto_detect_ckpt_format and not use_dist_ckpt(cfg.checkpoint.ckpt_format), (
             cfg.checkpoint.auto_detect_ckpt_format,
             use_dist_ckpt(cfg.checkpoint.ckpt_format),
         )
