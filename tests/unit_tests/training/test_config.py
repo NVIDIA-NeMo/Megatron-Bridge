@@ -210,19 +210,19 @@ def create_test_config_container(
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
 
     container = ConfigContainer(
-        train_config=train_config or create_test_training_config(),
-        model_config=model_config,
-        optimizer_config=optimizer_config or create_test_optimizer_config(),
-        scheduler_config=scheduler_config or create_test_scheduler_config(),
-        dataset_config=final_dataset_config,
-        logger_config=logger_config or create_test_logger_config(),
-        tokenizer_config=tokenizer_config or create_test_tokenizer_config(),
-        checkpoint_config=checkpoint_config or create_test_checkpoint_config(),
-        dist_config=dist_config or create_test_distributed_init_config(),
-        ddp_config=DistributedDataParallelConfig(),
-        rng_config=RNGConfig(),
-        rerun_state_machine_config=RerunStateMachineConfig(),
-        profiling_config=profiling_config,
+        train=train_config or create_test_training_config(),
+        model=model_config,
+        optimizer=optimizer_config or create_test_optimizer_config(),
+        scheduler=scheduler_config or create_test_scheduler_config(),
+        dataset=final_dataset_config,
+        logger=logger_config or create_test_logger_config(),
+        tokenizer=tokenizer_config or create_test_tokenizer_config(),
+        checkpoint=checkpoint_config or create_test_checkpoint_config(),
+        dist=dist_config or create_test_distributed_init_config(),
+        ddp=DistributedDataParallelConfig(),
+        rng=RNGConfig(),
+        rerun_state_machine=RerunStateMachineConfig(),
+        profiling=profiling_config,
     )
 
     # Monkeypatch get_world_size_safe for this test
@@ -316,7 +316,7 @@ class TestConfigContainerValidation:
         )
         try:
             container.validate()
-            assert container.model_config.use_cpu_initialization is True
+            assert container.model.use_cpu_initialization is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -331,7 +331,7 @@ class TestConfigContainerValidation:
         )
         try:
             container1.validate()
-            assert container1.model_config.use_cpu_initialization is True
+            assert container1.model.use_cpu_initialization is True
         finally:
             restore_get_world_size_safe(og1, mod1)
 
@@ -343,7 +343,7 @@ class TestConfigContainerValidation:
         )
         try:
             container2.validate()
-            assert container2.model_config.use_cpu_initialization is True
+            assert container2.model.use_cpu_initialization is True
         finally:
             restore_get_world_size_safe(og2, mod2)
 
@@ -436,8 +436,8 @@ class TestConfigContainerValidation:
         )
         try:
             container.validate()
-            assert container.scheduler_config.lr_decay_iters == train_cfg.train_iters
-            assert container.scheduler_config.lr_decay_steps == train_cfg.train_iters * train_cfg.global_batch_size
+            assert container.scheduler.lr_decay_iters == train_cfg.train_iters
+            assert container.scheduler.lr_decay_steps == train_cfg.train_iters * train_cfg.global_batch_size
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -453,8 +453,8 @@ class TestConfigContainerValidation:
         )
         try:
             container.validate()
-            assert container.scheduler_config.lr_decay_iters == custom_lr_decay_iters
-            assert container.scheduler_config.lr_decay_steps == custom_lr_decay_iters * train_cfg.global_batch_size
+            assert container.scheduler.lr_decay_iters == custom_lr_decay_iters
+            assert container.scheduler.lr_decay_steps == custom_lr_decay_iters * train_cfg.global_batch_size
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -470,7 +470,7 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             expected_wd_incr_steps = train_cfg.train_iters * train_cfg.global_batch_size
-            assert container.scheduler_config.wd_incr_steps == expected_wd_incr_steps
+            assert container.scheduler.wd_incr_steps == expected_wd_incr_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -488,7 +488,7 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             expected_wsd_decay_steps = lr_wsd_decay_iters * train_cfg.global_batch_size
-            assert container.scheduler_config.wsd_decay_steps == expected_wsd_decay_steps
+            assert container.scheduler.wsd_decay_steps == expected_wsd_decay_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -503,7 +503,7 @@ class TestConfigContainerValidation:
         )
         try:
             container.validate()
-            assert container.scheduler_config.wsd_decay_steps is None
+            assert container.scheduler.wsd_decay_steps is None
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -523,7 +523,7 @@ class TestConfigContainerValidation:
             container.validate()
             # lr_decay_iters in scheduler_config defaults to train_config.train_iters
             expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters
-            assert container.scheduler_config.lr_warmup_steps == expected_lr_warmup_steps
+            assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -540,7 +540,7 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             expected_lr_warmup_steps = lr_warmup_iters * train_cfg.global_batch_size
-            assert container.scheduler_config.lr_warmup_steps == expected_lr_warmup_steps
+            assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -559,7 +559,7 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters
-            assert container.scheduler_config.lr_warmup_steps == expected_lr_warmup_steps
+            assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

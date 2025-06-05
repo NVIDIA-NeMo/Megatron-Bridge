@@ -99,7 +99,7 @@ def initialize_megatron(
         dist_config=dist_config,
         rng_config=rng_config,
         micro_batch_size=train_config.micro_batch_size,
-        num_distributed_optimizer_instances=cfg.ddp_config.num_distributed_optimizer_instances,
+        num_distributed_optimizer_instances=cfg.ddp.num_distributed_optimizer_instances,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         skip_mpu_initialization=skip_mpu_initialization,

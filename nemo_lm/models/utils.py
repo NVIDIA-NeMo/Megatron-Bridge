@@ -90,7 +90,7 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
             "position_ids": data["position_ids"].cuda(non_blocking=True),
         }
 
-        if cfg.model_config.pipeline_model_parallel_size == 1:
+        if cfg.model.pipeline_model_parallel_size == 1:
             _broadcast(batch["tokens"])
             _broadcast(batch["labels"])
             _broadcast(batch["loss_mask"])
@@ -108,8 +108,8 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
             _broadcast(batch["attention_mask"])
 
     else:
-        mbs = cfg.train_config.micro_batch_size
-        seq_length = cfg.model_config.seq_length
+        mbs = cfg.train.micro_batch_size
+        seq_length = cfg.model.seq_length
         tokens = torch.empty(
             (mbs, seq_length),
             dtype=torch.int64,
@@ -125,7 +125,7 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
-        if isinstance(cfg.dataset_config, FinetuningDatasetConfig) or cfg.dataset_config.create_attention_mask:
+        if isinstance(cfg.dataset, FinetuningDatasetConfig) or cfg.dataset.create_attention_mask:
             attention_mask = torch.empty(
                 (
                     mbs,
@@ -144,7 +144,7 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
             device=torch.cuda.current_device(),
         )
 
-        if cfg.model_config.pipeline_model_parallel_size == 1:
+        if cfg.model.pipeline_model_parallel_size == 1:
             _broadcast(tokens)
             _broadcast(labels)
             _broadcast(loss_mask)
@@ -199,7 +199,7 @@ def get_batch(
     if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None
 
-    if isinstance(cfg.dataset_config, FinetuningDatasetConfig):
+    if isinstance(cfg.dataset, FinetuningDatasetConfig):
         batch = get_batch_from_iterator(data_iterator)
     else:
         # get batches based on the TP rank you are on

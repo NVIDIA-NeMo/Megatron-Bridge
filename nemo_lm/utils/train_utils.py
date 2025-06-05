@@ -337,11 +337,11 @@ def training_log(
 
     if tb_logger and (train_state.step % logger_config.tensorboard_log_interval == 0):
         if config.profiling_config:
-            if config.profiling_config.record_memory_history and is_last_rank():
+            if config.profiling.record_memory_history and is_last_rank():
                 snapshot = torch.cuda.memory._snapshot()
                 from pickle import dump
 
-                with open(config.profiling_config.memory_snapshot_path, "wb") as f:
+                with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
 
         if wandb_logger:
@@ -352,7 +352,7 @@ def training_log(
         )
         if wandb_logger:
             wandb_logger.log({"learning-rate": learning_rate}, train_state.step)
-        if config.optimizer_config.decoupled_lr is not None:
+        if config.optimizer.decoupled_lr is not None:
             tb_logger.add_scalar("decoupled-learning-rate", decoupled_learning_rate, train_state.step)
         if global_state.train_state.skipped_train_samples > 0:
             tb_logger.add_scalar(
@@ -424,7 +424,7 @@ def training_log(
                 mem_stats["allocation.all.current"],
                 train_state.step,
             )
-    if config.model_config.num_moe_experts is not None:
+    if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_moe_metrics(
             moe_loss_scale,
@@ -432,7 +432,7 @@ def training_log(
             tb_logger,
             wandb_logger,
             total_loss_dict,
-            config.model_config.moe_per_layer_logging,
+            config.model.moe_per_layer_logging,
         )
 
     if train_state.step % logger_config.log_interval == 0:
@@ -465,7 +465,7 @@ def training_log(
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"
-        if config.optimizer_config.decoupled_lr is not None and (
+        if config.optimizer.decoupled_lr is not None and (
             parallel_state.is_pipeline_first_stage(ignore_virtual=True)
             or parallel_state.is_pipeline_last_stage(ignore_virtual=True)
         ):

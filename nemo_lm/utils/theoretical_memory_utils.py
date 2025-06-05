@@ -42,7 +42,7 @@ def compute_weight_and_optimizer_memory(config: ConfigContainer, verbose: bool =
         float: Estimated memory footprint in bytes for weights and optimizer states
                on the most loaded GPU shard.
     """
-    model_config = config.model_config
+    model_config = config.model
     # Attention projection size.
     query_projection_size = model_config.kv_channels * model_config.num_attention_heads
     query_projection_to_hidden_size_ratio = query_projection_size / model_config.hidden_size
@@ -69,7 +69,7 @@ def compute_weight_and_optimizer_memory(config: ConfigContainer, verbose: bool =
             + (1 / (model_config.num_layers * model_config.hidden_size))
         )
     )
-    embedding_size = model_config.hidden_size * config.tokenizer_config.padded_vocab_size
+    embedding_size = model_config.hidden_size * config.tokenizer.padded_vocab_size
     if not model_config.share_embeddings_and_output_weights:
         num_parameters_in_embedding_layers = 2 * embedding_size
     else:
@@ -108,7 +108,7 @@ def compute_weight_and_optimizer_memory(config: ConfigContainer, verbose: bool =
             )
 
     num_bytes_per_parameter = (
-        18 if not config.optimizer_config.use_distributed_optimizer else 6 + (12 / config.data_parallel_size)
+        18 if not config.optimizer.use_distributed_optimizer else 6 + (12 / config.data_parallel_size)
     )
     weight_and_optimizer_memory = num_parameters_on_most_loaded_model_shard * num_bytes_per_parameter
 
@@ -146,8 +146,8 @@ def compute_activation_memory(
     # TODO: This function needs to take into account query_projection_size potentially being
     # different from hidden_size.
 
-    model_config = config.model_config
-    train_config = config.train_config
+    model_config = config.model
+    train_config = config.train
 
     # Memory footprint from transformer layer (self-attention and MLP).
     activation_memory = (model_config.seq_length * train_config.micro_batch_size * model_config.hidden_size) * (
@@ -206,7 +206,7 @@ def compute_activation_memory(
             * train_config.micro_batch_size
             * model_config.hidden_size
             * 4
-            * (1 + (config.tokenizer_config.padded_vocab_size / model_config.hidden_size))
+            * (1 + (config.tokenizer.padded_vocab_size / model_config.hidden_size))
         )
 
     # Activation memory is partitioned by TP size due to tensor and sequence model parallelism.
@@ -232,7 +232,7 @@ def report_theoretical_memory(
     weight_and_optimizer_memory = compute_weight_and_optimizer_memory(config, verbose=verbose) / NUM_BYTES_IN_MEGABYTE
 
     # Formulae here assume sequence parallelism and selective activation recomputation.
-    if not config.model_config.sequence_parallel or config.model_config.recompute_granularity != "selective":
+    if not config.model.sequence_parallel or config.model.recompute_granularity != "selective":
         print(f"Theoretical memory footprints: weight and optimizer={weight_and_optimizer_memory:.2f} MB")
         return
 

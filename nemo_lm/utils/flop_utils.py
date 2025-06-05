@@ -32,23 +32,23 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
                (forward + backward pass).
     """
     # Attention projection size.
-    query_projection_size = cfg.model_config.kv_channels * cfg.model_config.num_attention_heads
-    query_projection_to_hidden_size_ratio = query_projection_size / cfg.model_config.hidden_size
+    query_projection_size = cfg.model.kv_channels * cfg.model.num_attention_heads
+    query_projection_to_hidden_size_ratio = query_projection_size / cfg.model.hidden_size
     # Group Query Attention.
-    if not cfg.model_config.num_query_groups:
-        num_query_groups = cfg.model_config.num_attention_heads
+    if not cfg.model.num_query_groups:
+        num_query_groups = cfg.model.num_attention_heads
     else:
-        num_query_groups = cfg.model_config.num_query_groups
+        num_query_groups = cfg.model.num_query_groups
 
     # MoE.
-    num_experts_routed_to = 1 if cfg.model_config.num_moe_experts is None else cfg.model_config.moe_router_topk
+    num_experts_routed_to = 1 if cfg.model.num_moe_experts is None else cfg.model.moe_router_topk
     gated_linear_multiplier = (
-        3 / 2 if cfg.model_config.gated_linear_unit and cfg.model_config.activation_func == F.silu else 1
+        3 / 2 if cfg.model.gated_linear_unit and cfg.model.activation_func == F.silu else 1
     )
     shared_expert_ffn_hidden_size = (
         0
-        if cfg.model_config.moe_shared_expert_intermediate_size is None
-        else cfg.model_config.moe_shared_expert_intermediate_size
+        if cfg.model.moe_shared_expert_intermediate_size is None
+        else cfg.model.moe_shared_expert_intermediate_size
     )
 
     # The 12x term below comes from the following factors; for more details, see
@@ -64,32 +64,32 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
     return (
         expansion_factor
         * batch_size
-        * cfg.model_config.seq_length
-        * cfg.model_config.num_layers
-        * cfg.model_config.hidden_size
-        * cfg.model_config.hidden_size
+        * cfg.model.seq_length
+        * cfg.model.num_layers
+        * cfg.model.hidden_size
+        * cfg.model.hidden_size
         * (
             # Attention.
             (
                 (
                     1
-                    + (num_query_groups / cfg.model_config.num_attention_heads)
-                    + (cfg.model_config.seq_length / cfg.model_config.hidden_size)
+                    + (num_query_groups / cfg.model.num_attention_heads)
+                    + (cfg.model.seq_length / cfg.model.hidden_size)
                 )
                 * query_projection_to_hidden_size_ratio
             )
             # MLP.
             + (
-                (cfg.model_config.ffn_hidden_size / cfg.model_config.hidden_size)
+                (cfg.model.ffn_hidden_size / cfg.model.hidden_size)
                 * num_experts_routed_to
                 * gated_linear_multiplier
             )
             # Shared Experts.
-            + ((shared_expert_ffn_hidden_size / cfg.model_config.hidden_size) * gated_linear_multiplier)
+            + ((shared_expert_ffn_hidden_size / cfg.model.hidden_size) * gated_linear_multiplier)
             # Logit.
             + (
-                cfg.tokenizer_config.padded_vocab_size
-                / (2 * cfg.model_config.num_layers * cfg.model_config.hidden_size)
+                cfg.tokenizer.padded_vocab_size
+                / (2 * cfg.model.num_layers * cfg.model.hidden_size)
             )
         )
     )

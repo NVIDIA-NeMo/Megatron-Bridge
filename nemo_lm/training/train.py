@@ -91,7 +91,7 @@ def train(
     """
     config: ConfigContainer = global_state.cfg
     model_config = get_model_config(model[0])
-    train_config = config.train_config
+    train_config = config.train
     timers = global_state.timers
     straggler_timer = global_state.straggler_timer
 
@@ -129,16 +129,16 @@ def train(
         gc.disable()
         gc.collect()
 
-    if config.straggler_config and config.straggler_config.log_straggler:
+    if config.straggler and config.straggler.log_straggler:
         world = torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
-        mmcnt = config.straggler_config.straggler_minmax_count
+        mmcnt = config.straggler.straggler_minmax_count
         straggler_timer.configure(
             world,
             rank,
             mmcnt=mmcnt,
-            enabled=not config.straggler_config.disable_straggler_on_startup,
-            port=config.straggler_config.straggler_ctrlr_port,
+            enabled=not config.straggler.disable_straggler_on_startup,
+            port=config.straggler.straggler_ctrlr_port,
         )
 
     num_microbatches = get_num_microbatches()
@@ -146,7 +146,7 @@ def train(
     eval_iterations = 0
 
     prof = None
-    prof_config = config.profiling_config
+    prof_config = config.profiling
     if prof_config and torch.distributed.get_rank() in prof_config.profile_ranks and prof_config.use_pytorch_profiler:
         prof = torch.profiler.profile(
             schedule=torch.profiler.schedule(
@@ -155,7 +155,7 @@ def train(
                 active=prof_config.profile_step_end - prof_config.profile_step_start,
                 repeat=1,
             ),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(config.logger_config.tensorboard_dir),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler(config.logger.tensorboard_dir),
             record_shapes=prof_config.record_shapes,
             with_stack=True,
         )
@@ -163,7 +163,7 @@ def train(
 
     start_iteration = global_state.train_state.step
     should_toggle_forward_pre_hook = (
-        config.optimizer_config.use_distributed_optimizer and config.ddp_config.overlap_param_gather
+        config.optimizer.use_distributed_optimizer and config.ddp.overlap_param_gather
     )
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
@@ -194,7 +194,7 @@ def train(
                     torch.autograd.profiler.emit_nvtx(record_shapes=prof_config.record_shapes).__enter__()
 
         fault_tolerance.on_checkpointing_start(global_state)
-        maybe_finalize_async_save(ckpt_cfg=config.checkpoint_config, blocking=False)
+        maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Update number of microbatches first without consistency check to decide if a
@@ -207,7 +207,7 @@ def train(
                 f"Number of microbatches should be increasing due to batch size rampup; "
                 f"instead going from {num_microbatches} to {get_num_microbatches()}"
             )
-            if config.checkpoint_config.save is not None:
+            if config.checkpoint.save is not None:
                 save_checkpoint_and_time(
                     global_state,
                     model,
@@ -223,7 +223,7 @@ def train(
 
         # TODO: implement dummy train_step to fast forward train_data_iterator.
         # Completely skip iteration if needed.
-        # if global_state.train_state.step in config.checkpoint_config.iterations_to_skip:
+        # if global_state.train_state.step in config.checkpoint.iterations_to_skip:
         #     # Dummy train_step to fast forward train_data_iterator.
         #     dummy_train_step(train_data_iterator)
         #     global_state.train_state.step += 1
@@ -295,7 +295,7 @@ def train(
             loss_scale = 1.0
         params_norm = None
 
-        if config.logger_config.log_params_norm:
+        if config.logger.log_params_norm:
             params_norm = calc_params_l2_norm(model, model_config)
         learning_rate = None
         decoupled_learning_rate = None
@@ -394,12 +394,12 @@ def train(
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(ckpt_cfg=config.checkpoint_config, blocking=True, terminate=True)
+    maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
     if should_exit:
-        maybe_finalize_async_save(ckpt_cfg=config.checkpoint_config, blocking=True, terminate=True)
+        maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
         wandb_writer = global_state.wandb_logger
         if wandb_writer:
             wandb_writer.finish()
@@ -440,8 +440,8 @@ def train_step(
     cfg: ConfigContainer = global_state.cfg
     timers = global_state.timers
     model_config = get_model_config(model[0])
-    train_config = cfg.train_config
-    optim_config = cfg.optimizer_config
+    train_config = cfg.train
+    optim_config = cfg.optimizer
 
     rerun_state_machine = get_rerun_state_machine()
     while rerun_state_machine.should_run_forward_backward(data_iterator):
@@ -542,18 +542,18 @@ def post_training_step_callbacks(
         config: Configuration container
         should_toggle_forward_pre_hook: Whether to toggle forward pre-hook
     """
-    train_config = config.train_config
+    train_config = config.train
 
     # Bring CPU and GPU back in sync if on right iteration.
     if train_config.train_sync_interval and iteration % train_config.train_sync_interval == 0:
         torch.cuda.synchronize()
 
     # Straggler detector.
-    if config.straggler_config:
-        if iteration % config.logger_config.log_interval == 0 and config.straggler_config.log_straggler:
+    if config.straggler:
+        if iteration % config.logger.log_interval == 0 and config.straggler.log_straggler:
             straggler_timer.report(
                 num_floating_point_operations_since_last_log_event,
-                config.logger_config.log_interval,
+                config.logger.log_interval,
             )
             num_floating_point_operations_since_last_log_event = 0.0
 
@@ -574,14 +574,14 @@ def post_training_step_callbacks(
 
     # Profiling.
     if (
-        config.profiling_config
-        and iteration == config.profiling_config.profile_step_end
-        and torch.distributed.get_rank() in config.profiling_config.profile_ranks
+        config.profiling
+        and iteration == config.profiling.profile_step_end
+        and torch.distributed.get_rank() in config.profiling.profile_ranks
     ):
-        if config.profiling_config.use_pytorch_profiler:
+        if config.profiling.use_pytorch_profiler:
             assert prof is not None
             prof.stop()
-        if config.profiling_config.use_nsys_profiler:
+        if config.profiling.use_nsys_profiler:
             torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStop())
 
     # Manual garbage collection.
@@ -618,8 +618,8 @@ def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, fl
     Gets start time of earliest job with same world size. Also returns the number
     of floating-point operations completed in last saved checkpoint.
     """
-    assert cfg.checkpoint_config.save is not None
-    progress_log_filename = os.path.join(cfg.checkpoint_config.save, "progress.txt")
+    assert cfg.checkpoint.save is not None
+    progress_log_filename = os.path.join(cfg.checkpoint.save, "progress.txt")
 
     # start_time is time when job with same world size started.
     # start_num_floating_point_operations is the number of floating-point operations
@@ -668,7 +668,7 @@ def compute_throughputs_and_append_to_progress_log(
         state: The GlobalState object.
         num_floating_point_operations_so_far: Total floating-point operations completed.
     """
-    if state.cfg.checkpoint_config.save is None:
+    if state.cfg.checkpoint.save is None:
         return
 
     # Compute job throughput.
@@ -687,10 +687,10 @@ def compute_throughputs_and_append_to_progress_log(
         elapsed_time * 10**12 * get_world_size_safe()
     )
 
-    tokens_so_far = state.train_state.consumed_train_samples * state.cfg.model_config.seq_length
-    saved_ckpt_prefix = "Saving async checkpoint" if state.cfg.checkpoint_config.async_save else "Saved checkpoint"
+    tokens_so_far = state.train_state.consumed_train_samples * state.cfg.model.seq_length
+    saved_ckpt_prefix = "Saving async checkpoint" if state.cfg.checkpoint.async_save else "Saved checkpoint"
     append_to_progress_log(
-        state.cfg.checkpoint_config.save,
+        state.cfg.checkpoint.save,
         f"{saved_ckpt_prefix}\tIteration: {state.train_state.step}\t"
         f"Job throughput: {job_throughput:.1f} TFLOP/s/GPU\t"
         f"Cumulative throughput: {cumulative_throughput:.1f} TFLOP/s/GPU\t"
@@ -734,7 +734,7 @@ def save_checkpoint_and_time(
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
 
-    if state.cfg.optimizer_config.use_distributed_optimizer and state.cfg.ddp_config.overlap_param_gather:
+    if state.cfg.optimizer.use_distributed_optimizer and state.cfg.ddp.overlap_param_gather:
         disable_forward_pre_hook(model)
     save_checkpoint(
         state,
@@ -746,12 +746,12 @@ def save_checkpoint_and_time(
         non_persistent_ckpt=non_persistent_ckpt,
         train_data_iterator=train_data_iterator,
     )
-    if state.cfg.optimizer_config.use_distributed_optimizer and state.cfg.ddp_config.overlap_param_gather:
+    if state.cfg.optimizer.use_distributed_optimizer and state.cfg.ddp.overlap_param_gather:
         enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
     timers.log([timer_key])
 
-    if state.cfg.logger_config.log_progress and not non_persistent_ckpt:
+    if state.cfg.logger.log_progress and not non_persistent_ckpt:
         compute_throughputs_and_append_to_progress_log(state, num_floating_point_operations_so_far)
 
     # Recover timing
@@ -788,10 +788,10 @@ def checkpoint_and_decide_exit(
     saved_checkpoint = False
 
     # Exit based on signal handler.
-    if state.cfg.train_config.exit_signal_handler:
+    if state.cfg.train.exit_signal_handler:
         signal_handler = state.signal_handler
         if any(signal_handler.signals_received()):
-            if state.cfg.checkpoint_config.save:
+            if state.cfg.checkpoint.save:
                 save_checkpoint_and_time(
                     state,
                     model,
@@ -807,9 +807,9 @@ def checkpoint_and_decide_exit(
 
     # Regular save (persistent and non-persistent).
     if (
-        state.cfg.checkpoint_config.save
-        and state.cfg.checkpoint_config.save_interval
-        and state.train_state.step % state.cfg.checkpoint_config.save_interval == 0
+        state.cfg.checkpoint.save
+        and state.cfg.checkpoint.save_interval
+        and state.train_state.step % state.cfg.checkpoint.save_interval == 0
     ):
         save_checkpoint_and_time(
             state,
@@ -823,9 +823,9 @@ def checkpoint_and_decide_exit(
         saved_checkpoint = True
 
     elif (
-        state.cfg.checkpoint_config.save
-        and state.cfg.checkpoint_config.non_persistent_save_interval
-        and state.train_state.step % state.cfg.checkpoint_config.non_persistent_save_interval == 0
+        state.cfg.checkpoint.save
+        and state.cfg.checkpoint.non_persistent_save_interval
+        and state.train_state.step % state.cfg.checkpoint.non_persistent_save_interval == 0
     ):
         save_checkpoint_and_time(
             state,
@@ -840,15 +840,15 @@ def checkpoint_and_decide_exit(
         saved_checkpoint = True
 
     # Exit based on duration.
-    if state.cfg.train_config.exit_duration_in_mins:
+    if state.cfg.train.exit_duration_in_mins:
         train_time = (time.time() - state.train_state.start_time) / 60.0
         done_cuda = torch.tensor(
-            [train_time > state.cfg.checkpoint_config.exit_duration_in_mins], dtype=torch.int, device="cuda"
+            [train_time > state.cfg.checkpoint.exit_duration_in_mins], dtype=torch.int, device="cuda"
         )
         torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
         done = done_cuda.item()
         if done:
-            if state.cfg.checkpoint_config.save and not saved_checkpoint:
+            if state.cfg.checkpoint.save and not saved_checkpoint:
                 save_checkpoint_and_time(
                     state,
                     model,
@@ -863,8 +863,8 @@ def checkpoint_and_decide_exit(
             return True
 
     # Exit based on iterations.
-    if state.cfg.train_config.exit_interval and state.train_state.step % state.cfg.train_config.exit_interval == 0:
-        if state.cfg.checkpoint_config.save and not saved_checkpoint:
+    if state.cfg.train.exit_interval and state.train_state.step % state.cfg.train.exit_interval == 0:
+        if state.cfg.checkpoint.save and not saved_checkpoint:
             save_checkpoint_and_time(
                 state,
                 model,
@@ -883,7 +883,7 @@ def checkpoint_and_decide_exit(
 
 
 def _finish_train(global_state: GlobalState):
-    ckpt_cfg = global_state.cfg.checkpoint_config
+    ckpt_cfg = global_state.cfg.checkpoint
 
     fault_tolerance.on_checkpointing_start(global_state)
     maybe_finalize_async_save(blocking=True, terminate=True, ckpt_cfg=ckpt_cfg)

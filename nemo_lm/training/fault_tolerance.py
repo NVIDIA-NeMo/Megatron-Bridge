@@ -81,7 +81,7 @@ def setup(config: ConfigContainer, global_state: GlobalState) -> None:
 
     print_rank_0("FT: initializing...")
 
-    checkpoint_dir = config.checkpoint_config.save
+    checkpoint_dir = config.checkpoint.save
     if not checkpoint_dir:
         raise ValueError("checkpointing save dir must be set to enable fault tolerance")
     if get_rank_safe() == 0 and not os.path.exists(checkpoint_dir):
@@ -93,9 +93,9 @@ def setup(config: ConfigContainer, global_state: GlobalState) -> None:
 
     global_state.fault_tolerance_state.ft_state_path = os.path.join(checkpoint_dir, "ft_state.json")
 
-    global_state.fault_tolerance_state.is_async_chkpt_enabled = config.checkpoint_config.async_save
+    global_state.fault_tolerance_state.is_async_chkpt_enabled = config.checkpoint.async_save
 
-    global_state.fault_tolerance_state.is_calculating_timeouts = config.ft_config.calc_ft_timeouts
+    global_state.fault_tolerance_state.is_calculating_timeouts = config.ft.calc_ft_timeouts
 
     global_state.rank_monitor_client.init_workload_monitoring()
     _load_state_if_exists(global_state)

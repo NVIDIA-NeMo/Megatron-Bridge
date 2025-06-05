@@ -107,10 +107,10 @@ def setup(
     # TODO: Freeze state.cfg
 
     setup_logging(
-        logging_level=cfg.logger_config.logging_level,
-        filter_warning=cfg.logger_config.filter_warnings,
-        modules_to_filter=cfg.logger_config.modules_to_filter,
-        set_level_for_all_loggers=cfg.logger_config.set_level_for_all_loggers,
+        logging_level=cfg.logger.logging_level,
+        filter_warning=cfg.logger.filter_warnings,
+        modules_to_filter=cfg.logger.modules_to_filter,
+        set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
     initialize_megatron(
@@ -121,15 +121,15 @@ def setup(
 
     timers = state.timers
 
-    if cfg.logger_config.log_progress:
-        append_to_progress_log(cfg.checkpoint_config.save, "Starting job")
+    if cfg.logger.log_progress:
+        append_to_progress_log(cfg.checkpoint.save, "Starting job")
 
     if cfg.ft_config and cfg.ft_config.enable_ft_package:
         fault_tolerance.setup(cfg, state)
-        fault_tolerance.maybe_setup_simulated_fault(cfg.ft_config)
+        fault_tolerance.maybe_setup_simulated_fault(cfg.ft)
 
     # Set pytorch JIT layer fusion options and warmup JIT functions.
-    set_jit_fusion_options(cfg.model_config, cfg.train_config.micro_batch_size)
+    set_jit_fusion_options(cfg.model, cfg.train.micro_batch_size)
 
     # Adjust the startup time so it reflects the largest value.
     # This will be closer to what scheduler will see (outside of
@@ -142,52 +142,52 @@ def setup(
     barrier_and_log("after megatron is initialized")
 
     # Context used for persisting some state between checkpoint saves.
-    checkpointing_context = init_checkpointing_context(cfg.checkpoint_config)
+    checkpointing_context = init_checkpointing_context(cfg.checkpoint)
 
     # Tokenizer
     timers("tokenizer-setup", log_level=0).start(barrier=True)
     tokenizer = build_tokenizer(
-        cfg.tokenizer_config,
-        make_vocab_size_divisible_by=cfg.model_config.make_vocab_size_divisible_by,
-        tensor_model_parallel_size=cfg.model_config.tensor_model_parallel_size,
+        cfg.tokenizer,
+        make_vocab_size_divisible_by=cfg.model.make_vocab_size_divisible_by,
+        tensor_model_parallel_size=cfg.model.tensor_model_parallel_size,
     )
-    if not cfg.model_config.vocab_size:
-        cfg.model_config.vocab_size = tokenizer.vocab_size
+    if not cfg.model.vocab_size:
+        cfg.model.vocab_size = tokenizer.vocab_size
 
-    cfg.dataset_config.tokenizer = tokenizer
+    cfg.dataset.tokenizer = tokenizer
     timers("tokenizer-setup").stop()
     barrier_and_log("after tokenizer is built")
 
     # Model, optimizer, and learning rate.
     timers("model-and-optimizer-setup", log_level=0).start(barrier=True)
     model = get_model_from_config(
-        cfg.model_config,
-        cfg.ddp_config,
-        use_torch_fsdp2=cfg.dist_config.use_torch_fsdp2,
-        overlap_param_gather_with_optimizer_step=cfg.optimizer_config.overlap_param_gather_with_optimizer_step,
-        data_parallel_random_init=cfg.rng_config.data_parallel_random_init,
+        cfg.model,
+        cfg.ddp,
+        use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+        overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+        data_parallel_random_init=cfg.rng.data_parallel_random_init,
     )
-    cfg.model_config.timers = timers
-    cfg.optimizer_config.timers = timers
+    cfg.model.timers = timers
+    cfg.optimizer.timers = timers
     optimizer, scheduler = setup_optimizer(
-        optimizer_config=cfg.optimizer_config,
-        scheduler_config=cfg.scheduler_config,
+        optimizer_config=cfg.optimizer,
+        scheduler_config=cfg.scheduler,
         model=model,
-        use_gloo_process_groups=cfg.dist_config.use_gloo_process_groups,
+        use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
     )
     _update_model_config_funcs(
         model,
-        cfg.model_config,
-        cfg.ddp_config,
+        cfg.model,
+        cfg.ddp,
         optimizer,
-        align_grad_reduce=cfg.dist_config.align_grad_reduce,
+        align_grad_reduce=cfg.dist.align_grad_reduce,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
     # Load checkpoint if applicable
-    if (cfg.checkpoint_config.load is not None or cfg.checkpoint_config.pretrained_checkpoint is not None) and (
-        checkpoint_exists(cfg.checkpoint_config.load) or checkpoint_exists(cfg.checkpoint_config.pretrained_checkpoint)
+    if (cfg.checkpoint.load is not None or cfg.checkpoint.pretrained_checkpoint is not None) and (
+        checkpoint_exists(cfg.checkpoint.load) or checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
     ):
         timers("load-checkpoint", log_level=0).start(barrier=True)
 
@@ -197,7 +197,7 @@ def setup(
             optimizer,
             scheduler,
             checkpointing_context=checkpointing_context,
-            skip_load_to_model_and_opt=HAVE_FSDP2 and cfg.dist_config.use_torch_fsdp2,
+            skip_load_to_model_and_opt=HAVE_FSDP2 and cfg.dist.use_torch_fsdp2,
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

@@ -120,14 +120,14 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
     """
 
     # Number of train/valid/test samples.
-    train_samples = cfg.train_config.train_iters * cfg.train_config.global_batch_size
-    eval_iters = (cfg.train_config.train_iters // cfg.train_config.eval_interval + 1) * cfg.train_config.eval_iters
-    test_iters = cfg.train_config.eval_iters
+    train_samples = cfg.train.train_iters * cfg.train.global_batch_size
+    eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
+    test_iters = cfg.train.eval_iters
 
     return (
         train_samples,
-        eval_iters * cfg.train_config.global_batch_size,
-        test_iters * cfg.train_config.global_batch_size,
+        eval_iters * cfg.train.global_batch_size,
+        test_iters * cfg.train.global_batch_size,
     )
 
 
@@ -178,40 +178,40 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
-    exit_signal = cfg.train_config.exit_signal
+    exit_signal = cfg.train.exit_signal
 
     def worker_init_fn(_):
         DistributedSignalHandler(exit_signal).__enter__()
 
-    maybe_worker_init_fn = worker_init_fn if cfg.train_config.exit_signal_handler_for_dataloader else None
+    maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
 
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
         train_ds,
         train_state.consumed_train_samples,
-        cfg.dataset_config.dataloader_type,
-        cfg.train_config.micro_batch_size,
-        cfg.dataset_config.num_workers,
-        cfg.dataset_config.data_sharding,
+        cfg.dataset.dataloader_type,
+        cfg.train.micro_batch_size,
+        cfg.dataset.num_workers,
+        cfg.dataset.data_sharding,
         worker_init_fn=maybe_worker_init_fn,
         collate_fn=train_ds.collate_fn if hasattr(train_ds, "collate_fn") else None,
-        pin_memory=cfg.dataset_config.pin_memory,
-        persistent_workers=cfg.dataset_config.persistent_workers,
+        pin_memory=cfg.dataset.pin_memory,
+        persistent_workers=cfg.dataset.persistent_workers,
         data_parallel_rank=mpu.get_data_parallel_rank(),
         data_parallel_size=mpu.get_data_parallel_world_size(),
     )
-    if cfg.train_config.skip_train:
+    if cfg.train.skip_train:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             0,
-            cfg.dataset_config.dataloader_type,
-            cfg.train_config.micro_batch_size,
-            cfg.dataset_config.num_workers,
-            cfg.dataset_config.data_sharding,
+            cfg.dataset.dataloader_type,
+            cfg.train.micro_batch_size,
+            cfg.dataset.num_workers,
+            cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
-            pin_memory=cfg.dataset_config.pin_memory,
-            persistent_workers=cfg.dataset_config.persistent_workers,
+            pin_memory=cfg.dataset.pin_memory,
+            persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
         )
@@ -220,35 +220,35 @@ def build_train_valid_test_data_loaders(
             valid_ds,
             train_state.consumed_valid_samples,
             "cyclic",
-            cfg.train_config.micro_batch_size,
-            cfg.dataset_config.num_workers,
-            cfg.dataset_config.data_sharding,
+            cfg.train.micro_batch_size,
+            cfg.dataset.num_workers,
+            cfg.dataset.data_sharding,
             worker_init_fn=maybe_worker_init_fn,
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
-            pin_memory=cfg.dataset_config.pin_memory,
-            persistent_workers=cfg.dataset_config.persistent_workers,
+            pin_memory=cfg.dataset.pin_memory,
+            persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
         )
     test_dataloader = build_pretraining_data_loader(
         test_ds,
         0,
-        cfg.dataset_config.dataloader_type,
-        cfg.train_config.micro_batch_size,
-        cfg.dataset_config.num_workers,
-        cfg.dataset_config.data_sharding,
+        cfg.dataset.dataloader_type,
+        cfg.train.micro_batch_size,
+        cfg.dataset.num_workers,
+        cfg.dataset.data_sharding,
         worker_init_fn=maybe_worker_init_fn,
         collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
-        pin_memory=cfg.dataset_config.pin_memory,
-        persistent_workers=cfg.dataset_config.persistent_workers,
+        pin_memory=cfg.dataset.pin_memory,
+        persistent_workers=cfg.dataset.persistent_workers,
         data_parallel_rank=mpu.get_data_parallel_rank(),
         data_parallel_size=mpu.get_data_parallel_world_size(),
     )
 
     # Flags to know if we need to do training/validation/testing.
-    do_train = train_dataloader is not None and cfg.train_config.train_iters > 0
-    do_valid = valid_dataloader is not None and cfg.train_config.eval_iters > 0
-    do_test = test_dataloader is not None and cfg.train_config.eval_iters > 0
+    do_train = train_dataloader is not None and cfg.train.train_iters > 0
+    do_valid = valid_dataloader is not None and cfg.train.eval_iters > 0
+    do_test = test_dataloader is not None and cfg.train.eval_iters > 0
     flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
 
     torch.distributed.broadcast(flags, 0)
@@ -285,7 +285,7 @@ def build_train_valid_test_data_iterators(
     )
 
     # Build iterators.
-    dl_type = cfg.dataset_config.dataloader_type
+    dl_type = cfg.dataset.dataloader_type
     assert dl_type in ["single", "cyclic", "external"]
 
     def _get_iterator(dataloader_type, dataloader):
@@ -348,7 +348,7 @@ def setup_data_iterators(
         Each element can be a single iterator or a list of iterators if virtual
         pipeline parallelism is enabled.
     """
-    if cfg.model_config.virtual_pipeline_model_parallel_size is not None:
+    if cfg.model.virtual_pipeline_model_parallel_size is not None:
         train_data_iterator = []
         valid_data_iterator = []
         test_data_iterator = []

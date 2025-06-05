@@ -656,21 +656,21 @@ class StragglerDetectionConfig:
 class ConfigContainer(Container):
     """Top-level container holding all configuration objects."""
 
-    rng_config: RNGConfig = field(default_factory=RNGConfig)
-    rerun_state_machine_config: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
-    train_config: TrainingConfig
-    model_config: GPTConfig | T5Config
-    optimizer_config: OptimizerConfig
-    ddp_config: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
-    scheduler_config: SchedulerConfig
-    dataset_config: GPTDatasetConfig | FinetuningDatasetConfig
-    logger_config: LoggerConfig
-    tokenizer_config: TokenizerConfig
-    checkpoint_config: CheckpointConfig
-    dist_config: DistributedInitConfig = field(default_factory=DistributedInitConfig)
-    ft_config: Optional[FaultToleranceConfig] = None
-    straggler_config: Optional[StragglerDetectionConfig] = None
-    profiling_config: Optional[ProfilingConfig] = None
+    rng: RNGConfig = field(default_factory=RNGConfig)
+    rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
+    train: TrainingConfig
+    model: GPTConfig | T5Config
+    optimizer: OptimizerConfig
+    ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
+    scheduler: SchedulerConfig
+    dataset: GPTDatasetConfig | FinetuningDatasetConfig
+    logger: LoggerConfig
+    tokenizer: TokenizerConfig
+    checkpoint: CheckpointConfig
+    dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
+    ft: Optional[FaultToleranceConfig] = None
+    straggler: Optional[StragglerDetectionConfig] = None
+    profiling: Optional[ProfilingConfig] = None
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
@@ -682,15 +682,16 @@ class ConfigContainer(Container):
 
         # Distributed
         world_size = get_world_size_safe()
+        model_cfg = self.model
         encoder_model_size = (
-            getattr(self.model_config, "encoder_tensor_model_parallel_size", 0)
-            * getattr(self.model_config, "encoder_pipeline_model_parallel_size", 0)
-            * self.model_config.context_parallel_size
+            getattr(model_cfg, "encoder_tensor_model_parallel_size", 0)
+            * getattr(model_cfg, "encoder_pipeline_model_parallel_size", 0)
+            * model_cfg.context_parallel_size
         )
         decoder_model_size = (
-            self.model_config.tensor_model_parallel_size
-            * self.model_config.pipeline_model_parallel_size
-            * self.model_config.context_parallel_size
+            model_cfg.tensor_model_parallel_size
+            * model_cfg.pipeline_model_parallel_size
+            * model_cfg.context_parallel_size
         )
         total_model_size = encoder_model_size + decoder_model_size
         assert world_size % total_model_size == 0, f"""
@@ -698,35 +699,35 @@ class ConfigContainer(Container):
         """
         self.data_parallel_size = world_size // total_model_size
 
-        self.model_config.use_cpu_initialization = (
-            self.model_config.use_cpu_initialization or self.dist_config.lazy_init
+        self.model.use_cpu_initialization = (
+            self.model.use_cpu_initialization or self.dist.lazy_init
         )
 
         # Make sure all functionality that requires Gloo process groups is disabled.
-        if not self.dist_config.use_gloo_process_groups:
-            if self.optimizer_config.use_distributed_optimizer:
+        if not self.dist.use_gloo_process_groups:
+            if self.optimizer.use_distributed_optimizer:
                 # If using distributed optimizer, must use distributed checkpointing.
                 # Legacy checkpointing uses Gloo process groups to collect full distributed
                 # optimizer state in the CPU memory of DP rank 0.
-                assert self.checkpoint_config.ckpt_format == "torch_dist"
+                assert self.checkpoint.ckpt_format == "torch_dist"
 
         # Scheduler
-        if self.scheduler_config.lr_decay_iters is None:
-            self.scheduler_config.lr_decay_iters = self.train_config.train_iters
-        self.scheduler_config.lr_decay_steps = (
-            self.scheduler_config.lr_decay_iters * self.train_config.global_batch_size
+        if self.scheduler.lr_decay_iters is None:
+            self.scheduler.lr_decay_iters = self.train.train_iters
+        self.scheduler.lr_decay_steps = (
+            self.scheduler.lr_decay_iters * self.train.global_batch_size
         )
-        self.scheduler_config.wd_incr_steps = self.train_config.train_iters * self.train_config.global_batch_size
-        self.scheduler_config.wsd_decay_steps = None
-        if self.scheduler_config.lr_wsd_decay_iters is not None:
-            self.scheduler_config.wsd_decay_steps = (
-                self.scheduler_config.lr_wsd_decay_iters * self.train_config.global_batch_size
+        self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
+        self.scheduler.wsd_decay_steps = None
+        if self.scheduler.lr_wsd_decay_iters is not None:
+            self.scheduler.wsd_decay_steps = (
+                self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
             )
-        if self.scheduler_config.lr_warmup_fraction is not None:
-            self.scheduler_config.lr_warmup_steps = (
-                self.scheduler_config.lr_warmup_fraction * self.scheduler_config.lr_decay_iters
+        if self.scheduler.lr_warmup_fraction is not None:
+            self.scheduler.lr_warmup_steps = (
+                self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
             )
         else:
-            self.scheduler_config.lr_warmup_steps = (
-                self.scheduler_config.lr_warmup_iters * self.train_config.global_batch_size
+            self.scheduler.lr_warmup_steps = (
+                self.scheduler.lr_warmup_iters * self.train.global_batch_size
             )

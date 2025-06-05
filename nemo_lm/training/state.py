@@ -158,20 +158,20 @@ class GlobalState:
     def tokenizer(self) -> Any:
         """The tokenizer instance, lazily built based on the config."""
         if self._tokenizer is None:
-            self._tokenizer = build_tokenizer(self.cfg.tokenizer_config)
+            self._tokenizer = build_tokenizer(self.cfg.tokenizer)
         return self._tokenizer
 
     @property
     def tensorboard_logger(self) -> Optional[SummaryWriter]:
         """The TensorBoard SummaryWriter instance, lazily initialized for rank N-1."""
         if self._tensorboard_logger is None:
-            if self.cfg.logger_config.tensorboard_dir and get_rank_safe() == (get_world_size_safe() - 1):
+            if self.cfg.logger.tensorboard_dir and get_rank_safe() == (get_world_size_safe() - 1):
                 from torch.utils.tensorboard.writer import SummaryWriter
 
                 print("> setting tensorboard ...")
                 self._tensorboard_logger = SummaryWriter(
-                    log_dir=self.cfg.logger_config.tensorboard_dir,
-                    max_queue=self.cfg.logger_config.tensorboard_queue_size,
+                    log_dir=self.cfg.logger.tensorboard_dir,
+                    max_queue=self.cfg.logger.tensorboard_queue_size,
                 )
             else:
                 self._tensorboard_logger = None
@@ -181,20 +181,19 @@ class GlobalState:
     def wandb_logger(self) -> Optional[Any]:
         """The Weights & Biases logger instance, lazily initialized for rank N-1."""
         if self._wandb_logger is None:
-            if self.cfg.logger_config.wandb_project and get_rank_safe() == (get_world_size_safe() - 1):
-                if self.cfg.logger_config.wandb_exp_name == "":
+            if self.cfg.logger.wandb_project and get_rank_safe() == (get_world_size_safe() - 1):
+                if self.cfg.logger.wandb_exp_name == "":
                     raise ValueError("Please specify the wandb experiment name!")
 
                 import wandb
 
-                save_dir = self.cfg.logger_config.wandb_save_dir or os.path.join(self.cfg.save, "wandb")
+                save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.save, "wandb")
                 wandb_kwargs = {
                     "dir": save_dir,
-                    "name": self.cfg.logger_config.wandb_exp_name,
-                    "project": self.cfg.logger_config.wandb_project,
+                    "name": self.cfg.logger.wandb_exp_name,
+                    "project": self.cfg.logger.wandb_project,
                     "config": yaml.safe_load(dump_dataclass_to_yaml(self.cfg)),
                 }
-                os.makedirs(wandb_kwargs["dir"], exist_ok=True)
                 wandb.init(**wandb_kwargs)
 
                 self._wandb_logger = wandb
@@ -206,7 +205,7 @@ class GlobalState:
     def timers(self) -> Timers:
         """The Megatron Timers instance used for tracking execution times."""
         if self._timers is None:
-            self._timers = Timers(self.cfg.logger_config.timing_log_level, self.cfg.logger_config.timing_log_option)
+            self._timers = Timers(self.cfg.logger.timing_log_level, self.cfg.logger.timing_log_option)
             self._timers.write_to_wandb = types.MethodType(_timers_write_to_wandb, self._timers)
         return self._timers
 
@@ -258,8 +257,8 @@ class GlobalState:
 
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""
-        if self.cfg.train_config is not None:
-            self._signal_handler = DistributedSignalHandler(self.cfg.train_config.exit_signal)
+        if self.cfg.train is not None:
+            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal)
 
 
 def _timers_write_to_wandb(

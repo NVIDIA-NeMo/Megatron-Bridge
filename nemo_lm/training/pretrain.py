@@ -60,9 +60,9 @@ def megatron_pretrain(
     ckpt_context = setup_output.checkpointing_context
 
     # TRAINING
-    if not config.train_config.skip_train:
-        print_rank_0("training ...")
-        if state.train_state.do_train and config.train_config.train_iters > 0:
+    if not config.train.skip_train:
+        print_rank_0("Training ...")
+        if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
                 model,
@@ -101,9 +101,9 @@ def megatron_pretrain(
             forward_step_func,
             valid_data_iterator,
             model,
-            config.model_config,
+            config.model,
             verbose=True,
-            write_to_tensorboard=not config.train_config.skip_train,
+            write_to_tensorboard=not config.train.skip_train,
         )
     if state.train_state.do_test:
         prefix = f"iteration {iteration} on test set"
@@ -113,9 +113,9 @@ def megatron_pretrain(
             forward_step_func,
             test_data_iterator,
             model,
-            config.model_config,
+            config.model,
             verbose=True,
-            write_to_tensorboard=not config.train_config.skip_train,
+            write_to_tensorboard=not config.train.skip_train,
         )
 
     _finish_train(state)
