@@ -149,7 +149,7 @@ def build_train_valid_test_datasets(
     print_rank_0("    train:      {}".format(train_valid_test_num_samples[0]))
     print_rank_0("    validation: {}".format(train_valid_test_num_samples[1]))
     print_rank_0("    test:       {}".format(train_valid_test_num_samples[2]))
-    return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset_config)
+    return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset)
 
 
 def build_train_valid_test_data_loaders(
