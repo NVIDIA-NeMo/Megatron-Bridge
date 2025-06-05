@@ -170,49 +170,49 @@ class TestAdapterWrapper:
         state_dict = wrapper.state_dict()
 
         # Check that wrapped module parameters are included (without to_wrap prefix)
-        assert 'weight' in state_dict
-        assert 'bias' in state_dict
+        assert "weight" in state_dict
+        assert "bias" in state_dict
 
         # Check that adapter parameters are included with prefix
-        assert 'adapter.weight' in state_dict
-        assert 'adapter.bias' in state_dict
+        assert "adapter.weight" in state_dict
+        assert "adapter.bias" in state_dict
 
     def test_state_dict_with_custom_prefix(self, mock_linear_simple, simple_adapter):
         """Test state_dict with custom prefix."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
 
-        state_dict = wrapper.state_dict(prefix='custom_')
+        state_dict = wrapper.state_dict(prefix="custom_")
 
         # Check that custom prefix is applied
-        assert 'custom_weight' in state_dict
-        assert 'custom_adapter.weight' in state_dict
+        assert "custom_weight" in state_dict
+        assert "custom_adapter.weight" in state_dict
 
     def test_state_dict_with_existing_destination(self, mock_linear_simple, simple_adapter):
         """Test state_dict with existing destination dictionary."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
-        destination = {'existing_key': torch.tensor([1.0])}
+        destination = {"existing_key": torch.tensor([1.0])}
 
         result = wrapper.state_dict(destination=destination)
 
         assert result is destination
-        assert 'existing_key' in result
-        assert 'weight' in result
-        assert 'adapter.weight' in result
+        assert "existing_key" in result
+        assert "weight" in result
+        assert "adapter.weight" in result
 
     def test_sharded_state_dict(self, mock_linear_simple, simple_adapter):
         """Test sharded_state_dict functionality."""
         # Mock the sharded_state_dict methods on the modules
-        mock_linear_simple.sharded_state_dict = Mock(return_value={'linear_shard': 'value1'})
-        simple_adapter.sharded_state_dict = Mock(return_value={'adapter_shard': 'value2'})
+        mock_linear_simple.sharded_state_dict = Mock(return_value={"linear_shard": "value1"})
+        simple_adapter.sharded_state_dict = Mock(return_value={"adapter_shard": "value2"})
 
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
 
-        result = wrapper.sharded_state_dict(prefix='test_')
+        result = wrapper.sharded_state_dict(prefix="test_")
 
-        assert 'linear_shard' in result
-        assert 'adapter_shard' in result
-        mock_linear_simple.sharded_state_dict.assert_called_once_with('test_', (), None)
-        simple_adapter.sharded_state_dict.assert_called_once_with('test_adapter.', (), None)
+        assert "linear_shard" in result
+        assert "adapter_shard" in result
+        mock_linear_simple.sharded_state_dict.assert_called_once_with("test_", (), None)
+        simple_adapter.sharded_state_dict.assert_called_once_with("test_adapter.", (), None)
 
     def test_forward_integration(self, mock_linear_simple, simple_adapter):
         """Test full forward pass integration."""
@@ -255,6 +255,6 @@ class TestAdapterWrapper:
         assert isinstance(wrapper, AdapterWrapper)
 
         # Test that the base class has the expected methods
-        assert hasattr(AdapterWrapper, 'base_linear_forward')
-        assert hasattr(AdapterWrapper, 'state_dict')
-        assert hasattr(AdapterWrapper, 'sharded_state_dict')
+        assert hasattr(AdapterWrapper, "base_linear_forward")
+        assert hasattr(AdapterWrapper, "state_dict")
+        assert hasattr(AdapterWrapper, "sharded_state_dict")

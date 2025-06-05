@@ -27,6 +27,7 @@ import torch.nn as nn
 
 from nemo_lm.peft.lora import LinearAdapter, LoRALinear, patch_linear_module
 
+
 # Test if Transformer Engine is available
 try:
     import transformer_engine.pytorch as te
@@ -143,10 +144,10 @@ class TestLinearAdapter:
         assert torch.equal(adapter.bias, original_linear.bias)
 
         # Check LoRA components exist
-        assert hasattr(adapter, 'lora_a')
-        assert hasattr(adapter, 'lora_b')
-        assert hasattr(adapter, 'dropout')
-        assert hasattr(adapter, 'scale')
+        assert hasattr(adapter, "lora_a")
+        assert hasattr(adapter, "lora_b")
+        assert hasattr(adapter, "dropout")
+        assert hasattr(adapter, "scale")
 
         # Check dimensions
         assert adapter.lora_a.in_features == 10
@@ -240,7 +241,7 @@ class TestLinearAdapter:
         for key, val in adapter.state_dict().items():
             if key in state_init:
                 continue
-            assert key in ['lora_a.weight', 'lora_b.weight']
+            assert key in ["lora_a.weight", "lora_b.weight"]
 
     def test_linear_adapter_zero_output_initially(self, original_linear):
         """Test that adapter produces zero output initially (LoRA B is zero)."""
@@ -284,7 +285,7 @@ class TestPatchLinearModule:
         for key, val in patched_linear.state_dict().items():
             if key in state_init:
                 continue
-            assert key in ['lora_a.weight', 'lora_b.weight']
+            assert key in ["lora_a.weight", "lora_b.weight"]
 
     def test_patch_linear_module_attributes(self):
         """Test that patched module has required LoRA attributes."""
@@ -292,9 +293,9 @@ class TestPatchLinearModule:
         patched_linear = patch_linear_module(linear)
 
         state_dict = patched_linear.state_dict()
-        for key in ['lora_a', 'lora_b']:
+        for key in ["lora_a", "lora_b"]:
             assert hasattr(patched_linear, key), f"Expected {key} to be in module"
-            assert f'{key}.weight' in state_dict, f"Expected {key} to be in state dict"
+            assert f"{key}.weight" in state_dict, f"Expected {key} to be in state dict"
             assert getattr(patched_linear, key).weight.requires_grad == True, f"Expected {key} to require_grad"
 
     def test_patch_linear_module_already_patched_error(self):
@@ -316,8 +317,8 @@ class TestPatchLinearModule:
         assert patched_linear is te_linear
 
         # Check LoRA attributes exist
-        assert hasattr(patched_linear, 'lora_a')
-        assert hasattr(patched_linear, 'lora_b')
+        assert hasattr(patched_linear, "lora_a")
+        assert hasattr(patched_linear, "lora_b")
 
     def test_patch_linear_module_unsupported_type(self):
         """Test error with unsupported module type."""
@@ -352,8 +353,8 @@ class TestTELinearAdapter:
         adapter = TELinearAdapter(te_linear, dim=8, alpha=16)
 
         # Check that it's properly initialized
-        assert hasattr(adapter, 'lora_a')
-        assert hasattr(adapter, 'lora_b')
+        assert hasattr(adapter, "lora_a")
+        assert hasattr(adapter, "lora_b")
         assert adapter.scale == 16 / 8
 
         # Check dimensions

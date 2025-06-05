@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+
 if TYPE_CHECKING:
     from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 
@@ -90,9 +91,9 @@ class AdapterWrapper(nn.Module):
             4. both: (out, bias, ln_out)
         """
         linear_output = self.to_wrap(x, *args, **kwargs)
-        assert isinstance(
-            linear_output, tuple
-        ), f"{self.to_wrap} should return a tuple but instead returns {linear_output}"
+        assert isinstance(linear_output, tuple), (
+            f"{self.to_wrap} should return a tuple but instead returns {linear_output}"
+        )
 
         bias = None
         layernorm_output = x
@@ -107,7 +108,7 @@ class AdapterWrapper(nn.Module):
         return linear_output, bias, layernorm_output
 
     def state_dict(
-        self, destination: Optional[Dict[str, Any]] = None, prefix: str = '', keep_vars: bool = False
+        self, destination: Optional[Dict[str, Any]] = None, prefix: str = "", keep_vars: bool = False
     ) -> Dict[str, Any]:
         """Retrieve the state dictionary of the wrapped module and adapter.
 
@@ -131,12 +132,12 @@ class AdapterWrapper(nn.Module):
         self.to_wrap.state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
 
         # Store adapter state dict under the "adapter" prefix in the destination dict
-        self.adapter.state_dict(destination=destination, prefix=f'{prefix}adapter.', keep_vars=keep_vars)
+        self.adapter.state_dict(destination=destination, prefix=f"{prefix}adapter.", keep_vars=keep_vars)
         return destination
 
     def sharded_state_dict(
         self,
-        prefix: str = '',
+        prefix: str = "",
         sharded_offsets: Tuple[Tuple[int, int, int]] = (),
         metadata: Optional[Dict[str, Any]] = None,
     ) -> "ShardedStateDict":

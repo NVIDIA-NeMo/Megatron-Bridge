@@ -31,6 +31,7 @@ from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 
 from nemo_lm.utils.import_utils import safe_import_from
 
+
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TEColumnParallelLinear"
 )
@@ -106,7 +107,7 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
                 ub_overlap_ag = m.ub_overlap_ag_fprop
             else:
                 ub_overlap_ag = False
-            if hasattr(m, 'config') and m.config.sequence_parallel and not ub_overlap_ag:
+            if hasattr(m, "config") and m.config.sequence_parallel and not ub_overlap_ag:
                 m.return_layernorm_output_gathered = True
                 te_version = packaging.version.Version(version("transformer-engine"))
                 if te_version >= packaging.version.Version("1.5.0dev") and (
@@ -158,7 +159,7 @@ def is_expert_linear(fqn: str) -> bool:
         >>> is_expert_linear("model.layers.0.mlp.linear_fc1")
         False
     """
-    return re.match(r'.*mlp\..*experts.*\.linear_fc[1-2]$', fqn) is not None
+    return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None
 
 
 def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
@@ -374,14 +375,14 @@ class ParallelLinearAdapter(nn.Module):
         out_features: int,
         dim: int,
         base_linear_name: str,
-        activation: str = 'swish',
-        column_init_method: str = 'xavier',
-        row_init_method: str = 'zero',
+        activation: str = "swish",
+        column_init_method: str = "xavier",
+        row_init_method: str = "zero",
         input_is_parallel: bool = False,
         dropout: float = 0.0,
         model_parallel_config: Optional[ModelParallelConfig] = None,
         alpha: Optional[float] = None,
-        dropout_position: str = 'post',
+        dropout_position: str = "post",
         a2a_experimental: bool = False,
         is_expert: bool = False,
         disable_sequence_parallel_comm: bool = True,
@@ -499,13 +500,13 @@ class ParallelLinearAdapter(nn.Module):
             Defaults to Identity if activation name is not recognized.
         """
         activation_map = {
-            'identity': nn.Identity(),
-            'relu': nn.ReLU(),
-            'gelu': nn.GELU(),
-            'swish': nn.SiLU(),
-            'silu': nn.SiLU(),
-            'tanh': nn.Tanh(),
-            'sigmoid': nn.Sigmoid(),
+            "identity": nn.Identity(),
+            "relu": nn.ReLU(),
+            "gelu": nn.GELU(),
+            "swish": nn.SiLU(),
+            "silu": nn.SiLU(),
+            "tanh": nn.Tanh(),
+            "sigmoid": nn.Sigmoid(),
         }
         return activation_map.get(activation, nn.Identity())
 
@@ -521,11 +522,11 @@ class ParallelLinearAdapter(nn.Module):
         Raises:
             NotImplementedError: If init_method is not supported.
         """
-        if init_method == 'xavier':
+        if init_method == "xavier":
             init_fn = nn.init.xavier_normal_
-        elif init_method == 'normal':
+        elif init_method == "normal":
             init_fn = init_method_normal(0.2)
-        elif init_method == 'kaiming':
+        elif init_method == "kaiming":
             init_fn = init_method_kaiming_uniform(math.sqrt(5))
         elif init_method == "zero":
             init_fn = init_method_const(0.0)
@@ -545,7 +546,7 @@ class ParallelLinearAdapter(nn.Module):
         Returns:
             Adapted output tensor with scaling applied.
         """
-        if self.dropout is not None and self.dropout_position == 'pre':
+        if self.dropout is not None and self.dropout_position == "pre":
             x = self.dropout(x)
 
         pad_len = 0
@@ -581,7 +582,7 @@ class ParallelLinearAdapter(nn.Module):
                 x = scatter_to_sequence_parallel_region(x)
 
         # Add dropout if available
-        if self.dropout is not None and self.dropout_position == 'post':
+        if self.dropout is not None and self.dropout_position == "post":
             x = self.dropout(x)
 
         x = x * (self.alpha / self.dim)
@@ -593,7 +594,7 @@ class ParallelLinearAdapter(nn.Module):
         return x
 
     def sharded_state_dict(
-        self, prefix: str = '', sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 
@@ -612,9 +613,9 @@ class ParallelLinearAdapter(nn.Module):
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
 
-        if 'linear_fc1' in self.base_linear_name:
+        if "linear_fc1" in self.base_linear_name:
             for k, v in linear_out_sd.items():
-                if k in (f'{prefix}linear_out.weight', f'{prefix}linear_out.bias'):
+                if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
                     linear_out_sd[k] = apply_swiglu_sharded_factory(v, sharded_offsets)
 
         sharded_state_dict.update(linear_in_sd)

@@ -21,6 +21,7 @@ import torch.nn as nn
 from nemo_lm.peft.base import AdapterWrapper
 from nemo_lm.utils.import_utils import safe_import
 
+
 if torch.cuda.is_available():
     bitsandbytes, HAVE_BNB = safe_import("bitsandbytes")
 else:
@@ -90,8 +91,8 @@ if HAVE_TE:
             dim: int = 8,
             alpha: int = 32,
             dropout: float = 0.0,
-            dropout_position: Literal['pre', 'post'] = 'post',
-            lora_A_init_method: Literal['xavier', 'uniform'] = 'xavier',
+            dropout_position: Literal["pre", "post"] = "post",
+            lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
             lora_dtype: Optional[torch.dtype] = None,
         ) -> None:
             """Initialize TELinearAdapter by copying from original TELinear and adding LoRA components.
@@ -137,8 +138,8 @@ if HAVE_TE:
             dim: int = 8,
             alpha: int = 32,
             dropout: float = 0.0,
-            dropout_position: Literal['pre', 'post'] = 'post',
-            lora_A_init_method: Literal['xavier', 'uniform'] = 'xavier',
+            dropout_position: Literal["pre", "post"] = "post",
+            lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
             lora_dtype: Optional[torch.dtype] = None,
         ) -> None:
             """Add LoRA weights to obj. The obj is either a LinearAdapter or an nn.Module (when monkey-patching).
@@ -168,13 +169,13 @@ if HAVE_TE:
 
             obj.lora_a = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
             obj.lora_b = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
-            if lora_A_init_method == 'xavier':
+            if lora_A_init_method == "xavier":
                 torch.nn.init.uniform_(obj.lora_a.weight.data)
             else:
                 nn.init.kaiming_uniform_(obj.lora_a.weight.data, a=math.sqrt(5))
             obj.lora_b.weight.data.fill_(0)
             obj.dropout = nn.Dropout(p=dropout)
-            assert dropout_position in ['pre', 'post'], dropout_position
+            assert dropout_position in ["pre", "post"], dropout_position
             obj.dropout_position = dropout_position
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -188,12 +189,12 @@ if HAVE_TE:
             """
             # pylint: disable=C0115,C0116
             res = super(TELinearAdapter, self).forward(x)
-            if self.dropout_position == 'pre':
+            if self.dropout_position == "pre":
                 x = self.dropout(x)
             # LoRA fwd is performed in original precision regardless of FP8 enabled
             lora_res = self.lora_b(self.lora_a(x))
             lora_res = lora_res * self.scale
-            if self.dropout_position == 'post':
+            if self.dropout_position == "post":
                 lora_res = self.dropout(lora_res)
             return res + lora_res
 
@@ -223,8 +224,8 @@ class LinearAdapter(nn.Linear):
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
-        dropout_position: Literal['pre', 'post'] = 'post',
-        lora_A_init_method: Literal['xavier', 'uniform'] = 'xavier',
+        dropout_position: Literal["pre", "post"] = "post",
+        lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
         """Initialize LinearAdapter by copying from original Linear and adding LoRA components.
@@ -268,8 +269,8 @@ class LinearAdapter(nn.Linear):
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
-        dropout_position: Literal['pre', 'post'] = 'post',
-        lora_A_init_method: Literal['xavier', 'uniform'] = 'xavier',
+        dropout_position: Literal["pre", "post"] = "post",
+        lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
         """Add LoRA weights to obj. The obj is either a LinearAdapter or an nn.Module (when monkey-patching).
@@ -299,13 +300,13 @@ class LinearAdapter(nn.Linear):
 
         obj.lora_a = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
         obj.lora_b = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
-        if lora_A_init_method == 'xavier':
+        if lora_A_init_method == "xavier":
             torch.nn.init.uniform_(obj.lora_a.weight.data)
         else:
             nn.init.kaiming_uniform_(obj.lora_a.weight.data, a=math.sqrt(5))
         obj.lora_b.weight.data.fill_(0)
         obj.dropout = nn.Dropout(p=dropout)
-        assert dropout_position in ['pre', 'post'], dropout_position
+        assert dropout_position in ["pre", "post"], dropout_position
         obj.dropout_position = dropout_position
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -321,17 +322,17 @@ class LinearAdapter(nn.Linear):
         # If LinearAdapter is used to monkey-patch a nn.Linear module, we want to use nn.Linear's
         # forward in the case where it uses quantized weights. We store a reference to nn.Linear's
         # forward in `super_fwd` attribute. If the attribute does not exist we do the usual linear.
-        if (fwd := getattr(self, 'super_fwd', None)) is not None:
+        if (fwd := getattr(self, "super_fwd", None)) is not None:
             assert fwd != self.forward
             res = fwd(x)
         else:
             res = torch.nn.functional.linear(x, self.weight, self.bias)
 
-        if self.dropout_position == 'pre':
+        if self.dropout_position == "pre":
             x = self.dropout(x)
         lora_res = self.lora_b(self.lora_a(x))
         lora_res = lora_res * self.scale
-        if self.dropout_position == 'post':
+        if self.dropout_position == "post":
             lora_res = self.dropout(lora_res)
         return res + lora_res
 
@@ -341,8 +342,8 @@ def patch_linear_module(
     dim: int = 8,
     alpha: int = 32,
     dropout: float = 0.0,
-    dropout_position: Literal['pre', 'post'] = 'post',
-    lora_A_init_method: Literal['xavier', 'uniform'] = 'xavier',
+    dropout_position: Literal["pre", "post"] = "post",
+    lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
     lora_dtype: Optional[torch.dtype] = None,
 ) -> Union[nn.Linear, "te.Linear"]:
     """Monkey-patch a nn.Linear or te.Linear to be a LinearAdapter.
@@ -378,25 +379,25 @@ def patch_linear_module(
         AssertionError: If orig_linear already has super_fwd attribute.
     """
     assert isinstance(orig_linear, nn.Linear) or (HAVE_TE and orig_linear.__class__ == te.Linear)
-    assert not hasattr(orig_linear, 'super_fwd'), orig_linear.super_fwd
+    assert not hasattr(orig_linear, "super_fwd"), orig_linear.super_fwd
 
     if isinstance(orig_linear, nn.Linear):
         LinearAdapter._init_adapter(orig_linear, dim, alpha, dropout, dropout_position, lora_A_init_method, lora_dtype)
         cls = orig_linear.__class__
-        new_cls = type('PatchedLinearAdapter', (LinearAdapter, cls), {})
+        new_cls = type("PatchedLinearAdapter", (LinearAdapter, cls), {})
     elif HAVE_TE and orig_linear.__class__ == te.Linear:
         TELinearAdapter._init_adapter(
             orig_linear, dim, alpha, dropout, dropout_position, lora_A_init_method, lora_dtype
         )
         cls = orig_linear.__class__
-        new_cls = type('PatchedTELinearAdapter', (TELinearAdapter, cls), {})
+        new_cls = type("PatchedTELinearAdapter", (TELinearAdapter, cls), {})
     else:
         raise NotImplementedError("Expected isinstance(orig_linear, (nn.Linear, te.Linear))")
 
     # If the model uses quantized weights, we want to use orig_linear's forward
     if (
         HAVE_BNB
-        and getattr(orig_linear, 'quant_state', None) is not None
+        and getattr(orig_linear, "quant_state", None) is not None
         and orig_linear.quant_state.__class__ == bitsandbytes.functional.QuantState
     ):
         orig_linear.super_fwd = orig_linear.forward

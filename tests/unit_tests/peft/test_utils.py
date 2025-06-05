@@ -240,7 +240,7 @@ class TestUtilityFunctions:
         assert torch.equal(unpadded, original)
 
 
-@patch('nemo_lm.peft.utils.parallel_state')
+@patch("nemo_lm.peft.utils.parallel_state")
 class TestAll2AllCommunication:
     """Test All2All communication functions."""
 
@@ -251,7 +251,7 @@ class TestAll2AllCommunication:
         mock_parallel_state.get_tensor_model_parallel_group.return_value = None
 
         # Mock torch.distributed.all_to_all
-        with patch('torch.distributed.all_to_all') as mock_all_to_all:
+        with patch("torch.distributed.all_to_all") as mock_all_to_all:
 
             def side_effect(receive_list, send_list, group):
                 # Simulate all_to_all operation
@@ -317,8 +317,8 @@ class TestParallelLinearAdapter:
         """Create mock model parallel config."""
         return MockModelParallelConfig()
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_init_column_input(self, mock_row_linear, mock_col_linear, mock_config):
         """Test ParallelLinearAdapter initialization with column parallel input."""
         # Mock the linear layers
@@ -345,8 +345,8 @@ class TestParallelLinearAdapter:
         assert adapter.linear_in is mock_linear_in
         assert adapter.linear_out is mock_linear_out
 
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
     def test_parallel_linear_adapter_init_row_input(self, mock_col_linear, mock_row_linear, mock_config):
         """Test ParallelLinearAdapter initialization with row parallel input."""
         mock_linear_in = Mock()
@@ -367,8 +367,8 @@ class TestParallelLinearAdapter:
         assert adapter.linear_in is mock_linear_in  # RowParallelLinear
         assert adapter.linear_out is mock_linear_out  # ColumnParallelLinear
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_get_activation_fn(self, mock_row_linear, mock_col_linear, mock_config):
         """Test activation function selection."""
         # Mock the linear layers
@@ -388,12 +388,12 @@ class TestParallelLinearAdapter:
 
         # Test different activations - we need to patch for each new instance
         activations_to_test = {
-            'gelu': nn.GELU,
-            'swish': nn.SiLU,
-            'silu': nn.SiLU,
-            'tanh': nn.Tanh,
-            'sigmoid': nn.Sigmoid,
-            'identity': nn.Identity,
+            "gelu": nn.GELU,
+            "swish": nn.SiLU,
+            "silu": nn.SiLU,
+            "tanh": nn.Tanh,
+            "sigmoid": nn.Sigmoid,
+            "identity": nn.Identity,
         }
 
         for activation_name, expected_type in activations_to_test.items():
@@ -412,8 +412,8 @@ class TestParallelLinearAdapter:
             )
             assert isinstance(adapter.activation, expected_type)
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_get_init_fn(self, mock_row_linear, mock_col_linear, mock_config):
         """Test initialization function selection."""
         # Mock the linear layers
@@ -444,8 +444,8 @@ class TestParallelLinearAdapter:
         with pytest.raises(NotImplementedError):
             adapter._get_init_fn("invalid_method")
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_alpha_parameter(self, mock_row_linear, mock_col_linear, mock_config):
         """Test alpha parameter handling."""
         # Mock the linear layers
@@ -468,8 +468,8 @@ class TestParallelLinearAdapter:
         )
         assert adapter2.alpha == 16
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_dropout(self, mock_row_linear, mock_col_linear, mock_config):
         """Test dropout configuration."""
         # Mock the linear layers
@@ -502,8 +502,8 @@ class TestParallelLinearAdapter:
         )
         assert isinstance(adapter2.dropout, nn.Dropout)
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_forward_basic(self, mock_row_linear, mock_col_linear, mock_config):
         """Test basic forward pass."""
         # Mock the linear layers
@@ -533,8 +533,8 @@ class TestParallelLinearAdapter:
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_expert_mode(self, mock_row_linear, mock_col_linear, mock_config):
         """Test adapter in expert mode (MoE)."""
         # Set tensor_model_parallel_size to 4 so that sequence length 7 gets padded to 8
@@ -564,8 +564,8 @@ class TestParallelLinearAdapter:
         # Output should be unpadded back to original size
         assert output.shape == (7, 10)
 
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sharded_state_dict(self, mock_row_linear, mock_col_linear, mock_config):
         """Test sharded state dict functionality."""
         # Mock linear layers with sharded_state_dict methods
@@ -588,9 +588,9 @@ class TestParallelLinearAdapter:
         mock_linear_in.sharded_state_dict.assert_called_once_with("adapter.linear_in.", (), None)
         mock_linear_out.sharded_state_dict.assert_called_once_with("adapter.linear_out.", (), None)
 
-    @patch('nemo_lm.peft.utils.apply_swiglu_sharded_factory')
-    @patch('nemo_lm.peft.utils.ColumnParallelLinear')
-    @patch('nemo_lm.peft.utils.RowParallelLinear')
+    @patch("nemo_lm.peft.utils.apply_swiglu_sharded_factory")
+    @patch("nemo_lm.peft.utils.ColumnParallelLinear")
+    @patch("nemo_lm.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sharded_state_dict_fc1_special_case(
         self, mock_row_linear, mock_col_linear, mock_swiglu_factory, mock_config
     ):
