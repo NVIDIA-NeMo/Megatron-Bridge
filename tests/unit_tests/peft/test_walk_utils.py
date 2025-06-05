@@ -23,7 +23,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from nemo_lm.utils import walking_utils as fn
+from nemo_lm.peft import walk_utils as fn
 
 
 class CustomMLP(nn.Module):
