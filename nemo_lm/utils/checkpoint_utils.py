@@ -1,3 +1,17 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import os
 import sys
@@ -91,9 +105,7 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
             config_obj[0] = {"error": True, "msg": error_msg}
 
     if torch.distributed.is_initialized():
-        log_single_rank(
-            logger, f"Broadcasting config from rank 0 to all {get_world_size_safe()} ranks", level=logging.INFO
-        )
+        log_single_rank(logger, logging.INFO, f"Broadcasting config from rank 0 to all {get_world_size_safe()} ranks")
         torch.distributed.broadcast_object_list(config_obj, src=0)
 
     if isinstance(config_obj[0], dict) and config_obj[0].get("error", False):

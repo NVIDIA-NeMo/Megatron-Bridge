@@ -14,6 +14,7 @@
 import os
 from pathlib import Path
 from shutil import rmtree
+from unittest.mock import patch
 
 import pytest
 
@@ -106,3 +107,47 @@ def pytest_configure(config):
         "markers",
         "with_downloads: runs the test using data present in tests/.data",
     )
+
+
+@pytest.fixture(autouse=True)
+def clear_lru_cache():
+    """Clear LRU cache before each test to ensure test isolation."""
+    # Import the functions that use @lru_cache
+    from nemo_lm.utils.checkpoint_utils import read_run_config, read_train_state
+
+    # Clear the cache before each test
+    read_run_config.cache_clear()
+    read_train_state.cache_clear()
+
+    yield
+
+    # Clear cache after each test as well
+    read_run_config.cache_clear()
+    read_train_state.cache_clear()
+
+
+@pytest.fixture
+def mock_distributed_environment():
+    """Mock torch.distributed environment for testing."""
+    with (
+        patch("torch.distributed.is_initialized", return_value=False),
+        patch("nemo_lm.utils.checkpoint_utils.get_rank_safe", return_value=0),
+        patch("nemo_lm.utils.checkpoint_utils.get_world_size_safe", return_value=1),
+    ):
+        yield
+
+
+@pytest.fixture
+def sample_config_data():
+    """Provide sample configuration data for testing."""
+    return {
+        "model": {"type": "gpt", "layers": 24, "hidden_size": 1024, "attention_heads": 16},
+        "training": {"learning_rate": 1e-4, "batch_size": 32, "max_steps": 10000, "warmup_steps": 1000},
+        "optimizer": {"type": "adam", "beta1": 0.9, "beta2": 0.999, "eps": 1e-8},
+    }
+
+
+@pytest.fixture
+def sample_train_state_data():
+    """Provide sample train state data for testing."""
+    return {"iteration": 5000, "epoch": 10, "step": 50000, "learning_rate": 0.0001, "loss": 2.34}
