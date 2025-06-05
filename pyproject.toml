@@ -58,7 +58,7 @@ classifiers = [
 dependencies = [
     "accelerate>=1.6.0",
     "datasets>=3.5.1",
-    "numpy>=2.2.5",
+    "numpy<2",
     "omegaconf>=2.3.0",
     "packaging>=25.0",
     "tensorboard>=2.19.0",
