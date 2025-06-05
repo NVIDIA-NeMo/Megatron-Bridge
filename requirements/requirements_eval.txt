@@ -1,0 +1,4 @@
+nvidia-lm-eval
+nemo-export-deploy
+uvicorn
+
