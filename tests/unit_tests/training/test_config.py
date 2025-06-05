@@ -63,6 +63,7 @@ def create_test_gpt_config(**kwargs: Any) -> GPTConfig:
         "hidden_size": 128,
         "num_attention_heads": 4,
         "seq_length": 512,
+        "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
     return GPTConfig(**defaults)
@@ -75,6 +76,7 @@ def create_test_t5_config(**kwargs: Any) -> T5Config:
         "hidden_size": 128,
         "num_attention_heads": 4,
         "seq_length": 512,
+        "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
     return T5Config(**defaults)
