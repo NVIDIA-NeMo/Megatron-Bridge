@@ -671,8 +671,6 @@ class ConfigContainer(Container):
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
-    comm_overlap: Optional[MegatronCommOverlapConfig] = None
-    mixed_precision: Optional[MegatronMixedPrecisionConfig] = None
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
@@ -696,9 +694,7 @@ class ConfigContainer(Container):
             * model_cfg.context_parallel_size
         )
         total_model_size = encoder_model_size + decoder_model_size
-        assert (
-            world_size % total_model_size == 0
-        ), f"""
+        assert world_size % total_model_size == 0, f"""
         world size ({world_size}) is not divisible by total_model_size ({encoder_model_size=} + {decoder_model_size=})
         """
         self.data_parallel_size = world_size // total_model_size
@@ -730,11 +726,4 @@ class ConfigContainer(Container):
         if self.profiling is not None:
             assert self.profiling.use_pytorch_profiler != self.profiling.use_nsys_profiler, (
                 "Exactly one of pytorch or nsys profiler should be enabled, not both or neither"
-            )
-
-        if self.mixed_precision is not None:
-            self.mixed_precision.setup(
-                self.model_config,
-                self.optimizer_config,
-                self.ddp_config,
             )
