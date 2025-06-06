@@ -60,14 +60,14 @@ def test_evaluation(httpserver: HTTPServer, task: str):
     )
     httpserver.expect_request("/v1/completions/", method="POST").respond_with_json(
         {
-            'id': 'cmpl-123456',
-            'object': 'text_completion',
-            'created': 1234567,
-            'model': 'triton_model',
-            'choices': [
+            "id": "cmpl-123456",
+            "object": "text_completion",
+            "created": 1234567,
+            "model": "triton_model",
+            "choices": [
                 {
-                    'text': ' Janet eats 3 eggs and bakes 4 eggs, so she has 16 - 3 - 4 = <<16-3-4=9>>9 eggs left.\n'
-                    'She sells 9 eggs for $2 each, so she makes 9 x 2 = <<9*2=18>>18 dollars.\n#### 18'
+                    "text": " Janet eats 3 eggs and bakes 4 eggs, so she has 16 - 3 - 4 = <<16-3-4=9>>9 eggs left.\n"
+                    "She sells 9 eggs for $2 each, so she makes 9 x 2 = <<9*2=18>>18 dollars.\n#### 18"
                 }
             ],
         },
@@ -82,8 +82,8 @@ def test_evaluation(httpserver: HTTPServer, task: str):
 
     results = evaluate(target_cfg=target_config, eval_cfg=eval_config)
     assert (
-        results['tasks']['gsm8k']['metrics']['exact_match__strict-match']['scores']['exact_match__strict-match'][
-            'value'
+        results["tasks"]["gsm8k"]["metrics"]["exact_match__strict-match"]["scores"]["exact_match__strict-match"][
+            "value"
         ]
         == 1.0
     )

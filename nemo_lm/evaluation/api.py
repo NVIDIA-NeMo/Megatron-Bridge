@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Optional, Union
-from pathlib import Path
-import logging
 import importlib
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union
 
 import torch
 
 from nemo_lm.evaluation.utils.api import EvaluationConfig, EvaluationTarget, MisconfigurationError
 
+
 AnyPath = Union[Path, str]
 
 logger = logging.getLogger(__name__)
+
 
 def deploy(
     nemo_checkpoint: Optional[AnyPath] = None,
@@ -44,7 +46,7 @@ def deploy(
     max_input_len: int = 4096,
     max_batch_size: int = 8,
     enable_flash_decode: bool = True,
-    legacy_ckpt: bool = False
+    legacy_ckpt: bool = False,
 ):
     """
     Deploys nemo model on a PyTriton server "in-framework" to be used as OAI API compatible server for evaluations with
@@ -85,14 +87,15 @@ def deploy(
             saved with TE < 1.14. Default: False.
     """
     import os
+
     import uvicorn
     from nemo_deploy import DeployPyTriton
 
-    assert (
-        start_fastapi_server is True
-    ), 'in-framework deployment exposes OAI API endpoints v1/completions and \
+    assert start_fastapi_server is True, (
+     "in-framework deployment exposes OAI API endpoints v1/completions and \
     v1/chat/completions hence needs fastAPI interface to expose these endpoints to PyTriton. Please set \
-    start_fastapi_server to True'
+    start_fastapi_server to True"
+        )
     if triton_http_port == fastapi_port:
         raise ValueError("FastAPI port and Triton server port cannot use the same port. Please change them")
     # Store triton ip, port relevant for FastAPI as env vars to be accessible by fastapi_interface_to_pytriton.py
@@ -118,7 +121,7 @@ def deploy(
         inference_max_seq_length=max_input_len,
         enable_flash_decode=enable_flash_decode,
         max_batch_size=max_batch_size,
-        legacy_ckpt=legacy_ckpt
+        legacy_ckpt=legacy_ckpt,
     )
 
     if torch.distributed.is_initialized():
@@ -146,7 +149,7 @@ def deploy(
                     try:
                         logger.info("REST service will be started.")
                         uvicorn.run(
-                            'nemo.deploy.service.fastapi_interface_to_pytriton:app',
+                            "nemo.deploy.service.fastapi_interface_to_pytriton:app",
                             host=fastapi_http_address,
                             port=fastapi_port,
                             reload=True,
@@ -179,8 +182,9 @@ def evaluate(
             url in EvaluationTarget.api_endpoint is required to run evaluations.
         eval_cfg (EvaluationConfig): configuration for evaluations. Default type (task): gsm8k.
     """
-    from nemo_lm.evaluation.utils.base import find_framework, wait_for_fastapi_server
     import yaml
+
+    from nemo_lm.evaluation.utils.base import find_framework, wait_for_fastapi_server
 
     eval_type_components = eval_cfg.type.split(".")
     if len(eval_type_components) == 2:
@@ -207,7 +211,7 @@ def evaluate(
             f"as it is required to run {eval_cfg.type} evaluation"
         )
 
-    base_url, _ = target_cfg.api_endpoint.url.split('/v1')
+    base_url, _ = target_cfg.api_endpoint.url.split("/v1")
     server_ready = wait_for_fastapi_server(base_url=base_url, model_name=target_cfg.api_endpoint.model_id)
     if not server_ready:
         raise RuntimeError("Server not ready for evaluation")

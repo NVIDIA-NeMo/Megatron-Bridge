@@ -13,24 +13,25 @@
 # limitations under the License.
 
 import argparse
+import logging
 
 from nemo_lm.evaluation.api import deploy
-import logging
+
 
 logger = logging.getLogger(__name__)
 
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description='Test evaluation with lm-eval-harness on nemo2 model deployed on PyTriton'
+        description="Test evaluation with lm-eval-harness on nemo2 model deployed on PyTriton"
     )
-    parser.add_argument('--nemo2_ckpt_path', type=str, help="NeMo 2.0 ckpt path")
-    parser.add_argument('--max_batch_size', type=int, help="Max BS for the model")
-    parser.add_argument('--legacy_ckpt', action="store_true", help="Whether the nemo checkpoint is in legacy format")
+    parser.add_argument("--nemo2_ckpt_path", type=str, help="NeMo 2.0 ckpt path")
+    parser.add_argument("--max_batch_size", type=int, help="Max BS for the model")
+    parser.add_argument("--legacy_ckpt", action="store_true", help="Whether the nemo checkpoint is in legacy format")
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = get_args()
     try:
         deploy(

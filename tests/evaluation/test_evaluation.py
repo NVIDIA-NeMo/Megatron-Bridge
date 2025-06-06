@@ -24,14 +24,14 @@ from nemo.utils import logging
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description='Test evaluation with NVIDIA Evals Factory on nemo2 model deployed on PyTriton'
+        description="Test evaluation with NVIDIA Evals Factory on nemo2 model deployed on PyTriton"
     )
-    parser.add_argument('--nemo2_ckpt_path', type=str, help="NeMo 2.0 ckpt path")
-    parser.add_argument('--tokenizer_path', type=str, default=None, help="Path to the tokenizer")
-    parser.add_argument('--max_batch_size', type=int, help="Max BS for the model for deployment")
-    parser.add_argument('--eval_type', type=str, help="Evaluation benchmark to run from NVIDIA Evals Factory")
-    parser.add_argument('--limit', type=int, help="Limit evaluation to `limit` num of samples")
-    parser.add_argument('--legacy_ckpt', action="store_true", help="Whether the nemo checkpoint is in legacy format")
+    parser.add_argument("--nemo2_ckpt_path", type=str, help="NeMo 2.0 ckpt path")
+    parser.add_argument("--tokenizer_path", type=str, default=None, help="Path to the tokenizer")
+    parser.add_argument("--max_batch_size", type=int, help="Max BS for the model for deployment")
+    parser.add_argument("--eval_type", type=str, help="Evaluation benchmark to run from NVIDIA Evals Factory")
+    parser.add_argument("--limit", type=int, help="Limit evaluation to `limit` num of samples")
+    parser.add_argument("--legacy_ckpt", action="store_true", help="Whether the nemo checkpoint is in legacy format")
 
     return parser.parse_args()
 
@@ -50,7 +50,7 @@ def run_deploy(args):
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = get_args()
     deploy_proc = run_deploy(args)
 

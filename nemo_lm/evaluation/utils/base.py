@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import importlib
+import logging
 import pkgutil
+
 
 logger = logging.getLogger(__name__)
 
+
 def wait_for_fastapi_server(
-    base_url: str = 'http://0.0.0.0:8080',
-    model_name: str = 'triton_model',
+    base_url: str = "http://0.0.0.0:8080",
+    model_name: str = "triton_model",
     max_retries: int = 600,
     retry_interval: int = 2,
 ):
@@ -38,6 +40,7 @@ def wait_for_fastapi_server(
     """
 
     import time
+
     import requests
 
     completions_url = f"{base_url}/v1/completions/"
@@ -98,7 +101,7 @@ def list_available_evaluations() -> dict[str, list[str]]:
             "Please ensure that core_evals is installed in your env as it is required to run evaluations"
         )
     discovered_modules = {
-        name: importlib.import_module('.input', package=name) for finder, name, ispkg in _iter_namespace(core_evals)
+        name: importlib.import_module(".input", package=name) for finder, name, ispkg in _iter_namespace(core_evals)
     }
 
     evals = {}
@@ -123,7 +126,7 @@ def find_framework(eval_task: str) -> str:
     if len(frameworks) == 0:
         raise ValueError(f"Framework for task {eval_task} not found!")
     elif len(frameworks) > 1:
-        frameworks_names = [f[len('core_evals.') :].replace('_', '-') for f in frameworks]
+        frameworks_names = [f[len("core_evals.") :].replace("_", "-") for f in frameworks]
         raise ValueError(
             f"Multiple frameworks found for task {eval_task}: {frameworks_names}. "
             "Please indicate which version should be used by passing <framework>.<task>"
