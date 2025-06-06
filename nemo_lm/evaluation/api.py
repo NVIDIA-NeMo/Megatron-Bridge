@@ -15,7 +15,7 @@
 import importlib
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import Optional, Union
 
 import torch
 
@@ -92,10 +92,10 @@ def deploy(
     from nemo_deploy import DeployPyTriton
 
     assert start_fastapi_server is True, (
-     "in-framework deployment exposes OAI API endpoints v1/completions and \
+        "in-framework deployment exposes OAI API endpoints v1/completions and \
     v1/chat/completions hence needs fastAPI interface to expose these endpoints to PyTriton. Please set \
     start_fastapi_server to True"
-        )
+    )
     if triton_http_port == fastapi_port:
         raise ValueError("FastAPI port and Triton server port cannot use the same port. Please change them")
     # Store triton ip, port relevant for FastAPI as env vars to be accessible by fastapi_interface_to_pytriton.py
