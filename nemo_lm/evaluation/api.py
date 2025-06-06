@@ -44,6 +44,7 @@ def deploy(
     max_input_len: int = 4096,
     max_batch_size: int = 8,
     enable_flash_decode: bool = True,
+    legacy_ckpt: bool = False
 ):
     """
     Deploys nemo model on a PyTriton server "in-framework" to be used as OAI API compatible server for evaluations with
@@ -80,6 +81,8 @@ def deploy(
             Needs to be True while running evaluation. Default: True.
         enable_flash_decode (bool): If True runs in-framework deployment with flash decode enabled (not supported for
             the trtllm backend).
+        legacy_ckpt (bool): Indicates whether the checkpoint is in the legacy format. Required to load nemo checkpoints
+            saved with TE < 1.14. Default: False.
     """
     import os
     import uvicorn
@@ -115,6 +118,7 @@ def deploy(
         inference_max_seq_length=max_input_len,
         enable_flash_decode=enable_flash_decode,
         max_batch_size=max_batch_size,
+        legacy_ckpt=legacy_ckpt
     )
 
     if torch.distributed.is_initialized():

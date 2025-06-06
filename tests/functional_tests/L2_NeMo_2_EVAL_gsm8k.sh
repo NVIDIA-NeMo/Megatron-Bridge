@@ -16,10 +16,9 @@ export CUDA_VISIBLE_DEVICES=0
 export HF_DATASETS_OFFLINE=1
 export HF_HOME=/home/TestData/HF_HOME
 export HF_DATASETS_CACHE=${HF_HOME}/datasets
-coverage run -a --data-file=/workspace/.coverage --source=/workspace/nemo tests/evaluation/test_evaluation.py \
+coverage run -a --data-file=/workspace/.coverage --source=/workspace/nemo_lm tests/evaluation/test_evaluation.py \
     --nemo2_ckpt_path=/home/TestData/nemo2_ckpt/llama3-1b-lingua \
     --max_batch_size=4 \
     --eval_type='gsm8k' \
     --limit=1 \
     --legacy_ckpt
-
