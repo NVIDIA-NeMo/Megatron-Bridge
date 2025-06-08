@@ -142,7 +142,7 @@ jobs:
       worker-configs: |
         [
           {"id": 1, "runner": "linux-amd64-gpu-rtxa6000-latest-2-nemo", "timeout": 30},
-          {"id": 2, "runner": "linux-amd64-cpu16", "cpu-only": true, "timeout": 30},
+          {"id": 2, "runner": "linux-amd64-cpu16", "cpu-only": true, "timeout": 30}
         ]
 
       events: |
