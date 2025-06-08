@@ -45,6 +45,11 @@ runs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Install Azure CLI
+      shell: bash
+      run: |
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
     - name: Azure Login
       uses: azure/login@v2
       with:
