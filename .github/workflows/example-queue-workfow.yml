@@ -1,107 +1,107 @@
-name: Example Queue Processing
+# name: Example Queue Processing
 
-on:
-  push:
+# on:
+#   push:
 
-jobs:
-  process-queue:
-    uses: ./.github/workflows/azure-queue-events.yml
-    with:
-      # Example 1: Simple worker configs (just numbers)
-      worker-configs: |
-        [
-          {"id": 1, "runner": "ubuntu-latest", "cpu-only": true},
-          {"id": 2, "runner": "ubuntu-latest", "cpu-only": true},
-          {"id": 3, "runner": "ubuntu-latest", "cpu-only": true}
-        ]
+# jobs:
+#   process-queue:
+#     uses: ./.github/workflows/azure-queue-events.yml
+#     with:
+#       # Example 1: Simple worker configs (just numbers)
+#       worker-configs: |
+#         [
+#           {"id": 1, "runner": "ubuntu-latest", "cpu-only": true},
+#           {"id": 2, "runner": "ubuntu-latest", "cpu-only": true},
+#           {"id": 3, "runner": "ubuntu-latest", "cpu-only": true}
+#         ]
 
-      # Example 2: Complex worker configs with custom settings
-      # worker_configs: |
-      #   [
-      #     {
-      #       "id": 1,
-      #       "batch_size": 10,
-      #       "timeout": 30
-      #     },
-      #     {
-      #       "id": 2,
-      #       "batch_size": 20,
-      #       "timeout": 60
-      #     },
-      #     {
-      #       "id": 3,
-      #       "batch_size": 15,
-      #       "timeout": 45
-      #     }
-      #   ]
+#       # Example 2: Complex worker configs with custom settings
+#       # worker_configs: |
+#       #   [
+#       #     {
+#       #       "id": 1,
+#       #       "batch_size": 10,
+#       #       "timeout": 30
+#       #     },
+#       #     {
+#       #       "id": 2,
+#       #       "batch_size": 20,
+#       #       "timeout": 60
+#       #     },
+#       #     {
+#       #       "id": 3,
+#       #       "batch_size": 15,
+#       #       "timeout": 45
+#       #     }
+#       #   ]
 
-      # Example events to process
-      events: |
-        [
-          {
-            "type": "event_1",
-            "name": "First Event",
-            "script": "echo 'Processing First Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_2",
-            "name": "Second Event",
-            "script": "echo 'Processing Second Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_3",
-            "name": "Third Event",
-            "script": "echo 'Processing Third Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_4",
-            "name": "Fourth Event",
-            "script": "echo 'Processing Fourth Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_5",
-            "name": "Fifth Event",
-            "script": "echo 'Processing Fifth Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_6",
-            "name": "Sixth Event",
-            "script": "echo 'Processing Sixth Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_7",
-            "name": "Seventh Event",
-            "script": "echo 'Processing Seventh Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_8",
-            "name": "Eighth Event",
-            "script": "echo 'Processing Eighth Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_9",
-            "name": "Ninth Event",
-            "script": "echo 'Processing Ninth Event'",
-            "runner": "ubuntu-latest"
-          },
-          {
-            "type": "event_10",
-            "name": "Tenth Event",
-            "script": "echo 'Processing Tenth Event'",
-            "runner": "ubuntu-latest"
-          }
-        ]
-    secrets:
-      AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
-      AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+#       # Example events to process
+#       events: |
+#         [
+#           {
+#             "type": "event_1",
+#             "name": "First Event",
+#             "script": "echo 'Processing First Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_2",
+#             "name": "Second Event",
+#             "script": "echo 'Processing Second Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_3",
+#             "name": "Third Event",
+#             "script": "echo 'Processing Third Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_4",
+#             "name": "Fourth Event",
+#             "script": "echo 'Processing Fourth Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_5",
+#             "name": "Fifth Event",
+#             "script": "echo 'Processing Fifth Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_6",
+#             "name": "Sixth Event",
+#             "script": "echo 'Processing Sixth Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_7",
+#             "name": "Seventh Event",
+#             "script": "echo 'Processing Seventh Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_8",
+#             "name": "Eighth Event",
+#             "script": "echo 'Processing Eighth Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_9",
+#             "name": "Ninth Event",
+#             "script": "echo 'Processing Ninth Event'",
+#             "runner": "ubuntu-latest"
+#           },
+#           {
+#             "type": "event_10",
+#             "name": "Tenth Event",
+#             "script": "echo 'Processing Tenth Event'",
+#             "runner": "ubuntu-latest"
+#           }
+#         ]
+#     secrets:
+#       AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
+#       AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+#       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+#       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+#       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

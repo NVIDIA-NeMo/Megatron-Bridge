@@ -30,12 +30,12 @@ inputs:
     description: "Max runtime of the overall worker"
     required: false
     default: "10"
-  test-timeout:
-    description: "Max runtime of a test container in minutes"
-    required: false
-    default: "10"
   cpu-only:
     description: "Run containers on CPU only"
+    required: false
+    default: "false"
+  is-unit-test:
+    description: "Run unit tests"
     required: false
     default: "false"
 
@@ -119,11 +119,11 @@ runs:
         QUEUE_NAME: ${{ inputs.queue-name }}
         IMAGE: ${{ inputs.image }}
         WORKER_TIMEOUT: ${{ inputs.worker-timeout }}
-        TEST_TIMEOUT: ${{ inputs.test-timeout }}
         CPU_ONLY: ${{ inputs.cpu-only }}
         MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
         AZURE_BLOB_STORAGE: ${{ inputs.azure-blob-storage }}
+        IS_UNIT_TEST: ${{ inputs.is-unit-test }}
       run: |
         python - <<EOF
         import os
@@ -138,13 +138,13 @@ runs:
             """Run the event in a new Docker container"""
             try:
                 # Create container name
-                container_name = f"nemo_container_{os.environ.get('GITHUB_RUN_ID')}_{event_data.get('type', 'unknown')}"
+                container_name = f"nemo_container_{os.environ.get('GITHUB_RUN_ID')}_{event_data.get('script', 'unknown')}"
 
                 # Prepare Docker run command
                 gpu_args = "" if os.environ.get('CPU_ONLY') == "true" else "--runtime=nvidia --gpus all"
                 mnt_path = os.environ.get('MNT_PATH')
                 image = os.environ.get('IMAGE')
-                timeout_minutes = int(os.environ.get('TEST_TIMEOUT', '10'))
+                timeout_minutes = int(event_data.get('timeout', '10'))
                 sleep_seconds = (timeout_minutes * 60) + 60  # Add 60 seconds buffer
 
                 cmd = f"""
@@ -170,8 +170,9 @@ runs:
 
                 # Execute the event command
                 if 'script' in event_data:
+                    test_directory = "unit_tests" if os.environ.get('IS_UNIT_TEST') == "true" else "functional_tests"
                     result = subprocess.run(
-                        f"docker exec -t {container_name} bash -c '{event_data['script']}'",
+                        f"docker exec -t {container_name} bash -c 'tests/{test_directory}/{event_data['script']}.sh'",
                         shell=True,
                         capture_output=True,
                         text=True
@@ -180,9 +181,9 @@ runs:
                     # Create log content
                     log_content = json.dumps({
                         "event": {
-                            "type": event_data.get('type', 'unknown'),
-                            "name": event_data.get('name', 'unknown'),
-                            "runner": event_data.get('runner', 'unknown')
+                            "script": event_data.get('script', 'unknown'),
+                            "runner": event_data.get('runner', 'unknown'),
+                            "timeout": event_data.get('timeout', '10')
                         },
                         "execution": {
                             "worker_id": os.environ.get('WORKER_ID'),
@@ -198,11 +199,11 @@ runs:
 
                     # Upload log to blob storage
                     account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.blob.core.windows.net"
-                    container_name = os.environ.get('AZURE_BLOB_STORAGE')
-                    blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{event_data.get('type', 'unknown')}.json"
+                    blob_container_name = os.environ.get('AZURE_BLOB_STORAGE')
+                    blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{event_data.get('script', 'unknown')}.json"
 
                     blob_service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
-                    container_client = blob_service.get_container_client(container_name)
+                    container_client = blob_service.get_container_client(blob_container_name)
                     blob_client = container_client.get_blob_client(blob_name)
 
                     blob_client.upload_blob(log_content, overwrite=True)
@@ -219,7 +220,7 @@ runs:
                             subprocess.run(f"docker cp {container_name}:/workspace/.coverage .coverage", shell=True)
                             subprocess.run(f"docker cp {container_name}:/workspace/coverage.xml coverage.xml", shell=True)
 
-                            print(f"Uploaded coverage data for {event_data.get('type', 'unknown')}")
+                            print(f"Uploaded coverage data for {event_data.get('script', 'unknown')}")
                         except Exception as e:
                             print(f"Error handling coverage data: {e}")
 

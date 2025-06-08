@@ -134,6 +134,38 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+  cicd-unit-tests:
+    uses: ./.github/workflows/azure-queue-events.yml
+    needs: [cicd-container-build]
+    with:
+      is-unit-test: "true"
+      worker-configs: |
+        [
+          {"id": 1, "runner": "linux-amd64-gpu-rtxa6000-latest-2-nemo", "timeout": 30},
+          {"id": 2, "runner": "linux-amd64-cpu16", "cpu-only": true, "timeout": 30},
+        ]
+
+      events: |
+        [
+          {
+            script: L0_Unit_Tests_GPU
+            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 10
+          },
+          {
+            script: L0_Unit_Tests_CPU
+            runner: linux-amd64-cpu16
+            cpu-only: true
+            timeout: 10
+          }
+        ]
+    secrets:
+      AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
+      AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
   # cicd-e2e-tests:
   #   strategy:
   #     fail-fast: false
