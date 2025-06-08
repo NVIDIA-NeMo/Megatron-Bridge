@@ -2,14 +2,14 @@ name: "Monitor Queue Logs"
 description: "Monitors logs from queue events and handles test coverage artifacts"
 
 inputs:
-  event-type:
-    description: "Type of event being monitored"
-    required: true
-  event-name:
-    description: "Name of the event"
-    required: true
   event-script:
     description: "Script to execute in the container"
+    required: true
+  event-runner:
+    description: "Runner to execute the event on"
+    required: true
+  event-timeout:
+    description: "Timeout for the event"
     required: true
   azure-client-id:
     description: "Azure Client ID"
@@ -65,12 +65,11 @@ runs:
     - name: Emit Event to Queue
       shell: bash
       env:
-        EVENT_TYPE: ${{ inputs.event-type }}
-        EVENT_NAME: ${{ inputs.event-name }}
         EVENT_SCRIPT: ${{ inputs.event-script }}
+        EVENT_RUNNER: ${{ inputs.event-runner }}
+        EVENT_TIMEOUT: ${{ inputs.event-timeout }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
         AZURE_QUEUE_NAME: ${{ inputs.azure-queue-name }}
-        RUNNER: ${{ inputs.runner }}
       run: |
         python - <<EOF
         import os
@@ -80,10 +79,9 @@ runs:
 
         # Create event data
         event = {
-            "type": os.environ.get('EVENT_TYPE'),
-            "name": os.environ.get('EVENT_NAME'),
             "script": os.environ.get('EVENT_SCRIPT'),
-            "runner": os.environ.get('RUNNER')
+            "runner": os.environ.get('EVENT_RUNNER'),
+            "timeout": os.environ.get('EVENT_TIMEOUT')
         }
         print(f"Emitting event: {json.dumps(event, indent=2)}")
 
@@ -105,7 +103,7 @@ runs:
       id: monitor
       shell: bash
       env:
-        EVENT_TYPE: ${{ inputs.event-type }}
+        EVENT_SCRIPT: ${{ inputs.event-script }}
         IS_UNIT_TEST: ${{ inputs.is-unit-test }}
         TIMEOUT: ${{ inputs.timeout }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
@@ -124,7 +122,7 @@ runs:
             """Wait for the event log to appear in blob storage"""
             account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.blob.core.windows.net"
             container_name = os.environ.get('AZURE_BLOB_STORAGE')
-            blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{os.environ.get('EVENT_TYPE')}.json"
+            blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{os.environ.get('EVENT_SCRIPT')}.json"
 
             blob_service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
             container_client = blob_service.get_container_client(container_name)
@@ -152,7 +150,7 @@ runs:
             """Check if coverage tarball exists in blob storage"""
             account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.blob.core.windows.net"
             container_name = os.environ.get('AZURE_BLOB_STORAGE')
-            blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{os.environ.get('EVENT_TYPE')}_coverage.tar.gz"
+            blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{os.environ.get('EVENT_SCRIPT')}_coverage.tar.gz"
 
             blob_service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
             container_client = blob_service.get_container_client(container_name)
@@ -162,8 +160,8 @@ runs:
 
         try:
             # Get event type from environment
-            event_type = os.environ.get('EVENT_TYPE')
-            print(f"Waiting for log for event type: {event_type}")
+            event_script = os.environ.get('EVENT_SCRIPT')
+            print(f"Waiting for log for event type: {event_script}")
 
             # Wait for and download the log
             log_content = wait_for_log()
@@ -171,8 +169,7 @@ runs:
 
             # Print the log contents
             print("\n=== Event Information ===")
-            print(f"Type: {log_data['event']['type']}")
-            print(f"Name: {log_data['event']['name']}")
+            print(f"Name: {event_script}")
             print(f"Runner: {log_data['event']['runner']}")
             print(f"\n=== Execution Information ===")
             print(f"Worker ID: {log_data['execution']['worker_id']}")
@@ -209,7 +206,7 @@ runs:
       if: steps.monitor.outputs.coverage_exists == 'true'
       shell: bash
       env:
-        EVENT_TYPE: ${{ inputs.event-type }}
+        EVENT_SCRIPT: ${{ inputs.event-script }}
         AZURE_QUEUE_STORAGE_ACCOUNT: ${{ inputs.azure-queue-storage-account }}
         AZURE_BLOB_STORAGE: ${{ inputs.azure-blob-storage }}
       run: |
@@ -220,7 +217,7 @@ runs:
 
         account_url = f"https://{os.environ.get('AZURE_QUEUE_STORAGE_ACCOUNT')}.blob.core.windows.net"
         container_name = os.environ.get('AZURE_BLOB_STORAGE')
-        blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{os.environ.get('EVENT_TYPE')}_coverage.tar.gz"
+        blob_name = f"{os.environ.get('GITHUB_RUN_ID')}/{os.environ.get('EVENT_SCRIPT')}_coverage.tar.gz"
 
         blob_service = BlobServiceClient(account_url=account_url, credential=DefaultAzureCredential())
         container_client = blob_service.get_container_client(container_name)

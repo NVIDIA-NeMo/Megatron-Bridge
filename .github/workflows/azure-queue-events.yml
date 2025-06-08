@@ -20,10 +20,10 @@ on:
         required: false
         default: "10"
         type: string
-      test-timeout:
-        description: "Max runtime of tests in minutes"
+      is-unit-test:
+        description: "Run unit tests"
         required: false
-        default: "10"
+        default: "false"
         type: string
     secrets:
       AZURE_BLOB_STORAGE:
@@ -61,7 +61,7 @@ jobs:
       queue_names: ${{ needs.create-queues.outputs.queue_names }}
       runners: ${{ needs.create-queues.outputs.runners }}
       worker-timeout: ${{ inputs.worker-timeout }}
-      test-timeout: ${{ inputs.test-timeout }}
+      is-unit-test: ${{ inputs.is-unit-test }}
     secrets:
       AZURE_BLOB_STORAGE: ${{ secrets.AZURE_BLOB_STORAGE }}
       AZURE_QUEUE_STORAGE_ACCOUNT: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
@@ -87,16 +87,16 @@ jobs:
       - name: Monitor Queue Logs
         uses: ./.github/actions/monitor-queue-logs
         with:
-          event-type: ${{ matrix.event.type }}
-          event-name: ${{ matrix.event.name }}
           event-script: ${{ matrix.event.script }}
+          event-runner: ${{ matrix.event.runner }}
+          event-timeout: ${{ matrix.event.timeout }}
           azure-queue-name: ${{ fromJson(needs.create-queues.outputs.queue_names)[matrix.event.runner] }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           azure-queue-storage-account: ${{ secrets.AZURE_QUEUE_STORAGE_ACCOUNT }}
           azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
-          is-unit-test: false
+          is-unit-test: ${{ inputs.is-unit-test }}
           timeout: 10
 
   stop-workers:
