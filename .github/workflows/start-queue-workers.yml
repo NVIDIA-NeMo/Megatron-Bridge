@@ -26,10 +26,10 @@ on:
         required: false
         default: "10"
         type: string
-      test-timeout:
-        description: "Max runtime of tests in minutes"
+      is-unit-test:
+        description: "Run unit tests"
         required: false
-        default: "10"
+        default: "false"
         type: string
     secrets:
       AZURE_BLOB_STORAGE:
@@ -75,6 +75,7 @@ jobs:
           azure-blob-storage: ${{ secrets.AZURE_BLOB_STORAGE }}
           worker-timeout: ${{ inputs.worker-timeout }}
           cpu-only: ${{ matrix.worker.cpu-only }}
+          is-unit-test: ${{ inputs.is-unit-test }}
 
   delete-queues:
     needs: [start-workers]
