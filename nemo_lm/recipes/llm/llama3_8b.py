@@ -36,7 +36,7 @@ from nemo_lm.training.config import (
 def model_config(
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_type: Optional[torch.dtype] = None,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 2,
     sequence_parallelism: bool = False,
@@ -47,7 +47,7 @@ def model_config(
     Args:
         tensor_parallelism (int): Degree of tensor model parallelism.
         pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_type (Optional[torch.dtype]): Data type for pipeline parallelism.
+        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
         virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism.
         sequence_parallelism (bool): Whether to use sequence parallelism.
@@ -58,7 +58,7 @@ def model_config(
     return Llama3Config8B(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_type,
+        pipeline_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
         context_parallel_size=context_parallelism,
         sequence_parallel=sequence_parallelism,
@@ -79,7 +79,7 @@ def pretrain_config(
     # Model configuration
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_type: Optional[torch.dtype] = None,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 2,
     sequence_parallelism: bool = False,
@@ -107,7 +107,7 @@ def pretrain_config(
         mock (bool): Whether to use mock data. If True, ignores data_paths.
         tensor_parallelism (int): Degree of tensor model parallelism.
         pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_type (Optional[torch.dtype]): Data type for pipeline parallelism.
+        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
         virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism to be passed to model_config.
         sequence_parallelism (bool): Whether to use sequence parallelism.
@@ -159,7 +159,6 @@ def pretrain_config(
             split = "1,1,1"
             data_path = None
         else:
-            split = "9999,8,2"
             # Construct data_path from the inputs
             if data_paths is not None:
                 data_path = data_paths
@@ -177,11 +176,7 @@ def pretrain_config(
                     data_path = per_split_data_args_path
 
             # Create the tuples expected by BlendedMegatronDatasetConfig
-            if blend_weights is not None:
-                blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
-            else:
-                blend = None
-
+            # Prioritize blend_per_split_weights over blend_weights if both are provided
             if blend_per_split_weights is not None:
                 # For per-split, we need to construct the paths for each split
                 train_paths = train_data_path or []
@@ -193,13 +188,23 @@ def pretrain_config(
                     (valid_paths, blend_per_split_weights[1]) if valid_paths else None,
                     (test_paths, blend_per_split_weights[2]) if test_paths else None,
                 ]
-            else:
+                # When using blend_per_split, split should be None and blend should be None
+                split = None
+                blend = None
+            elif blend_weights is not None:
+                blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
                 blend_per_split = None
+                # When using regular blend, we can use split
+                split = "9999,8,2"
+            else:
+                blend = None
+                blend_per_split = None
+                split = "9999,8,2"
 
     model_cfg = model_config(
         tensor_parallelism=tensor_parallelism,
         pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_type=pipeline_parallelism_type,
+        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_parallelism=virtual_pipeline_parallelism,
         context_parallelism=context_parallelism,
         sequence_parallelism=sequence_parallelism,
