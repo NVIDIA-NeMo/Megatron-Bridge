@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Run functional tests with torchrun for distributed training
-CUDA_VISIBLE_DEVICES="0,1" torchrun --nproc_per_node=2 --nnodes=1 -m pytest tests/functional_tests -v -m "not pleasefixme" --tb=short 
+CUDA_VISIBLE_DEVICES="0,1" torchrun --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m pytest tests/functional_tests -v -m "not pleasefixme" --tb=short 
+coverage combine
