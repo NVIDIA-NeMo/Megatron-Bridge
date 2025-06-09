@@ -18,7 +18,7 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from nemo_lm.peft.base import AdapterWrapper
+from nemo_lm.peft.adapter_wrapper import AdapterWrapper
 from nemo_lm.utils.import_utils import safe_import
 
 
