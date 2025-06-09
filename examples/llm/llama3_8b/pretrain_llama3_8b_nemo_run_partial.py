@@ -20,8 +20,9 @@ import nemo_run as run
 
 from nemo_lm.models.utils import forward_step
 from nemo_lm.recipes.llm.llama3_8b import pretrain_config
-from nemo_lm.recipes.utils.nemo_run_utils import get_pretrain_fn
+from nemo_lm.recipes.utils.nemo_run_utils import get_partial_fn
 from nemo_lm.training.config import ConfigContainer, ProfilingConfig
+from nemo_lm.training.pretrain import megatron_pretrain
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -46,13 +47,13 @@ def main(args: argparse.Namespace) -> None:
     cfg.profiling.use_pytorch_profiler = True
     cfg.profiling.record_shapes = True
 
-    # Create a run.Partial object for the main training function
-    train_fn = get_pretrain_fn(cfg, forward_step)
+    # Create a run.Partial object for the pretrain function
+    fn = get_partial_fn(megatron_pretrain, cfg, forward_step)
 
     logger.info(f"Launching locally with TorchRun with nproc_per_node={args.nproc_per_node}")
     executor = run.LocalExecutor(ntasks_per_node=args.nproc_per_node, launcher="torchrun")
 
-    run.run(train_fn, executor=executor, dryrun=args.dryrun)
+    run.run(fn, executor=executor, dryrun=args.dryrun)
 
 
 if __name__ == "__main__":

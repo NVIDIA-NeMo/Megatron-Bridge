@@ -33,21 +33,6 @@ Examples:
         $ python pretrain_llama3_8b.py --config-file conf/my_config.yaml \
         model.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
-<<<<<<< HEAD
-=======
-
-    Adding new parameters with Hydra syntax:
-        $ python pretrain_llama3_8b.py +experiment_name=my_experiment +tags=[experiment,test]
-
-    Multiple CLI overrides:
-        $ python pretrain_llama3_8b.py \
-            model.tensor_model_parallel_size=8 \
-            model.pipeline_model_parallel_size=1 \
-            train.train_iters=1000000 \
-            train.global_batch_size=1024 \
-            optimizer.lr=0.0003 \
-            dataset.num_workers=8
->>>>>>> e8e6adb (docstring -s; git pushh origin)
 
 Configuration Precedence:
     1. Base configuration from pretrain_config() recipe

@@ -20,20 +20,23 @@ from typing import Callable
 import nemo_run as run
 
 from nemo_lm.training.config import ConfigContainer
-from nemo_lm.training.pretrain import megatron_pretrain
 
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def get_pretrain_fn(config: ConfigContainer, forward_step_func: Callable) -> run.Partial:
+def get_partial_fn(
+    target_fn: Callable[[ConfigContainer, Callable], None], config: ConfigContainer, forward_step_func: Callable
+) -> run.Partial:
     """
-    Creates a run.Partial object for pretraining with the given configuration and forward step function.
+    Creates a run.Partial object for the given target function with configuration and forward step function.
 
     This is a convenience function that combines the preparation of the config for NeMo Run
-    and the creation of the run.Partial object for megatron_pretrain.
+    and the creation of the run.Partial object for any target function that expects a ConfigContainer
+    and forward_step_func.
 
     Args:
+        target_fn: The target function to be wrapped in run.Partial (e.g., megatron_pretrain).
         config: The ConfigContainer dataclass instance.
         forward_step_func: The forward step function to use for training.
 
@@ -43,8 +46,8 @@ def get_pretrain_fn(config: ConfigContainer, forward_step_func: Callable) -> run
     # Prepare the config container for NeMo Run
     prepared_config = prepare_config_for_nemo_run(config)
 
-    # Create and return the run.Partial object for the main training function
-    return run.Partial(megatron_pretrain, config=prepared_config, forward_step_func=forward_step_func)
+    # Create and return the run.Partial object for the target function
+    return run.Partial(target_fn, config=prepared_config, forward_step_func=forward_step_func)
 
 
 def prepare_config_for_nemo_run(config: ConfigContainer) -> ConfigContainer:
