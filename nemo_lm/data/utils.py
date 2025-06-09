@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from dataclasses import fields
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Type, Union
 
 from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
-from megatron.core.datasets.utils import get_blend_from_list
 
 from nemo_lm.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from nemo_lm.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
@@ -162,72 +160,3 @@ def get_dataset_provider(
         The callable dataset provider function corresponding to the config type.
     """
     return _REGISTRY[type(dataset_config)]
-
-
-def get_blend_and_blend_per_split(
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
-) -> Tuple[Optional[List[float]], Optional[List[List[float]]]]:
-    """
-    Get blend and blend_per_split from passed-in arguments.
-
-    Args:
-        data_paths: List of data paths (equivalent to args.data_path in Megatron)
-        data_args_path: Path to file containing data arguments
-        train_data_path: List of training data paths
-        valid_data_path: List of validation data paths
-        test_data_path: List of test data paths
-        per_split_data_args_path: Path to JSON file with per-split data configuration
-
-    Returns:
-        tuple: (blend, blend_per_split) where:
-            - blend: List of weights for datasets when using single data_paths
-            - blend_per_split: List of [train_weights, valid_weights, test_weights] when using per-split paths
-    """
-    use_data_path = data_paths is not None or data_args_path is not None
-    use_per_split_data_path = (
-        any(elt is not None for elt in [train_data_path, valid_data_path, test_data_path])
-        or per_split_data_args_path is not None
-    )
-
-    blend = None
-    blend_per_split = None
-
-    if use_data_path:
-        if data_args_path is not None:
-            assert data_paths is None, "Cannot specify both data_paths and data_args_path"
-            with open(data_args_path, "r") as f:
-                blend = get_blend_from_list(f.read().split())
-        else:
-            assert data_paths is not None, "Must specify either data_paths or data_args_path"
-            blend = get_blend_from_list(data_paths)
-
-    elif use_per_split_data_path:
-        if per_split_data_args_path is not None:
-            with open(per_split_data_args_path, "r") as f:
-                per_split_data_args = json.load(f)
-                # Each element in blend_per_split should be a list of files (and optional
-                # weights), so split string if needed.
-                for split in ["train", "valid", "test"]:
-                    if isinstance(per_split_data_args[split], str):
-                        per_split_data_args[split] = per_split_data_args[split].split()
-
-                blend_per_split = [
-                    get_blend_from_list(per_split_data_args["train"]),
-                    get_blend_from_list(per_split_data_args["valid"]),
-                    get_blend_from_list(per_split_data_args["test"]),
-                ]
-        else:
-            blend_per_split = [
-                get_blend_from_list(train_data_path or []),
-                get_blend_from_list(valid_data_path or []),
-                get_blend_from_list(test_data_path or []),
-            ]
-    else:
-        blend, blend_per_split = None, None
-
-    return blend, blend_per_split
