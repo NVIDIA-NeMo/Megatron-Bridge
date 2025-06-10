@@ -31,8 +31,8 @@ RUN pip install --no-cache-dir --upgrade --force-reinstall --no-deps \
     git+https://github.com/NVIDIA/Megatron-LM.git@${MCORE_COMMIT} \
     git+https://github.com/NVIDIA/NeMo-RUN.git@${NEMO_RUN_COMMIT}
 
-RUN --mount=type=secret,id=PAT \
-    export PAT=$(cat /run/secrets/PAT) && \
+RUN --mount=type=secret,id=GH_TOKEN \
+    export PAT=$(cat /run/secrets/GH_TOKEN) && \
     echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc && chmod 600 ~/.netrc && \
     pip install --no-cache-dir git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@main && \
     rm ~/.netrc
