@@ -76,8 +76,6 @@ section-order = ["future", "standard-library", "third-party", "first-party", "lo
 lines-after-imports = 2
 # Force imports from the same module to be on separate lines for clarity
 force-single-line = false
-# Group imports by type for better readability
-force-sort-within-sections = true
 
 [lint.per-file-ignores]
 # Ignore import violations in __init__ files
