@@ -30,3 +30,12 @@ ARG NEMO_RUN_COMMIT=main
 RUN pip install --no-cache-dir --upgrade --force-reinstall --no-deps \
     git+https://github.com/NVIDIA/Megatron-LM.git@${MCORE_COMMIT} \
     git+https://github.com/NVIDIA/NeMo-RUN.git@${NEMO_RUN_COMMIT}
+
+RUN --mount=type=secret,id=GITHUB_API_TOKEN \
+    export GITHUB_API_TOKEN=$(cat /run/secrets/GITHUB_API_TOKEN) && \
+    echo -e "machine github.com\n  login token\n  password $GITHUB_API_TOKEN" > ~/.netrc && chmod 600 ~/.netrc && \
+    pip install --no-cache-dir git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@main && \
+    rm ~/.netrc
+
+
+
