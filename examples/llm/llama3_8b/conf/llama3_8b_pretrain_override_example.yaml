@@ -15,44 +15,44 @@
 # Example override file
 
 # To override a parameter, ensure the structure matches the ConfigContainer
-# and its sub-configurations (e.g., model_config, train_config, etc.)
+# and its sub-configurations (e.g., model, train, etc.)
 # Top-level ConfigContainer fields are dataclasses themselves
 
-model_config:
+model:
   tensor_model_parallel_size: 2
   pipeline_model_parallel_size: 2
   context_parallel_size: 1
   pipeline_dtype: torch.bfloat16
 
-train_config:
+train:
   train_iters: 500000
   global_batch_size: 256
   micro_batch_size: 4
   eval_interval: 1000
 
-optimizer_config:
+optimizer:
   lr: 0.00025
   min_lr: 0.000025
 
-scheduler_config:
+scheduler:
   lr_warmup_iters: 1000
 
-checkpoint_config:
+checkpoint:
   save_interval: 1000
 
-logger_config:
+logger:
   log_interval: 5
 
-dataset_config:
+dataset:
   num_workers: 4
 
-rng_config:
+rng:
   seed: 42
 
-ddp_config:
+ddp:
   grad_reduce_in_fp32: true
 
-profiling_config:
+profiling:
   use_nsys_profiler: false
   profile_step_start: 1000
   profile_step_end: 10000

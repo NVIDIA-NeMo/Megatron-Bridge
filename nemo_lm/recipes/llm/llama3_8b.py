@@ -19,7 +19,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from nemo_lm.data.utils import get_blend_and_blend_per_split
+from nemo_lm.data.loaders import get_blend_and_blend_per_split
 from nemo_lm.models.llama import Llama3Config8B
 from nemo_lm.training.config import (
     CheckpointConfig,
