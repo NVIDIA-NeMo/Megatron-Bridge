@@ -55,7 +55,7 @@ ignore = [
 ]
 
 [lint.isort]
-known-first-party = ["nemo"]
+known-first-party = ["megatron.hub"]
 known-third-party = ["examples", "scripts"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 lines-after-imports = 2

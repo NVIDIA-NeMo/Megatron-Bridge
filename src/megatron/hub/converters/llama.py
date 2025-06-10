@@ -31,19 +31,19 @@ logger = logging.getLogger(__name__)
 
 
 class HFLlamaExporter(BaseExporter):
-    """Exporter to convert megatron_hub Llama models to Hugging Face format."""
+    """Exporter to convert megatron.hub Llama models to Hugging Face format."""
 
     def convert_state(self, source, target, source_config=None):
         # pylint: disable=C0301
-        """Convert state dict from megatron_hub format to HF format.
+        """Convert state dict from megatron.hub format to HF format.
 
-        Maps the weights from the megatron_hub model to the HF model according to
+        Maps the weights from the megatron.hub model to the HF model according to
         the appropriate mapping scheme.
 
         Args:
-            source: Source megatron_hub model
+            source: Source megatron.hub model
             target: Target HF model
-            source_config: Source megatron_hub config (optional, used for Llama4)
+            source_config: Source megatron.hub config (optional, used for Llama4)
 
         Returns:
             The target model with weights transferred from source
@@ -134,9 +134,9 @@ class HFLlamaExporter(BaseExporter):
 
     @property
     def hf_config(self) -> "HFLlamaConfig":
-        """Generate a Hugging Face Llama configuration from the megatron_hub model configuration.
+        """Generate a Hugging Face Llama configuration from the megatron.hub model configuration.
 
-        This property maps megatron_hub configuration parameters to their Hugging Face equivalents.
+        This property maps megatron.hub configuration parameters to their Hugging Face equivalents.
 
         Returns:
             HFLlamaConfig: A Hugging Face Llama configuration
@@ -178,7 +178,7 @@ class HFLlamaExporter(BaseExporter):
 
 
 class HFLlamaImporter(BaseImporter):
-    """Importer for converting Hugging Face Llama models to megatron_hub Tron format."""
+    """Importer for converting Hugging Face Llama models to megatron.hub Tron format."""
 
     def init_hf_model(self) -> "LlamaForCausalLM":
         """Initialize the source Hugging Face Llama model.
@@ -191,14 +191,14 @@ class HFLlamaImporter(BaseImporter):
         return LlamaForCausalLM.from_pretrained(str(self.input_path), torch_dtype="auto")
 
     def convert_state(self, source, target):
-        """Convert state dict from HF format to megatron_hub format.
+        """Convert state dict from HF format to megatron.hub format.
 
-        Maps the weights from the HF model to the megatron_hub model according to
+        Maps the weights from the HF model to the megatron.hub model according to
         the appropriate mapping scheme.
 
         Args:
             source: Source HF model
-            target: Target megatron_hub model
+            target: Target megatron.hub model
 
         Returns:
             The result of applying the transforms
@@ -308,13 +308,13 @@ class HFLlamaImporter(BaseImporter):
 
     @property
     def tron_config(self) -> LlamaConfig:
-        """Create a megatron_hub LlamaConfig from the HF model config.
+        """Create a megatron.hub LlamaConfig from the HF model config.
 
-        Translates the HF configuration parameters to the equivalent megatron_hub
+        Translates the HF configuration parameters to the equivalent megatron.hub
         configuration.
 
         Returns:
-            LlamaConfig: megatron_hub configuration for Llama models
+            LlamaConfig: megatron.hub configuration for Llama models
         """
         if self._tron_config is not None:
             return self._tron_config

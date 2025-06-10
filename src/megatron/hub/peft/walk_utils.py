@@ -17,8 +17,6 @@ Walking utilities for PyTorch module transformation.
 
 This module provides utilities for recursively applying transformations to PyTorch modules,
 handling complex hierarchies including lists, dictionaries, and nested structures.
-These utilities are copied from NeMo's fn/base.py to provide independent module traversal
-capabilities without external dependencies.
 
 Examples:
     Basic module transformation:
@@ -83,7 +81,7 @@ def map(  # noqa: A001
 
     Examples:
         >>> import torch.nn as nn
-        >>> from nemo_lm.utils.walking_utils import map
+        >>> from megatron.hub.peft.walk_utils import map
 
         # Example: Adding a custom attribute to all modules
         >>> model = nn.Sequential(nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10))
@@ -127,7 +125,7 @@ def walk(
 
     Examples:
         >>> import torch.nn as nn
-        >>> from nemo_lm.utils.walking_utils import walk
+        >>> from megatron.hub.peft.walk_utils import map
 
         # Example: Freezing all parameters in a model
         >>> model = nn.Sequential(nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10))
@@ -167,7 +165,7 @@ def forall(module: nn.Module, func: ModulePredicate, recurse: bool = False) -> b
 
     Examples:
         >>> import torch.nn as nn
-        >>> from nemo_lm.utils.walking_utils import forall
+        >>> from megatron.hub.peft.walk_utils import map
 
         >>> model = nn.Sequential(nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10))
         >>> predicate = lambda m: isinstance(m, (nn.Linear, nn.Sequential, nn.ReLU))

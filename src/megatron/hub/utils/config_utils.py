@@ -31,7 +31,7 @@ T = TypeVar("T", bound="ConfigContainer")
 @dataclass(kw_only=True)
 class ConfigContainer:
     """
-    Base configuration container for NeMo Tron configurations.
+    Base configuration container for Megatron Hub configurations.
 
     Provides:
     - Custom validation

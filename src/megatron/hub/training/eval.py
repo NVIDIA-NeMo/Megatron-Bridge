@@ -17,17 +17,17 @@ import time
 from typing import Any, Callable, Optional, Union
 
 import torch
-from megatron_hub.training import fault_tolerance
-from megatron_hub.training.config import ConfigContainer
-from megatron_hub.training.state import GlobalState
-from megatron_hub.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
-from megatron_hub.utils.train_utils import check_forward_step_func_num_args, maybe_inject_state
 
 from megatron.core import mpu
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.hub.training import fault_tolerance
+from megatron.hub.training.config import ConfigContainer
+from megatron.hub.training.state import GlobalState
+from megatron.hub.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
+from megatron.hub.utils.train_utils import check_forward_step_func_num_args, maybe_inject_state
 
 
 def evaluate(

@@ -18,8 +18,7 @@ ENV PIP_CONSTRAINT=""
 # Install all
 WORKDIR /workspace
 RUN --mount=type=bind,source=pyproject.toml,target=/workspace/pyproject.toml \
-    --mount=type=bind,source=nemo_lm/__init__.py,target=/workspace/nemo_lm/__init__.py \
-    --mount=type=bind,source=nemo_lm/package_info.py,target=/workspace/nemo_lm/package_info.py \
+    --mount=type=bind,source=src,target=/workspace/src \
     --mount=type=bind,source=README.md,target=/workspace/README.md \
     pip install --no-build-isolation --no-cache-dir '.[all]'
 
