@@ -19,14 +19,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
-from megatron_hub.models.gpt import GPTConfig
-from megatron_hub.models.t5 import T5Config
-from megatron_hub.utils.common_utils import get_world_size_safe
-from megatron_hub.utils.config_utils import ConfigContainer as Container
-
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.t5 import T5Config
+from megatron.hub.utils.common_utils import get_world_size_safe
+from megatron.hub.utils.config_utils import ConfigContainer as Container
 
 
 @dataclass(kw_only=True)

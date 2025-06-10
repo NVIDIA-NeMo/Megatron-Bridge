@@ -16,11 +16,10 @@ import logging
 from dataclasses import asdict, dataclass, fields
 from typing import Optional
 
-from megatron_hub.models.gpt import GPTConfig
-from megatron_hub.models.t5 import T5Config
-
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.t5 import T5Config
 
 
 try:

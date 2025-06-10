@@ -113,7 +113,7 @@ def pytest_configure(config):
 def clear_lru_cache():
     """Clear LRU cache before each test to ensure test isolation."""
     # Import the functions that use @lru_cache
-    from nemo_lm.utils.checkpoint_utils import read_run_config, read_train_state
+    from megatron.hub.utils.checkpoint_utils import read_run_config, read_train_state
 
     # Clear the cache before each test
     read_run_config.cache_clear()
