@@ -17,17 +17,23 @@ import functools
 import logging
 from typing import Callable
 
-import nemo_run as run
+from megatron.hub.training.config import ConfigContainer
 
-from nemo_lm.training.config import ConfigContainer
 
+try:
+    import nemo_run as run
+
+    HAS_NEMO_RUN = True
+except ImportError:
+    run = None
+    HAS_NEMO_RUN = False
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 def get_partial_fn(
     target_fn: Callable[[ConfigContainer, Callable], None], config: ConfigContainer, forward_step_func: Callable
-) -> run.Partial:
+) -> "run.Partial":
     """
     Creates a run.Partial object for the given target function with configuration and forward step function.
 
@@ -42,7 +48,12 @@ def get_partial_fn(
 
     Returns:
         A run.Partial object ready to be executed with NeMo Run.
+
+    Raises:
+        ImportError: If nemo_run is not installed.
     """
+    _check_nemo_run_available()
+
     # Prepare the config container for NeMo Run
     prepared_config = prepare_config_for_nemo_run(config)
 
@@ -59,7 +70,12 @@ def prepare_config_for_nemo_run(config: ConfigContainer) -> ConfigContainer:
         config: The ConfigContainer dataclass instance.
     Returns:
         The patched ConfigContainer instance compatible for execution with nemo_run.
+
+    Raises:
+        ImportError: If nemo_run is not installed.
     """
+    _check_nemo_run_available()
+
     model_cfg = config.model
     patched_fields = []
 
@@ -147,3 +163,11 @@ def _fix_yaml_serialization_issues(config: ConfigContainer) -> None:
 
     if fixed_fields:
         logger.debug(f"Fixed YAML serialization for enum fields: {', '.join(fixed_fields)}")
+
+
+def _check_nemo_run_available() -> None:
+    """Check if nemo_run is available and raise helpful error if not."""
+    if not HAS_NEMO_RUN:
+        raise ImportError(
+            "nemo_run is required for recipe functionality. Install it with: pip install megatron-hub[recipes]"
+        )
