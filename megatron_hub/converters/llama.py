@@ -17,9 +17,10 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import torch
-from megatron_hub_lm.converters.common import BaseExporter, BaseImporter, dtype_from_hf
-from megatron_hub_lm.converters.state_transform import TransformFns, apply_transforms, state_transform
-from megatron_hub_lm.models.llama import Llama4Config, Llama31Config, LlamaConfig
+
+from megatron_hub.converters.common import BaseExporter, BaseImporter, dtype_from_hf
+from megatron_hub.converters.state_transform import TransformFns, apply_transforms, state_transform
+from megatron_hub.models.llama import Llama4Config, Llama31Config, LlamaConfig
 
 
 if TYPE_CHECKING:

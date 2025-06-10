@@ -27,13 +27,14 @@ from megatron.core import parallel_state
 from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
-from megatron_hub_lm.models.gpt import GPTConfig, torch_dtype_from_mcore_config
-from megatron_hub_lm.models.t5 import T5Config
-from megatron_hub_lm.tokenizers.tokenizer import _HuggingFaceTokenizer
-from megatron_hub_lm.training.checkpointing import save_checkpoint
-from megatron_hub_lm.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
-from megatron_hub_lm.training.state import GlobalState
-from megatron_hub_lm.utils.instantiate_utils import instantiate
+
+from megatron_hub.models.gpt import GPTConfig, torch_dtype_from_mcore_config
+from megatron_hub.models.t5 import T5Config
+from megatron_hub.tokenizers.tokenizer import _HuggingFaceTokenizer
+from megatron_hub.training.checkpointing import save_checkpoint
+from megatron_hub.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
+from megatron_hub.training.state import GlobalState
+from megatron_hub.utils.instantiate_utils import instantiate
 
 
 if TYPE_CHECKING:
@@ -131,7 +132,7 @@ def get_full_mcore_state_dict(dist_ckpt_folder: Path, model_cfg: Any) -> dict[st
     return state_dict
 
 
-def save_hf_tokenizer_assets(tokenizer_name_or_path: str, save_path: str = "/tmp/megatron_hub_tokenizer") -> str:
+def save_hf_tokenizer_assets(tokenizer_name_or_path: str, save_path: str = "/tmp/nemo_tokenizer") -> str:
     """Download and save tokenizer assets from Hugging Face Hub or a local path.
 
     Uses `transformers.AutoTokenizer` to load and then save the tokenizer files.
@@ -229,7 +230,7 @@ class _ModelState:
 
 
 class BaseImporter(ABC):
-    """Abstract Base Class for importing models from Hugging Face format to megatron_hub Tron.
+    """Abstract Base Class for importing models from Hugging Face format to megatron_hub format.
 
     Provides a common structure and utilities for conversion.
     Subclasses must implement model initialization (`init_hf_model`),
@@ -263,13 +264,13 @@ class BaseImporter(ABC):
         )
 
     def init_tron_model(self, cfg: GPTConfig | T5Config) -> list[MegatronModule]:
-        """Initialize the target megatron_hub Tron model on CPU.
+        """Initialize the target megatron model on CPU.
 
         Args:
-            cfg: The megatron_hub Tron model configuration (e.g., GPTConfig).
+            cfg: The megatron hub model configuration (e.g., GPTConfig).
 
         Returns:
-            A list containing the initialized megatron_hub Tron model module.
+            A list containing the initialized megatron module.
         """
         with megatron_cpu_init_context(cfg):
             model = cfg.configure_model(tokenizer=self.tokenizer)
@@ -288,13 +289,13 @@ class BaseImporter(ABC):
 
     @abstractmethod
     def convert_state(self, source: Any, target: Any) -> None:
-        """Convert the state dict from the source HF model to the target megatron_hub model.
+        """Convert the state dict from the source HF model to the target megatron model.
 
         Must be implemented by subclasses.
 
         Args:
             source: The source Hugging Face model instance.
-            target: The target megatron_hub Tron model instance.
+            target: The target megatron model instance.
         """
         raise NotImplementedError
 
@@ -313,23 +314,23 @@ class BaseImporter(ABC):
     @property
     @abstractmethod
     def tron_config(self) -> GPTConfig | T5Config:
-        """Get the megatron_hub Tron configuration object derived from the HF config.
+        """Get the megatron_hub model configuration object derived from the HF config.
 
         Must be implemented by subclasses.
 
         Returns:
-            A megatron_hub Tron configuration instance (e.g., GPTConfig).
+            A megatron_hub model configuration instance (e.g., GPTConfig).
         """
         raise NotImplementedError
 
     def apply(self) -> Path:
-        """Run the full conversion process from Hugging Face to megatron_hub Tron.
+        """Run the full conversion process from Hugging Face to megatron_hub.
 
         Initializes source and target models, converts the state dict,
         and saves the result as a megatron_hub distributed checkpoint.
 
         Returns:
-            Path to the saved megatron_hub Tron checkpoint directory.
+            Path to the saved megatron_hub checkpoint directory.
         """
         source = self.init_hf_model()
 
