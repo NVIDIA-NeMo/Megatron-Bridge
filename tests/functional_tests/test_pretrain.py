@@ -20,9 +20,9 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from nemo_lm.models.llama import Llama32Config1B
-from nemo_lm.models.utils import forward_step
-from nemo_lm.training.config import (
+from megatron.hub.models.llama import Llama32Config1B
+from megatron.hub.models.utils import forward_step
+from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     GPTDatasetConfig,
@@ -32,7 +32,7 @@ from nemo_lm.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from nemo_lm.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import megatron_pretrain
 
 
 class TestPretrain:

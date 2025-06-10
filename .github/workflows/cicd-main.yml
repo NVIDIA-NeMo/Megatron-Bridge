@@ -156,7 +156,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout || 30 }}
           is_unit_test: "false"
-          image: nemo_lm
+          image: megatron_hub
           cpu-only: false
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
