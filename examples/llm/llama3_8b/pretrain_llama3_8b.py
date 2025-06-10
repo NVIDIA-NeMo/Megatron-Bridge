@@ -57,11 +57,11 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron_hub.models.utils import forward_step
-from megatron_hub.recipes.llm.llama3_8b import pretrain_config
-from megatron_hub.training.config import ConfigContainer
-from megatron_hub.training.pretrain import megatron_pretrain
-from megatron_hub.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
+from megatron.hub.models.utils import forward_step
+from megatron.hub.recipes.llm.llama3_8b import pretrain_config
+from megatron.hub.training.config import ConfigContainer
+from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
 
 
 logger: logging.Logger = logging.getLogger(__name__)

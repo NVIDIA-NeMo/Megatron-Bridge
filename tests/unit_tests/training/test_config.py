@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for configuration validation in megatron_hub.training.config."""
+"""Unit tests for configuration validation in megatron.hub.training.config."""
 
 from typing import Any, Optional, Union
 
 import pytest
 import torch
+
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-
-from megatron_hub.models.gpt import GPTConfig
-from megatron_hub.models.t5 import T5Config
-from megatron_hub.training.config import (
+from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.t5 import T5Config
+from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedInitConfig,
@@ -228,7 +228,7 @@ def create_test_config_container(
     )
 
     # Monkeypatch get_world_size_safe for this test
-    import megatron_hub.training.config as config_module
+    import megatron.hub.training.config as config_module
 
     original_get_world_size = getattr(config_module, "get_world_size_safe", None)
     config_module.get_world_size_safe = mock_get_world_size_safe(world_size_override)

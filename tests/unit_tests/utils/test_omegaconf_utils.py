@@ -23,7 +23,7 @@ import pytest
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from megatron_hub.utils.omegaconf_utils import (
+from megatron.hub.utils.omegaconf_utils import (
     OverridesError,
     _apply_overrides,
     _dataclass_to_omegaconf_dict,
