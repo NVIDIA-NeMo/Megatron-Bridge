@@ -14,7 +14,7 @@
 
 import torch
 
-from nemo_lm.recipes.llm.llama3_8b import pretrain_config as llama3_8b
+from nemo_lm.recipes.llm.llama3_70b import pretrain_config as llama3_70b
 from nemo_lm.training.config import ConfigContainer
 
 
@@ -30,7 +30,7 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 4,
+    tensor_parallelism: int = 8,
     pipeline_parallelism: int = 2,
     pipeline_parallelism_type: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
@@ -40,13 +40,13 @@ def pretrain_config(
     train_iters: int = 1_168_251,
     global_batch_size: int = 512,
     micro_batch_size: int = 1,
-    seq_length: int = 16384,
+    seq_length: int = 65536,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
 ) -> ConfigContainer:
 
-    return llama3_8b(
+    return llama3_70b(
         dir=dir,
         name=name,
         data_paths=data_paths,
