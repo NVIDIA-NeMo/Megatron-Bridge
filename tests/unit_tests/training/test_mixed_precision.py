@@ -1,4 +1,4 @@
-"""Unit tests for nemo_lm.training.mixed_precision module."""
+"""Unit tests for megatron.hub.training.mixed_precision module."""
 
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock, patch
@@ -7,9 +7,9 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from nemo_lm.models.gpt import GPTConfig
-from nemo_lm.models.t5 import T5Config
-from nemo_lm.training.mixed_precision import (
+from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.t5 import T5Config
+from megatron.hub.training.mixed_precision import (
     MixedPrecisionConfig,
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,

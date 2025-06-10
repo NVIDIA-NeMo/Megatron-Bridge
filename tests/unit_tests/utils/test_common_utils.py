@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 import torch.nn as nn
 
-from nemo_lm.utils.common_utils import (
+from megatron.hub.utils.common_utils import (
     get_local_rank_preinit,
     get_rank_safe,
     get_world_size_safe,
@@ -154,7 +154,7 @@ class TestGetLocalRankPreinit:
 class TestPrintRank0:
     """Test print_rank_0 function."""
 
-    @patch("nemo_lm.utils.common_utils.get_rank_safe")
+    @patch("megatron.hub.utils.common_utils.get_rank_safe")
     @patch("builtins.print")
     def test_print_on_rank_0(self, mock_print, mock_get_rank_safe):
         """Test print_rank_0 prints message when rank is 0."""
@@ -166,7 +166,7 @@ class TestPrintRank0:
         mock_get_rank_safe.assert_called_once()
         mock_print.assert_called_once_with(message, flush=True)
 
-    @patch("nemo_lm.utils.common_utils.get_rank_safe")
+    @patch("megatron.hub.utils.common_utils.get_rank_safe")
     @patch("builtins.print")
     def test_no_print_on_non_zero_rank(self, mock_print, mock_get_rank_safe):
         """Test print_rank_0 does not print message when rank is not 0."""
@@ -226,7 +226,7 @@ class TestPrintRankLast:
     """Test print_rank_last function."""
 
     @patch("torch.distributed.is_initialized")
-    @patch("nemo_lm.utils.common_utils.is_last_rank")
+    @patch("megatron.hub.utils.common_utils.is_last_rank")
     @patch("builtins.print")
     def test_print_on_last_rank_when_initialized(self, mock_print, mock_is_last_rank, mock_is_initialized):
         """Test print_rank_last prints message when torch.distributed is initialized and rank is last."""
@@ -241,7 +241,7 @@ class TestPrintRankLast:
         mock_print.assert_called_once_with(message, flush=True)
 
     @patch("torch.distributed.is_initialized")
-    @patch("nemo_lm.utils.common_utils.is_last_rank")
+    @patch("megatron.hub.utils.common_utils.is_last_rank")
     @patch("builtins.print")
     def test_no_print_on_non_last_rank_when_initialized(self, mock_print, mock_is_last_rank, mock_is_initialized):
         """Test print_rank_last does not print message when torch.distributed is initialized and rank is not last."""
