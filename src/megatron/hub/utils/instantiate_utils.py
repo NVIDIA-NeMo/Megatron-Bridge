@@ -16,9 +16,9 @@
 # until https://github.com/facebookresearch/hydra/issues/2140 is resolved
 
 import copy
+from enum import Enum
 import functools
 import logging
-from enum import Enum
 from textwrap import dedent
 from typing import Any, Callable, Sequence, Union
 

@@ -16,11 +16,11 @@
 
 from typing import Any, Optional, Union
 
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig
 import pytest
 import torch
 
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config
 from megatron.hub.training.config import (

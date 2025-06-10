@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import copy
-import os
 from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
+import os
 from typing import Any, Optional, Type, TypeVar
 
-import yaml
 from omegaconf import OmegaConf
+import yaml
 
 from megatron.hub.utils.instantiate_utils import InstantiationMode, instantiate
 from megatron.hub.utils.yaml_utils import safe_yaml_representers

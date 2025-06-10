@@ -12,22 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import os
-import socket
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+import logging
+import os
 from pathlib import Path
+import socket
 from typing import TYPE_CHECKING, Any, Generator, Optional
-
-import torch
-import torch.distributed as dist
-import yaml
 
 from megatron.core import parallel_state
 from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
+import torch
+import torch.distributed as dist
+import yaml
+
 from megatron.hub.models.gpt import GPTConfig, torch_dtype_from_mcore_config
 from megatron.hub.models.t5 import T5Config
 from megatron.hub.tokenizers.tokenizer import _HuggingFaceTokenizer
@@ -366,14 +366,14 @@ class BaseImporter(ABC):
 
 
 class BaseExporter(ABC):
-    """Abstract Base Class for exporting models from megatron hub Tron format to Hugging Face.
+    """Abstract Base Class for exporting models from megatron hub format to Hugging Face.
 
     Provides a common structure and utilities for conversion.
     Subclasses must implement config mapping (`hf_config`) and state dict
     conversion (`convert_state`).
 
     Args:
-        input_path: Path to the input megatron hub Tron checkpoint directory.
+        input_path: Path to the input megatron hub checkpoint directory.
         output_path: Path to the directory where the Hugging Face model will be saved.
         hf_tokenizer_path: Optional path or name to a Hugging Face tokenizer to include
                            with the exported model. If None, tries to find one in the
@@ -404,13 +404,13 @@ class BaseExporter(ABC):
 
     @property
     def tron_config(self) -> GPTConfig | T5Config:
-        """Get the megatron hub Tron configuration loaded from the checkpoint.
+        """Get the megatron hub configuration loaded from the checkpoint.
 
         Returns:
-            The loaded megatron hub Tron configuration instance (e.g., GPTConfig).
+            The loaded megatron hub configuration instance (e.g., GPTConfig).
 
         Raises:
-            ValueError: If the Tron config has not been loaded yet (e.g., before `apply`).
+            ValueError: If the config has not been loaded yet (e.g., before `apply`).
         """
         if self._tron_config is None:
             raise ValueError("Tron config is not set")
@@ -463,7 +463,7 @@ class BaseExporter(ABC):
             return AutoModelForCausalLM.from_config(self.hf_config, torch_dtype=dtype)
 
     def init_tron_model(self) -> tuple[dict[str, torch.Tensor], GPTConfig | T5Config]:
-        """Load the megatron hub Tron model state dict and config from a distributed checkpoint.
+        """Load the megatron hub model state dict and config from a distributed checkpoint.
 
         Loads the full state dict directly without initializing the full megatron hub model
         for memory efficiency.
@@ -499,7 +499,7 @@ class BaseExporter(ABC):
         return state_dict, model_config
 
     def apply(self) -> Path:
-        """Run the full conversion process from megatron hub Tron to Hugging Face.
+        """Run the full conversion process from megatron hub to Hugging Face.
 
         Loads the megatron hub state dict and config, initializes the target HF model,
         converts the state dict, and saves the HF model and tokenizer.
@@ -507,10 +507,10 @@ class BaseExporter(ABC):
         Returns:
             Path to the saved Hugging Face model directory.
         """
-        logger.info("Loading Tron checkpoint. This may take a while...")
+        logger.info("Loading checkpoint. This may take a while...")
         state_dict, source_config = self.init_tron_model()
         self._tron_config = source_config
-        logger.info("Tron checkpoint loaded.")
+        logger.info("Checkpoint loaded.")
 
         self.config = self.hf_config  # for backward compatibility
         source = _ModelState(state_dict)

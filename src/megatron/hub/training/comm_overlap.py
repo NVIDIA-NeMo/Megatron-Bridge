@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from dataclasses import asdict, dataclass, fields
+import logging
 from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config
 

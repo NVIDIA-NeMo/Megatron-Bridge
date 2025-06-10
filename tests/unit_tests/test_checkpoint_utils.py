@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import os
 import threading
 import time
-from dataclasses import dataclass
 from typing import Any, Dict
 from unittest.mock import mock_open, patch
 

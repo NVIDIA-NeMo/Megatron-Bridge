@@ -125,7 +125,7 @@ def walk(
 
     Examples:
         >>> import torch.nn as nn
-        >>> from megatron.hub.peft.walk_utils import map
+        >>> from megatron.hub.peft.walk_utils import walk
 
         # Example: Freezing all parameters in a model
         >>> model = nn.Sequential(nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10))
@@ -165,7 +165,7 @@ def forall(module: nn.Module, func: ModulePredicate, recurse: bool = False) -> b
 
     Examples:
         >>> import torch.nn as nn
-        >>> from megatron.hub.peft.walk_utils import map
+        >>> from megatron.hub.peft.walk_utils import forall
 
         >>> model = nn.Sequential(nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 10))
         >>> predicate = lambda m: isinstance(m, (nn.Linear, nn.Sequential, nn.ReLU))

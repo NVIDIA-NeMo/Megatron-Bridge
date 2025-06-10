@@ -14,10 +14,7 @@
 from copy import deepcopy
 from typing import Optional, Tuple, Union
 
-import torch
 from einops import rearrange
-from torch import Tensor
-
 from megatron.core import parallel_state
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rope_utils import apply_rotary_pos_emb
@@ -27,6 +24,8 @@ from megatron.core.transformer.attention import SelfAttention as MCoreSelfAttent
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.torch_norm import L2Norm
 from megatron.core.utils import deprecate_inference_params, is_fa_min_version
+import torch
+from torch import Tensor
 
 
 try:

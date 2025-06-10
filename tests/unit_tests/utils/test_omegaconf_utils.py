@@ -19,9 +19,9 @@ import dataclasses
 import functools
 from typing import Any, Dict, Optional
 
+from omegaconf import DictConfig, OmegaConf
 import pytest
 import torch
-from omegaconf import DictConfig, OmegaConf
 
 from megatron.hub.utils.omegaconf_utils import (
     OverridesError,

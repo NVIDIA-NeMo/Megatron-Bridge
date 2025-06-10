@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import copy
-import logging
 from dataclasses import dataclass
+import logging
 from typing import Any, Callable, Literal, Optional, Union
 
 from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+
 from megatron.hub.models.gpt import get_vocab_size
 from megatron.hub.utils.import_utils import safe_import
 

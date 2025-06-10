@@ -16,13 +16,13 @@
 # https://github.com/rapidsai/cuml/blob/e93166ea0dddfa8ef2f68c6335012af4420bc8ac/python/cuml/internals/safe_imports.py
 
 
+from contextlib import contextmanager
 import importlib
 import logging
 import traceback
-from contextlib import contextmanager
 
-import torch
 from packaging.version import Version as PkgVersion
+import torch
 
 
 logger = logging.getLogger(__name__)

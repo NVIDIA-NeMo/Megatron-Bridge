@@ -20,10 +20,10 @@ import functools
 import logging
 from typing import Any, Dict, Tuple, TypeVar
 
-import torch
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
 from omegaconf import DictConfig, OmegaConf
+import torch
 
 
 logger = logging.getLogger(__name__)

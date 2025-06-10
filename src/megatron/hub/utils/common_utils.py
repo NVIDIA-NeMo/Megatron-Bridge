@@ -15,11 +15,10 @@
 import os
 from typing import Type, Union
 
-import torch
-import torch.distributed
-
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
+import torch
+import torch.distributed
 
 
 try:

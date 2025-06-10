@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime
 import gc
 import os
 import sys
 import time
-from datetime import datetime
 from typing import Any, Callable, Optional, Union
-
-import torch
-import torch.profiler
 
 from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -36,6 +33,9 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+import torch
+import torch.profiler
+
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.checkpointing import save_checkpoint
 from megatron.hub.training.config import ConfigContainer

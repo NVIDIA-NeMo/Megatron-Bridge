@@ -15,8 +15,8 @@
 import types
 from unittest.mock import MagicMock, patch
 
-import pytest
 from packaging.version import Version as PkgVersion
+import pytest
 
 from megatron.hub.utils.import_utils import (
     UnavailableError,

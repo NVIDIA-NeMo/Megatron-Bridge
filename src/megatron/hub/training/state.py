@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import os
 import time
 import types
-from dataclasses import dataclass
 from typing import Any, Optional
-
-import torch
-import yaml
-from torch.distributed.checkpoint.stateful import Stateful
-from torch.utils.tensorboard.writer import SummaryWriter
 
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
+import torch
+from torch.distributed.checkpoint.stateful import Stateful
+from torch.utils.tensorboard.writer import SummaryWriter
+import yaml
+
 from megatron.hub.tokenizers.tokenizer import build_tokenizer
 from megatron.hub.training.config import ConfigContainer
 from megatron.hub.utils.common_utils import get_rank_safe, get_world_size_safe
