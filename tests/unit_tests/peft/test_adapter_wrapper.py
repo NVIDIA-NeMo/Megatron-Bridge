@@ -25,7 +25,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from nemo_lm.peft.adapter_wrapper import AdapterWrapper
+from megatron.hub.peft.adapter_wrapper import AdapterWrapper
 
 
 class MockLinear(nn.Module):

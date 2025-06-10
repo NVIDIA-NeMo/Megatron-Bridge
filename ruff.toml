@@ -55,10 +55,27 @@ ignore = [
 ]
 
 [lint.isort]
-known-first-party = ["nemo"]
-known-third-party = ["examples", "scripts"]
+known-first-party = ["megatron.hub"]
+known-third-party = [
+    # External megatron dependencies
+    "megatron.core",
+    "megatron",
+    # Other common dependencies
+    "torch", 
+    "transformers", 
+    "datasets",
+    "accelerate",
+    "wandb",
+    "omegaconf",
+    "hydra",
+    "numpy",
+    "examples", 
+    "scripts"
+]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 lines-after-imports = 2
+# Force imports from the same module to be on separate lines for clarity
+force-single-line = false
 
 [lint.per-file-ignores]
 # Ignore import violations in __init__ files

@@ -1,3 +1,3 @@
-# NeMo-LM: Training Recipes for Megatron-based LLM and VLM models
+# Megatron Hub: Training Recipes for Megatron-based LLM and VLM models
 
 More content coming soon ...

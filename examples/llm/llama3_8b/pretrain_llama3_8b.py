@@ -27,30 +27,12 @@ Examples:
         $ python pretrain_llama3_8b.py --config-file my_custom_config.yaml
 
     Using CLI overrides only:
-        $ python pretrain_llama3_8b.py model_config.tensor_model_parallel_size=4 train_config.train_iters=100000
+        $ python pretrain_llama3_8b.py model.tensor_model_parallel_size=4 train.train_iters=100000
 
     Combining YAML and CLI overrides (CLI takes precedence):
         $ python pretrain_llama3_8b.py --config-file conf/my_config.yaml \
-        model_config.pipeline_dtype=torch.float16 \
-        train_config.global_batch_size=512
-
-    Adding new parameters with Hydra syntax:
-        $ python pretrain_llama3_8b.py +experiment_name=my_experiment +tags=[experiment,test]
-
-    Nested parameter overrides:
-        $ python pretrain_llama3_8b.py \
-        optimizer_config.lr=0.0001 \
-        scheduler_config.lr_warmup_iters=2000 \
-        checkpoint_config.save_interval=500
-
-    Multiple CLI overrides:
-        $ python pretrain_llama3_8b.py \
-            model_config.tensor_model_parallel_size=8 \
-            model_config.pipeline_model_parallel_size=1 \
-            train_config.train_iters=1000000 \
-            train_config.global_batch_size=1024 \
-            optimizer_config.lr=0.0003 \
-            dataset_config.num_workers=8
+        model.pipeline_dtype=torch.float16 \
+        train.global_batch_size=512
 
 Configuration Precedence:
     1. Base configuration from pretrain_config() recipe
@@ -75,11 +57,11 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from nemo_lm.models.utils import forward_step
-from nemo_lm.recipes.llm.llama3_8b import pretrain_config
-from nemo_lm.training.config import ConfigContainer
-from nemo_lm.training.pretrain import megatron_pretrain
-from nemo_lm.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
+from megatron.hub.models.utils import forward_step
+from megatron.hub.recipes.llm.llama3_8b import pretrain_config
+from megatron.hub.training.config import ConfigContainer
+from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -127,16 +109,16 @@ def main() -> None:
 
     Examples of CLI usage:
         # Use default config with custom learning rate
-        python pretrain_llama3_8b.py optimizer_config.lr=0.0002
+        python pretrain_llama3_8b.py optimizer.lr=0.0002
 
         # Custom config file with additional overrides
-        python pretrain_llama3_8b.py --config-file my_config.yaml train_config.train_iters=50000
+        python pretrain_llama3_8b.py --config-file my_config.yaml train.train_iters=50000
 
         # Multiple overrides for distributed training
         python pretrain_llama3_8b.py \
-            model_config.tensor_model_parallel_size=4 \
-            model_config.pipeline_model_parallel_size=2 \
-            train_config.global_batch_size=512
+            model.tensor_model_parallel_size=4 \
+            model.pipeline_model_parallel_size=2 \
+            train.global_batch_size=512
     """
     args, cli_overrides = parse_cli_args()
 

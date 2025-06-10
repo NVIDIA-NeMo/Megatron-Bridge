@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 
-from nemo_lm.peft.utils import (
+from megatron.hub.peft.utils import (
     ParallelLinearAdapter,
     all2all_hp2sp,
     get_adapter_attributes_from_linear,

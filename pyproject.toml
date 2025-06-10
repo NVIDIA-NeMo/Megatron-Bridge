@@ -13,8 +13,8 @@
 # limitations under the License.
 
 [project]
-name = "nemo-lm"
-dynamic = ["version"]
+name = "megatron-hub"
+version = "0.1.0rc0"
 description = "NeMo - a toolkit for Conversational AI"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -58,7 +58,7 @@ classifiers = [
 dependencies = [
     "accelerate>=1.6.0",
     "datasets>=3.5.1",
-    "numpy>=2.2.5",
+    "numpy<2",
     "omegaconf>=2.3.0",
     "packaging>=25.0",
     "tensorboard>=2.19.0",
@@ -82,7 +82,7 @@ dependencies = [
 megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git" }
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [dependency-groups]
@@ -108,11 +108,8 @@ dev = [
     "mypy>=1.8.0",
 ]
 
-[tool.setuptools]
-py-modules = ["nemo_lm"]
-
 [project.entry-points."nemo_run.cli"]
-lm = "nemo_lm"
+lm = "megatron.hub"
 
 [project.urls]
 Download = "https://github.com/NVIDIA/NeMo-LM/releases"
@@ -125,7 +122,7 @@ addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add thes
 testpaths = ["tests"]
 # directories to ignore when discovering tests
 norecursedirs = [
-    "nemo_lm",
+    "src",
     "external",
     "examples",
     "docs",
@@ -151,3 +148,9 @@ markers = [
     "skipduringci: marks tests that are skipped ci as they are addressed by Jenkins jobs but should be run to test user setups",
     "pleasefixme: marks tests that are broken and need fixing",
 ]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

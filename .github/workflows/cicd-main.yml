@@ -95,7 +95,7 @@ jobs:
       )
       && !cancelled()
     with:
-      image-name: nemo_lm
+      image-name: megatron_hub
       dockerfile: docker/Dockerfile.ci
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -127,7 +127,7 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout || 10 }}
           is_unit_test: "true"
-          image: nemo_lm
+          image: megatron_hub
           cpu-only: ${{ matrix.cpu-only || false }}
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
