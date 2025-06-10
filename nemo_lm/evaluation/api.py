@@ -149,7 +149,7 @@ def deploy(
                     try:
                         logger.info("REST service will be started.")
                         uvicorn.run(
-                            "nemo.deploy.service.fastapi_interface_to_pytriton:app",
+                            "nemo_deploy.service.fastapi_interface_to_pytriton:app",
                             host=fastapi_http_address,
                             port=fastapi_port,
                             reload=True,
