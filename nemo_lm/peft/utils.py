@@ -366,7 +366,6 @@ class ParallelLinearAdapter(nn.Module):
         a2a_experimental: Whether to use experimental all-to-all communication (default: False).
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
-        dropout_recompute: Whether to use recomputation for dropout (default: False).
     """
 
     def __init__(
@@ -386,7 +385,6 @@ class ParallelLinearAdapter(nn.Module):
         a2a_experimental: bool = False,
         is_expert: bool = False,
         disable_sequence_parallel_comm: bool = True,
-        dropout_recompute: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
@@ -466,12 +464,7 @@ class ParallelLinearAdapter(nn.Module):
         )
 
         if dropout > 0.0:
-            if dropout_recompute:
-                import thunder
-
-                self.dropout = thunder.jit(nn.Dropout(dropout))
-            else:
-                self.dropout = nn.Dropout(dropout)
+            self.dropout = nn.Dropout(dropout)
         else:
             self.dropout = None
 
