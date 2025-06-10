@@ -13,7 +13,7 @@
 # limitations under the License.
 
 [project]
-name = "nemo-lm"
+name = "megatron-hub"
 dynamic = ["version"]
 description = "NeMo - a toolkit for Conversational AI"
 readme = "README.md"
@@ -109,10 +109,10 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["nemo_lm"]
+py-modules = ["megatron_hub"]
 
 [project.entry-points."nemo_run.cli"]
-lm = "nemo_lm"
+lm = "megatron_hub"
 
 [project.urls]
 Download = "https://github.com/NVIDIA/NeMo-LM/releases"
@@ -125,7 +125,7 @@ addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add thes
 testpaths = ["tests"]
 # directories to ignore when discovering tests
 norecursedirs = [
-    "nemo_lm",
+    "megatron_hub",
     "external",
     "examples",
     "docs",
