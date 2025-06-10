@@ -15,10 +15,10 @@
 import json
 from typing import Any, Callable, Iterable, Iterator, Optional, Union
 
+import torch
 from megatron.core import mpu
 from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
-import torch
 from torch.utils.data import DataLoader
 
 from megatron.hub.data.samplers import build_pretraining_data_loader

@@ -16,14 +16,14 @@ import json
 import logging
 import math
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import List, Mapping, Optional
 
 import datasets
-from datasets import load_dataset
 import numpy as np
 import torch
+from datasets import load_dataset
 from torch.utils.data import Dataset
 
 from megatron.hub.data.datasets.utils import (

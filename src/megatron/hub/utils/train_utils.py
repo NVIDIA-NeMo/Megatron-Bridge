@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from datetime import datetime
 from functools import partial
-import inspect
 from typing import Any, Callable, Optional, Union
 
+import torch
+import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
-import torch
-import torch.nn as nn
 
 from megatron.hub.training.config import ConfigContainer
 from megatron.hub.training.state import GlobalState

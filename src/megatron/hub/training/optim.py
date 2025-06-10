@@ -14,10 +14,10 @@
 
 from typing import Callable, Optional, Union
 
+import torch.nn as nn
 from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
-import torch.nn as nn
 
 from megatron.hub.training.config import SchedulerConfig
 

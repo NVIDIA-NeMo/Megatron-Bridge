@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import os
 from datetime import datetime
 from functools import partial
-import logging
 from logging import Filter, LogRecord
-import os
 from typing import Any, Callable, Optional, Union
 
 import torch

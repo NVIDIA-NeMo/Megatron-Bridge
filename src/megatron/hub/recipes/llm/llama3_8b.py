@@ -15,9 +15,9 @@
 import os
 from typing import List, Optional
 
+import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-import torch
 
 from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3Config8B

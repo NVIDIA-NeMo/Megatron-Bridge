@@ -13,16 +13,16 @@
 # limitations under the License.
 
 import contextlib
+import logging
 from dataclasses import dataclass
 from functools import partial
-import logging
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
+import torch
+import torch.distributed
 from megatron.core.models.gpt.gpt_model import GPTModel as MCoreGPTModel
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-import torch
-import torch.distributed
 
 from megatron.hub.utils.import_utils import safe_import
 

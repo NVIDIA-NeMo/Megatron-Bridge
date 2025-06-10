@@ -16,12 +16,12 @@ import math
 import time
 from typing import Any, Callable, Optional, Union
 
+import torch
 from megatron.core import mpu
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-import torch
 
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.config import ConfigContainer

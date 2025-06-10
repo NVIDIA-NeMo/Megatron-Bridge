@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import inspect
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union, overload
 
 import numpy as np

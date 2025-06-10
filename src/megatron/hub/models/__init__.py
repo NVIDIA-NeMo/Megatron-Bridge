@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
     DistributedDataParallel,
@@ -21,7 +22,6 @@ from megatron.core.distributed import (
 from megatron.core.enums import ModelType
 from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.transformer.module import Float16Module, MegatronModule
-import torch
 
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config

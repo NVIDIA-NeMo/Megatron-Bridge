@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import copy
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable, Literal, Optional, Union
 
 from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model

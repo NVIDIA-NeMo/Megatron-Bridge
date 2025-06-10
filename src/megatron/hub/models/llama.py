@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 import logging
 import math
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import torch

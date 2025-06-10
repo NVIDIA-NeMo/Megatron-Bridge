@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import contextmanager
 import enum
 import functools
 import inspect
+from contextlib import contextmanager
 from typing import Any, Generator, Optional
 
 import yaml

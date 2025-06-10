@@ -3,9 +3,9 @@
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock, patch
 
+import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-import torch
 
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config

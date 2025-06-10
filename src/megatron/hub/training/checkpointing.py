@@ -15,18 +15,21 @@
 """Input/output checkpointing."""
 
 import contextlib
-from enum import Enum, auto
-from functools import lru_cache
-from logging import getLogger
 import os
-from pathlib import Path
 import random
 import shutil
 import sys
 import threading
+from enum import Enum, auto
+from functools import lru_cache
+from logging import getLogger
+from pathlib import Path
 from time import time
 from typing import Any, Callable, Optional, Union
 
+import numpy as np
+import torch
+import yaml
 from megatron.core import dist_checkpointing, mpu, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject
 from megatron.core.dist_checkpointing.serialization import (
@@ -40,9 +43,6 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
-import numpy as np
-import torch
-import yaml
 
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer

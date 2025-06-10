@@ -16,8 +16,8 @@
 """Tests for config_utils module."""
 
 import copy
-from dataclasses import dataclass
 import functools
+from dataclasses import dataclass
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest

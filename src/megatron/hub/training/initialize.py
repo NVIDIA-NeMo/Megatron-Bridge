@@ -14,9 +14,12 @@
 
 import datetime
 import time
-from typing import Callable, Optional
 import warnings
+from typing import Callable, Optional
 
+import torch
+import torch.distributed
+import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
@@ -26,9 +29,6 @@ from megatron.core.num_microbatches_calculator import (
     init_num_microbatches_calculator,
 )
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
-import torch
-import torch.distributed
-import torch.nn.functional as F
 
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config
@@ -266,8 +266,8 @@ def _initialize_tp_communicators(model_config: GPTConfig | T5Config, micro_batch
 
     try:
         import transformer_engine  # noqa: F401
-        from transformer_engine.pytorch import module as te_module
         import yaml
+        from transformer_engine.pytorch import module as te_module
 
     except ImportError:
         raise RuntimeError(

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import asdict, dataclass, fields
 import logging
+from dataclasses import asdict, dataclass, fields
 from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
