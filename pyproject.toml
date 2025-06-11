@@ -16,6 +16,7 @@
 name = "megatron-hub"
 description = "NeMo - a toolkit for Conversational AI"
 readme = "README.md"
+dynamic = ["version"]
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
