@@ -25,7 +25,7 @@ uv add git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 If you are a contributor, you can install this project for development with the following commands:
 ```
 git clone https://github.com/NVIDIA-NeMo/Megatron-Hub.git
-cd NeMo
+cd Megatron-Hub
 uv sync
 ```
 
