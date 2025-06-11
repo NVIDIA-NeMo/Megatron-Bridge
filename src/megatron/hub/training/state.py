@@ -28,6 +28,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 
 from megatron.hub.tokenizers.tokenizer import build_tokenizer
 from megatron.hub.training.config import ConfigContainer
+from megatron.hub.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.hub.utils.common_utils import get_rank_safe, get_world_size_safe
 from megatron.hub.utils.sig_utils import DistributedSignalHandler
 from megatron.hub.utils.yaml_utils import dump_dataclass_to_yaml
@@ -134,6 +135,7 @@ class GlobalState:
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
         self._async_calls_queue: Optional[AsyncCallsQueue] = None
+        self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
@@ -268,6 +270,13 @@ class GlobalState:
             # Create persistent queue by default when async_save is enabled
             self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
         return self._async_calls_queue
+
+    @property
+    def nvrx_straggler_manager(self) -> Optional[NVRxStragglerDetectionManager]:
+        """The NVRx straggler detection manager, if enabled."""
+        if self._nvrx_straggler_manager is None and self.cfg.nvrx_straggler is not None:
+            self._nvrx_straggler_manager = NVRxStragglerDetectionManager(self.cfg.nvrx_straggler)
+        return self._nvrx_straggler_manager
 
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""

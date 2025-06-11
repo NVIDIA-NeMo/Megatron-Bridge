@@ -140,7 +140,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - script: L2_Functional_Tests_GPU
+          - script: L2_Pretrain_Test_GPU
+            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 60
+          - script: L2_Straggler_Detector_Test_GPU
             runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
             timeout: 60
     needs: [cicd-unit-tests]
