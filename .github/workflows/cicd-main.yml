@@ -95,8 +95,15 @@ jobs:
       )
       && !cancelled()
     with:
-      image-name: nemo_lm
+      image-name: nemo_lm_${{ matrix.include-trtllm && 'eval' || '' }}
       dockerfile: docker/Dockerfile.ci
+      include-trtllm: ${{ matrix.include-trtllm }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include-trtllm:
+          - true
+          - false
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

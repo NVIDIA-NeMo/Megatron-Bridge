@@ -27,6 +27,11 @@ on:
         default: linux-amd64-gpu-rtxa6000-latest-2-nemo
         type: string
         description: "The runner to use for the build"
+      include-trtllm:
+        required: false
+        default: false
+        type: boolean
+        description: "Whether to include TRTLLM in the build"
     secrets:
       AZURE_CLIENT_ID:
         required: true
@@ -79,6 +84,8 @@ jobs:
       use-inline-cache: false
       runner: ${{ inputs.runner }}
       has-azure-credentials: true
+      build-args: |
+        INCLUDE_TRTLLM=${{ inputs.include-trtllm }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

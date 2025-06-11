@@ -33,12 +33,18 @@ RUN bash -exu <<"EOF"
         git+https://github.com/NVIDIA/NeMo-RUN.git@${NEMO_RUN_COMMIT}
 EOF
 
+ARG INCLUDE_TRTLLM=false
+ARG NEMO_EXPORT_DEPLOY_COMMIT=ko3n1g/ci/switch-to-ngc-pytorch
 RUN --mount=type=secret,id=GH_TOKEN bash -exu <<"EOF"
     export PAT=$(cat /run/secrets/GH_TOKEN)
 
     echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
     chmod 600 ~/.netrc 
-    pip install --no-cache-dir "NeMo-Export-Deploy[trtllm]@git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@main"
+    if [ "$INCLUDE_TRTLLM" = "true" ]; then
+        pip install --no-cache-dir "NeMo-Export-Deploy[trtllm]@git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@${NEMO_EXPORT_DEPLOY_COMMIT}"
+    else
+        pip install --no-cache-dir "NeMo-Export-Deploy@git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@${NEMO_EXPORT_DEPLOY_COMMIT}"
+    fi
     
     rm ~/.netrc
 EOF
