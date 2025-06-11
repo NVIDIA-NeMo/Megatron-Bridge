@@ -1,7 +1,6 @@
 .github/ @nvidia-nemo/automation
 docker/ @nvidia-nemo/automation
-.pylintrc.* @nvidia-nemo/automation
 .flake8.* @nvidia-nemo/automation
-/setup.py @nvidia-nemo/automation
 pyproject.toml @nvidia-nemo/automation
-requirements/ @nvidia-nemo/automation
+ruff.toml @nvidia-nemo/automation
+.pre-commit-config.yaml
