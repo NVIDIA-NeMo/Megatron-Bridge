@@ -95,7 +95,7 @@ jobs:
       )
       && !cancelled()
     with:
-      image-name: nemo_lm_${{ matrix.include-trtllm && 'eval' || '' }}
+      image-name: nemo_lm${{ matrix.include-trtllm && '_eval' || '' }}
       dockerfile: docker/Dockerfile.ci
       include-trtllm: ${{ matrix.include-trtllm }}
     strategy:
