@@ -84,8 +84,6 @@ jobs:
       use-inline-cache: false
       runner: ${{ inputs.runner }}
       has-azure-credentials: true
-      build-args: |
-        INCLUDE_TRTLLM=${{ inputs.include-trtllm }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
