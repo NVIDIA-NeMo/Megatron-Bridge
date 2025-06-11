@@ -3,6 +3,13 @@
 ```
 
 ```{toctree}
+:caption: Guides
+:hidden:
+
+performance-guide.md
+```
+
+```{toctree}
 :caption: Development
 :hidden:
 
