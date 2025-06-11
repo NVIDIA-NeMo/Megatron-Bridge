@@ -69,7 +69,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
   build:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@ko3n1g/feat/build-secrets
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@v0.37.0
     needs: [pre-flight]
     with:
       image-name: ${{ inputs.image-name }}
