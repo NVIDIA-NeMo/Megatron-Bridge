@@ -71,7 +71,7 @@ class TestPretrain:
                 model=model_cfg,
                 train=TrainingConfig(
                     train_iters=total_iters,
-                    eval_interval=5,
+                    eval_interval=50,
                     eval_iters=2,
                     global_batch_size=global_batch_size,
                     micro_batch_size=micro_batch_size,
