@@ -319,16 +319,21 @@ def _map_module_dict(
         module_dict = func(module_dict, **f_kwargs)
 
     mapped_modules = {}
-    for i, (name, module) in enumerate(module_dict.items()):
-        kwargs["i"] = i
-        kwargs["name"] = name
+    prefix = kwargs.get("name", "") if not kwargs.get("prefix", "") else f"{kwargs['prefix']}.{kwargs['name']}"
+    kwargs.pop("i", None)
+    kwargs.pop("name", None)
+    kwargs.pop("prefix", None)
 
+    for i, (name, module) in enumerate(module_dict.items()):
         mapped_modules[name] = map(
             module,
             func,
             recurse=recurse,
             leaf_only=leaf_only,
             transformed_modules=transformed_modules,
+            i=i,
+            name=name,
+            prefix=prefix,
             **kwargs,
         )
 
