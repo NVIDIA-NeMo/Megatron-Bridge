@@ -83,7 +83,8 @@ dependencies = [
     "megatron-energon",
     "qwen_vl_utils",
     "sacrebleu",
-    "rouge_score"
+    "rouge_score",
+    "decord"
 ]
 
 [tool.setuptools.dynamic]
