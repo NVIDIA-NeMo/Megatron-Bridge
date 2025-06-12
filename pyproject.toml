@@ -93,7 +93,7 @@ override-dependencies = [
 
 [tool.uv.sources]
 megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git" }
-nemo-export-deploy = { git = "https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git", rev = "ko3n1g/ci/switch-to-ngc-pytorch" }
+nemo-export-deploy = { git = "https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git", rev = "93bdbb26dfb82469ff00cf8362674cbb18baac5a" }
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
