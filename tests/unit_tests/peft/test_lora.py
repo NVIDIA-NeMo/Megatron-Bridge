@@ -494,6 +494,7 @@ class TestLoRAIntegration:
         assert torch.equal(lora_b_1, lora_b_2)
 
 
+@pytest.mark.run_only_on("GPU")
 class TestLoRAMegatronIntegration:
     """Integration tests for LoRA with real Megatron models."""
 
