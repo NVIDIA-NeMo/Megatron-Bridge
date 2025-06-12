@@ -133,7 +133,7 @@ class GlobalState:
         self.start_time: float = time.time()
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
-        self._async_calls_queue: Optional[Any] = None
+        self._async_calls_queue: Optional[AsyncCallsQueue] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
