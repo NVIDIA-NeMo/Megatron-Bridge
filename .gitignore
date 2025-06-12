@@ -184,5 +184,4 @@ nemo_experiments/
 slurm*.out
 
 # UV package manager
-uv.lock
 .uv/
