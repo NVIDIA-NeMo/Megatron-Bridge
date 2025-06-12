@@ -117,6 +117,9 @@ training = [
     "tensorboard>=2.19.0",
     "accelerate>=1.6.0",
 ]
+datasets = [
+    "datasets>=3.5.1",
+]
 docs = [
     "myst-parser>=4.0.1",
     "nvidia-sphinx-theme>=0.0.8",
