@@ -16,36 +16,10 @@ import logging
 import time
 from typing import Callable, Optional
 
+import nvidia_resiliency_ext.straggler as straggler
 import torch
 
 from megatron.hub.training.config import NVRxStragglerDetectionConfig
-
-
-try:
-    import nvidia_resiliency_ext.straggler as straggler
-
-    HAVE_NVRX_STRAGGLER = True
-except ImportError:
-    HAVE_NVRX_STRAGGLER = False
-    straggler = None
-
-
-def safe_shutdown_nvrx_straggler_manager(
-    manager: Optional["NVRxStragglerDetectionManager"], logger_name: str = "nvrx_straggler"
-) -> None:
-    """
-    Safely shutdown the NVRx straggler detection manager with error handling.
-
-    Args:
-        manager: The NVRx straggler detection manager to shutdown, can be None.
-        logger_name: Logger name for error reporting.
-    """
-    if manager is not None:
-        logger = logging.getLogger(logger_name)
-        try:
-            manager.shutdown()
-        except Exception as e:
-            logger.error(f"Error shutting down NVRx straggler detection: {e}")
 
 
 class NVRxStragglerDetectionManager:
@@ -62,11 +36,6 @@ class NVRxStragglerDetectionManager:
             ImportError: If nvidia-resiliency-ext is not available.
             ValueError: If invalid configuration is provided.
         """
-        if not HAVE_NVRX_STRAGGLER:
-            raise ImportError(
-                "nvidia-resiliency-ext is not available. Please install it to use NVRx straggler detection."
-            )
-
         self.config = config
         self.logger = logging.getLogger(config.logger_name)
         self.initialized = False
@@ -89,12 +58,11 @@ class NVRxStragglerDetectionManager:
             raise RuntimeError("NVRxStragglerDetectionManager is already initialized.")
 
         if not self.config.enabled:
-            self.logger.info("NVRx straggler detection is disabled.")
+            self.logger.debug("NVRx straggler detection is disabled.")
             return
 
-        self.logger.info("Initializing NVRx straggler detection...")
+        self.logger.debug("Initializing NVRx straggler detection...")
 
-        # Initialize the straggler detector
         straggler.Detector.initialize(
             scores_to_compute=self.scores_to_compute,
             gather_on_rank0=True,
@@ -103,7 +71,7 @@ class NVRxStragglerDetectionManager:
         )
 
         self.initialized = True
-        self.logger.info("NVRx straggler detection initialized successfully.")
+        self.logger.debug("NVRx straggler detection initialized successfully.")
 
     def wrap_train_step_function(self, train_step_func: Callable) -> Callable:
         """
@@ -124,6 +92,7 @@ class NVRxStragglerDetectionManager:
 
         try:
             # Create a wrapper object with train_step method for nvidia-resiliency-ext
+            # TODO: See if NVRx can support functions directly without needing them attached to a class
             class TrainStepWrapper:
                 def __init__(self, func):
                     self.train_step = func
@@ -139,7 +108,7 @@ class NVRxStragglerDetectionManager:
             straggler.Detector.wrap_callables(callable_ids=[callable_id])
 
             self.wrapped_function = train_step_func
-            self.logger.info("Train step function wrapped for NVRx straggler detection.")
+            self.logger.debug("Train step function wrapped for NVRx straggler detection.")
 
             # Return the original function since the wrapper is just for nvidia-resiliency-ext
             return train_step_func
@@ -179,7 +148,7 @@ class NVRxStragglerDetectionManager:
 
             # Log reporting time
             elapsed = time.monotonic() - time_started
-            self.logger.info(f"Straggler report processing time: {elapsed:.3f} sec.")
+            self.logger.debug(f"Straggler report processing time: {elapsed:.3f} sec.")
 
         return False
 
@@ -211,7 +180,7 @@ class NVRxStragglerDetectionManager:
 
         return stragglers_found
 
-    def _print_stragglers(self, stragglers):
+    def _print_stragglers(self, stragglers) -> None:
         """Print straggler detection warnings."""
         if rel_stragglers := stragglers["straggler_gpus_relative"]:
             self.logger.warning(
@@ -245,7 +214,7 @@ class NVRxStragglerDetectionManager:
 
         return res
 
-    def _print_gpu_scores(self, report):
+    def _print_gpu_scores(self, report) -> None:
         """Print GPU performance scores."""
         if self.config.calc_relative_gpu_perf:
             rel_perf_str = self._format_gpu_scores(
@@ -265,7 +234,7 @@ class NVRxStragglerDetectionManager:
             )
             self.logger.info(f"\nGPU individual performance:\n{indiv_perf_str}")
 
-    def _log_gpu_scores(self, report):
+    def _log_gpu_scores(self, report) -> None:
         """Log GPU performance scores as structured data."""
         if self.config.calc_relative_gpu_perf:
             self._log_gpu_perf_scores(
@@ -281,7 +250,7 @@ class NVRxStragglerDetectionManager:
                 score_prefix="gpu_individual_perf",
             )
 
-    def _log_gpu_perf_scores(self, rank_to_score, rank_to_node, score_prefix):
+    def _log_gpu_perf_scores(self, rank_to_score, rank_to_node, score_prefix) -> None:
         """Log GPU performance scores with statistics."""
         scores_log = {}
         min_val = float("nan")
@@ -308,7 +277,7 @@ class NVRxStragglerDetectionManager:
         torch.distributed.broadcast(flag_tensor, 0)
         return bool(flag_tensor.item() > 0.0)
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Shutdown the straggler detector."""
         if self.initialized and self.config.enabled:
             self.logger.info("Shutting down NVRx straggler detection...")
@@ -316,14 +285,6 @@ class NVRxStragglerDetectionManager:
             self.initialized = False
             self.wrapped_function = None
             self.logger.info("NVRx straggler detection shutdown complete.")
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit with cleanup."""
-        self.shutdown()
 
 
 def check_nvrx_straggler_detection(nvrx_straggler_manager: Optional["NVRxStragglerDetectionManager"]) -> bool:
@@ -341,3 +302,21 @@ def check_nvrx_straggler_detection(nvrx_straggler_manager: Optional["NVRxStraggl
     global_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
     should_exit = nvrx_straggler_manager.check_stragglers(global_rank)
     return should_exit
+
+
+def safe_shutdown_nvrx_straggler_manager(
+    manager: Optional["NVRxStragglerDetectionManager"], logger_name: str = "nvrx_straggler"
+) -> None:
+    """
+    Safely shutdown the NVRx straggler detection manager with error handling.
+
+    Args:
+        manager: The NVRx straggler detection manager to shutdown, can be None.
+        logger_name: Logger name for error reporting.
+    """
+    if manager is not None:
+        logger = logging.getLogger(logger_name)
+        try:
+            manager.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down NVRx straggler detection: {e}")

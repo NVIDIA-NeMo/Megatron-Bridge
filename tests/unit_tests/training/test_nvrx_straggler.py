@@ -171,43 +171,34 @@ class TestNVRxStragglerDetectionManager:
     @pytest.fixture
     def manager(self, config, mock_straggler_module):
         """Create a manager instance for testing."""
-        with patch("megatron.hub.training.nvrx_straggler.HAVE_NVRX_STRAGGLER", True):
-            return NVRxStragglerDetectionManager(config)
+        return NVRxStragglerDetectionManager(config)
 
-    def test_init_without_nvrx_available(self, config):
-        """Test initialization when nvidia-resiliency-ext is not available."""
-        with patch("megatron.hub.training.nvrx_straggler.HAVE_NVRX_STRAGGLER", False):
-            with pytest.raises(ImportError, match="nvidia-resiliency-ext is not available"):
-                NVRxStragglerDetectionManager(config)
-
-    def test_init_with_nvrx_available(self, config, mock_straggler_module):
+    def test_init_success(self, config, mock_straggler_module):
         """Test successful initialization."""
-        with patch("megatron.hub.training.nvrx_straggler.HAVE_NVRX_STRAGGLER", True):
-            manager = NVRxStragglerDetectionManager(config)
+        manager = NVRxStragglerDetectionManager(config)
 
-            assert manager.config == config
-            assert manager.initialized is False
-            assert manager.wrapped_function is None
-            assert "relative_perf_scores" in manager.scores_to_compute
-            assert "individual_perf_scores" in manager.scores_to_compute
+        assert manager.config == config
+        assert manager.initialized is False
+        assert manager.wrapped_function is None
+        assert "relative_perf_scores" in manager.scores_to_compute
+        assert "individual_perf_scores" in manager.scores_to_compute
 
     def test_init_scores_to_compute_config(self, mock_straggler_module):
         """Test scores_to_compute based on configuration."""
-        with patch("megatron.hub.training.nvrx_straggler.HAVE_NVRX_STRAGGLER", True):
-            # Test with only relative performance
-            config1 = NVRxStragglerDetectionConfig(calc_relative_gpu_perf=True, calc_individual_gpu_perf=False)
-            manager1 = NVRxStragglerDetectionManager(config1)
-            assert manager1.scores_to_compute == ["relative_perf_scores"]
+        # Test with only relative performance
+        config1 = NVRxStragglerDetectionConfig(calc_relative_gpu_perf=True, calc_individual_gpu_perf=False)
+        manager1 = NVRxStragglerDetectionManager(config1)
+        assert manager1.scores_to_compute == ["relative_perf_scores"]
 
-            # Test with only individual performance
-            config2 = NVRxStragglerDetectionConfig(calc_relative_gpu_perf=False, calc_individual_gpu_perf=True)
-            manager2 = NVRxStragglerDetectionManager(config2)
-            assert manager2.scores_to_compute == ["individual_perf_scores"]
+        # Test with only individual performance
+        config2 = NVRxStragglerDetectionConfig(calc_relative_gpu_perf=False, calc_individual_gpu_perf=True)
+        manager2 = NVRxStragglerDetectionManager(config2)
+        assert manager2.scores_to_compute == ["individual_perf_scores"]
 
-            # Test with neither
-            config3 = NVRxStragglerDetectionConfig(calc_relative_gpu_perf=False, calc_individual_gpu_perf=False)
-            manager3 = NVRxStragglerDetectionManager(config3)
-            assert manager3.scores_to_compute == []
+        # Test with neither
+        config3 = NVRxStragglerDetectionConfig(calc_relative_gpu_perf=False, calc_individual_gpu_perf=False)
+        manager3 = NVRxStragglerDetectionManager(config3)
+        assert manager3.scores_to_compute == []
 
     def test_initialize_disabled(self, manager, mock_straggler_module):
         """Test initialize when disabled."""
@@ -284,7 +275,18 @@ class TestNVRxStragglerDetectionManager:
 
         assert result is dummy_func
         assert manager.wrapped_function is dummy_func
-        mock_straggler_module.CallableId.assert_called_once_with(dummy_func, "train_step")
+
+        # Verify CallableId was called with a TrainStepWrapper object, not the original function
+        mock_straggler_module.CallableId.assert_called_once()
+        call_args = mock_straggler_module.CallableId.call_args[0]
+        assert len(call_args) == 2
+        wrapper_obj, method_name = call_args
+        assert method_name == "train_step"
+
+        # Verify the wrapper object has the train_step method that wraps our dummy_func
+        assert hasattr(wrapper_obj, "train_step")
+        assert wrapper_obj.train_step is dummy_func
+
         mock_straggler_module.Detector.wrap_callables.assert_called_once()
 
     def test_check_stragglers_disabled(self, manager, mock_straggler_module):
@@ -448,14 +450,6 @@ class TestNVRxStragglerDetectionManager:
         assert manager.initialized is False
         assert manager.wrapped_function is None
 
-    def test_context_manager(self, manager):
-        """Test context manager functionality."""
-        with patch.object(manager, "shutdown") as mock_shutdown:
-            with manager as ctx_manager:
-                assert ctx_manager is manager
-
-            mock_shutdown.assert_called_once()
-
 
 class TestCheckNVRxStragglerDetection:
     """Test the check_nvrx_straggler_detection function."""
@@ -520,39 +514,39 @@ class TestIntegration:
             logger_name="integration_test",
         )
 
-    @patch("megatron.hub.training.nvrx_straggler.straggler")
-    @patch("megatron.hub.training.nvrx_straggler.HAVE_NVRX_STRAGGLER", True)
-    def test_full_workflow(self, mock_straggler, full_config):
+    def test_full_workflow(self, full_config):
         """Test the complete workflow from initialization to shutdown."""
-        # Setup mocks
-        mock_straggler.Detector = Mock()
-        mock_straggler.CallableId = Mock()
+        # Use the same mocking pattern as other tests for consistency
+        with patch("megatron.hub.training.nvrx_straggler.straggler") as mock_straggler:
+            # Setup mocks
+            mock_straggler.Detector = Mock()
+            mock_straggler.CallableId = Mock()
 
-        # Configure the Detector's methods to return proper values
-        mock_straggler.Detector.generate_report_if_interval_elapsed.return_value = None
-        mock_straggler.Detector.is_interval_elapsed.return_value = False
+            # Configure the Detector's methods to return proper values
+            mock_straggler.Detector.generate_report_if_interval_elapsed.return_value = None
+            mock_straggler.Detector.is_interval_elapsed.return_value = False
 
-        # Create manager and initialize
-        manager = NVRxStragglerDetectionManager(full_config)
-        manager.initialize()
+            # Create manager and initialize
+            manager = NVRxStragglerDetectionManager(full_config)
+            manager.initialize()
 
-        # Wrap a function
-        def train_step():
-            return "training"
+            # Wrap a function
+            def train_step():
+                return "training"
 
-        wrapped_func = manager.wrap_train_step_function(train_step)
-        assert wrapped_func is train_step
+            wrapped_func = manager.wrap_train_step_function(train_step)
+            assert wrapped_func is train_step
 
-        # Test straggler detection function
-        with patch("torch.distributed.is_initialized", return_value=False):
-            result = check_nvrx_straggler_detection(manager)
-            # Should return False since we configured no report generation
-            assert result is False
+            # Test straggler detection function
+            with patch("torch.distributed.is_initialized", return_value=False):
+                result = check_nvrx_straggler_detection(manager)
+                # Should return False since we configured no report generation
+                assert result is False
 
-        # Test safe shutdown
-        safe_shutdown_nvrx_straggler_manager(manager)
+            # Test safe shutdown
+            safe_shutdown_nvrx_straggler_manager(manager)
 
-        # Verify calls
-        mock_straggler.Detector.initialize.assert_called_once()
-        mock_straggler.Detector.wrap_callables.assert_called_once()
-        mock_straggler.Detector.shutdown.assert_called_once()
+            # Verify calls
+            mock_straggler.Detector.initialize.assert_called_once()
+            mock_straggler.Detector.wrap_callables.assert_called_once()
+            mock_straggler.Detector.shutdown.assert_called_once()
