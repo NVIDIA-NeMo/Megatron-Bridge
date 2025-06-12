@@ -477,12 +477,12 @@ class BaseExporter(ABC):
         assert tron_yaml.exists(), f"Tron config file {tron_yaml} does not exist"
         with open(tron_yaml, "r") as stream:
             _config = yaml.safe_load(stream)
-        model_config = _config["model_config"]
+        model_config = _config["model"]
         model_config = instantiate(model_config)
 
         if self._hf_tokenizer_path is None:
             # Try to build tokenizer from the megatron hub checkpoint
-            tokenizer_config: TokenizerConfig | None = instantiate(_config["tokenizer_config"])
+            tokenizer_config: TokenizerConfig | None = instantiate(_config["tokenizer"])
             if (
                 tokenizer_config is not None
                 and tokenizer_config.tokenizer_type == "HuggingFaceTokenizer"
