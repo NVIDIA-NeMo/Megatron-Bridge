@@ -259,6 +259,24 @@ def destroy_global_state() -> None:
     destroy_rerun_state_machine()
 
 
+def init_async_checkpoint_worker(global_state) -> None:
+    """Initialize the async checkpoint worker if enabled.
+
+    Creates a persistent background worker for handling asynchronous checkpoint saves
+    when both async_save and use_persistent_ckpt_worker are enabled in the configuration.
+
+    Args:
+        global_state: The GlobalState instance containing the configuration and async queue.
+    """
+    from megatron.hub.utils.common_utils import print_rank_0
+
+    if global_state.cfg.checkpoint.async_save and global_state.cfg.checkpoint.use_persistent_ckpt_worker:
+        # Access the async_calls_queue property to trigger lazy initialization
+        # This creates the persistent worker immediately during setup
+        _ = global_state.async_calls_queue
+        print_rank_0("Initialized persistent async checkpoint worker")
+
+
 def _initialize_tp_communicators(model_config: GPTConfig | T5Config, micro_batch_size: int) -> None:
     """initializing the communicators with user buffers for high-performance tensor-model-parallel
     communication overlap"""

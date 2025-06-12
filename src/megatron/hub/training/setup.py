@@ -32,7 +32,7 @@ from megatron.hub.tokenizers.tokenizer import build_tokenizer
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.checkpointing import checkpoint_exists, init_checkpointing_context, load_checkpoint
 from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.initialize import initialize_megatron, set_jit_fusion_options
+from megatron.hub.training.initialize import initialize_megatron, set_jit_fusion_options, init_async_checkpoint_worker
 from megatron.hub.training.optim import setup_optimizer
 from megatron.hub.training.state import GlobalState
 from megatron.hub.utils.common_utils import print_rank_0
@@ -105,6 +105,9 @@ def setup(
     state = GlobalState()
     state.cfg = cfg
     # TODO: Freeze state.cfg
+
+    # Initialize async checkpoint worker if enabled
+    init_async_checkpoint_worker(state)
 
     setup_logging(
         logging_level=cfg.logger.logging_level,

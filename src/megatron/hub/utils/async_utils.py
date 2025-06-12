@@ -13,46 +13,34 @@
 # limitations under the License.
 
 """
-This module provides a singleton instance of AsyncCallsQueue which manages
-the async checkpoint save calls.
+This module provides utilities for managing asynchronous checkpoint save calls.
 """
 
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue, AsyncRequest
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 
 from megatron.hub.training.config import CheckpointConfig
 from megatron.hub.utils.common_utils import print_rank_0
 
 
-# Singleton manager of async calls
-# The default is `TemporalAsyncCaller`
-_async_calls_queue: AsyncCallsQueue = AsyncCallsQueue()
-
-
-def init_persistent_async_worker() -> None:
-    """Initialize the asynchronous calls queue with a persistent worker.
-
-    Recreates the singleton AsyncCallsQueue instance to use a persistent
-    background thread/process for handling asynchronous requests.
-    """
-    global _async_calls_queue
-    # Recreate the async_calls_queue for persistent worker
-    # This duplicate step is for backward compatiblity
-    _async_calls_queue = AsyncCallsQueue(persistent=True)
-
-
-def schedule_async_save(async_request: AsyncRequest) -> None:
+def schedule_async_save(global_state, async_request: AsyncRequest) -> None:
     """Schedule the async save request.
 
     Args:
+        global_state: The global training state containing the async calls queue.
         async_request (AsyncRequest): the async save request.
     """
-    _async_calls_queue.schedule_async_request(async_request)
+    async_queue = global_state.async_calls_queue
+    if async_queue is not None:
+        async_queue.schedule_async_request(async_request)
 
 
-def maybe_finalize_async_save(ckpt_cfg: CheckpointConfig, blocking: bool = False, terminate: bool = False) -> None:
+def maybe_finalize_async_save(
+    global_state, ckpt_cfg: CheckpointConfig, blocking: bool = False, terminate: bool = False
+) -> None:
     """Finalizes active async save calls.
 
     Args:
+        global_state: The global training state containing the async calls queue.
         ckpt_cfg (CheckpointConfig): The checkpoint configuration.
         blocking (bool, optional): if True, will wait until all active requests
             are done. Otherwise, finalizes only the async request that already
@@ -63,19 +51,29 @@ def maybe_finalize_async_save(ckpt_cfg: CheckpointConfig, blocking: bool = False
     if not ckpt_cfg.async_save:
         return
 
-    if blocking and not is_empty_async_queue():
+    async_queue = global_state.async_calls_queue
+    if async_queue is None:
+        return
+
+    if blocking and not is_empty_async_queue(global_state):
         print_rank_0("Unfinalized async checkpoint saves. Finalizing them synchronously now.")
 
-    _async_calls_queue.maybe_finalize_async_calls(blocking)
+    async_queue.maybe_finalize_async_calls(blocking)
 
     if terminate:
-        _async_calls_queue.close()
+        async_queue.close()
 
 
-def is_empty_async_queue() -> bool:
+def is_empty_async_queue(global_state) -> bool:
     """Check if async calls queue is empty. This result is consistent across ranks.
+
+    Args:
+        global_state: The global training state containing the async calls queue.
 
     Returns:
         bool: True if there is any ongoing async call.
     """
-    return _async_calls_queue.get_num_unfinalized_calls() == 0
+    async_queue = global_state.async_calls_queue
+    if async_queue is None:
+        return True
+    return async_queue.get_num_unfinalized_calls() == 0
