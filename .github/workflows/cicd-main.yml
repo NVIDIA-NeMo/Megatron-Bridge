@@ -95,12 +95,13 @@ jobs:
       )
       && !cancelled()
     with:
-      image-name: nemo_lm
+      image-name: megatron_hub
       dockerfile: docker/Dockerfile.ci
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      PAT: ${{ secrets.PAT }}
 
   cicd-unit-tests:
     strategy:
@@ -129,45 +130,54 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout || 10 }}
           is_unit_test: "true"
-          image: nemo_lm
+          image: megatron_hub
           cpu-only: ${{ matrix.cpu-only || false }}
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-  cicd-e2e-tests:
+  cicd-functional-tests:
     strategy:
       fail-fast: false
       matrix:
         include:
+          - script: L2_Functional_Tests_GPU
+            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 60
           - script: L2_NeMo_2_EVAL_arcc
             runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 60
           - script: L2_NeMo_2_EVAL_gsm8k
             runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 60
     needs: [cicd-unit-tests]
     runs-on: ${{ matrix.runner }}
-    name: ${{ matrix.is_optional && 'PLEASEFIXME_' || '' }}${{ matrix.script }}
+    name: ${{ matrix.script }}
     environment: nemo-ci
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: main
-        uses: NVIDIA/NeMo-LM/.github/actions/test-template@main
+        uses: ./.github/actions/test-template
         with:
           runner: ${{ runner.name }}
           script: ${{ matrix.script }}
-          image: nemo_container
-          is_optional: ${{ matrix.is_optional || false }}
+          timeout: ${{ matrix.timeout || 30 }}
+          is_unit_test: "false"
+          image: megatron_hub
+          cpu-only: false
+          has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          has-azure-credentials: true
 
   Nemo_CICD_Test:
     needs:
       - pre-flight
       - cicd-container-build
       - cicd-unit-tests
-      # - cicd-e2e-tests
+      - cicd-functional-tests
     if: always()
     runs-on: ubuntu-latest
     permissions: write-all

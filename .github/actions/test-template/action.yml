@@ -36,7 +36,7 @@ inputs:
   image:
     description: "Image to use for test"
     required: false
-    default: "nemo_lm"
+    default: "megatron_hub"
   cpu-only:
     description: "Run tests on CPU only"
     required: false

@@ -1,4 +1,4 @@
-"""Unit tests for nemo_lm.training.mixed_precision module."""
+"""Unit tests for megatron.hub.training.mixed_precision module."""
 
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock, patch
@@ -7,9 +7,23 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from nemo_lm.models.gpt import GPTConfig
-from nemo_lm.models.t5 import T5Config
-from nemo_lm.training.mixed_precision import MixedPrecisionConfig, update_config_with_precision_overrides
+from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.t5 import T5Config
+from megatron.hub.training.mixed_precision import (
+    MixedPrecisionConfig,
+    bf16_mixed,
+    bf16_with_fp8_current_scaling_mixed,
+    bf16_with_fp8_mixed,
+    bf16_with_fp8_subchannel_scaling_mixed,
+    bf16_with_mxfp8_mixed,
+    fp16_mixed,
+    fp16_with_fp8_current_scaling_mixed,
+    fp16_with_fp8_mixed,
+    fp16_with_fp8_subchannel_scaling_mixed,
+    fp16_with_mxfp8_mixed,
+    nemotron_h_bf16_with_fp8_current_scaling_mixed,
+    update_config_with_precision_overrides,
+)
 
 
 class TestMegatronMixedPrecisionConfig:
@@ -348,3 +362,204 @@ class TestIntegration:
         assert model_config.fp8_multi_head_attention is True
         assert model_config.fp8_param is True
         assert model_config.fp8_param_gather is True
+
+
+class TestMixedPrecisionRecipes:
+    def test_bf16_mixed(self):
+        config = bf16_mixed()
+
+        assert config.bf16 is True
+        assert config.fp16 is False
+        assert config.params_dtype == torch.bfloat16
+        assert config.pipeline_dtype == torch.bfloat16
+        assert config.autocast_enabled is False
+        assert config.grad_reduce_in_fp32 is True
+
+    def test_fp16_mixed(self):
+        config = fp16_mixed()
+
+        assert config.fp16 is True
+        assert config.bf16 is False
+        assert config.params_dtype == torch.half
+        assert config.pipeline_dtype == torch.half
+        assert config.autocast_enabled is False
+        assert config.grad_reduce_in_fp32 is False
+
+    def test_bf16_with_fp8_mixed(self):
+        config = bf16_with_fp8_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+        assert config.pipeline_dtype == torch.bfloat16
+
+        # FP8 specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "delayed"
+        assert config.fp8_margin == 0
+        assert config.fp8_amax_history_len == 1024
+        assert config.fp8_amax_compute_algo == "max"
+        assert config.fp8_param_gather is True
+
+    def test_fp16_with_fp8_mixed(self):
+        config = fp16_with_fp8_mixed()
+
+        # Should inherit FP16 settings
+        assert config.fp16 is True
+        assert config.params_dtype == torch.half
+        assert config.pipeline_dtype == torch.half
+        assert config.grad_reduce_in_fp32 is False
+
+        # FP8 specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "delayed"
+        assert config.fp8_margin == 0
+        assert config.fp8_amax_history_len == 1024
+        assert config.fp8_amax_compute_algo == "max"
+        assert config.fp8_param_gather is True
+
+    def test_bf16_with_mxfp8_mixed(self):
+        config = bf16_with_mxfp8_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # MXFP8 specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "mxfp8"
+        assert config.fp8_param_gather is False
+
+    def test_fp16_with_mxfp8_mixed(self):
+        config = fp16_with_mxfp8_mixed()
+
+        # Should inherit FP16 settings
+        assert config.fp16 is True
+        assert config.params_dtype == torch.half
+
+        # MXFP8 specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "mxfp8"
+        assert config.fp8_param_gather is False
+
+    def test_bf16_with_fp8_current_scaling_mixed(self):
+        config = bf16_with_fp8_current_scaling_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # Tensorwise scaling specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "tensorwise"
+        assert config.first_last_layers_bf16 is True
+        assert config.num_layers_at_start_in_bf16 == 1
+        assert config.num_layers_at_end_in_bf16 == 1
+        assert config.fp8_param_gather is True
+
+    def test_nemotron_h_bf16_with_fp8_current_scaling_mixed(self):
+        config = nemotron_h_bf16_with_fp8_current_scaling_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # Nemotron variant with more layers
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "tensorwise"
+        assert config.first_last_layers_bf16 is True
+        assert config.num_layers_at_start_in_bf16 == 2
+        assert config.num_layers_at_end_in_bf16 == 2
+        assert config.fp8_param_gather is True
+
+    def test_fp16_with_fp8_current_scaling_mixed(self):
+        config = fp16_with_fp8_current_scaling_mixed()
+
+        # Should inherit FP16 settings
+        assert config.fp16 is True
+        assert config.params_dtype == torch.half
+
+        # Tensorwise scaling specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "tensorwise"
+        assert config.first_last_layers_bf16 is True
+        assert config.num_layers_at_start_in_bf16 == 1
+        assert config.num_layers_at_end_in_bf16 == 1
+        assert config.fp8_param_gather is True
+
+    def test_bf16_with_fp8_subchannel_scaling_mixed(self):
+        config = bf16_with_fp8_subchannel_scaling_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # Blockwise scaling specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "blockwise"
+        assert config.fp8_param_gather is False
+
+    def test_fp16_with_fp8_subchannel_scaling_mixed(self):
+        config = fp16_with_fp8_subchannel_scaling_mixed()
+
+        # Should inherit FP16 settings
+        assert config.fp16 is True
+        assert config.params_dtype == torch.half
+
+        # Blockwise scaling specific settings
+        assert config.fp8 == "hybrid"
+        assert config.fp8_recipe == "blockwise"
+        assert config.fp8_param_gather is False
+
+    def test_recipe_returns_new_instance(self):
+        """Test that each recipe returns a new instance."""
+        config1 = bf16_mixed()
+        config2 = bf16_mixed()
+
+        assert config1 is not config2
+
+        # Modifying one should not affect the other
+        config1.fp8 = "test"
+        assert config2.fp8 is None
+
+    def test_recipe_with_setup(self):
+        """Test that recipe configs work with the setup method."""
+        config = bf16_with_fp8_mixed()
+
+        # Create mock model config
+        model_config = MagicMock(spec=GPTConfig)
+        for field in fields(config):
+            setattr(model_config, field.name, None)
+
+        # Create mock optimizer config with relevant fields
+        optimizer_config = MagicMock(spec=OptimizerConfig)
+        optimizer_config.grad_reduce_in_fp32 = None
+        optimizer_config.loss_scale = None
+        optimizer_config.initial_loss_scale = None
+        optimizer_config.min_loss_scale = None
+        optimizer_config.loss_scale_window = None
+        optimizer_config.hysteresis = None
+
+        # Create mock DDP config with relevant fields
+        ddp_config = MagicMock(spec=DistributedDataParallelConfig)
+        ddp_config.grad_reduce_in_fp32 = None
+        ddp_config.fp16 = None
+        ddp_config.bf16 = None
+        ddp_config.fp8 = None
+
+        # Apply configuration to all configs
+        config.setup(model_config, optimizer_config, ddp_config)
+
+        # Verify model config settings were applied
+        assert model_config.bf16 is True
+        assert model_config.params_dtype == torch.bfloat16
+        assert model_config.fp8 == "hybrid"
+        assert model_config.fp8_recipe == "delayed"
+        assert model_config.grad_reduce_in_fp32 is True
+
+        # Verify optimizer config settings were applied
+        assert optimizer_config.grad_reduce_in_fp32 is True
+
+        # Verify DDP config settings were applied
+        assert ddp_config.grad_reduce_in_fp32 is True
+        assert ddp_config.bf16 is True

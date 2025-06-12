@@ -17,16 +17,32 @@ ENV PIP_CONSTRAINT=""
 
 # Install all
 WORKDIR /workspace
-RUN --mount=type=bind,source=pyproject.toml,target=/workspace/pyproject.toml \
-    --mount=type=bind,source=nemo_lm/__init__.py,target=/workspace/nemo_lm/__init__.py \
-    --mount=type=bind,source=nemo_lm/package_info.py,target=/workspace/nemo_lm/package_info.py \
-    --mount=type=bind,source=README.md,target=/workspace/README.md \
-    pip install --no-build-isolation --no-cache-dir '.[all]'
+
+# Copy necessary files for installation
+COPY pyproject.toml /workspace/
+COPY src /workspace/src
+COPY README.md /workspace/
+
+# Install the package
+RUN pip install --no-build-isolation --no-cache-dir '.[all]'
 
 # Install development versions
-ARG MCORE_COMMIT=54afff44f29e1117b2057ced6fa5be583e35cb7b
+ARG MCORE_COMMIT=9eebd5173cbd6dea5e6a324d418b669ac000989e
 ARG NEMO_RUN_COMMIT=main
+RUN bash -exu <<"EOF"
+    pip install --no-cache-dir --upgrade --force-reinstall --no-deps \
+        git+https://github.com/NVIDIA/Megatron-LM.git@${MCORE_COMMIT} \
+        git+https://github.com/NVIDIA/NeMo-RUN.git@${NEMO_RUN_COMMIT}
+EOF
 
-RUN pip install --no-cache-dir --upgrade --force-reinstall --no-deps \
-    git+https://github.com/NVIDIA/Megatron-LM.git@${MCORE_COMMIT} \
-    git+https://github.com/NVIDIA/NeMo-RUN.git@${NEMO_RUN_COMMIT}
+ARG NEMO_EXPORT_DEPLOY_COMMIT=main
+RUN --mount=type=secret,id=GH_TOKEN bash -exu <<"EOF"
+    export PAT=$(cat /run/secrets/GH_TOKEN)
+
+    echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
+    chmod 600 ~/.netrc 
+    
+    pip install --no-cache-dir "NeMo-Export-Deploy@git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@${NEMO_EXPORT_DEPLOY_COMMIT}"
+    
+    rm ~/.netrc
+EOF
