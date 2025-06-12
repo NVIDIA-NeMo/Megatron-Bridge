@@ -87,6 +87,11 @@ version = { attr = "megatron.hub.package_info.__version__" }
 [tool.uv]
 # Currently, TE must be built with no build-isolation b/c it requires torch
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
+override-dependencies = [
+    "torch; sys_platform == 'never'",
+    "torchvision; sys_platform == 'never'",
+    "triton; sys_platform == 'never'",
+]
 
 [tool.uv.sources]
 megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git" }
