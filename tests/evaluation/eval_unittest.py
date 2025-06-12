@@ -15,8 +15,8 @@
 import pytest
 from pytest_httpserver import HTTPServer
 
-from nemo.collections.llm.api import evaluate
-from nemo.collections.llm.evaluation.api import ConfigParams, EvaluationConfig, EvaluationTarget
+from megatron.hub.evaluation.api import evaluate
+from megatron.hub.evaluation.utils.api import ConfigParams, EvaluationConfig, EvaluationTarget
 
 
 @pytest.fixture(scope="session")

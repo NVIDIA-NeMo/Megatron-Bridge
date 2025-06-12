@@ -90,7 +90,6 @@ build-backend = "setuptools.build_meta"
 [project.optional-dependencies]
 eval = [
     "nvidia-lm-eval",
-    "nemo-export-deploy",
     "uvicorn"
 ]
 

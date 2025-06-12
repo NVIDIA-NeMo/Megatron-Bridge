@@ -15,7 +15,7 @@
 import argparse
 import logging
 
-from nemo_lm.evaluation.api import deploy
+from megatron.hub.evaluation.api import deploy
 
 
 logger = logging.getLogger(__name__)

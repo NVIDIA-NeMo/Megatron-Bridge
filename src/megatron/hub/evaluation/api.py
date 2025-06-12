@@ -19,7 +19,7 @@ from typing import Optional, Union
 
 import torch
 
-from nemo_lm.evaluation.utils.api import EvaluationConfig, EvaluationTarget, MisconfigurationError
+from megatron.hub.evaluation.utils.api import EvaluationConfig, EvaluationTarget, MisconfigurationError
 
 
 AnyPath = Union[Path, str]
@@ -184,7 +184,7 @@ def evaluate(
     """
     import yaml
 
-    from nemo_lm.evaluation.utils.base import find_framework, wait_for_fastapi_server
+    from megatron.hub.evaluation.utils.base import find_framework, wait_for_fastapi_server
 
     eval_type_components = eval_cfg.type.split(".")
     if len(eval_type_components) == 2:
