@@ -42,9 +42,9 @@ RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
     chmod 600 ~/.netrc 
 
     if [ "$INSTALL_EVAL" = "true" ]; then
-        EXTRA_ARGS=(--extra eval)
+        EXTRA_ARGS=(--all-groups)
     else
-        EXTRA_ARGS=()
+        EXTRA_ARGS=(--no-group eval)
     fi
     uv sync \
         --link-mode copy \
