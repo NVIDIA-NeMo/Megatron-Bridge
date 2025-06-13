@@ -1,7 +1,6 @@
 # Performance Tuning Guide
 
 NeMo Framework provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
-NeMo Framework("NeMo") provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
 
 ## Low Precision Training
 
