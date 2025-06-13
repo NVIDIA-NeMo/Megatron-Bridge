@@ -156,3 +156,19 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.coverage.run]
+concurrency = ["thread", "multiprocessing"]
+omit = [
+    "/tmp/*",
+    "/workspace/tests/*",
+    "/workspace/*.py",
+    "*_ray.py",
+]
+
+[tool.coverage.paths]
+source = [
+    ".",
+    "/workspace/",
+    "/home/runner/work/Megatron-Hub/Megatron-Hub",
+]
