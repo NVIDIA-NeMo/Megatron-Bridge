@@ -191,7 +191,7 @@ def train(
                     torch.autograd.profiler.emit_nvtx(record_shapes=prof_config.record_shapes).__enter__()
 
         fault_tolerance.on_checkpointing_start(global_state)
-        maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=False)
+        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Update number of microbatches first without consistency check to decide if a
@@ -391,12 +391,12 @@ def train(
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
+    maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
     if should_exit:
-        maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
+        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
         wandb_writer = global_state.wandb_logger
         if wandb_writer:
             wandb_writer.finish()
@@ -883,7 +883,7 @@ def _finish_train(global_state: GlobalState):
     ckpt_cfg = global_state.cfg.checkpoint
 
     fault_tolerance.on_checkpointing_start(global_state)
-    maybe_finalize_async_save(blocking=True, terminate=True, ckpt_cfg=ckpt_cfg)
+    maybe_finalize_async_save(global_state=global_state, blocking=True, terminate=True, ckpt_cfg=ckpt_cfg)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
     fault_tolerance.shutdown(global_state)
 

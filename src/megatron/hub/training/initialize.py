@@ -172,7 +172,6 @@ def torch_dist_init(
         # Megatron's MPU is the master. Complete initialization right away.
         finish_mpu_init()
 
-        _compile_dataset_helpers()
         if model_config.tp_comm_overlap:
             _initialize_tp_communicators(model_config, micro_batch_size)
 
@@ -380,23 +379,6 @@ def _initialize_distributed(
                     f"> initialized pipeline model parallel with size "
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
-
-
-def _compile_dataset_helpers() -> None:
-    # =========================
-    # Compile dataset C++ code.
-    # =========================
-    # TODO: move this to ninja
-    if get_rank_safe() == 0:
-        start_time = time.time()
-        print("> compiling dataset index builder ...")
-        from megatron.core.datasets.utils import compile_helpers
-
-        compile_helpers()
-        print(
-            ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
-            flush=True,
-        )
 
 
 def _set_random_seed(
