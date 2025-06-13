@@ -737,3 +737,38 @@ class TestLoRAMegatronIntegration:
         # LoRAMerge keeps the LoRALinear wrappers but merges the weights
         assert lora_modules_after == lora_modules_before, "LoRAMerge keeps LoRALinear wrappers"
         assert weights_changed > 0, "LoRAMerge should change the underlying weights"
+
+    def test_lora_different_targets(self):
+        """Test LoRA with different target module configurations."""
+        config = GPTConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=2,
+            vocab_size=100,
+            ffn_hidden_size=128,
+        )
+
+        # Test different target configurations
+        target_configs = [
+            ["linear_qkv"],
+            ["linear_proj"],
+            ["linear_fc1", "linear_fc2"],
+            ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+        ]
+
+        for targets in target_configs:
+            # Create fresh model for each configuration
+            base_model = get_base_model(config)
+            if torch.cuda.is_available():
+                base_model = [chunk.cuda() for chunk in base_model]
+
+            lora = LoRA(target_modules=targets, dim=4, alpha=8)
+            adapted_model = lora(base_model, training=True)
+
+            # Count LoRA modules
+            lora_count = sum(
+                1 for chunk in adapted_model for _, module in chunk.named_modules() if isinstance(module, LoRALinear)
+            )
+
+            # Should find some LoRA modules for each configuration
+            assert lora_count > 0

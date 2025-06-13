@@ -113,6 +113,9 @@ class LoRA(PEFT, ModuleMatcher):
         Returns:
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
+        # Skip already transformed modules
+        if isinstance(module, LoRALinear):
+            return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             (match, full_name) = ans
