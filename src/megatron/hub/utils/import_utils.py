@@ -331,7 +331,7 @@ def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None
         return alt, False
 
 
-def gpu_only_import(module, *, alt=None):
+def gpu_only_import(module, *, alt=None) -> Tuple[object, bool]:
     """A function used to import modules required only in GPU installs.
 
     This function will attempt to import a module with the given name.
@@ -346,8 +346,9 @@ def gpu_only_import(module, *, alt=None):
             fails to import in a non-GPU-enabled install. Defaults to None.
 
     Returns:
-        object: The imported module, the given alternate, or a class derived from
-            UnavailableMeta.
+        tuple: A tuple containing two elements. The first element is the imported module,
+        the given alternate, or a class derived from UnavailableMeta. The second element
+        is a boolean indicating whether the intended import was successful.
     """
 
     return safe_import(
@@ -357,7 +358,7 @@ def gpu_only_import(module, *, alt=None):
     )
 
 
-def gpu_only_import_from(module, symbol, *, alt=None):
+def gpu_only_import_from(module, symbol, *, alt=None) -> Tuple[object, bool]:
     """A function used to import symbols required only in GPU installs.
 
     This function will attempt to import a module with the given name.
@@ -373,8 +374,9 @@ def gpu_only_import_from(module, symbol, *, alt=None):
             to import in a non-GPU-enabled install. Defaults to None.
 
     Returns:
-        object: The imported symbol, the given alternate, or a class derived from
-            UnavailableMeta.
+        tuple: A tuple containing two elements. The first element is the imported symbol,
+        the given alternate, or a class derived from UnavailableMeta. The second element
+        is a boolean indicating whether the intended import was successful.
     """
     return safe_import_from(
         module,
