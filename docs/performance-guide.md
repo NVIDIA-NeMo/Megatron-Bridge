@@ -13,7 +13,7 @@ NeMo Framework("NeMo") provides a wide range of features for performant and memo
 
 2. Common issues of low FP8 training speedup
 
-   > 1. Host performance boundness when LLM uses small GPU kernels (check [6. Lowering Host Overhead and Jitters]).
+   > 1. Host performance boundness when LLM uses small GPU kernels (see [Lowering Host Overhead and Jitters](#lowering-overhead-jitter)).
    > 2. A low proportion of linear layers in training step time that use FP8 computation.
 
 ## Parallel Mapping Strategies
@@ -44,7 +44,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 >
 >    > 1. A large tensor-parallel or context-parallel size is not recommended unless the hidden size or sequence length is large enough to maintain sufficient per-GPU parallelism and avoid excessive communication overhead. For example, using a tensor-parallel size of 8 for LLAMA 3 70B could lead to low GPU utilization and make training host-performance bound.
 >    > 2. You can combine TP and CP to optimize performance by balancing communication overhead. For example, using TP=2 along with CP=2 can give better performance than TP=4 when the sequence size is larger than the hidden size.
->    > 3. Additional tips can be found in Section [9. Long Sequence Training].
+>    > 3. For additional tips, see [Long Sequence Training](#long-sequence-train).
 
 1. Pipeline Parallelism
 
@@ -201,7 +201,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 4. Context-parallel (CP) communication
 
-   > 1. CP communication is configurable via "cp_comm_type", which can be "p2p", "all_gather", "a2a", or "a2a+p2p". Communications of "p2p" are implemented as ring-exchange send/receive operations, and they are hard-coded to overlap with the attention compute of sequence chunks. See Section [9. Long Sequence Training] for more details.
+   > 1. CP communication is configurable via "cp_comm_type", which can be "p2p", "all_gather", "a2a", or "a2a+p2p". Communications of "p2p" are implemented as ring-exchange send/receive operations, and they are hard-coded to overlap with the attention compute of sequence chunks. See [Long Sequence Training](#long-sequence-train) for more details.
 
 5. Expert-parallel communication
 
@@ -212,6 +212,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 1. PP send/recv in steady 1F1B states are set to be overlapped with computes by default.
    > 2. The PP send/recv in warmup and flush are exposed by default.
 
+(comm-data-types)=
 ## Communication Data Types
 
 1. FP8 data-parallel parameter AllGather in Distributed Optimizer and FSDP
@@ -242,7 +243,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 2. You can lower the overhead of data-parallel communication by (1) reducing the communication precision e.g., BF16 for gradient reduction and FP8 parameter gathering, (2) improving the efficiency of communication by increasing the data-parallel communication message size or using the hierarchical data-parallel reduction, or (3) using multi-cast and switch reduction with SHARP in case of InfiniBand network.
 
-   > 1. Using BF16 gradient reduction and FP8 parameter gather are described in Section [4. Communication Data Types]
+   > 1. Using BF16 gradient reduction and FP8 parameter gather are described in [Communication Data Types](#comm-data-types)
    >
    > 2. For non-pipeline-parallel training, the data-parallel communication bucket size can be adjusted using the knobs below. In pipeline-parallel training, however, the bucket size is fixed and determined by the number of parameters assigned to each virtual pipeline rank.
    >
@@ -252,8 +253,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    >    > 1. `recipe.trainer.strategy.num_distributed_optimizer_instances=<int: ≤dp_size>`
 
-3. Ideas to reduce the host-driven inter-GPU jitters are discussed in Section [6. Lowering Host Overhead and Jitters].
+3. Ideas to reduce the host-driven inter-GPU jitters are discussed in [Lowering Host Overhead and Jitters](#lowering-overhead-jitter).
 
+(lowering-overhead-jitter)=
 ## Lowering Host Overhead and Jitters
 
 1. Common observation associated with host overhead
@@ -286,6 +288,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 2. Example command line for a X86-based GPU system: `numactl --cpunodebind=$((SLURM_LOCALID/4)) --membind=$((SLURM_LOCALID/4)) <run script>`
    > 3. Example command line for a Grace-based GPU system: `numactl --cpunodebind=$((SLURM_LOCALID/2)) --membind=$((SLURM_LOCALID/2)) <run script>`
 
+(reducing-memory-overflow)=
 ## Techniques for Reducing Memory to Avoid Memory Overflow and Enhance Training Efficiency
 
 1. Activation recomputation
@@ -356,6 +359,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 1. FlashAttention2 (default): `NVTE_FLASH_ATT=1`
    > 2. cuDNN fused attention: `NVTE_FLASH_ATT=0, NVTE_FUSED_ATT=1`
 
+(long-sequence-train)=
 ## Long Sequence Training
 
 1. Problem of long sequence training
@@ -377,9 +381,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    > 5. `a2a+p2p`: is a middle ground between `a2a` and `p2p`. This is useful for cases of big CP sizes, where each sequence chunk is too short to overlap P2P communications. It first does A2A in partial CP groups to gather relatively longer sequence chunks, then applies P2P implementation to the gathered chunks. It also can be helpful for hierarchical CP communications, for example A2A and P2P happen in NVLink and IBLink domains respectively.
    >    > 6. With small and medium CP size, `p2p` is the recommended configuration because communications can be fully overlapped; "all_gather" also should work fine with GQA/MQA. As for strongly-scaling a sequence length with big CP sizes, the short chunk length can barely overlap the `p2p` communications, so `a2a+p2p` ought to be the preferred choice. `a2a` could be adopted in some cases for its simplicity. However, CP size can be restricted with "a2a" because it requires the number of attention heads to be divisible by CP size. Restricted CP size will finally limit the sequence length that can be run.
 
-3. Activation recomputation (in Section [7. Techniques for Reducing Memory to Avoid Memory Overflow and Enhance Training Efficiency])
+3. Activation recomputation (in [Techniques for Reducing Memory to Avoid Memory Overflow and Enhance Training Efficiency](#reducing-memory-overflow))
 
-4. Activation offloading to host memory (in Section [7. Techniques for Reducing Memory to Avoid Memory Overflow and Enhance Training Efficiency])
+4. Activation offloading to host memory (in [Techniques for Reducing Memory to Avoid Memory Overflow and Enhance Training Efficiency](#reducing-memory-overflow))
 
 ## Sequence Packing for Performant Fine-Tuning
 
