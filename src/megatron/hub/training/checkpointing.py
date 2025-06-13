@@ -573,24 +573,25 @@ def save_checkpoint(
             if ckpt_type == CheckpointType.LOCAL:
                 try:
                     from megatron.core.dist_checkpointing.tensor_aware_state_dict import MCoreTensorAwareStateDict
-
-                    algo = ckpt_cfg.non_persistent_local_ckpt_algo
-                    cached_metadata = None
-                    if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
-                        cached_metadata = checkpointing_context["local_checkpoint_cache"]
-                    state_dict_for_save, cacheable_metadata = MCoreTensorAwareStateDict.from_state_dict(
-                        state_dict,
-                        algo=algo,
-                        cached_metadata=cached_metadata,
-                        parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
+                except ModuleNotFoundError:
+                    raise RuntimeError(
+                        "The 'nvidia_resiliency_ext' module is required for local "
+                        "checkpointing but was not found. Please ensure it is installed."
                     )
-                    async_save_request = checkpointing_context["local_checkpoint_manager"].save(
-                        state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
-                    )
-                    checkpointing_context["local_checkpoint_cache"] = cacheable_metadata
-                except Exception as e:
-                    print_rank_0(f"Error saving local checkpoint: {e}")
-                    async_save_request = None
+                algo = ckpt_cfg.non_persistent_local_ckpt_algo
+                cached_metadata = None
+                if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
+                    cached_metadata = checkpointing_context["local_checkpoint_cache"]
+                state_dict_for_save, cacheable_metadata = MCoreTensorAwareStateDict.from_state_dict(
+                    state_dict,
+                    algo=algo,
+                    cached_metadata=cached_metadata,
+                    parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
+                )
+                async_save_request = checkpointing_context["local_checkpoint_manager"].save(
+                    state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
+                )
+                checkpointing_context["local_checkpoint_cache"] = cacheable_metadata
 
     start_misc = time()
     if ckpt_type != CheckpointType.LOCAL:
@@ -1053,13 +1054,12 @@ def load_checkpoint(
             #     assert not is_dist_ckpt
             #     tracker_filename = get_checkpoint_train_state_filename(load_dir, prefix="latest")
             #     iteration, release = read_train_state(tracker_filename)
-            #     model_checkpoint_name_dir = get_checkpoint_name(load_dir, iteration, release)
-            #     # optim_checkpoint_name would need to be a file within model_checkpoint_name_dir
-            #     # optim_checkpoint_name = get_distributed_optimizer_checkpoint_name(os.path.join(model_checkpoint_name_dir, "dummy_filename_for_dist_opt.pt"))
-            #     # optimizer.load_parameter_state(
-            #     #     optim_checkpoint_name,
-            #     #     update_legacy_format=cfg.checkpoint_config.ckpt_convert_update_legacy_dist_opt_format,
-            #     # )
+            #     model_checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+            #     optim_checkpoint_name = get_distributed_optimizer_checkpoint_name(model_checkpoint_name)
+            #     optimizer.load_parameter_state(
+            #         optim_checkpoint_name,
+            #         update_legacy_format=cfg.checkpoint.ckpt_convert_update_legacy_dist_opt_format,
+            #     )
 
             # Load scheduler.
             if opt_param_scheduler is not None:
