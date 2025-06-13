@@ -113,7 +113,9 @@ def build_tokenizer(
         assert tokenizer_config.tokenizer_model is not None
         assert tokenizer_config.tiktoken_pattern is not None
         assert tokenizer_config.tiktoken_pattern in {"v1", "v2"}
-        pattern = PATTERN_TIKTOKEN if tokenizer_config.tiktoken_pattern == "v1" else PATTERN_TIKTOKEN_V2
+        pattern_tiktoken = r"[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"
+        pattern_tiktoken_v2 = "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"  # pylint: disable=line-too-long
+        pattern = pattern_tiktoken if tokenizer_config.tiktoken_pattern == "v1" else pattern_tiktoken_v2
         tokenizer = CustomTikTokenizer(
             path=tokenizer_config.tokenizer_model,
             pattern=pattern,
@@ -835,10 +837,6 @@ def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[b
     assert set(ranks.values()) == set(range(len(ranks)))
 
     return ranks
-
-
-PATTERN_TIKTOKEN = r"[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"
-PATTERN_TIKTOKEN_V2 = "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"  # pylint: disable=line-too-long
 
 
 class CustomTikTokenizer(MegatronTokenizer):
