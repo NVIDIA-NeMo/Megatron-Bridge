@@ -2,7 +2,7 @@
     "vcs-dependencies": {
         "megatron-lm": {
             "repo": "https://github.com/NVIDIA/Megatron-LM.git",
-            "ref": "ad36348f397451dbc4a4b4adb5e40055c89fec2f"
+            "ref": "9eebd5173cbd6dea5e6a324d418b669ac000989e"
         },
         "export-deploy": {
             "repo": "https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git",
