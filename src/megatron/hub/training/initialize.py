@@ -172,7 +172,7 @@ def torch_dist_init(
         # Megatron's MPU is the master. Complete initialization right away.
         finish_mpu_init()
 
-        _compile_dataset_helpers()
+        # _compile_dataset_helpers()
         if model_config.tp_comm_overlap:
             _initialize_tp_communicators(model_config, micro_batch_size)
 
