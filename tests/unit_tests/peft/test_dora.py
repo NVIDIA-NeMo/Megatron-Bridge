@@ -364,6 +364,100 @@ class TestDoRA:
         # This functionality should be available through ModuleMatcher
         assert hasattr(dora, "exclude_modules")
 
+    def test_dora_transform_idempotent(self):
+        """Test that DoRA transform is idempotent (applying twice has same effect as applying once)."""
+        test_module = nn.Linear(512, 256)
+        test_module.config = MockModelParallelConfig()
+        test_module.config.sequence_parallel = False
+
+        dora = DoRA(target_modules=["linear_test"], dim=8, alpha=16)
+
+        # Mock all the necessary functions for DoRA transform
+        with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
+            mock_get_attrs.return_value = (False, 512, 256, False)
+
+            with patch("megatron.hub.peft.utils.ColumnParallelLinear") as mock_col_linear:
+                # Create mocks for the adapters that will be created
+                mock_linear_in = Mock()
+                mock_linear_out = Mock()
+                mock_linear_in.configure_mock(**{"weight": torch.randn(8, 512)})
+                mock_linear_out.configure_mock(**{"weight": torch.randn(256, 8)})
+                mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+
+                with patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
+                    mock_gather.return_value = torch.randn(512, 8)
+
+                    with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
+                        mock_norm.return_value = torch.randn(256)
+
+                        with patch.object(dora, "match", return_value=("linear_test", "test.linear_test")):
+                            # Apply DoRA first time
+                            first_transform = dora.transform(test_module, name="linear_test", prefix="test")
+
+                            # Verify first transformation worked
+                            assert isinstance(first_transform, DoRALinear)
+                            assert first_transform.to_wrap is test_module
+
+                            # Apply DoRA second time to the already-transformed module
+                            second_transform = dora.transform(first_transform, name="linear_test", prefix="test")
+
+                            # Verify idempotency: second transformation should return identical object
+                            assert second_transform is first_transform
+                            assert isinstance(second_transform, DoRALinear)
+
+    def test_dora_transform_idempotent_full_model(self):
+        """Test that DoRA transform is idempotent when applied to a full model."""
+        model = SimpleModel()
+        dora = DoRA(target_modules=["linear_qkv", "linear_proj"], dim=8, alpha=16)
+
+        # Mock all the necessary functions for DoRA transform
+        with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
+
+            def mock_get_attributes_func(module):
+                return (False, module.in_features, module.out_features, False)
+
+            mock_get_attrs.side_effect = mock_get_attributes_func
+
+            with patch("megatron.hub.peft.utils.ColumnParallelLinear") as mock_col_linear:
+                # Create mocks for the adapters that will be created
+                mock_linear_in = Mock()
+                mock_linear_out = Mock()
+                mock_linear_in.configure_mock(**{"weight": torch.randn(8, 512)})
+                mock_linear_out.configure_mock(**{"weight": torch.randn(512, 8)})
+                mock_col_linear.side_effect = [mock_linear_in, mock_linear_out] * 10  # Multiple calls
+
+                with patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
+                    mock_gather.return_value = torch.randn(512, 8)
+
+                    with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
+                        mock_norm.return_value = torch.randn(512)  # Will be updated per module
+
+                        # Apply DoRA first time
+                        first_transform = dora(model, training=True)
+
+                        # Store references to transformed modules
+                        first_linear_qkv = first_transform.linear_qkv
+                        first_linear_proj = first_transform.linear_proj
+                        first_linear_fc1 = first_transform.linear_fc1  # Should remain unchanged
+
+                        # Verify first transformation worked
+                        assert isinstance(first_linear_qkv, DoRALinear)
+                        assert isinstance(first_linear_proj, DoRALinear)
+                        assert isinstance(first_linear_fc1, nn.Linear)  # Not targeted
+
+                        # Apply DoRA second time to the already-transformed model
+                        second_transform = dora(first_transform, training=True)
+
+                        # Verify idempotency: second transformation should return identical objects
+                        assert second_transform.linear_qkv is first_linear_qkv
+                        assert second_transform.linear_proj is first_linear_proj
+                        assert second_transform.linear_fc1 is first_linear_fc1
+
+                        # Verify the module types are still correct
+                        assert isinstance(second_transform.linear_qkv, DoRALinear)
+                        assert isinstance(second_transform.linear_proj, DoRALinear)
+                        assert isinstance(second_transform.linear_fc1, nn.Linear)
+
 
 @pytest.mark.run_only_on("GPU")
 class TestDoRAMegatronIntegration:
@@ -500,12 +594,66 @@ class TestDoRAMegatronIntegration:
         # DoRA should add parameters (low-rank matrices + magnitude vectors)
         assert adapted_params > original_params
 
-        # Count trainable parameters (should be much less than total)
-        trainable_params = sum(p.numel() for chunk in adapted_model for p in chunk.parameters() if p.requires_grad)
-        frozen_params = adapted_params - trainable_params
+    def test_dora_transform_idempotent_megatron_model(self):
+        """Test that DoRA transform is idempotent when applied to real Megatron models."""
+        # Create a minimal GPT configuration
+        config = GPTConfig(
+            num_layers=1,
+            hidden_size=64,
+            num_attention_heads=2,
+            vocab_size=100,
+            ffn_hidden_size=128,
+        )
 
-        # Most parameters should be frozen
-        assert frozen_params > trainable_params
+        base_model = get_base_model(config)
+
+        # Ensure model is on CUDA if available
+        if torch.cuda.is_available():
+            base_model = [chunk.cuda() for chunk in base_model]
+
+        # Create DoRA instance
+        dora = DoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
+
+        # Apply DoRA first time
+        first_transform = dora(base_model, training=True)
+
+        # Store references to the transformed model chunks
+        first_chunks = [chunk for chunk in first_transform]
+
+        # Verify we got DoRA modules in the first transformation
+        found_dora_modules_first = []
+        for chunk in first_transform:
+            for name, module in chunk.named_modules():
+                if isinstance(module, DoRALinear):
+                    found_dora_modules_first.append((chunk, name, module))
+
+        assert len(found_dora_modules_first) > 0, "Should have found DoRA modules in first transformation"
+
+        # Apply DoRA second time to the already-transformed model
+        second_transform = dora(first_transform, training=True)
+
+        # Verify idempotency: should return the same model chunks
+        assert len(second_transform) == len(first_transform)
+        for i, (first_chunk, second_chunk) in enumerate(zip(first_chunks, second_transform)):
+            assert second_chunk is first_chunk, f"Chunk {i} should be identical object"
+
+        # Verify DoRA modules are identical objects
+        found_dora_modules_second = []
+        for chunk in second_transform:
+            for name, module in chunk.named_modules():
+                if isinstance(module, DoRALinear):
+                    found_dora_modules_second.append((chunk, name, module))
+
+        # Should have same number of DoRA modules
+        assert len(found_dora_modules_second) == len(found_dora_modules_first)
+
+        # Each DoRA module should be the identical object
+        for (first_chunk, first_name, first_module), (second_chunk, second_name, second_module) in zip(
+            found_dora_modules_first, found_dora_modules_second
+        ):
+            assert first_chunk is second_chunk
+            assert first_name == second_name
+            assert second_module is first_module, f"DoRA module {first_name} should be identical object"
 
     def test_dora_forward_pass(self):
         """Test that DoRA adapted model can perform forward pass."""

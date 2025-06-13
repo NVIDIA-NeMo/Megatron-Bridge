@@ -493,6 +493,45 @@ class TestLoRAIntegration:
         lora_b_2 = adapted_model2.linear_qkv.lora_b.weight.data
         assert torch.equal(lora_b_1, lora_b_2)
 
+    def test_lora_transform_idempotent(self):
+        """Test that LoRA transform is idempotent (applying twice has same effect as applying once)."""
+        model = SimpleModel()
+        lora = LoRA(target_modules=["linear_qkv", "linear_proj"], dim=8, alpha=16)
+
+        # Apply LoRA first time
+        first_transform = lora(model, training=True)
+
+        # Store references to the transformed modules
+        first_linear_qkv = first_transform.linear_qkv
+        first_linear_proj = first_transform.linear_proj
+        first_linear_fc1 = first_transform.linear_fc1  # Should remain unchanged
+
+        # Verify first transformation worked
+        assert isinstance(first_linear_qkv, LinearAdapter)
+        assert isinstance(first_linear_proj, LinearAdapter)
+        assert isinstance(first_linear_fc1, nn.Linear)
+
+        # Apply LoRA second time to the already-transformed model
+        second_transform = lora(first_transform, training=True)
+
+        # Verify idempotency: second transformation should return identical objects
+        assert second_transform.linear_qkv is first_linear_qkv
+        assert second_transform.linear_proj is first_linear_proj
+        assert second_transform.linear_fc1 is first_linear_fc1
+
+        # Verify the module types are still correct
+        assert isinstance(second_transform.linear_qkv, LinearAdapter)
+        assert isinstance(second_transform.linear_proj, LinearAdapter)
+        assert isinstance(second_transform.linear_fc1, nn.Linear)
+
+        # Verify the LoRA parameters are identical
+        assert torch.equal(
+            first_transform.linear_qkv.lora_a.weight.data, second_transform.linear_qkv.lora_a.weight.data
+        )
+        assert torch.equal(
+            first_transform.linear_qkv.lora_b.weight.data, second_transform.linear_qkv.lora_b.weight.data
+        )
+
 
 @pytest.mark.run_only_on("GPU")
 class TestLoRAMegatronIntegration:
@@ -772,3 +811,64 @@ class TestLoRAMegatronIntegration:
 
             # Should find some LoRA modules for each configuration
             assert lora_count > 0
+
+    def test_lora_transform_idempotent_megatron_model(self):
+        """Test that LoRA transform is idempotent when applied to real Megatron models."""
+        # Create a minimal GPT configuration
+        config = GPTConfig(
+            num_layers=1,
+            hidden_size=64,
+            num_attention_heads=2,
+            vocab_size=100,
+            ffn_hidden_size=128,
+        )
+
+        base_model = get_base_model(config)
+
+        # Ensure model is on CUDA if available
+        if torch.cuda.is_available():
+            base_model = [chunk.cuda() for chunk in base_model]
+
+        # Create LoRA instance
+        lora = LoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
+
+        # Apply LoRA first time
+        first_transform = lora(base_model, training=True)
+
+        # Store references to the transformed model chunks
+        first_chunks = [chunk for chunk in first_transform]
+
+        # Verify we got LoRA modules in the first transformation
+        found_lora_modules_first = []
+        for chunk in first_transform:
+            for name, module in chunk.named_modules():
+                if isinstance(module, LoRALinear):
+                    found_lora_modules_first.append((chunk, name, module))
+
+        assert len(found_lora_modules_first) > 0, "Should have found LoRA modules in first transformation"
+
+        # Apply LoRA second time to the already-transformed model
+        second_transform = lora(first_transform, training=True)
+
+        # Verify idempotency: should return the same model chunks
+        assert len(second_transform) == len(first_transform)
+        for i, (first_chunk, second_chunk) in enumerate(zip(first_chunks, second_transform)):
+            assert second_chunk is first_chunk, f"Chunk {i} should be identical object"
+
+        # Verify LoRA modules are identical objects
+        found_lora_modules_second = []
+        for chunk in second_transform:
+            for name, module in chunk.named_modules():
+                if isinstance(module, LoRALinear):
+                    found_lora_modules_second.append((chunk, name, module))
+
+        # Should have same number of LoRA modules
+        assert len(found_lora_modules_second) == len(found_lora_modules_first)
+
+        # Each LoRA module should be the identical object
+        for (first_chunk, first_name, first_module), (second_chunk, second_name, second_module) in zip(
+            found_lora_modules_first, found_lora_modules_second
+        ):
+            assert first_chunk is second_chunk
+            assert first_name == second_name
+            assert second_module is first_module, f"LoRA module {first_name} should be identical object"
