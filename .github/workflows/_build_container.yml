@@ -90,8 +90,8 @@ jobs:
       runner: ${{ inputs.runner }}
       has-azure-credentials: true
       build-args: |
-        MCORE_REF=${{ steps.manifest-json.outputs.MCORE_REF }}
-        EXPORT_DEPLOY_REF=${{ steps.manifest-json.outputs.EXPORT_DEPLOY_REF }}
+        MCORE_REF=${{ needs.pre-flight.outputs.mcore-ref }}
+        EXPORT_DEPLOY_REF=${{ needs.pre-flight.outputs.export-deploy-ref }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
