@@ -60,7 +60,10 @@ myst_heading_anchors = 5  # Generates anchor links for headings up to level 5
 sys.path.insert(0, os.path.abspath(".."))
 
 autodoc2_packages = [
-    "../src/megatron/hub",  # Path to your package relative to conf.py
+    {
+        "path": "../src/megatron/hub",  # Path to your package relative to conf.py
+        "exclude_dirs": ["converters"],  # list of directory names to exclude
+    }
 ]
 autodoc2_render_plugin = "myst"  # Use MyST for rendering docstrings
 autodoc2_output_dir = "apidocs"  # Output directory for autodoc2 (relative to docs/)
