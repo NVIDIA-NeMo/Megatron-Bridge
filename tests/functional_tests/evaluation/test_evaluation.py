@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import signal
 import subprocess
 import pytest
-import logging
 
 from megatron.hub.evaluation.api import evaluate
 from megatron.hub.evaluation.utils.api import ApiEndpoint, ConfigParams, EvaluationConfig, EvaluationTarget
 from megatron.hub.evaluation.utils.base import wait_for_fastapi_server
 
+
 logger = logging.getLogger(__name__)
+
 
 class TestEvaluation:
     """
@@ -125,11 +127,11 @@ class TestEvaluation:
                 "extra": {
                     "tokenizer_backend": "huggingface",
                     "tokenizer": tokenizer_path,
-                }
+                },
             }
             eval_config = EvaluationConfig(type=eval_type, params=ConfigParams(**eval_params))
             evaluate(target_cfg=eval_target, eval_cfg=eval_config)
             logger.info("Evaluation completed.")
 
         finally:
-            deploy_proc.send_signal(signal.SIGINT) 
+            deploy_proc.send_signal(signal.SIGINT)
