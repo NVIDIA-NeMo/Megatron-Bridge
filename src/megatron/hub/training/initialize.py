@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import datetime
-import time
 import warnings
 from typing import Callable, Optional
 
@@ -379,26 +378,6 @@ def _initialize_distributed(
                     f"> initialized pipeline model parallel with size "
                     f"{parallel_state.get_pipeline_model_parallel_world_size()}"
                 )
-
-
-def _compile_dataset_helpers() -> None:
-    # =========================
-    # Compile dataset C++ code.
-    # =========================
-    # TODO: move this to ninja
-    if get_rank_safe() == 0:
-        start_time = time.time()
-        print("> compiling dataset index builder ...")
-        from megatron.core.datasets.utils import compile_helpers
-
-        compile_helpers()
-        print(
-            ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
-            flush=True,
-        )
-
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
 
 
 def _set_random_seed(
