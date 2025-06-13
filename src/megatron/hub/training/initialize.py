@@ -397,6 +397,9 @@ def _compile_dataset_helpers() -> None:
             flush=True,
         )
 
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
 
 def _set_random_seed(
     seed_: int,
