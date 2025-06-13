@@ -212,7 +212,7 @@ class GPTConfig(TransformerConfig):
     deallocate_pipeline_outputs: bool = True
     scatter_embedding_sequence_parallel: bool = True
     tp_only_amax_red: bool = False
-    tp_comm_overlap_cfg: Optional[str] = None
+    tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
     """Config file when tp_comm_overlap is enabled."""
 
     use_transformer_engine_full_layer_spec: bool = False
@@ -221,7 +221,6 @@ class GPTConfig(TransformerConfig):
     generation_config: Optional["GenerationConfig"] = None
 
     vocab_size: Optional[int] = None
-    tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
 
     def configure_model(self, tokenizer, pre_process=None, post_process=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
