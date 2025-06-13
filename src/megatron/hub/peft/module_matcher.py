@@ -102,15 +102,15 @@ class ModuleMatcher:
             """
             Find the element in canonical_mapping which
             1) matches the current `name` exactly, OR
-            2) matches the current `full_name` with regex
+            2) matches the current `full_name` with wildcard
             match is None if current module name doesn't match the specified targets.
             """
-            assert len(self.exclude_modules) == 0
+            assert len(self.exclude_modules) == 0, "exclude_modules should be empty when using canonical_mapping"
             for pattern in self.canonical_mapping:
                 if name == pattern or wildcard_match(pattern, full_name):
                     return (pattern, full_name)
         elif len(self.target_modules or []) > 0:
-            assert len(self.exclude_modules) == 0
+            assert len(self.exclude_modules) == 0, "exclude_modules should be empty when using target_modules"
             for pattern in self.target_modules:
                 if name == pattern or wildcard_match(pattern, full_name):
                     return (pattern, full_name)
@@ -125,7 +125,7 @@ class ModuleMatcher:
             linear_types = tuple(linear_types)
 
             if (
-                not name in self.exclude_modules
+                name not in self.exclude_modules
                 and not any(wildcard_match(pattern, full_name) for pattern in self.exclude_modules)
                 and isinstance(m, linear_types)
             ):
