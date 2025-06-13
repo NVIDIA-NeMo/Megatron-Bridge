@@ -76,15 +76,6 @@ dependencies = [
     "nvidia-modelopt[torch]>=0.25.0,<=0.29.0 ; sys_platform != 'darwin'",
     "nvidia-resiliency-ext>=0.3.0,<1.0.0 ; sys_platform != 'darwin'",
     "hydra-core>1.3,<=1.3.2",
-    "wget",
-    "h5py",
-    "ijson",
-    "boto3",
-    "megatron-energon",
-    "qwen_vl_utils",
-    "sacrebleu",
-    "rouge_score",
-    "decord"
 ]
 
 [tool.setuptools.dynamic]
