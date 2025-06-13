@@ -20,6 +20,7 @@ import importlib
 import logging
 import traceback
 from contextlib import contextmanager
+from typing import Tuple
 
 import torch
 from packaging.version import Version as PkgVersion
@@ -248,7 +249,7 @@ class UnavailableNullContext:
         pass
 
 
-def safe_import(module, *, msg=None, alt=None):
+def safe_import(module, *, msg=None, alt=None) -> Tuple[object, bool]:
     """A function used to import modules that may not be available.
 
     This function will attempt to import a module with the given name, but it
@@ -263,10 +264,9 @@ def safe_import(module, *, msg=None, alt=None):
             fails to import. Defaults to None.
 
     Returns:
-        tuple: A tuple containing:
-            - object: The imported module, the given alternate, or a class derived from
-              UnavailableMeta
-            - bool: A boolean indicating whether the intended import was successful.
+        tuple: A tuple containing two elements. The first element is the imported module,
+        the given alternate, or a class derived from UnavailableMeta. The second element
+        is a boolean indicating whether the intended import was successful.
     """
     try:
         return importlib.import_module(module), True
@@ -284,7 +284,7 @@ def safe_import(module, *, msg=None, alt=None):
         return alt, False
 
 
-def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None):
+def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None) -> Tuple[object, bool]:
     """A function used to import symbols from modules that may not be available.
 
     This function will attempt to import a symbol with the given name from
@@ -304,10 +304,9 @@ def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None
             will also try the `fallback_module`. Defaults to None.
 
     Returns:
-        tuple: A tuple containing:
-            - object: The imported symbol, the given alternate, or a class derived from
-              UnavailableMeta
-            - bool: A boolean indicating whether the intended import was successful.
+        tuple: A tuple containing two elements. The first element is the imported symbol,
+        the given alternate, or a class derived from UnavailableMeta. The second element
+        is a boolean indicating whether the intended import was successful.
     """
     try:
         imported_module = importlib.import_module(module)
