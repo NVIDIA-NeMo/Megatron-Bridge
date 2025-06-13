@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import datetime
-import time
 import warnings
 from typing import Callable, Optional
 
