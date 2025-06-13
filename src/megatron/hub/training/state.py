@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 import torch
 import yaml
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
@@ -132,6 +133,7 @@ class GlobalState:
         self.start_time: float = time.time()
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
+        self._async_calls_queue: Optional[AsyncCallsQueue] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
@@ -254,6 +256,18 @@ class GlobalState:
         if self._straggler_timer is None:
             self._straggler_timer = StragglerDetector()
         return self._straggler_timer
+
+    @property
+    def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
+        """The AsyncCallsQueue instance for handling asynchronous checkpoint saves.
+
+        Creates a persistent AsyncCallsQueue when async_save is enabled in the checkpoint config.
+        Returns None if async_save is disabled.
+        """
+        if self._async_calls_queue is None and self.cfg and self.cfg.checkpoint.async_save:
+            # Create persistent queue by default when async_save is enabled
+            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+        return self._async_calls_queue
 
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""

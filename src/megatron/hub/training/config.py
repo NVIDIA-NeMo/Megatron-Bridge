@@ -446,6 +446,11 @@ class CheckpointConfig:
     async_save: bool = False
     """Apply async checkpointing save. Currently works only with `torch_dist` distributed checkpoint format."""
 
+    use_persistent_ckpt_worker: bool = True
+    """Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated
+    worker thread/process for handling async saves. When disabled, uses temporal workers that are
+    created and destroyed for each save operation."""
+
     fully_parallel_load: bool = False
     """Apply full load parallelization across DP for distributed checkpoints."""
 

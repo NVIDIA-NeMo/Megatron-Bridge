@@ -36,6 +36,7 @@ from megatron.core.dist_checkpointing.serialization import (
     get_default_load_sharded_strategy,
     get_default_save_sharded_strategy,
 )
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
@@ -48,7 +49,6 @@ from megatron.hub.training import fault_tolerance
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer
 from megatron.hub.training.state import GlobalState, TrainState
 from megatron.hub.utils import wandb_utils
-from megatron.hub.utils.async_utils import is_empty_async_queue, schedule_async_save
 from megatron.hub.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
@@ -83,6 +83,11 @@ _CHECKPOINT_VERSION = None
 
 logger = getLogger(__name__)
 _NON_PERSISTENT_CKPT_SUBDIR = "non_persistent"
+
+
+# ============================================================================
+# Checkpoint version and utilities
+# ============================================================================
 
 
 def set_checkpoint_version(value: float) -> None:
@@ -394,6 +399,68 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
     return config_obj[0]
 
 
+# ============================================================================
+# Async checkpoint utilities
+# ============================================================================
+
+
+def schedule_async_save(global_state: GlobalState, async_request: AsyncRequest) -> None:
+    """Schedule the async save request.
+
+    Args:
+        global_state: The global training state containing the async calls queue.
+        async_request: the async save request.
+    """
+    async_queue = global_state.async_calls_queue
+    if async_queue is not None:
+        async_queue.schedule_async_request(async_request)
+
+
+def maybe_finalize_async_save(
+    global_state: GlobalState, ckpt_cfg: CheckpointConfig, blocking: bool = False, terminate: bool = False
+) -> None:
+    """Finalizes active async save calls.
+
+    Args:
+        global_state: The global training state containing the async calls queue.
+        ckpt_cfg (CheckpointConfig): The checkpoint configuration.
+        blocking (bool, optional): if True, will wait until all active requests
+            are done. Otherwise, finalizes only the async request that already
+            finished. Defaults to False.
+        terminate (bool, optional): if True, the asynchronous queue will
+                be closed as the last action of this function.
+    """
+    if not ckpt_cfg.async_save:
+        return
+
+    async_queue = global_state.async_calls_queue
+    if async_queue is None:
+        return
+
+    if blocking and not is_empty_async_queue(global_state):
+        print_rank_0("Unfinalized async checkpoint saves. Finalizing them synchronously now.")
+
+    async_queue.maybe_finalize_async_calls(blocking)
+
+    if terminate:
+        async_queue.close()
+
+
+def is_empty_async_queue(global_state: GlobalState) -> bool:
+    """Check if async calls queue is empty. This result is consistent across ranks.
+
+    Args:
+        global_state: The global training state containing the async calls queue.
+
+    Returns:
+        bool: True if there is any ongoing async call.
+    """
+    async_queue = global_state.async_calls_queue
+    if async_queue is None:
+        return True
+    return async_queue.get_num_unfinalized_calls() == 0
+
+
 def get_rng_state(
     data_parallel_random_init: bool, use_dist_ckpt: bool = False
 ) -> Union[list[dict[str, Any]], ShardedObject]:
@@ -495,7 +562,7 @@ def save_checkpoint(
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
 
-    if ckpt_cfg.async_save and not is_empty_async_queue():
+    if ckpt_cfg.async_save and not is_empty_async_queue(state):
         print_rank_0(
             "WARNING: Starting a checkpoint save before previous has finished. "
             "Consider increasing the checkpoint interval."
@@ -764,7 +831,7 @@ def save_checkpoint(
             wandb_finalize_fn()
 
     if ckpt_cfg.async_save:
-        schedule_async_save(async_save_request)
+        schedule_async_save(state, async_save_request)
         print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
 
     # Wait so everyone is done (not necessary)
@@ -1297,6 +1364,24 @@ def load_checkpoint(
         fault_tolerance.on_checkpoint_loaded(is_local_chkpt=is_local_chkpt, global_state=state)
 
     return state.train_state.step, state.train_state.floating_point_operations_so_far
+
+
+def init_async_checkpoint_worker(global_state: GlobalState) -> None:
+    """Initialize the async checkpoint worker if enabled.
+
+    Creates a persistent background worker for handling asynchronous checkpoint saves
+    when both async_save and use_persistent_ckpt_worker are enabled in the configuration.
+
+    Args:
+        global_state: The GlobalState instance containing the configuration and async queue.
+    """
+    from megatron.hub.utils.common_utils import print_rank_0
+
+    if global_state.cfg.checkpoint.async_save and global_state.cfg.checkpoint.use_persistent_ckpt_worker:
+        # Access the async_calls_queue property to trigger lazy initialization
+        # This creates the persistent worker immediately during setup
+        _ = global_state.async_calls_queue
+        print_rank_0("Initialized persistent async checkpoint worker")
 
 
 def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str, Any]:
