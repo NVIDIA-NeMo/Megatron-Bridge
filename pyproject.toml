@@ -90,7 +90,8 @@ build-backend = "setuptools.build_meta"
 [project.optional-dependencies]
 eval = [
     "nvidia-lm-eval",
-    "uvicorn"
+    "uvicorn",
+    "pytest-httpserver"
 ]
 
 [dependency-groups]
