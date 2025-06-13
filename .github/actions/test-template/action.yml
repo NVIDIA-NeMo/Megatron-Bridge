@@ -173,7 +173,7 @@ runs:
 
         echo "$cmd" | tee "retry_job.sh"
         bash retry_job.sh
-        docker exec -t nemo_container_${{ github.run_id }} bash -c 'pip install -e .'
+        docker exec -t nemo_container_${{ github.run_id }} bash -c 'uv pip install --no-deps -e .'
 
     - name: Create run-script
       id: create
