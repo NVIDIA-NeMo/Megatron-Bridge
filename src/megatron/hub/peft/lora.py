@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -101,7 +101,7 @@ class LoRA(PEFT, ModuleMatcher):
         """Initialize attributes from parent classes."""
         PEFT.__post_init__(self)
 
-    def transform(self, m: nn.Module, name=None, prefix=None):
+    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
         Applies LoRA to a specific module within the model architecture.
 
@@ -114,25 +114,25 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
 
-        if (ans := self.match(m, name, prefix)) is not None:
+        if (ans := self.match(module, name, prefix)) is not None:
             (match, full_name) = ans
-            if isinstance(m, nn.Linear) or m.__class__ == te.Linear:
+            if isinstance(module, nn.Linear) or module.__class__ == te.Linear:
                 # Will use the `patch_linear_module` function if:
                 # - is FSDP v1
                 # - is DTensor (has _local_tensor attribute)
                 # - has quant_state attribute
-                if hasattr(m.weight.data, "_local_tensor") or (
-                    getattr(m, "quant_state", None) is not None
-                    and m.quant_state.__class__ == bitsandbytes.functional.QuantState
+                if hasattr(module.weight.data, "_local_tensor") or (
+                    getattr(module, "quant_state", None) is not None
+                    and module.quant_state.__class__ == bitsandbytes.functional.QuantState
                 ):
                     lora_cls = patch_linear_module
-                elif HAVE_TE and m.__class__ == te.Linear:
+                elif HAVE_TE and module.__class__ == te.Linear:
                     lora_cls = TELinearAdapter
                 else:
                     lora_cls = LinearAdapter
 
                 return lora_cls(
-                    m,
+                    module,
                     dim=self.dim,
                     alpha=self.alpha,
                     dropout=self.dropout,
@@ -140,7 +140,7 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_dtype=self.lora_dtype,
                 )
 
-            input_is_parallel, in_features, out_features, disable_sp_comm = get_adapter_attributes_from_linear(m)
+            input_is_parallel, in_features, out_features, disable_sp_comm = get_adapter_attributes_from_linear(module)
             logging.info(f"Adding lora to: {full_name}")
             adapter = ParallelLinearAdapter(
                 in_features,
@@ -155,14 +155,14 @@ class LoRA(PEFT, ModuleMatcher):
                 input_is_parallel=input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
-                model_parallel_config=getattr(m, "config", None),
+                model_parallel_config=getattr(module, "config", None),
                 alpha=self.alpha,
                 is_expert=is_expert_linear(full_name),
                 a2a_experimental=self.a2a_experimental,
                 disable_sequence_parallel_comm=disable_sp_comm,
             )
-            return LoRALinear(m, adapter)
-        return m
+            return LoRALinear(module, adapter)
+        return module
 
 
 class LoRAMerge(PEFT):
@@ -171,7 +171,7 @@ class LoRAMerge(PEFT):
     """
 
     @torch.no_grad()
-    def transform(self, m: nn.Module, name=None, prefix=None):
+    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
         Merges the LoRA adapter with the base model weights.
 
@@ -184,16 +184,16 @@ class LoRAMerge(PEFT):
             nn.Module: The modified module with the LoRA adapter merged into the base model weights.
         """
 
-        if not isinstance(m, LoRALinear):
-            return m
+        if not isinstance(module, LoRALinear):
+            return module
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_weight = m.to_wrap.weight
+        base_weight = module.to_wrap.weight
         lora_weight = (
-            m.adapter.alpha
-            / m.adapter.dim
-            * m.adapter.linear_out.weight.to(base_weight.device)
-            @ m.adapter.linear_in.weight.to(base_weight.device)
+            module.adapter.alpha
+            / module.adapter.dim
+            * module.adapter.linear_out.weight.to(base_weight.device)
+            @ module.adapter.linear_in.weight.to(base_weight.device)
         )
         merged_weight = base_weight + lora_weight
-        m.to_wrap.weight.data = merged_weight
-        return m
+        module.to_wrap.weight.data = merged_weight
+        return module

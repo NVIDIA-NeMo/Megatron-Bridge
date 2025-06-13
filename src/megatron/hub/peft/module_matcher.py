@@ -14,13 +14,14 @@
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from torch import nn
 
 from megatron.hub.peft.utils import wildcard_match
 from megatron.hub.utils.import_utils import safe_import_from
+
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TEColumnParallelLinear"
@@ -57,14 +58,14 @@ class ModuleMatcher:
     """
 
     target_modules: List[str] = field(
-        default_factory=lambda: ['linear_qkv', 'linear_proj', 'linear_fc1', 'linear_fc2']
+        default_factory=lambda: ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
     )
     exclude_modules: List[str] = field(default_factory=list)
     canonical_mapping: Dict[str, Set] = field(default_factory=lambda: defaultdict(set))
 
     def match(
         self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
-    ) -> Optional[Tuple[str, str]]:
+    ) -> Optional[tuple[str, str]]:
         """
         Determines whether a given module matches specified target patterns.
 
