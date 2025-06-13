@@ -191,7 +191,7 @@ def train(
                     torch.autograd.profiler.emit_nvtx(record_shapes=prof_config.record_shapes).__enter__()
 
         fault_tolerance.on_checkpointing_start(global_state)
-        maybe_finalize_async_save(ckpt_cfg=config.checkpoint, blocking=False)
+        maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Update number of microbatches first without consistency check to decide if a
