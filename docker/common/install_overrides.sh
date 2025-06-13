@@ -34,7 +34,7 @@ uv pip install --no-cache-dir --upgrade nemo_run
 
 # megatron-core and export-deploy are dependencies, but for development
 # we override with latest VCS commits
-uv pip uninstall -y megatron-core nemo-export-deploy
+uv pip uninstall megatron-core nemo-export-deploy
 uv pip install --no-cache-dir --upgrade \
     "megatron_core@git+https://github.com/NVIDIA/Megatron-LM.git@${MCORE_REF}" \
     "NeMo-Export-Deploy${INSTALL_EVAL:+[te,trtllm]}@git+https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git@${EXPORT_DEPLOY_REF}"
