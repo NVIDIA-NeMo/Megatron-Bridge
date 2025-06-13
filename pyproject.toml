@@ -99,10 +99,6 @@ override-dependencies = [
     "triton; sys_platform == 'never'",
 ]
 
-[tool.uv.sources]
-megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git" }
-nemo-export-deploy = { git = "https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git", rev = "ko3n1g/build/update-lock-file" }
-
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -129,8 +125,6 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-# eval = ["nemo-export-deploy[te,trtllm] ; python_version >= '3.12'"]
-
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.hub"

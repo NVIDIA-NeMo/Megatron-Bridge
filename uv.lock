@@ -1588,14 +1588,13 @@ wheels = [
 
 [[package]]
 name = "megatron-core"
-version = "0.13.0rc0"
-source = { git = "https://github.com/NVIDIA/Megatron-LM.git#d58f06277d045a17cb28b070406520fd24087090" }
+version = "0.12.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "einops" },
     { name = "flask-restful" },
     { name = "nltk" },
     { name = "nvidia-modelopt", extra = ["torch"], marker = "sys_platform != 'darwin'" },
-    { name = "nvtx" },
     { name = "packaging" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -1610,6 +1609,13 @@ dependencies = [
     { name = "wrapt" },
     { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "zarr", version = "3.0.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/12/e0f383e8fe937e46a3e5db422f7687609343c0d4d5a59ec4782b2ba1667a/megatron_core-0.12.1.tar.gz", hash = "sha256:11c40a1a26713951eaae6f73d5944f921db427cedd0e29b891102685a96d662f", size = 665816, upload-time = "2025-05-23T09:54:31.114Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/44/f70babc9866629b999b2c933345e831191b72a8dfdf483c7fbd8a1a82787/megatron_core-0.12.1-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1d772554840f497c256935d8e23c33a5a891a203ebd65e0d0d26a5bbdca8e7b1", size = 1802443, upload-time = "2025-05-23T09:54:23.513Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/a8/544adee355419ea142f01cb92e4c09f7823b1b6f4efb6cd92ee5c2551df6/megatron_core-0.12.1-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:14774f408f82176cc68de7b36e2f4d1d8553efd14fbe8cdba75beba588efb9de", size = 1822768, upload-time = "2025-05-23T09:54:25.473Z" },
+    { url = "https://files.pythonhosted.org/packages/06/3d/b477c73169918b97904ee0dd0f72ba677624b1288f08c840b2f08a46f369/megatron_core-0.12.1-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6dea326f051bdb24b1c4147fd935719c221b6996bf213f5c5094e1fbe80f04be", size = 1814233, upload-time = "2025-05-23T09:54:28.006Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/50/ae43379a30e8294a8aa335633546ac9abd18fe9c142cc331cffaaeb1cebe/megatron_core-0.12.1-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:88b7dfcc240b810a72a90b8a85203049c687f4aa413150a2e22d79413b21d286", size = 1836179, upload-time = "2025-05-23T09:54:29.341Z" },
 ]
 
 [[package]]
@@ -1705,7 +1711,7 @@ requires-dist = [
     { name = "h5py" },
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
     { name = "ijson" },
-    { name = "megatron-core", git = "https://github.com/NVIDIA/Megatron-LM.git" },
+    { name = "megatron-core" },
     { name = "megatron-energon" },
     { name = "numpy", specifier = "<2" },
     { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin'", specifier = ">=0.25.0,<=0.29.0" },
@@ -2324,26 +2330,6 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/74/996dbc314da8ed670cd5e040d0b4b5be79ff1fc3db3fe25e63134deebe9a/nvidia_sphinx_theme-0.0.8-py3-none-any.whl", hash = "sha256:18f117aa154a3a156251a75647279c541464f3e75f7df2ae283e720cc7d0bc2c", size = 140678, upload-time = "2025-03-24T21:56:25.621Z" },
-]
-
-[[package]]
-name = "nvtx"
-version = "0.2.12"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/56/05/160dc24b6cd1e21e5b00d55a46abac5802ed7c15c675e6ce25febad2b0d7/nvtx-0.2.12.tar.gz", hash = "sha256:b871fae9b80b004e624b5755291799794287016fa6a0c8fd0fb3255393ae3bc8", size = 110848, upload-time = "2025-05-26T10:32:33.824Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/db/34e2345fb0e72c1d7897fd55cb061b511703ae64a5f7656b44e24a3e05bc/nvtx-0.2.12-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0d3070d71e5b9661d40ae6f1a6bae289939ee8ca073283f6be84799de393b4eb", size = 470616, upload-time = "2025-05-25T08:55:19.517Z" },
-    { url = "https://files.pythonhosted.org/packages/63/da/b89896c71a3165eba997c2017064703fb63a217a9d0e33bec4c4d4d9207a/nvtx-0.2.12-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f01c8e81e02249b657015c7a65faf715a4323d543c46731d382461d9f480412b", size = 473951, upload-time = "2025-05-25T08:45:28.765Z" },
-    { url = "https://files.pythonhosted.org/packages/27/ae/77d56da116a3f04d9afbd21f12ba6886dafb90bf0572702f8beff52cb96a/nvtx-0.2.12-cp310-cp310-win_amd64.whl", hash = "sha256:5ce5089e8fdff2d577b83888b1c20dc99d4cc097b0c892a86f4e348d852a4587", size = 99249, upload-time = "2025-05-25T08:44:02.069Z" },
-    { url = "https://files.pythonhosted.org/packages/44/fd/2f505ec6d0051799d169b9a722ceefeff166086bf5c38da32dee4be4f6b5/nvtx-0.2.12-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c6f3fd5b5e813badee101be3f2c2a30f389cb90f840798cabf10587e6003357e", size = 521801, upload-time = "2025-05-25T08:53:26.95Z" },
-    { url = "https://files.pythonhosted.org/packages/63/4d/4eb32747f077f9f6078159b15e345b67e5e63fd831c334f63350e912091e/nvtx-0.2.12-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b18cc0e8dcade60621d406ac2c71fcc14bdaa919a0352210760bfc3e92db428f", size = 522737, upload-time = "2025-05-25T08:45:49.911Z" },
-    { url = "https://files.pythonhosted.org/packages/67/b3/a80e5c9c8edd370b2915750355d25ed3e39d6cb18fb1484d419a0eabf907/nvtx-0.2.12-cp311-cp311-win_amd64.whl", hash = "sha256:78dab5243c160e9f10721072ae029de9c835a2a67c53f88e7c0564d9cd753c5f", size = 99303, upload-time = "2025-05-25T08:42:37.727Z" },
-    { url = "https://files.pythonhosted.org/packages/08/e4/944e63039a0d652c843ecffb42700e2b4f596b745ac9ac6ebed937f1bce5/nvtx-0.2.12-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9ea22a86eca22fd52e3c2905654182da1fcebea6f0107e87d7dc4ec6871604ca", size = 539647, upload-time = "2025-05-25T08:52:12.911Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/7b/6e25716c92039a3ecc2f6f4e1380b5492b0d23af78ea862cb84e8ffe0d7b/nvtx-0.2.12-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9a279d880c27ec8c72632a0685456c170e7b12da2839c861ee461c121692aea6", size = 543614, upload-time = "2025-05-25T08:44:44.678Z" },
-    { url = "https://files.pythonhosted.org/packages/7d/96/eb1078d7509b72e3e4b6dd7ff12a698951e81dcc5f20a3ad7f35d7455700/nvtx-0.2.12-cp312-cp312-win_amd64.whl", hash = "sha256:2f93e07add2544a85c202b3c710945b54b3abb6660a6a7e447395cb024938b35", size = 98894, upload-time = "2025-05-25T08:42:59.068Z" },
-    { url = "https://files.pythonhosted.org/packages/55/78/88563935649f9202735ac5686fc451d3fa9f34e6592787ba224244c3570a/nvtx-0.2.12-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:871e54f95929a6c7c39b85d4111bf6af8ab43325bbc36c97a179270443896ef7", size = 520074, upload-time = "2025-05-25T08:52:50.144Z" },
-    { url = "https://files.pythonhosted.org/packages/86/0c/62b1f76c84a8bed267421d11114953b5da631daeb0ec7894a91252f79b5d/nvtx-0.2.12-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2b82ad84ac8d5408851947d1d2cef3e8e627627cc2290e5150c8af0dda1e3f63", size = 524516, upload-time = "2025-05-25T08:45:06.598Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/41/e74ec826e1585ad6d31f41de96f6faae8ffc712a45c2b880baca4ae87a64/nvtx-0.2.12-cp313-cp313-win_amd64.whl", hash = "sha256:a37e063c3c745a4c6b561993a2dae2f67fcc26f2a2c2653f24eeae5810a2180d", size = 97070, upload-time = "2025-05-25T08:43:41.323Z" },
 ]
 
 [[package]]

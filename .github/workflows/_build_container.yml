@@ -42,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       cache-from: ${{ steps.cache-from.outputs.LAST_PRS }}
+      mcore-ref: ${{ steps.manifest-json.outputs.MCORE_REF }}
+      export-deploy-ref: ${{ steps.manifest-json.outputs.EXPORT_DEPLOY_REF }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -68,6 +70,14 @@ jobs:
           echo "$LAST_PRS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Parse manifest.json
+        id: manifest-json
+        run: |
+          MCORE_REF=$(cat docker/manifest.json | jq -r '."vcs-dependencies"."megatron-lm".ref')
+          echo "MCORE_REF=$MCORE_REF" | tee -a $GITHUB_OUTPUT
+          EXPORT_DEPLOY_REF=$(cat docker/manifest.json | jq -r '."vcs-dependencies"."export-deploy".ref')
+          echo "EXPORT_DEPLOY_REF=$EXPORT_DEPLOY_REF" | tee -a $GITHUB_OUTPUT
+
   build:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@v0.37.0
     needs: [pre-flight]
@@ -79,6 +89,9 @@ jobs:
       use-inline-cache: false
       runner: ${{ inputs.runner }}
       has-azure-credentials: true
+      build-args: |
+        MCORE_REF=${{ steps.manifest-json.outputs.MCORE_REF }}
+        EXPORT_DEPLOY_REF=${{ steps.manifest-json.outputs.EXPORT_DEPLOY_REF }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
