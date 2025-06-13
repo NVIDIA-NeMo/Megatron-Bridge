@@ -127,7 +127,7 @@ def ensure_directory_exists(filename: str, check_parent: bool = True) -> None:
 def get_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = False) -> str:
     """Determine the directory name for a specific checkpoint.
 
-    Constructs the path based on iteration and rank information (tensor, pipeline, expert).
+    Constructs the path based on iteration number or release flag.
 
     Args:
         checkpoints_path: Base directory where checkpoints are stored.
@@ -141,64 +141,9 @@ def get_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = F
         directory = "release"
     else:
         directory = "iter_{:07d}".format(iteration)
-    
+
     common_path = os.path.join(checkpoints_path, directory)
-
-    # The following logic for rank-specific subdirectories might be part of the
-    # distributed checkpointing structure itself, rather than get_checkpoint_name
-    # if this function is *only* for the iteration/release directory.
-    # However, the original function did include rank-specific paths when not returning base_dir.
-    # For now, let's assume the common_path (iter_XXXX or release) is what's consistently needed
-    # when `return_base_dir` was true. If rank-specific sub-paths are still generated
-    # by specific checkpointing formats (like legacy, though it's removed),
-    # that logic would be handled by the saving/loading strategy itself, or this function
-    # would need to be more complex. Given the simplification drive, returning just the
-    # top-level iteration/release directory seems correct for a simplified approach.
-    # If specific file paths with ranks are needed, callers will append them or use
-    # format-specific utilities from megatron-core.
-
-    # If the intent was to get the sharded save directory (which often includes mp_rank_*):
-    # This part of the original logic created rank-specific subdirectories for non-distributed (legacy) checkpoints.
-    # For distributed checkpoints, the sharding strategy handles the internal structure.
-    # Since legacy is removed, this function should primarily return the top-level directory for an iteration.
-
-    # Example from original if NOT return_base_dir:
-    # if pipeline_parallel is None:
-    #     pipeline_parallel = mpu.get_pipeline_model_parallel_world_size() > 1
-    # if tensor_rank is None:
-    #     tensor_rank = mpu.get_tensor_model_parallel_rank()
-    # if pipeline_rank is None:
-    #     pipeline_rank = mpu.get_pipeline_model_parallel_rank()
-    # if expert_parallel is None:
-    #     expert_parallel = mpu.get_expert_model_parallel_world_size() > 1
-    # if expert_rank is None:
-    #     expert_rank = mpu.get_expert_model_parallel_rank()
-    # if not pipeline_parallel:
-    #     rank_path = os.path.join(common_path, f"mp_rank_{tensor_rank:02d}")
-    # else:
-    #     rank_path = os.path.join(common_path, f"mp_rank_{tensor_rank:02d}_{pipeline_rank:03d}")
-    # if expert_parallel:
-    #     rank_path = rank_path + f"_{expert_rank:03d}"
-    # return os.path.join(rank_path, basename) 
-
     return common_path
-
-
-# def get_distributed_optimizer_checkpoint_name(model_checkpoint_name: str) -> str:
-#     """Get the checkpoint name for the distributed optimizer state.
-
-#     Appends /distrib_optim.pt to the directory of the model checkpoint.
-
-#     Args:
-#         model_checkpoint_name: The full path to the model checkpoint file.
-
-#     Returns:
-#         The full path to the distributed optimizer checkpoint file.
-#     """
-#     return os.path.join(
-#         os.path.dirname(model_checkpoint_name),
-#         "distrib_optim.pt",
-#     )
 
 
 def find_checkpoint_rank_0(checkpoints_path: str, iteration: int, release: bool = False) -> Optional[str]:
@@ -457,10 +402,7 @@ def save_checkpoint(
     num_floating_point_operations_so_far: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
     pipeline_rank: Optional[int] = None,
-    expert_rank: Optional[int] = None,
     tensor_rank: Optional[int] = None,
-    pipeline_parallel: Optional[bool] = None,
-    expert_parallel: Optional[bool] = None,
     non_persistent_ckpt: bool = False,
     train_data_iterator: Optional[Any] = None,
     preprocess_common_state_dict_fn: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None,
@@ -468,7 +410,7 @@ def save_checkpoint(
     """Save a model checkpoint.
 
     Handles saving the model state, optimizer state, scheduler state, RNG state,
-    and other metadata based on the configuration and checkpoint type (legacy, global, local).
+    and other metadata based on the configuration and checkpoint type (global or local).
     Supports synchronous and asynchronous saving.
 
     Args:
@@ -479,10 +421,7 @@ def save_checkpoint(
         num_floating_point_operations_so_far: Total FLOPs computed so far.
         checkpointing_context: Dictionary to store context across saves (e.g., strategies).
         pipeline_rank: Pipeline parallel rank (defaults to current rank).
-        expert_rank: Expert parallel rank (defaults to current rank).
         tensor_rank: Tensor parallel rank (defaults to current rank).
-        pipeline_parallel: Whether pipeline parallelism is used (defaults to current MPU state).
-        expert_parallel: Whether expert parallelism is used (defaults to current MPU state).
         non_persistent_ckpt: If True, saves as a non-persistent checkpoint.
         train_data_iterator: The training data iterator (for saving state if supported).
         preprocess_common_state_dict_fn: Optional function to preprocess the common state dict
@@ -506,32 +445,34 @@ def save_checkpoint(
     # Only rank zero of the data parallel writes to the disk.
     model = unwrap_model(model)
 
-    # Handle non_persistent_ckpt flag.
-    ckpt_type = CheckpointType.GLOBAL
+    # Determine checkpoint type and save directory
     save_dir = ckpt_cfg.save
-    if non_persistent_ckpt:
-        if ckpt_cfg.non_persistent_ckpt_type == "global":
-            ckpt_type = CheckpointType.GLOBAL
-            save_dir = (
-                ckpt_cfg.non_persistent_global_ckpt_dir
-                if ckpt_cfg.non_persistent_global_ckpt_dir
-                else os.path.join(save_dir, _NON_PERSISTENT_CKPT_SUBDIR)
-            )
-            # TODO Can we ensure the previous checkpoint is saved? We don't want to allow two saves in parallel.
-            cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=1, do_async=ckpt_cfg.async_save)
-        elif ckpt_cfg.non_persistent_ckpt_type == "local":
-            ckpt_type = CheckpointType.LOCAL
-            save_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
-        else:
-            assert False, (
-                f"Please use local or global non-persistent checkpoints(got: {ckpt_cfg.non_persistent_ckpt_type})"
-            )
+    if non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "local":
+        ckpt_type = CheckpointType.LOCAL
+        save_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
+    elif non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "global":
+        ckpt_type = CheckpointType.GLOBAL
+        save_dir = (
+            ckpt_cfg.non_persistent_global_ckpt_dir
+            if ckpt_cfg.non_persistent_global_ckpt_dir
+            else os.path.join(save_dir, _NON_PERSISTENT_CKPT_SUBDIR)
+        )
+        # TODO Can we ensure the previous checkpoint is saved? We don't want to allow two saves in parallel.
+        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=1, do_async=ckpt_cfg.async_save)
+    elif non_persistent_ckpt:
+        # Invalid non_persistent_ckpt_type value
+        raise ValueError(
+            f"Invalid non_persistent_ckpt_type: {ckpt_cfg.non_persistent_ckpt_type}. Must be 'local' or 'global'."
+        )
+    else:
+        # Regular persistent checkpoint - always GLOBAL
+        ckpt_type = CheckpointType.GLOBAL
 
-    ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch" # torch for local
+    ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch"  # torch for local
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
 
     # Collect rng state across data parallel ranks.
-    rng_state = get_rng_state(data_parallel_random_init=cfg.rng_config.data_parallel_random_init)
+    rng_state = get_rng_state(data_parallel_random_init=cfg.rng.data_parallel_random_init)
 
     # Collect rerun state across all ranks
     rerun_state_machine = get_rerun_state_machine()
@@ -546,29 +487,6 @@ def save_checkpoint(
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
     maybe_save_dataloader_state(train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None))
 
-    # Save distributed optimizer's custom parameter state.
-    if (
-        cfg.optimizer.use_distributed_optimizer
-        and ckpt_cfg.save_optim
-        and optimizer is not None
-        # and ckpt_type == CheckpointType.LEGACY # This condition is no longer needed
-    ):
-        # Legacy distributed optimizer saving path might need re-evaluation or removal
-        # if LEGACY checkpoints are fully deprecated.
-        # For now, assuming this path might still be triggered if not using GLOBAL/LOCAL explicitly
-        # but this logic seems tied to LEGACY. If LEGACY is truly gone, this block might be dead code
-        # or needs to be adapted for how distributed optimizer is saved with GLOBAL/LOCAL non-persistent.
-        # However, the original `if ckpt_type == CheckpointType.LEGACY` was there, implying this was for legacy.
-        # Given LEGACY is removed, this block effectively becomes unreachable if ckpt_type is always GLOBAL/LOCAL.
-        # We will assume for now that if this path *was* for legacy, it's no longer applicable.
-        # If it was a general distributed optimizer save not tied to legacy format, the outer if might be enough.
-        # Let's comment out the specific legacy-related part for now.
-        # optim_checkpoint_name = get_distributed_optimizer_checkpoint_name(checkpoint_name)
-        # ensure_directory_exists(optim_checkpoint_name)
-        # if not getattr(optimizer, "is_stub_optimizer", False):
-        #     optimizer.save_parameter_state(optim_checkpoint_name)
-        pass # Placeholder, as the original block was for LEGACY
-
     async_save_request = None
     if ckpt_cfg.async_save:
         if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format != "torch_dist":
@@ -579,9 +497,9 @@ def save_checkpoint(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     # Collect cfg, model, RNG.
-    if (not torch.distributed.is_initialized() or mpu.get_expert_data_parallel_rank() == 0):
+    if not torch.distributed.is_initialized() or mpu.get_expert_data_parallel_rank() == 0:
         optim_sd_kwargs = {}
-        if cfg.optimizer_config.use_distributed_optimizer:
+        if cfg.optimizer.use_distributed_optimizer:
             optim_sd_kwargs["sharding_type"] = (
                 "fully_sharded_model_space" if ckpt_cfg.fully_parallel_save else "dp_zero_gather_scatter"
             )
@@ -647,7 +565,7 @@ def save_checkpoint(
             if has_nvidia_modelopt:
                 if ckpt_type == CheckpointType.LOCAL:
                     print_rank_0("WARNING: Local checkpointing does not support nvidia_modelopt.")
-                else: # Implies GLOBAL
+                else:  # GLOBAL checkpoint type
                     save_modelopt_state(model, state_dict)
 
             end_ckpt = time()
@@ -655,6 +573,7 @@ def save_checkpoint(
             if ckpt_type == CheckpointType.LOCAL:
                 try:
                     from megatron.core.dist_checkpointing.tensor_aware_state_dict import MCoreTensorAwareStateDict
+
                     algo = ckpt_cfg.non_persistent_local_ckpt_algo
                     cached_metadata = None
                     if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
@@ -672,12 +591,6 @@ def save_checkpoint(
                 except Exception as e:
                     print_rank_0(f"Error saving local checkpoint: {e}")
                     async_save_request = None
-            else:
-                # This path should now only be for GLOBAL if LEGACY is removed.
-                assert ckpt_type == CheckpointType.GLOBAL, "This path was for LEGACY, which is removed. GLOBAL type should be handled above."
-                # ensure_directory_exists(checkpoint_name) # checkpoint_name for GLOBAL is a directory
-                # torch.save(state_dict, checkpoint_name) # GLOBAL uses dist_checkpointing.save
-                pass # Placeholder as this path should not be hit for GLOBAL handled above.
 
     start_misc = time()
     if ckpt_type != CheckpointType.LOCAL:
@@ -909,7 +822,7 @@ def load_checkpoint(
 
     Handles loading model state, optimizer state, scheduler state, RNG state,
     and other metadata based on the configuration and checkpoint type.
-    Supports loading legacy, global distributed, and local non-persistent checkpoints.
+    Supports loading global distributed and local non-persistent checkpoints.
 
     Args:
         state: The GlobalState object.
@@ -926,7 +839,7 @@ def load_checkpoint(
         - state_dict: The loaded state dictionary (or None if skipping).
         - checkpoint_name: The path of the loaded checkpoint.
         - release: Boolean indicating if it was a release checkpoint.
-        - ckpt_type: The type of checkpoint loaded (LEGACY, LOCAL, GLOBAL, or None).
+        - ckpt_type: The type of checkpoint loaded (LOCAL, GLOBAL, or None).
     """
     cfg = state.cfg
     load_dir = cfg.checkpoint.load
@@ -990,7 +903,7 @@ def load_checkpoint(
                 and run_config["checkpoint_config"]["save_rng"]
             ):
                 # we can load the rng state
-                gen_sd_rng_state = get_rng_state(data_parallel_random_init=cfg.rng_config.data_parallel_random_init)
+                gen_sd_rng_state = get_rng_state(data_parallel_random_init=cfg.rng.data_parallel_random_init)
             else:
                 gen_sd_rng_state = None
                 if ckpt_tp_pp != run_tp_pp:
@@ -1074,7 +987,6 @@ def load_checkpoint(
                     gen_sd_optim,
                     gen_sd_opt_param_scheduler,
                     gen_sd_rng_state,
-                    iteration=iteration,
                     optim_sd_kwargs=optim_sd_kwargs,
                     rerun_state=gen_sd_rerun_state,
                 )
@@ -1143,7 +1055,7 @@ def load_checkpoint(
             #     iteration, release = read_train_state(tracker_filename)
             #     model_checkpoint_name_dir = get_checkpoint_name(load_dir, iteration, release)
             #     # optim_checkpoint_name would need to be a file within model_checkpoint_name_dir
-            #     # optim_checkpoint_name = get_distributed_optimizer_checkpoint_name(os.path.join(model_checkpoint_name_dir, "dummy_filename_for_dist_opt.pt")) 
+            #     # optim_checkpoint_name = get_distributed_optimizer_checkpoint_name(os.path.join(model_checkpoint_name_dir, "dummy_filename_for_dist_opt.pt"))
             #     # optimizer.load_parameter_state(
             #     #     optim_checkpoint_name,
             #     #     update_legacy_format=cfg.checkpoint_config.ckpt_convert_update_legacy_dist_opt_format,
@@ -1151,7 +1063,7 @@ def load_checkpoint(
 
             # Load scheduler.
             if opt_param_scheduler is not None:
-                if "lr_scheduler" in state_dict:  # backward compatbility
+                if "lr_scheduler" in state_dict:  # backward compatibility
                     opt_param_scheduler.load_state_dict(state_dict["lr_scheduler"])
                 else:
                     opt_param_scheduler.load_state_dict(state_dict["opt_param_scheduler"])
@@ -1192,7 +1104,7 @@ def load_checkpoint(
                 if not rng_state["rng_tracker_states"]:
                     raise KeyError
                 tensor_parallel.get_cuda_rng_tracker().set_states(rng_state["rng_tracker_states"])
-            else:  # backward compatability
+            else:  # backward compatibility
                 random.setstate(state_dict["random_rng_state"])
                 np.random.set_state(state_dict["np_rng_state"])
                 torch.set_rng_state(state_dict["torch_rng_state"])
@@ -1456,7 +1368,7 @@ def _load_global_dist_base_checkpoint(
             "but neither use-dist-ckpt nor auto-detect-ckpt-format is set."
         )
 
-    checkpoint_name = get_checkpoint_name(load_dir, iteration, release, return_base_dir=True)
+    checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
     if cfg.checkpoint.fully_parallel_load:
         load_strategy = FullyParallelLoadStrategyWrapper(
@@ -1537,10 +1449,8 @@ def _load_base_checkpoint(
             load_dir, cfg, rank0, sharded_state_dict, iteration, release, checkpointing_context=checkpointing_context
         )
     else:
-        # This path implies a legacy, non-distributed checkpoint. Since LEGACY type is removed,
-        # this path should ideally not be taken. If all checkpoints are now distributed,
-        # this block is dead code.
-        # For now, raising an error as non-distributed checkpoints are no longer supported by this logic.
+        # This path implies a non-distributed checkpoint, which is no longer supported.
+        # All checkpoints should now be distributed (either GLOBAL or LOCAL types).
         raise RuntimeError(
-            "Loading non-distributed (legacy) checkpoints is no longer supported after CheckpointType.LEGACY removal."
+            "Loading non-distributed checkpoints is no longer supported. Please use distributed checkpointing formats."
         )
