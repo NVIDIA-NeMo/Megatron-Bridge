@@ -23,6 +23,7 @@ from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatas
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
+from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config
 from megatron.hub.utils.common_utils import get_world_size_safe
@@ -198,7 +199,7 @@ class FinetuningDatasetConfig(DataloaderConfig):
     seed: int = 1234
     memmap_workers: int = 1
     max_train_samples: Optional[int] = None
-    packed_sequence_specs: Optional[dict] = None
+    packed_sequence_specs: Optional[PackedSequenceSpecs] = None
     dataset_kwargs: Optional[dict[str, Any]] = None
     do_validation: bool = True
     do_test: bool = True

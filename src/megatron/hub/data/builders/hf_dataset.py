@@ -25,6 +25,7 @@ from datasets import Dataset, DatasetDict, load_dataset
 from tqdm import tqdm
 
 from megatron.hub.data.builders.finetuning_dataset import FinetuningDatasetBuilder
+from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.data.datasets.sft import get_dataset_root
 from megatron.hub.tokenizers.tokenizer import MegatronTokenizer
 from megatron.hub.training.config import FinetuningDatasetConfig
@@ -233,7 +234,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         seed: int = 1234,
         memmap_workers: int = 1,
         max_train_samples: Optional[int] = None,
-        packed_sequence_specs: Optional[dict[str, Any]] = None,
+        packed_sequence_specs: Optional[PackedSequenceSpecs] = None,
         download_mode: Optional[str] = None,
         val_proportion: Optional[float] = 0.05,
         split_val_from_train: bool = True,
@@ -260,7 +261,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             seed: Random seed.
             memmap_workers: Number of workers for memmapping.
             max_train_samples: Optional maximum number of training samples.
-            packed_sequence_specs: Optional specs for packed sequence datasets.
+            packed_sequence_specs: Optional PackedSequenceSpecs for packed sequence datasets.
             download_mode: Download mode for `load_dataset`.
             val_proportion: Proportion for validation split.
             split_val_from_train: Whether to split validation from train set.
