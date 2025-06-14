@@ -7,10 +7,13 @@
   * Any contribution which contains commits that are not Signed-Off will not be accepted.
 
 * To sign off on a commit you simply use the `--signoff` (or `-s`) option when committing your changes:
+
   ```bash
-  $ git commit -s -m "Add cool feature."
+  git commit -s -m "Add cool feature."
   ```
+
   This will append the following to your commit message:
+
   ```
   Signed-off-by: Your Name <your@email.com>
   ```
@@ -53,3 +56,36 @@
       maintained indefinitely and may be redistributed consistent with
       this project or the open source license(s) involved.
   ```
+
+## Setting Up
+
+### Development Container
+
+1. **Build and run the Docker container**:
+
+```bash
+docker build -f docker/Dockerfile.ci -t nemo-export-deploy .
+```
+
+```bash
+docker run --rm -it --entrypoint bash --runtime nvidia --gpus all nemo-export-deploy
+```
+
+### Development Dependencies
+
+We use [uv](https://docs.astral.sh/uv/) for managing dependencies.
+
+New required dependencies can be added by `uv add $DEPENDENCY`.
+
+New optional dependencies can be added by `uv add --optional --extra $EXTRA $DEPENDENCY`.
+
+`EXTRA` refers to the subgroup of extra-dependencies to which you're adding the new dependency.
+Example: For adding a TRT-LLM specific dependency, run `uv add --optional --extra trtllm $DEPENDENCY`.
+
+Adding a new dependency will update UV's lock-file. Please check this into your branch:
+
+```bash
+git add uv.lock pyproject.toml
+git commit -m "build: Adding dependencies"
+git push
+```
