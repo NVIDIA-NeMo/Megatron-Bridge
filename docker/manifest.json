@@ -6,7 +6,7 @@
         },
         "export-deploy": {
             "repo": "https://github.com/NVIDIA-NeMo/NeMo-Export-Deploy.git",
-            "ref": "ko3n1g/build/update-lock-file"
+            "ref": "e2455270fc8d5ddfabd4dcf1e4e8b68160bc9107"
         }
     }
 }
