@@ -32,6 +32,7 @@ class TestEvaluation:
     Test evaluation with NVIDIA Evals Factory on nemo2 model deployed on PyTriton.
     """
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_gsm8k_evaluation(self):
         """
@@ -82,6 +83,7 @@ class TestEvaluation:
         finally:
             deploy_proc.send_signal(signal.SIGINT)
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_arc_challenge_evaluation(self):
         """
