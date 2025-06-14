@@ -1,6 +1,7 @@
 # Megatron Hub: Training Recipes for Megatron-based LLM and VLM models
 
-## Installation 
+
+## Installation
 
 ### Pip Installation
 To install with pip, use the following command:
