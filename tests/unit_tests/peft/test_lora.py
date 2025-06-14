@@ -295,13 +295,30 @@ class TestLoRA:
 
         lora = LoRA(target_modules=["te_linear"])
 
-        # Mock the TELinearAdapter to avoid TE dependencies
-        with patch("megatron.hub.peft.lora.TELinearAdapter") as mock_te_adapter:
-            mock_te_adapter.return_value = te_linear_instance
+        # Create a mock class for TELinearAdapter to works with the isinstance() check
+        class MockTELinearAdapter(nn.Module):
+            def __init__(self, module, **kwargs):
+                super().__init__()
+                self.module = module
 
+        # Import the module to patch the specific import
+        from megatron.hub.peft import lora as lora_module
+
+        # Store the original TELinearAdapter
+        original_te_adapter = lora_module.TELinearAdapter
+
+        # Replace with our mock class
+        lora_module.TELinearAdapter = MockTELinearAdapter
+
+        try:
             # Should create TELinearAdapter
-            _ = lora(model, training=True)
-            mock_te_adapter.assert_called_once()
+            result = lora(model, training=True)
+
+            # Verify that te_linear was transformed to our mock adapter
+            assert isinstance(result.te_linear, MockTELinearAdapter)
+        finally:
+            # Restore the original TELinearAdapter
+            lora_module.TELinearAdapter = original_te_adapter
 
     def test_lora_list_model_support(self):
         """Test LoRA support for list of model chunks (pipeline parallelism)."""
