@@ -64,11 +64,11 @@
 1. **Build and run the Docker container**:
 
 ```bash
-docker build -f docker/Dockerfile.ci -t nemo-export-deploy .
+docker build -f docker/Dockerfile.ci -t megatron-hub .
 ```
 
 ```bash
-docker run --rm -it --entrypoint bash --runtime nvidia --gpus all nemo-export-deploy
+docker run --rm -it --entrypoint bash --runtime nvidia --gpus all megatron-hub
 ```
 
 ### Development Dependencies
