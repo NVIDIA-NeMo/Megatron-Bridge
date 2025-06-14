@@ -12,18 +12,22 @@ while [[ $# -gt 0 ]]; do
         EXPORT_DEPLOY_REF="$2"
         shift 2
         ;;
+    --nemo-ref)
+        NEMO_REF="$2"
+        shift 2
+        ;;
     *)
         echo "Unknown option: $1"
-        echo "Usage: $0 --megatron-lm-ref MCORE_REF --export-deploy-ref EXPORT_DEPLOY_REF"
+        echo "Usage: $0 --megatron-lm-ref MCORE_REF --export-deploy-ref EXPORT_DEPLOY_REF --nemo-ref NEMO_REF"
         exit 1
         ;;
     esac
 done
 
 # Check if required arguments are provided
-if [ -z "$MCORE_REF" ] || [ -z "$EXPORT_DEPLOY_REF" ]; then
-    echo "Error: --megatron-lm-ref and --export-deploy-ref are required"
-    echo "Usage: $0 --megatron-lm-ref MCORE_REF --export-deploy-ref EXPORT_DEPLOY_REF"
+if [ -z "$MCORE_REF" ] || [ -z "$EXPORT_DEPLOY_REF" ] || [ -z "$NEMO_REF" ]; then
+    echo "Error: --megatron-lm-ref and --export-deploy-ref and --nemo-ref are required"
+    echo "Usage: $0 --megatron-lm-ref MCORE_REF --export-deploy-ref EXPORT_DEPLOY_REF --nemo-ref NEMO_REF"
     exit 1
 fi
 
@@ -31,6 +35,7 @@ fi
 # They collide on nvidia-pytriton (export-deploy) and torchx (nemo-run)
 # via urllib3.
 uv pip install --no-cache-dir --upgrade nemo_run
+uv pip install --no-cache-dir --upgrade nemo-toolkit[automodel,common-only,nlp-only,eval,multimodal-only]@git+https://github.com/NVIDIA/NeMo.git@${NEMO_REF}
 
 # megatron-core and export-deploy are dependencies, but for development
 # we override with latest VCS commits
