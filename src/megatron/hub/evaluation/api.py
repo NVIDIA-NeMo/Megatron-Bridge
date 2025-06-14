@@ -29,11 +29,10 @@ logger = logging.getLogger(__name__)
 
 def deploy(
     nemo_checkpoint: Optional[AnyPath] = None,
-    triton_model_name: str = "triton_model",
-    triton_model_version: Optional[int] = 1,
-    triton_http_port: int = 8000,
-    triton_grpc_port: int = 8001,
-    triton_http_address: str = "0.0.0.0",
+    serving_backend: str = "pytriton",
+    model_name: str = "megatron_model",
+    server_port: int = 8000,
+    server_address: str = "0.0.0.0",
     start_fastapi_server: bool = True,
     fastapi_http_address: str = "0.0.0.0",
     fastapi_port: int = 8080,
@@ -46,128 +45,151 @@ def deploy(
     max_input_len: int = 4096,
     max_batch_size: int = 8,
     enable_flash_decode: bool = True,
+    enable_cuda_graphs: bool = True,
+    # Ray deployment specific args
+    num_replicas: Optional[int] = None,
+    num_cpus_per_replica: Optional[int] = None,
+    include_dashboard: bool = True,
+    cuda_visible_devices: str = "",
     legacy_ckpt: bool = False,
 ):
     """
-    Deploys nemo model on a PyTriton server "in-framework" to be used as OAI API compatible server for evaluations with
-    NVIDIA Evals Factory (https://pypi.org/project/nvidia-lm-eval/).
+    Deploys nemo model on either PyTriton server or Ray Serve.
 
     Args:
         nemo_checkpoint (Path): Path for nemo checkpoint.
-        triton_model_name (str): Name for the model that gets deployed on PyTriton. Please ensure that the same model
-            name is passed to the evalute method for the model to be accessible while sending evalution requests.
-            Default: 'triton_model'.
-        triton_model_version (Optional[int]): Version for the triton model. Default: 1.
-        triton_http_port (int): HTTP port for the PyTriton server. Default: 8000.
-        triton_grpc_port (int): gRPC Port for the PyTriton server. Default: 8001.
-        triton_http_address (str): HTTP address for the PyTriton server. Default:  "0.0.0.0".
-        triton_model_repository (Path): Folder for the trt-llm conversion, trt-llm engine gets saved in this specified
-            path. If None, saves it in /tmp dir. Default: None.
-        start_fastapi_server (bool): Starts FastAPI server which acts as a proxy in between to expose the
-            v1/completions and v1/chat/completions OpenAI (OAI) compatible endpoints as PyTriton does not expose a
-            standard HTTP/REST API. Only supported for "in-framework" deployment and not with "trtllm" backend.
-            Default: True.
-        fastapi_http_address (str): HTTP address for FastAPI interface/server.  Default: "0.0.0.0". OAI endpoints via
-            FastAPI interface are only supported for "in-framework" backend.
-        fastapi_port (int): Port for FastAPI interface/server. Applicable only for "in-framework" backend.
-            Default: 8080.
-        num_gpus (int): Number of GPUs per node for export to trtllm and deploy. Default: 1.
+        serving_backend (str): Backend to use for serving ("pytriton" or "ray"). Default: "pytriton".
+        model_name (str): Name for the model that gets deployed on PyTriton or Ray.
+        server_port (int): HTTP port for the PyTriton or Ray server. Default: 8000.
+        server_address (str): HTTP address for the PyTriton or Ray server. Default: "0.0.0.0".
+        start_fastapi_server (bool): Starts FastAPI server which acts as a proxy. Default: True.
+            Only applicable for PyTriton backend.
+        fastapi_http_address (str): HTTP address for FastAPI interface/server. Default: "0.0.0.0".
+        fastapi_port (int): Port for FastAPI interface/server. Default: 8080.
+        num_gpus (int): Number of GPUs per node. Default: 1.
+        num_nodes (int): Number of nodes. Default: 1.
         tensor_parallelism_size (int): Tensor parallelism size. Default: 1.
         pipeline_parallelism_size (int): Pipeline parallelism size. Default: 1.
         context_parallel_size (int): Context parallelism size. Default: 1.
         expert_model_parallel_size (int): Expert parallelism size. Default: 1.
-        dtype (str): dtype of the TensorRT-LLM model. Autodetected from the model weights dtype by default.
         max_input_len (int): Max input length of the model. Default: 4096.
         max_batch_size (int): Max batch size of the model. Default: 8.
-        openai_format_response (bool): Return the response from PyTriton server in OpenAI compatible format.
-            Needs to be True while running evaluation. Default: True.
-        enable_flash_decode (bool): If True runs in-framework deployment with flash decode enabled (not supported for
-            the trtllm backend).
-        legacy_ckpt (bool): Indicates whether the checkpoint is in the legacy format. Required to load nemo checkpoints
-            saved with TE < 1.14. Default: False.
+        enable_flash_decode (bool): If True runs inferencewith flash decode enabled. Default: True.
+        enable_cuda_graphs (bool): Whether to enable CUDA graphs for inference. Default: True.
+        legacy_ckpt (bool): Indicates whether the checkpoint is in the legacy format. Default: False.
+        ##### Ray deployment specific args #####
+        num_replicas (int): Number of model replicas for Ray deployment. Default: 1. Only applicable for Ray backend.
+        num_cpus_per_replica (int): Number of CPUs per replica for Ray deployment. Default: 8
+        include_dashboard (bool): Whether to include Ray dashboard. Default: True.
+        cuda_visible_devices (list): Comma-separated list of CUDA visible devices. Default: [0,1].
+        legacy_ckpt (bool): Indicates whether the checkpoint is in legacy format. Default: False.
     """
-    import os
+    if serving_backend == "ray":
+        if num_replicas is None:
+            raise ValueError("num_replicas must be specified when using Ray backend")
 
-    import uvicorn
-    from nemo_deploy import DeployPyTriton
+        from megatron.hub.evaluation.utils.ray_deploy import deploy_with_ray
 
-    assert start_fastapi_server is True, (
-        "in-framework deployment exposes OAI API endpoints v1/completions and \
-    v1/chat/completions hence needs fastAPI interface to expose these endpoints to PyTriton. Please set \
-    start_fastapi_server to True"
-    )
-    if triton_http_port == fastapi_port:
-        raise ValueError("FastAPI port and Triton server port cannot use the same port. Please change them")
-    # Store triton ip, port relevant for FastAPI as env vars to be accessible by fastapi_interface_to_pytriton.py
-    os.environ["TRITON_HTTP_ADDRESS"] = triton_http_address
-    os.environ["TRITON_PORT"] = str(triton_http_port)
+        deploy_with_ray(
+            nemo_checkpoint=nemo_checkpoint,
+            num_gpus=num_gpus,
+            num_nodes=num_nodes,
+            tensor_model_parallel_size=tensor_parallelism_size,
+            pipeline_model_parallel_size=pipeline_parallelism_size,
+            context_parallel_size=context_parallel_size,
+            expert_model_parallel_size=expert_model_parallel_size,
+            num_replicas=num_replicas,
+            num_cpus_per_replica=num_cpus_per_replica,
+            host=server_address,
+            port=server_port,
+            model_id=model_name,
+            enable_cuda_graphs=enable_cuda_graphs,
+            enable_flash_decode=enable_flash_decode,
+            legacy_ckpt=legacy_ckpt,
+            include_dashboard=include_dashboard,
+            cuda_visible_devices=cuda_visible_devices,
+        )
+    else:  # pytriton backend
+        import os
+        import uvicorn
+        from nemo_deploy import DeployPyTriton
 
-    try:
-        from nemo_deploy.nlp.megatronllm_deployable import MegatronLLMDeployableNemo2
-    except Exception as e:
-        raise ValueError(
-            f"Unable to import MegatronLLMDeployable, due to: {type(e).__name__}: {e} cannot run "
-            f"evaluation with in-framework deployment"
+        assert start_fastapi_server is True, (
+            "in-framework deployment exposes OAI API endpoints v1/completions and \
+        v1/chat/completions hence needs fastAPI interface to expose these endpoints to PyTriton. Please set \
+        start_fastapi_server to True"
+        )
+        if server_port == fastapi_port:
+            raise ValueError("FastAPI port and Triton server port cannot use the same port. Please change them")
+
+        # Store triton ip, port relevant for FastAPI as env vars
+        os.environ["TRITON_HTTP_ADDRESS"] = server_address
+        os.environ["TRITON_PORT"] = str(server_port)
+
+        try:
+            from nemo_deploy.nlp.megatronllm_deployable import MegatronLLMDeployableNemo2
+        except Exception as e:
+            raise ValueError(
+                f"Unable to import MegatronLLMDeployable, due to: {type(e).__name__}: {e} cannot run "
+                f"evaluation with in-framework deployment"
+            )
+
+        triton_deployable = MegatronLLMDeployableNemo2(
+            nemo_checkpoint_filepath=nemo_checkpoint,
+            num_devices=num_gpus,
+            num_nodes=num_nodes,
+            tensor_model_parallel_size=tensor_parallelism_size,
+            pipeline_model_parallel_size=pipeline_parallelism_size,
+            context_parallel_size=context_parallel_size,
+            expert_model_parallel_size=expert_model_parallel_size,
+            inference_max_seq_length=max_input_len,
+            enable_flash_decode=enable_flash_decode,
+            max_batch_size=max_batch_size,
+            legacy_ckpt=legacy_ckpt,
         )
 
-    triton_deployable = MegatronLLMDeployableNemo2(
-        nemo_checkpoint_filepath=nemo_checkpoint,
-        num_devices=num_gpus,
-        num_nodes=num_nodes,
-        tensor_model_parallel_size=tensor_parallelism_size,
-        pipeline_model_parallel_size=pipeline_parallelism_size,
-        context_parallel_size=context_parallel_size,
-        expert_model_parallel_size=expert_model_parallel_size,
-        inference_max_seq_length=max_input_len,
-        enable_flash_decode=enable_flash_decode,
-        max_batch_size=max_batch_size,
-        legacy_ckpt=legacy_ckpt,
-    )
+        if torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                try:
+                    nm = DeployPyTriton(
+                        model=triton_deployable,
+                        triton_model_name=model_name,
+                        max_batch_size=max_batch_size,
+                        http_port=server_port,
+                        address=server_address,
+                    )
 
-    if torch.distributed.is_initialized():
-        if torch.distributed.get_rank() == 0:
-            try:
-                nm = DeployPyTriton(
-                    model=triton_deployable,
-                    triton_model_name=triton_model_name,
-                    triton_model_version=triton_model_version,
-                    max_batch_size=max_batch_size,
-                    http_port=triton_http_port,
-                    grpc_port=triton_grpc_port,
-                    address=triton_http_address,
-                )
+                    logger.info("Triton deploy function will be called.")
+                    nm.deploy()
+                    nm.run()
+                except Exception as error:
+                    logger.error("Error message has occurred during deploy function. Error message: " + str(error))
+                    return
 
-                logger.info("Triton deploy function will be called.")
-                nm.deploy()
-                nm.run()
-            except Exception as error:
-                logger.error("Error message has occurred during deploy function. Error message: " + str(error))
-                return
+                try:
+                    if start_fastapi_server:
+                        try:
+                            logger.info("REST service will be started.")
+                            uvicorn.run(
+                                "nemo_deploy.service.fastapi_interface_to_pytriton:app",
+                                host=fastapi_http_address,
+                                port=fastapi_port,
+                                reload=True,
+                            )
+                        except Exception as error:
+                            logger.error(
+                                "Error message has occurred during REST service start. Error message: " + str(error)
+                            )
+                    logger.info("Model serving on Triton will be started.")
+                    nm.serve()
+                except Exception as error:
+                    logger.error("Error message has occurred during deploy function. Error message: " + str(error))
+                    return
 
-            try:
-                if start_fastapi_server:
-                    try:
-                        logger.info("REST service will be started.")
-                        uvicorn.run(
-                            "nemo_deploy.service.fastapi_interface_to_pytriton:app",
-                            host=fastapi_http_address,
-                            port=fastapi_port,
-                            reload=True,
-                        )
-                    except Exception as error:
-                        logger.error(
-                            "Error message has occurred during REST service start. Error message: " + str(error)
-                        )
-                logger.info("Model serving on Triton will be started.")
-                nm.serve()
-            except Exception as error:
-                logger.error("Error message has occurred during deploy function. Error message: " + str(error))
-                return
-
-            logger.info("Model serving will be stopped.")
-            nm.stop()
-        elif torch.distributed.get_rank() > 0:
-            triton_deployable.generate_other_ranks()
+                logger.info("Model serving will be stopped.")
+                nm.stop()
+            elif torch.distributed.get_rank() > 0:
+                triton_deployable.generate_other_ranks()
 
 
 def evaluate(
