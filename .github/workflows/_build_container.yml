@@ -44,6 +44,7 @@ jobs:
       cache-from: ${{ steps.cache-from.outputs.LAST_PRS }}
       mcore-ref: ${{ steps.manifest-json.outputs.MCORE_REF }}
       export-deploy-ref: ${{ steps.manifest-json.outputs.EXPORT_DEPLOY_REF }}
+      nemo-ref: ${{ steps.manifest-json.outputs.NEMO_REF }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -77,6 +78,8 @@ jobs:
           echo "MCORE_REF=$MCORE_REF" | tee -a $GITHUB_OUTPUT
           EXPORT_DEPLOY_REF=$(cat docker/manifest.json | jq -r '."vcs-dependencies"."export-deploy".ref')
           echo "EXPORT_DEPLOY_REF=$EXPORT_DEPLOY_REF" | tee -a $GITHUB_OUTPUT
+          NEMO_REF=$(cat docker/manifest.json | jq -r '."vcs-dependencies"."nemo".ref')
+          echo "NEMO_REF=$NEMO_REF" | tee -a $GITHUB_OUTPUT
 
   build:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@v0.37.0
@@ -92,6 +95,7 @@ jobs:
       build-args: |
         MCORE_REF=${{ needs.pre-flight.outputs.mcore-ref }}
         EXPORT_DEPLOY_REF=${{ needs.pre-flight.outputs.export-deploy-ref }}
+        NEMO_REF=${{ needs.pre-flight.outputs.nemo-ref }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

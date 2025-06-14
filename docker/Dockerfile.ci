@@ -38,6 +38,7 @@ COPY uv.lock /workspace/
 COPY docker/common/install_overrides.sh /workspace/docker/common/install_overrides.sh
 ARG MCORE_REF=ad36348f397451dbc4a4b4adb5e40055c89fec2f
 ARG EXPORT_DEPLOY_REF=ko3n1g/build/update-lock-file
+ARG NEMO_REF=5e63ca3c1631bb156187705f9c4cf643a67f9c05
 ARG INSTALL_EVAL=false
 RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
     PAT=$(cat /run/secrets/GH_TOKEN)
@@ -48,7 +49,8 @@ RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
 
     bash /workspace/docker/common/install_overrides.sh \
         --megatron-lm-ref ${MCORE_REF} \
-        --export-deploy-ref ${EXPORT_DEPLOY_REF}
+        --export-deploy-ref ${EXPORT_DEPLOY_REF} \
+        --nemo-ref ${NEMO_REF}
 
     rm ~/.netrc
 EOF
