@@ -169,6 +169,7 @@ def setup(
     )
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
+
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
@@ -186,11 +187,8 @@ def setup(
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
     # Load checkpoint if applicable
-    if (cfg.checkpoint.load is not None or cfg.checkpoint.pretrained_checkpoint is not None) and (
-        checkpoint_exists(cfg.checkpoint.load) or checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
-    ):
+    if (cfg.checkpoint.load is not None) and checkpoint_exists(cfg.checkpoint.load):
         timers("load-checkpoint", log_level=0).start(barrier=True)
-
         load_checkpoint(
             state,
             model,

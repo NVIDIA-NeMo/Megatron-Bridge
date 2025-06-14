@@ -680,6 +680,7 @@ class ConfigContainer(Container):
     straggler: Optional[StragglerDetectionConfig] = None
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
+    peft: Optional[PEFT] = None
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
