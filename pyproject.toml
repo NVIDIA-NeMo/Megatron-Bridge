@@ -106,7 +106,7 @@ eval = [
     "pytest-httpserver"
 ]
 recipes = [
-    "nemo_run",
+    "nemo-run",
 ]
 
 [dependency-groups]
