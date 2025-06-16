@@ -33,7 +33,6 @@ def deploy(
     model_name: str = "megatron_model",
     server_port: int = 8000,
     server_address: str = "0.0.0.0",
-    start_fastapi_server: bool = True,
     fastapi_http_address: str = "0.0.0.0",
     fastapi_port: int = 8080,
     num_gpus: int = 1,
@@ -62,8 +61,6 @@ def deploy(
         model_name (str): Name for the model that gets deployed on PyTriton or Ray.
         server_port (int): HTTP port for the PyTriton or Ray server. Default: 8000.
         server_address (str): HTTP address for the PyTriton or Ray server. Default: "0.0.0.0".
-        start_fastapi_server (bool): Starts FastAPI server which acts as a proxy. Default: True.
-            Only applicable for PyTriton backend.
         fastapi_http_address (str): HTTP address for FastAPI interface/server. Default: "0.0.0.0".
         fastapi_port (int): Port for FastAPI interface/server. Default: 8080.
         num_gpus (int): Number of GPUs per node. Default: 1.
@@ -114,11 +111,6 @@ def deploy(
         import uvicorn
         from nemo_deploy import DeployPyTriton
 
-        assert start_fastapi_server is True, (
-            "in-framework deployment exposes OAI API endpoints v1/completions and \
-        v1/chat/completions hence needs fastAPI interface to expose these endpoints to PyTriton. Please set \
-        start_fastapi_server to True"
-        )
         if server_port == fastapi_port:
             raise ValueError("FastAPI port and Triton server port cannot use the same port. Please change them")
 
@@ -144,6 +136,7 @@ def deploy(
             expert_model_parallel_size=expert_model_parallel_size,
             inference_max_seq_length=max_input_len,
             enable_flash_decode=enable_flash_decode,
+            enable_cuda_graphs=enable_cuda_graphs,
             max_batch_size=max_batch_size,
             legacy_ckpt=legacy_ckpt,
         )
@@ -167,19 +160,19 @@ def deploy(
                     return
 
                 try:
-                    if start_fastapi_server:
-                        try:
-                            logger.info("REST service will be started.")
-                            uvicorn.run(
-                                "nemo_deploy.service.fastapi_interface_to_pytriton:app",
-                                host=fastapi_http_address,
-                                port=fastapi_port,
-                                reload=True,
-                            )
-                        except Exception as error:
-                            logger.error(
-                                "Error message has occurred during REST service start. Error message: " + str(error)
-                            )
+                    # start fastapi server which acts as a proxy to Pytriton server. Applies to PyTriton backend only.
+                    try:
+                        logger.info("REST service will be started.")
+                        uvicorn.run(
+                            "nemo_deploy.service.fastapi_interface_to_pytriton:app",
+                            host=fastapi_http_address,
+                            port=fastapi_port,
+                            reload=True,
+                        )
+                    except Exception as error:
+                        logger.error(
+                            "Error message has occurred during REST service start. Error message: " + str(error)
+                        )
                     logger.info("Model serving on Triton will be started.")
                     nm.serve()
                 except Exception as error:

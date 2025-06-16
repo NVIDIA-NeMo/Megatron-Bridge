@@ -2,6 +2,7 @@ import logging
 import signal
 import sys
 from typing import Optional
+import multiprocessing
 
 import ray
 from ray.serve import Application
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def get_available_cpus() -> int:
     """Get the number of available CPUs."""
-    return ray.available_resources().get("CPU", 1)
+    return multiprocessing.cpu_count()
 
 def signal_handler(signum, frame, ray_deployer: DeployRay):
     """Handle termination signals."""
