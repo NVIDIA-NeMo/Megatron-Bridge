@@ -32,7 +32,6 @@ class TestEvaluation:
     Test evaluation with NVIDIA Evals Factory on nemo2 model deployed on PyTriton.
     """
 
-    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_gsm8k_evaluation(self):
         """
@@ -45,7 +44,7 @@ class TestEvaluation:
         legacy_ckpt = True
 
         # Set environment variables
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
         os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
         os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
@@ -83,7 +82,6 @@ class TestEvaluation:
         finally:
             deploy_proc.send_signal(signal.SIGINT)
 
-    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_arc_challenge_evaluation(self):
         """
@@ -97,7 +95,7 @@ class TestEvaluation:
         legacy_ckpt = True
 
         # Set environment variables
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
         os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
         os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
