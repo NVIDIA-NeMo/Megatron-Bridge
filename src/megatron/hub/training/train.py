@@ -381,21 +381,6 @@ def train(
             should_toggle_forward_pre_hook,
         )
 
-        if should_exit:
-            # Straggler detected - save checkpoint before exiting
-            print_rank_0("Exiting due to straggler detection. Saving checkpoint...")
-            if config.checkpoint.save is not None:
-                save_checkpoint_and_time(
-                    global_state,
-                    model,
-                    optimizer,
-                    scheduler,
-                    num_floating_point_operations_so_far,
-                    checkpointing_context,
-                    train_data_iterator=train_data_iterator,
-                )
-            break
-
         # Checkpoint and decide whether to exit.
         should_exit = checkpoint_and_decide_exit(
             global_state,
