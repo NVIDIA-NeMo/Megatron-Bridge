@@ -16,9 +16,10 @@ import logging
 import os
 import signal
 import subprocess
+import time
 
 import pytest
-import time
+
 from megatron.hub.evaluation.api import evaluate
 from megatron.hub.evaluation.utils.api import ApiEndpoint, ConfigParams, EvaluationConfig, EvaluationTarget
 from megatron.hub.evaluation.utils.base import wait_for_fastapi_server
