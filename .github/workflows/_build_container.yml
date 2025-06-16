@@ -42,7 +42,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       cache-from: ${{ steps.cache-from.outputs.LAST_PRS }}
-      mcore-ref: ${{ steps.manifest-json.outputs.MCORE_REF }}
       export-deploy-ref: ${{ steps.manifest-json.outputs.EXPORT_DEPLOY_REF }}
     steps:
       - name: Checkout repository
@@ -73,8 +72,6 @@ jobs:
       - name: Parse manifest.json
         id: manifest-json
         run: |
-          MCORE_REF=$(cat docker/manifest.json | jq -r '."vcs-dependencies"."megatron-lm".ref')
-          echo "MCORE_REF=$MCORE_REF" | tee -a $GITHUB_OUTPUT
           EXPORT_DEPLOY_REF=$(cat docker/manifest.json | jq -r '."vcs-dependencies"."export-deploy".ref')
           echo "EXPORT_DEPLOY_REF=$EXPORT_DEPLOY_REF" | tee -a $GITHUB_OUTPUT
 
@@ -90,7 +87,6 @@ jobs:
       runner: ${{ inputs.runner }}
       has-azure-credentials: true
       build-args: |
-        MCORE_REF=${{ needs.pre-flight.outputs.mcore-ref }}
         EXPORT_DEPLOY_REF=${{ needs.pre-flight.outputs.export-deploy-ref }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

@@ -35,21 +35,20 @@ COPY pyproject.toml /workspace/
 COPY src /workspace/src
 COPY README.md /workspace/
 COPY uv.lock /workspace/
-COPY docker/common/install_overrides.sh /workspace/docker/common/install_overrides.sh
+COPY docker/common/install_conflicting_deps.sh /workspace/docker/common/install_conflicting_deps.sh
 ARG MCORE_REF=ad36348f397451dbc4a4b4adb5e40055c89fec2f
 ARG EXPORT_DEPLOY_REF=ko3n1g/build/update-lock-file
+ARG NEMO_REF=5e63ca3c1631bb156187705f9c4cf643a67f9c05
 ARG INSTALL_EVAL=false
 RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
     PAT=$(cat /run/secrets/GH_TOKEN)
     echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
     chmod 600 ~/.netrc 
     
-    uv sync --link-mode copy --locked
+    uv sync --link-mode copy --locked --all-groups
 
-    bash /workspace/docker/common/install_overrides.sh \
-        --megatron-lm-ref ${MCORE_REF} \
-        --export-deploy-ref ${EXPORT_DEPLOY_REF}
-
+    bash /workspace/docker/common/install_conflicting_deps.sh 
+    
     rm ~/.netrc
 EOF
 
