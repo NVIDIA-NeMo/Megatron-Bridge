@@ -20,9 +20,6 @@ def test_deploy_ray():
     num_cpus_per_replica = 8
     cuda_visible_devices = "0"
 
-    # Set environment variables
-    os.environ["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
-
     # Test deployment
     logger.info("Testing ray deployment...")
     deploy(
