@@ -14,7 +14,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, TypeVar, Union
 
 import torch
@@ -50,9 +50,8 @@ class PEFT(ABC):
         adapted_model = peft(base_model, training=True)
     """
 
-    def __post_init__(self) -> None:
-        """Initialize runtime state after dataclass initialization."""
-        self.params_to_save: set[str] = set()
+    # Runtime state that should not be serialized in checkpoints
+    params_to_save: set[str] = field(default_factory=set, init=False, repr=False)
 
     @abstractmethod
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:

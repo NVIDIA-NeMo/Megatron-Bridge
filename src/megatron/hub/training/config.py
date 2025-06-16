@@ -757,3 +757,6 @@ class ConfigContainer(Container):
                 f"For details please visit "
                 f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
             )
+
+        if self.peft is not None:
+            assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"

@@ -20,7 +20,7 @@ from megatron.hub.utils.decorators import experimental_fn
 
 
 @experimental_fn
-def megatron_finetune(
+def finetune(
     config: ConfigContainer,
     forward_step_func: Callable,
 ) -> None:
@@ -36,4 +36,5 @@ def megatron_finetune(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
+    assert config.checkpoint.pretrained_checkpoint is not None, "Finetune requires a pretrained checkpoint"
     return megatron_pretrain(config, forward_step_func)
