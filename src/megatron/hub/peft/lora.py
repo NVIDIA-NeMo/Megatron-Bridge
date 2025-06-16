@@ -71,6 +71,8 @@ class LoRA(PEFT, ModuleMatcher):
         dropout_position (Literal['pre', 'post'], optional): Position for applying dropout.
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
+        lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
+        lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
         lora_dtype (torch.dtype): Parameter data type for LoRA weights. Default None (will use model's dtype).
     """
 
