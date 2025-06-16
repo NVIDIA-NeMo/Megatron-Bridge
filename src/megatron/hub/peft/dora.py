@@ -62,12 +62,6 @@ class DoRA(PEFT, ModuleMatcher):
         >>> dora = DoRA(target_modules=['linear_qkv', 'linear_proj'], dim=32, alpha=64)
         >>> base_model = get_base_model(model_config)
         >>> adapted_model = dora(base_model, training=True)
-
-    References:
-    -----------
-        Shih-Yang Liu, Chien-Yi Wang, Hongxu Yin, Pavlo Molchanov, Yu-Chiang Frank Wang, Kwang-Ting Cheng,
-        Min-Hung Chen (2024). DoRA: Weight-Decomposed Low-Rank Adaptation. arXiv preprint arXiv:2402.09353.
-        https://arxiv.org/abs/2402.09353
     """
 
     target_modules: List[str] = field(
@@ -82,7 +76,6 @@ class DoRA(PEFT, ModuleMatcher):
 
     def __post_init__(self):
         """Initialize attributes from parent classes and validate configuration."""
-        PEFT.__post_init__(self)
         assert self.dropout_position == "pre", (
             "DoRA only supports pre-adapter dropout at this time. Please set DoRA(..., dropout_position='pre')"
         )
