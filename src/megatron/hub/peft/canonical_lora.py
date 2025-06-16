@@ -155,13 +155,6 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         >>>
         >>> # Use the adapted model for training or inference
         >>> # (set up your training loop or inference code here)
-
-    References:
-    -----------
-        Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., & Chen, W. (2021).
-        LoRA: Low-Rank Adaptation of Large Language Models. arXiv preprint arXiv:2106.09685.
-        https://arxiv.org/abs/2106.09685
-
     """
 
     target_modules: List[str] = field(
