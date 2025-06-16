@@ -381,8 +381,6 @@ def train(
             should_toggle_forward_pre_hook,
         )
 
-        # Check NVRx straggler detection
-        should_exit = check_nvrx_straggler_detection(global_state.nvrx_straggler_manager)
         if should_exit:
             # Straggler detected - save checkpoint before exiting
             print_rank_0("Exiting due to straggler detection. Saving checkpoint...")
@@ -909,6 +907,21 @@ def checkpoint_and_decide_exit(
         torch.distributed.barrier()
         barrier_and_log(f"exiting program at iteration {state.train_state.step}")
 
+        return True
+
+    # Exit based on NVRx straggler detection
+    if check_nvrx_straggler_detection(state.nvrx_straggler_manager):
+        if state.cfg.checkpoint.save is not None and not saved_checkpoint:
+            save_checkpoint_and_time(
+                state,
+                model,
+                optimizer,
+                opt_param_scheduler,
+                num_floating_point_operations_so_far,
+                checkpointing_context,
+                train_data_iterator=train_data_iterator,
+            )
+        barrier_and_log("Exiting program due to straggler detection.")
         return True
 
     return False

@@ -136,6 +136,7 @@ class GlobalState:
         self._straggler_timer: Optional[StragglerDetector] = None
         self._async_calls_queue: Optional[AsyncCallsQueue] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
+        self._nvrx_straggler_created: bool = False
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
@@ -274,8 +275,13 @@ class GlobalState:
     @property
     def nvrx_straggler_manager(self) -> Optional[NVRxStragglerDetectionManager]:
         """The NVRx straggler detection manager, if enabled."""
-        if self._nvrx_straggler_manager is None and self.cfg.nvrx_straggler is not None:
+        if (
+            not self._nvrx_straggler_created
+            and self._nvrx_straggler_manager is None
+            and self.cfg.nvrx_straggler is not None
+        ):
             self._nvrx_straggler_manager = NVRxStragglerDetectionManager(self.cfg.nvrx_straggler)
+            self._nvrx_straggler_created = True
         return self._nvrx_straggler_manager
 
     def _set_signal_handler(self) -> None:
