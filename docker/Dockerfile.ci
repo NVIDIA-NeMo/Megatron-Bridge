@@ -36,10 +36,7 @@ COPY src /workspace/src
 COPY README.md /workspace/
 COPY uv.lock /workspace/
 COPY docker/common/install_conflicting_deps.sh /workspace/docker/common/install_conflicting_deps.sh
-ARG MCORE_REF=ad36348f397451dbc4a4b4adb5e40055c89fec2f
 ARG EXPORT_DEPLOY_REF=ko3n1g/build/update-lock-file
-ARG NEMO_REF=5e63ca3c1631bb156187705f9c4cf643a67f9c05
-ARG INSTALL_EVAL=false
 RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
     PAT=$(cat /run/secrets/GH_TOKEN)
     echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
@@ -50,5 +47,15 @@ RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
     bash /workspace/docker/common/install_conflicting_deps.sh --export-deploy-ref $EXPORT_DEPLOY_REF
     
     rm ~/.netrc
+EOF
+
+# Fix for triton 3.3 (part of NGC PyT25.05, presumably until 25.07)
+COPY external/patches/triton-lang_triton_6570_lazy_init.patch /workspace/external/patches/triton-lang_triton_6570_lazy_init.patch
+RUN bash -exu <<"EOF"
+    patch \
+        -p1 \
+        --force \
+        $(python -c "import triton; print(triton.__path__[0])")/runtime/autotuner.py \
+        /workspace/external/patches/triton-lang_triton_6570_lazy_init.patch     
 EOF
 

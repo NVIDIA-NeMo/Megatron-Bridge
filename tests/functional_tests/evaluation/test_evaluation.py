@@ -18,7 +18,7 @@ import signal
 import subprocess
 
 import pytest
-
+import time
 from megatron.hub.evaluation.api import evaluate
 from megatron.hub.evaluation.utils.api import ApiEndpoint, ConfigParams, EvaluationConfig, EvaluationTarget
 from megatron.hub.evaluation.utils.base import wait_for_fastapi_server
@@ -81,6 +81,7 @@ class TestEvaluation:
 
         finally:
             deploy_proc.send_signal(signal.SIGINT)
+            time.sleep(60)  # Wait for the server to shutdown
 
     @pytest.mark.run_only_on("GPU")
     def test_arc_challenge_evaluation(self):
@@ -136,3 +137,4 @@ class TestEvaluation:
 
         finally:
             deploy_proc.send_signal(signal.SIGINT)
+            time.sleep(60)  # Wait for the server to shutdown
