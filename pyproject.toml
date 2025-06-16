@@ -57,13 +57,9 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "accelerate>=1.6.0",
-    "datasets",
     "numpy<2",
     "omegaconf>=2.3.0",
     "packaging",
-    "tensorboard>=2.19.0",
-    "datasets>=3.5.1",
     "megatron-core",
     "numpy<2",
     "omegaconf>=2.3.0", 
@@ -104,8 +100,6 @@ eval = [
     "uvicorn",
     "pytest-httpserver"
 ]
-
-[dependency-groups]
 training = [
     "accelerate>=1.6.0",
     "einops>=0.8.1", 
