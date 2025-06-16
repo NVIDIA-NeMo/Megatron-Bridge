@@ -6,8 +6,8 @@ from typing import Optional
 import ray
 from ray.serve import Application
 
-from megatron.hub.evaluation.utils.deploy_ray import DeployRay
-from megatron.hub.evaluation.utils.megatron_ray_deployable import MegatronRayDeployable
+from nemo_deploy.deploy_ray import DeployRay
+from nemo_deploy.nlp.megatronllm_deployable_ray import MegatronRayDeployable
 
 logger = logging.getLogger(__name__)
 
