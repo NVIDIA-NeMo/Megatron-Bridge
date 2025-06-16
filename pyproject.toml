@@ -105,6 +105,9 @@ eval = [
     "uvicorn",
     "pytest-httpserver"
 ]
+recipes = [
+    "nemo-run",
+]
 
 [dependency-groups]
 docs = [
