@@ -30,9 +30,10 @@ from megatron.core.transformer.module import MegatronModule
 
 from megatron.hub.models.gpt import GPTConfig, torch_dtype_from_mcore_config
 from megatron.hub.models.t5 import T5Config
+from megatron.hub.tokenizers.config import TokenizerConfig
 from megatron.hub.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.hub.training.checkpointing import save_checkpoint
-from megatron.hub.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
+from megatron.hub.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.hub.training.state import GlobalState
 from megatron.hub.utils.instantiate_utils import instantiate
 

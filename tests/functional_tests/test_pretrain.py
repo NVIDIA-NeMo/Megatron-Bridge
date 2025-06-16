@@ -22,6 +22,7 @@ from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.models.llama import Llama32Config1B
 from megatron.hub.models.utils import forward_step
+from megatron.hub.tokenizers.config import TokenizerConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -29,7 +30,6 @@ from megatron.hub.training.config import (
     LoggerConfig,
     RNGConfig,
     SchedulerConfig,
-    TokenizerConfig,
     TrainingConfig,
 )
 from megatron.hub.training.pretrain import megatron_pretrain

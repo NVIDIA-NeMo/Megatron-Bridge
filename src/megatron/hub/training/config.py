@@ -26,6 +26,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config
+from megatron.hub.tokenizers.config import TokenizerConfig
 from megatron.hub.utils.common_utils import get_world_size_safe
 from megatron.hub.utils.config_utils import ConfigContainer as Container
 
@@ -105,56 +106,6 @@ class RerunStateMachineConfig:
     rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "disabled"
     """Use re-run engine to validate results (default) or to emit stats
     on variability of computations due to non-deterministic algorithms."""
-
-
-@dataclass
-class TokenizerConfig:
-    """Configuration settings for the tokenizer."""
-
-    vocab_size: Optional[int] = None
-    """Size of vocab before EOD or padding."""
-
-    vocab_file: Optional[str] = None
-    """Path to the vocab file."""
-
-    merge_file: Optional[str] = None
-    """Path to the BPE merge file."""
-
-    vocab_extra_ids: int = 0
-    """Number of additional vocabulary tokens. They are used for span masking in the T5 model"""
-
-    tokenizer_type: Optional[
-        Literal[
-            "BertWordPieceLowerCase",
-            "BertWordPieceCase",
-            "GPT2BPETokenizer",
-            "SentencePieceTokenizer",
-            "GPTSentencePieceTokenizer",
-            "HuggingFaceTokenizer",
-            "Llama2Tokenizer",
-            "TikTokenizer",
-            "MultimodalTokenizer",
-            "NullTokenizer",
-        ]
-    ] = None
-    """What type of tokenizer to use."""
-
-    tokenizer_model: Optional[str] = None
-    """Sentencepiece tokenizer model."""
-
-    tiktoken_pattern: Optional[str] = None
-    """Which tiktoken pattern to use. Options: [v1, v2]"""
-
-    tiktoken_num_special_tokens: int = 1000
-    """Number of special tokens in tiktoken tokenizer"""
-
-    tiktoken_special_tokens: Optional[list[str]] = None
-    """List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]"""
-
-    tokenizer_prompt_format: Optional[str] = None
-    special_tokens: Optional[list[str]] = None
-    image_tag_type: Optional[str] = None
-    padded_vocab_size: Optional[int] = None
 
 
 @dataclass(kw_only=True)
