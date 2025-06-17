@@ -8,8 +8,8 @@ on:
 
 jobs:
   install-test:
-    runs-on: Python ${{ matrix.python-version }} on ${{ matrix.arch }}
-    name: Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.arch }}
+    name: Python ${{ matrix.python-version }} on ${{ matrix.arch }}
     strategy:
       matrix:
         arch: ["ubuntu-latest", "macos-latest"]
@@ -30,3 +30,22 @@ jobs:
       - name: Install project
         run: |
           pip install ".[eval,recipes]"
+
+  uv-test:
+    runs-on: ${{ matrix.arch }}
+    name: UV on ${{ matrix.arch }}
+    strategy:
+      matrix:
+        arch: ["ubuntu-latest", "macos-latest"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: 0.7.2
+
+      - name: Install dependencies with UV
+        run: |
+          uv sync
