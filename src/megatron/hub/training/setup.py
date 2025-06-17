@@ -176,13 +176,6 @@ def setup(
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
     )
-    _update_model_config_funcs(
-        model,
-        cfg.model,
-        cfg.ddp,
-        optimizer,
-        align_grad_reduce=cfg.dist.align_grad_reduce,
-    )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
@@ -199,6 +192,14 @@ def setup(
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
+
+    _update_model_config_funcs(
+        model,
+        cfg.model,
+        cfg.ddp,
+        optimizer,
+        align_grad_reduce=cfg.dist.align_grad_reduce,
+    )
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)

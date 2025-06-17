@@ -28,7 +28,6 @@ def finetune(
 
     Args:
         config: The main configuration container holding all necessary parameters.
-                Must include a valid `peft` configuration.
         forward_step_func: A callable that performs a single forward and backward
                            step, returning the loss and any computed metrics.
 

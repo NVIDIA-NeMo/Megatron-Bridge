@@ -36,6 +36,12 @@ from megatron.hub.training.finetune import finetune
 from megatron.hub.utils.config_utils import InstantiationMode
 
 
+def print_rank_0(message: str) -> None:
+    """Print message only on rank 0."""
+    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        print(message)
+
+
 class TestLoRAE2E:
     """
     End-to-end LoRA fine-tuning test.
@@ -44,29 +50,82 @@ class TestLoRAE2E:
     @pytest.mark.run_only_on("GPU")
     def test_lora_finetuning_e2e(self, tmp_path):
         """
-        Test end-to-end LoRA fine-tuning with Llama3 8B.
+        Test end-to-end LoRA fine-tuning with checkpoint resume functionality.
+
+        This test verifies the complete PEFT resume workflow:
+        1. Initial training phase: Train for initial steps and save checkpoint
+        2. Resume phase: Resume from checkpoint and complete training
+        3. Verification: Ensure final checkpoint maintains size reduction
         """
         pretrained_checkpoint_path = "/lustre/fsw/coreai_dlalgo_genai/ansubramania/models/Meta-Llama3-8B/"
         checkpoint_dir = str(tmp_path / "checkpoints")
         tensorboard_dir = str(tmp_path / "tensorboard")
 
         try:
-            # Create LoRA configuration
-            cfg = self._create_lora_config(pretrained_checkpoint_path, checkpoint_dir, tensorboard_dir)
-            finetune(config=cfg, forward_step_func=forward_step)
+            # Phase 1: Initial training with intermediate checkpoint
+            print_rank_0("=== Phase 1: Initial Training ===")
+            initial_cfg = self._create_lora_config(
+                pretrained_checkpoint_path,
+                checkpoint_dir,
+                tensorboard_dir,
+                train_iters=10,  # Train for 10 iterations initially
+                save_interval=10,  # Save checkpoint after 10 iterations
+            )
 
-            # Verify checkpoint was created
+            finetune(config=initial_cfg, forward_step_func=forward_step)
+
             if torch.distributed.get_rank() == 0:
+                # Verify initial checkpoint was created
+                initial_checkpoint_dir = os.path.join(checkpoint_dir, "iter_0000010")
+                assert os.path.exists(initial_checkpoint_dir), (
+                    f"Initial checkpoint not found at {initial_checkpoint_dir}"
+                )
+
+                metadata_file = os.path.join(initial_checkpoint_dir, ".metadata")
+                assert os.path.exists(metadata_file), "Initial checkpoint metadata file not found"
+
+                print_rank_0(f"Initial checkpoint created successfully at {initial_checkpoint_dir}")
+
+            # Barrier to ensure all ranks see the checkpoint
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+
+            # Phase 2: Resume training from checkpoint
+            print_rank_0("=== Phase 2: Resume Training ===")
+            resume_cfg = self._create_lora_config(
+                pretrained_checkpoint_path,
+                checkpoint_dir,
+                tensorboard_dir,
+                train_iters=20,  # Total of 20 iterations (10 more)
+                save_interval=10,
+                load_checkpoint=initial_checkpoint_dir,  # Resume from initial checkpoint
+            )
+
+            finetune(config=resume_cfg, forward_step_func=forward_step)
+
+            # Phase 3: Verification
+            if torch.distributed.get_rank() == 0:
+                print_rank_0("=== Phase 3: Verification ===")
+
+                # Verify final checkpoint was created
                 latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
                 assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
 
-                # Check for the final checkpoint directory
-                final_iter_dir = os.path.join(checkpoint_dir, f"iter_{cfg.train.train_iters:07d}")
+                final_iter_dir = os.path.join(checkpoint_dir, f"iter_{resume_cfg.train.train_iters:07d}")
                 assert os.path.exists(final_iter_dir), f"Final checkpoint directory not found at {final_iter_dir}"
 
-                # For distributed checkpoints, check for the metadata file
                 metadata_file = os.path.join(final_iter_dir, ".metadata")
-                assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
+                assert os.path.exists(metadata_file), "Final checkpoint metadata file not found"
+
+                # Verify checkpoint size is significantly smaller than base model
+                self._verify_checkpoint_size_reduction(
+                    pretrained_checkpoint_path, final_iter_dir, expected_reduction_factor=0.1
+                )
+
+                # Additional verification: Compare initial and final checkpoints
+                self._verify_checkpoint_progression(initial_checkpoint_dir, final_iter_dir)
+
+                print_rank_0("PEFT resume test completed successfully!")
 
         finally:
             # pytest's tmp_path fixture doesn't clean up immediately.
@@ -82,7 +141,13 @@ class TestLoRAE2E:
                 torch.distributed.destroy_process_group()
 
     def _create_lora_config(
-        self, pretrained_checkpoint_path: str, save_dir: str, tensorboard_dir: str
+        self,
+        pretrained_checkpoint_path: str,
+        save_dir: str,
+        tensorboard_dir: str,
+        train_iters: int = 20,
+        save_interval: int = 10,
+        load_checkpoint: str = None,
     ) -> ConfigContainer:
         """Create LoRA configuration for Llama3 8B end-to-end test.
 
@@ -90,6 +155,9 @@ class TestLoRAE2E:
             pretrained_checkpoint_path: Path to the pretrained Llama3 8B checkpoint
             save_dir: Directory where test checkpoints will be saved
             tensorboard_dir: Directory for tensorboard logs
+            train_iters: Number of training iterations (default: 20)
+            save_interval: Interval between checkpoints (default: 10)
+            load_checkpoint: Path to checkpoint to load from (default: None)
 
         Returns:
             ConfigContainer with LoRA configuration for testing
@@ -115,16 +183,16 @@ class TestLoRAE2E:
         cfg.train = TrainingConfig(
             micro_batch_size=1,  # Reduced for memory efficiency
             global_batch_size=2,  # Must be divisible by (micro_batch_size * data_parallel_size)
-            train_iters=20,  # Reduced for faster testing
+            train_iters=train_iters,
             eval_iters=1,
             eval_interval=10,
         )
 
         # Checkpoint configuration
         cfg.checkpoint.save = save_dir
-        cfg.checkpoint.load = None
+        cfg.checkpoint.load = load_checkpoint
         cfg.checkpoint.pretrained_checkpoint = pretrained_checkpoint_path
-        cfg.checkpoint.save_interval = 10
+        cfg.checkpoint.save_interval = save_interval
         cfg.checkpoint.ckpt_format = "torch_dist"
         cfg.checkpoint.fully_parallel_save = True
         cfg.checkpoint.async_save = True
@@ -232,3 +300,129 @@ class TestLoRAE2E:
                 tokenizer_model="meta-llama/Meta-Llama-3-8B",
                 vocab_size=128256,
             )
+
+    def _verify_checkpoint_size_reduction(
+        self, pretrained_path: str, adapter_checkpoint_path: str, expected_reduction_factor: float = 0.1
+    ) -> None:
+        """Verify that adapter checkpoint is significantly smaller than base model.
+
+        Args:
+            pretrained_path: Path to the pretrained base model checkpoint
+            adapter_checkpoint_path: Path to the adapter checkpoint
+            expected_reduction_factor: Maximum ratio of adapter size to base model size
+        """
+        import subprocess
+
+        def get_directory_size(path: str) -> int:
+            """Get total size of directory in bytes."""
+            try:
+                result = subprocess.run(["du", "-sb", path], capture_output=True, text=True, check=True)
+                return int(result.stdout.split()[0])
+            except (subprocess.CalledProcessError, ValueError, IndexError):
+                # Fallback to Python implementation if du command fails
+                total_size = 0
+                for dirpath, dirnames, filenames in os.walk(path):
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
+                        try:
+                            total_size += os.path.getsize(filepath)
+                        except (OSError, IOError):
+                            pass  # Skip files that can't be accessed
+                return total_size
+
+        # Get size of base model checkpoint
+        base_model_size = get_directory_size(pretrained_path)
+
+        # Get size of adapter checkpoint
+        adapter_size = get_directory_size(adapter_checkpoint_path)
+
+        # Calculate size reduction ratio
+        size_ratio = adapter_size / base_model_size if base_model_size > 0 else 1.0
+
+        print(f"Base model checkpoint size: {base_model_size / (1024**3):.2f} GB")
+        print(f"Adapter checkpoint size: {adapter_size / (1024**3):.2f} GB")
+        print(f"Size reduction ratio: {size_ratio:.4f}")
+        print(f"Size reduction: {(1 - size_ratio) * 100:.1f}%")
+
+        # Verify significant size reduction
+        assert size_ratio < expected_reduction_factor, (
+            f"Adapter checkpoint size ({adapter_size / (1024**3):.2f} GB) is not significantly smaller "
+            f"than base model ({base_model_size / (1024**3):.2f} GB). "
+            f"Expected ratio < {expected_reduction_factor}, got {size_ratio:.4f}"
+        )
+
+        # Ensure adapter checkpoint is not empty
+        assert adapter_size > 0, "Adapter checkpoint appears to be empty"
+
+        # Additional verification for distributed checkpoints
+        if os.path.exists(os.path.join(adapter_checkpoint_path, ".metadata")):
+            # Check that main model state files are much smaller in adapter checkpoint
+            model_files = []
+            for root, dirs, files in os.walk(adapter_checkpoint_path):
+                for file in files:
+                    if file.startswith("__0_0_"):  # Distributed checkpoint model files
+                        model_files.append(os.path.join(root, file))
+
+            if model_files:
+                model_files_size = sum(os.path.getsize(f) for f in model_files)
+                model_ratio = model_files_size / base_model_size if base_model_size > 0 else 1.0
+
+                print(f"Model state files size in adapter checkpoint: {model_files_size / (1024**2):.2f} MB")
+                print(f"Model files size ratio: {model_ratio:.6f}")
+
+                # Model state files should be even smaller since they only contain adapters
+                assert model_ratio < expected_reduction_factor / 2, (
+                    f"Model state files in adapter checkpoint are larger than expected. "
+                    f"Expected ratio < {expected_reduction_factor / 2:.6f}, got {model_ratio:.6f}"
+                )
+
+    def _verify_checkpoint_progression(self, initial_checkpoint_dir: str, final_checkpoint_dir: str) -> None:
+        """Verify that the final checkpoint is a proper continuation of the initial checkpoint."""
+        import subprocess
+
+        def get_directory_size(path: str) -> int:
+            """Get total size of directory in bytes."""
+            try:
+                result = subprocess.run(["du", "-sb", path], capture_output=True, text=True, check=True)
+                return int(result.stdout.split()[0])
+            except (subprocess.CalledProcessError, ValueError, IndexError):
+                # Fallback to Python implementation
+                total_size = 0
+                for dirpath, dirnames, filenames in os.walk(path):
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
+                        try:
+                            total_size += os.path.getsize(filepath)
+                        except (OSError, IOError):
+                            pass
+                return total_size
+
+        # Both checkpoints should exist
+        assert os.path.exists(initial_checkpoint_dir), (
+            f"Initial checkpoint directory not found: {initial_checkpoint_dir}"
+        )
+        assert os.path.exists(final_checkpoint_dir), f"Final checkpoint directory not found: {final_checkpoint_dir}"
+
+        # Both should be distributed checkpoints with metadata
+        initial_metadata = os.path.join(initial_checkpoint_dir, ".metadata")
+        final_metadata = os.path.join(final_checkpoint_dir, ".metadata")
+
+        assert os.path.exists(initial_metadata), "Initial checkpoint metadata not found"
+        assert os.path.exists(final_metadata), "Final checkpoint metadata not found"
+
+        # Both checkpoints should be similar in size (both are adapter-only checkpoints)
+        initial_size = get_directory_size(initial_checkpoint_dir)
+        final_size = get_directory_size(final_checkpoint_dir)
+
+        print_rank_0(f"Initial checkpoint size: {initial_size / (1024**2):.2f} MB")
+        print_rank_0(f"Final checkpoint size: {final_size / (1024**2):.2f} MB")
+
+        # Size should be similar (within reasonable bounds) since both are adapter-only
+        size_ratio = (
+            abs(initial_size - final_size) / max(initial_size, final_size) if max(initial_size, final_size) > 0 else 0
+        )
+        assert size_ratio < 0.5, (
+            f"Checkpoint sizes too different: initial={initial_size}, final={final_size}, ratio={size_ratio:.3f}"
+        )
+
+        print_rank_0("Checkpoint progression verification completed successfully")
