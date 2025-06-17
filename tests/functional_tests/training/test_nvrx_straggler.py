@@ -307,9 +307,6 @@ def test_nvrx_straggler_detection_end_to_end(sleep_time: float = 1.0):
             for handler in logging.root.handlers[:]:
                 logging.root.removeHandler(handler)
 
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
-
 
 def main():
     """Main function for running the functional test directly."""

@@ -88,20 +88,6 @@ def shared_tmp_dir():
 
 
 @pytest.fixture(scope="function")
-def cleanup_distributed():
-    """Fixture to ensure proper cleanup of distributed processes."""
-    yield
-
-    # Cleanup after test
-    if torch.distributed.is_initialized():
-        try:
-            torch.distributed.destroy_process_group()
-        except Exception:
-            # Ignore cleanup errors
-            pass
-
-
-@pytest.fixture(scope="function")
 def reset_cuda():
     """Reset CUDA state between tests."""
     yield
