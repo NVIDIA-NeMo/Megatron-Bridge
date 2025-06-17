@@ -136,16 +136,6 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   cicd-functional-tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - script: L2_Pretrain_Test_GPU
-            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
-            timeout: 60
-          - script: L2_Straggler_Detector_Test_GPU
-            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
-            timeout: 60
     needs: [cicd-unit-tests]
     runs-on: ${{ matrix.runner }}
     name: ${{ matrix.script }}
@@ -157,8 +147,8 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           runner: ${{ runner.name }}
-          script: ${{ matrix.script }}
-          timeout: ${{ matrix.timeout || 30 }}
+          script: L2_Launch
+          timeout: 60
           is_unit_test: "false"
           image: megatron_hub
           cpu-only: false
