@@ -11,6 +11,7 @@ jobs:
     runs-on: ${{ matrix.arch }}
     name: Python ${{ matrix.python-version }} on ${{ matrix.arch }}
     strategy:
+      fail-fast: false
       matrix:
         arch: ["ubuntu-latest", "macos-latest"]
         python-version: ["3.10", "3.11", "3.12"]
@@ -35,6 +36,7 @@ jobs:
     runs-on: ${{ matrix.arch }}
     name: UV on ${{ matrix.arch }}
     strategy:
+      fail-fast: false
       matrix:
         arch: ["ubuntu-latest", "macos-latest"]
     steps:
