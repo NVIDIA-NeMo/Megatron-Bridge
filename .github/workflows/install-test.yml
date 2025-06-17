@@ -54,7 +54,11 @@ jobs:
       - name: Install dependencies with UV
         env:
           UV_PROJECT_ENVIRONMENT: /opt/venv
+          PAT: ${{ secrets.PAT }}
         run: |
+          echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
+          chmod 600 ~/.netrc 
+
           uv venv ${UV_PROJECT_ENVIRONMENT}
 
           uv sync --link-mode copy --locked --all-groups
