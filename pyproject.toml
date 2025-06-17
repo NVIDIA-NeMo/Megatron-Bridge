@@ -14,7 +14,7 @@
 
 [project]
 name = "megatron-hub"
-description = "NeMo - a toolkit for Conversational AI"
+description = "Megatron Hub: Training Recipes for Megatron-based LLM and VLM models"
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}

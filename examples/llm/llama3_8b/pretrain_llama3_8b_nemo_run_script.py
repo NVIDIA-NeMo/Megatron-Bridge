@@ -58,7 +58,7 @@ import nemo_run as run
 logger: logging.Logger = logging.getLogger(__name__)
 
 # Define paths relative to this script's location
-# Assumes this script (pretrain_llama3_8b_nemo_run_script.py) is in NeMo-LM/examples/llm/llama3_8b/
+# Assumes this script (pretrain_llama3_8b_nemo_run_script.py) is in Megatron-Hub/examples/llm/llama3_8b/
 # and pretrain_llama3_8b.py is in the same directory,
 # and the config is in a 'conf' subdirectory.
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()

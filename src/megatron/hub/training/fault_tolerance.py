@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Fault Tolerance (FT) package integration for NeMo-LM, using the FT section-based API.
+Fault Tolerance (FT) package integration for Megatron-Hub, using the FT section-based API.
 
 The FT package is included in "nvidia-resiliency-ext"
 (https://github.com/NVIDIA/nvidia-resiliency-ext).
