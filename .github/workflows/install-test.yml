@@ -2,9 +2,9 @@ name: Installation Test
 
 on:
   push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
+    branches:
+      - main
+      - "pull-request/[0-9]+"
 
 jobs:
   install-test:
