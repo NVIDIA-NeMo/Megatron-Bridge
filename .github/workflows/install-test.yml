@@ -48,4 +48,4 @@ jobs:
 
       - name: Install dependencies with UV
         run: |
-          uv sync
+          uv sync --link-mode copy --locked --all-groups
