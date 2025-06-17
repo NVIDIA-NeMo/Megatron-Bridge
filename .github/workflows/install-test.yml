@@ -46,6 +46,12 @@ jobs:
         with:
           version: 0.7.2
 
+      - name: Set up yq
+        uses: mikefarah/yq@master
+
       - name: Install dependencies with UV
         run: |
           uv sync --link-mode copy --locked --all-groups
+
+          bash ./docker/common/install_conflicting_deps.sh \
+            --export-deploy-ref $(cat ./docker/common/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
