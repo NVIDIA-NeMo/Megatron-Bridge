@@ -43,6 +43,7 @@ class TestEvaluation:
         eval_type = "gsm8k"
         limit = 1
         legacy_ckpt = True
+        port = 8886
 
         # Set environment variables
         os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
@@ -59,6 +60,8 @@ class TestEvaluation:
                 nemo2_ckpt_path,
                 "--max_batch_size",
                 str(max_batch_size),
+                "--port",
+                port,
             ]
             + (["--legacy_ckpt"] if legacy_ckpt else []),
         )
@@ -66,7 +69,7 @@ class TestEvaluation:
         try:
             # Wait for server readiness
             logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url="http://0.0.0.0:8886", max_retries=600)
+            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=600)
             assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
 
             # Run evaluation
@@ -95,6 +98,7 @@ class TestEvaluation:
         eval_type = "arc_challenge"
         limit = 1
         legacy_ckpt = True
+        port = 8887
 
         # Set environment variables
         os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
@@ -111,6 +115,8 @@ class TestEvaluation:
                 nemo2_ckpt_path,
                 "--max_batch_size",
                 str(max_batch_size),
+                "--port",
+                port,
             ]
             + (["--legacy_ckpt"] if legacy_ckpt else []),
         )
@@ -118,7 +124,7 @@ class TestEvaluation:
         try:
             # Wait for server readiness
             logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url="http://0.0.0.0:8886", max_retries=600)
+            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=600)
             assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
 
             # Run evaluation
