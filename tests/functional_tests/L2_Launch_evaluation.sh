@@ -15,7 +15,7 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
-export CUDA_VISIBLE_DEVICES="0,1"
+export CUDA_VISIBLE_DEVICES="0"
 
 coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short tests/functional_tests/evaluation
 coverage combine

@@ -13,12 +13,15 @@
 # limitations under the License.
 import logging
 import os
-import subprocess
-import pytest
 import signal
+import subprocess
+
+import pytest
+
 from megatron.hub.evaluation.api import evaluate
 from megatron.hub.evaluation.utils.api import ApiEndpoint, ConfigParams, EvaluationConfig, EvaluationTarget
 from megatron.hub.evaluation.utils.base import wait_for_fastapi_server
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -81,7 +84,7 @@ class TestEvaluation:
 
         # Run evaluation
         logger.info("Starting evaluation...")
-        api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:8886/v1/completions/")
+        api_endpoint = ApiEndpoint(url="http://0.0.0.0:8886/v1/completions/")
         eval_target = EvaluationTarget(api_endpoint=api_endpoint)
         eval_params = {
             "limit_samples": 1,
@@ -98,7 +101,7 @@ class TestEvaluation:
         """
         # Run evaluation
         logger.info("Starting evaluation...")
-        api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:8886/v1/completions/")
+        api_endpoint = ApiEndpoint(url="http://0.0.0.0:8886/v1/completions/")
         eval_target = EvaluationTarget(api_endpoint=api_endpoint)
         eval_params = {
             "limit_samples": 1,
