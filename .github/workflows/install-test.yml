@@ -32,6 +32,23 @@ jobs:
         run: |
           pip install ".[eval,recipes]"
 
+  ngc-cuda-test:
+    runs-on: linux-amd64-cpu16
+    name: NGC CUDA Test
+    container:
+      image: nvcr.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Install project
+        run: |
+          pip install ".[eval,recipes]"
+
   uv-test:
     runs-on: ${{ matrix.arch }}
     name: UV on ${{ matrix.arch }}
