@@ -42,10 +42,11 @@ class TestEvaluation:
         eval_type = "gsm8k"
         limit = 1
         legacy_ckpt = True
-        port = 8886
+        fastapi_port = 8886
+        server_port = 8080
 
         # Set environment variables
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
         os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
         os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
@@ -59,8 +60,10 @@ class TestEvaluation:
                 nemo2_ckpt_path,
                 "--max_batch_size",
                 str(max_batch_size),
-                "--port",
-                str(port),
+                "--fastapi_port",
+                str(fastapi_port),
+                "--server_port",
+                str(server_port),
             ]
             + (["--legacy_ckpt"] if legacy_ckpt else []),
         )
@@ -68,12 +71,12 @@ class TestEvaluation:
         try:
             # Wait for server readiness
             logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=600)
+            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{fastapi_port}", max_retries=600)
             assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
 
             # Run evaluation
             logger.info("Starting evaluation...")
-            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{port}/v1/completions/")
+            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{fastapi_port}/v1/completions/")
             eval_target = EvaluationTarget(api_endpoint=api_endpoint)
             eval_params = {
                 "limit_samples": limit,
@@ -83,9 +86,8 @@ class TestEvaluation:
             logger.info("Evaluation completed.")
 
         finally:
-            deploy_proc.send_signal(signal.SIGINT)
+            subprocess.run(["pkill", "-9", "python"], check=False)
 
-    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_arc_challenge_evaluation(self):
         """
@@ -97,10 +99,11 @@ class TestEvaluation:
         eval_type = "arc_challenge"
         limit = 1
         legacy_ckpt = True
-        port = 8887
+        fastapi_port = 8887
+        server_port = 8081
 
         # Set environment variables
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
         os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
         os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
@@ -114,8 +117,10 @@ class TestEvaluation:
                 nemo2_ckpt_path,
                 "--max_batch_size",
                 str(max_batch_size),
-                "--port",
-                str(port),
+                "--fastapi_port",
+                str(fastapi_port),
+                "--server_port",
+                str(server_port),
             ]
             + (["--legacy_ckpt"] if legacy_ckpt else []),
         )
@@ -123,12 +128,12 @@ class TestEvaluation:
         try:
             # Wait for server readiness
             logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=600)
+            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{fastapi_port}", max_retries=600)
             assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
 
             # Run evaluation
             logger.info("Starting evaluation...")
-            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{port}/v1/completions/")
+            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{fastapi_port}/v1/completions/")
             eval_target = EvaluationTarget(api_endpoint=api_endpoint)
             eval_params = {
                 "limit_samples": limit,
