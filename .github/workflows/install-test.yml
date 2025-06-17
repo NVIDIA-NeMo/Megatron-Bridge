@@ -60,6 +60,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
 
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: 0.7.2
+
       - name: Set up yq
         shell: bash
         run: |
