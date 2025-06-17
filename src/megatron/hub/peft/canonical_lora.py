@@ -138,23 +138,6 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         lora_A_init_method (str): Initialization method for LoRA A matrix. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for LoRA B matrix. Defaults to "zero".
-
-    Example:
-    --------
-        >>> from megatron.hub.peft import CanonicalLoRA
-        >>> from megatron.hub.models import get_base_model
-        >>> from megatron.hub.models.gpt import GPTConfig
-        >>>
-        >>> # Create model configuration
-        >>> config = GPTConfig(num_layers=12, hidden_size=768, num_attention_heads=12)
-        >>> base_model = get_base_model(config)
-        >>>
-        >>> # Apply Canonical LoRA
-        >>> lora = CanonicalLoRA(target_modules=['linear_q', 'linear_k', 'linear_v', 'linear_fc1_up'], dim=32)
-        >>> adapted_model = lora(base_model, training=True)
-        >>>
-        >>> # Use the adapted model for training or inference
-        >>> # (set up your training loop or inference code here)
     """
 
     target_modules: List[str] = field(
