@@ -50,7 +50,11 @@ jobs:
         uses: mikefarah/yq@master
 
       - name: Install dependencies with UV
+        env:
+          UV_PROJECT_ENVIRONMENT: /opt/venv
         run: |
+          uv venv ${UV_PROJECT_ENVIRONMENT}
+
           uv sync --link-mode copy --locked --all-groups
 
           bash ./docker/common/install_conflicting_deps.sh \
