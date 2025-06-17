@@ -286,8 +286,16 @@ class TestPEFTCheckpointLoading:
         mock_cfg.checkpoint.pretrained_checkpoint = "/path/to/pretrained"
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
         mock_cfg.checkpoint.finetune = False
-        mock_cfg.checkpoint.load_rng = True
-        mock_cfg.checkpoint.load_optim = True
+        mock_cfg.checkpoint.load_rng = False  # Disable RNG loading for focused testing
+        mock_cfg.checkpoint.load_optim = False  # Disable optimizer loading for focused testing
+
+        # Add necessary model config attributes
+        mock_cfg.model = Mock()
+        mock_cfg.model.tensor_model_parallel_size = 1
+        mock_cfg.model.pipeline_model_parallel_size = 1
+        mock_cfg.checkpoint.auto_detect_ckpt_format = False
+        mock_cfg.checkpoint.ckpt_format = "torch_dist"
+        mock_cfg.checkpoint.non_persistent_save_interval = None
         mock_state.cfg = mock_cfg
         mock_state.train_state = Mock()
         mock_state.train_state.consumed_train_samples = 0
@@ -308,9 +316,23 @@ class TestPEFTCheckpointLoading:
             patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
             patch("torch.distributed.barrier"),
             patch("megatron.hub.training.checkpointing.print_rank_0"),
+            patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.hub.training.checkpointing.unwrap_model") as mock_unwrap_model,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
+            mock_unwrap_model.return_value = mock_model
+
+            # Mock run config for non-PEFT scenario
+            mock_run_config = {
+                "model": {
+                    "tensor_model_parallel_size": 1,
+                    "pipeline_model_parallel_size": 1,
+                },
+                "checkpoint": {"save_rng": True, "save_optim": True},
+                "checkpoint_config": {"fully_parallel_save": True},
+            }
+            mock_read_run_config.return_value = mock_run_config
 
             _ = load_checkpoint(
                 mock_state,
@@ -352,8 +374,16 @@ class TestPEFTCheckpointLoading:
         mock_cfg.checkpoint.pretrained_checkpoint = None
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
         mock_cfg.checkpoint.finetune = False
-        mock_cfg.checkpoint.load_rng = True
-        mock_cfg.checkpoint.load_optim = True
+        mock_cfg.checkpoint.load_rng = False  # Disable RNG loading for focused testing
+        mock_cfg.checkpoint.load_optim = False  # Disable optimizer loading for focused testing
+
+        # Add necessary model config attributes
+        mock_cfg.model = Mock()
+        mock_cfg.model.tensor_model_parallel_size = 1
+        mock_cfg.model.pipeline_model_parallel_size = 1
+        mock_cfg.checkpoint.auto_detect_ckpt_format = False
+        mock_cfg.checkpoint.ckpt_format = "torch_dist"
+        mock_cfg.checkpoint.non_persistent_save_interval = None
         mock_state.cfg = mock_cfg
         mock_state.train_state = Mock()
         mock_state.train_state.consumed_train_samples = 0
@@ -374,9 +404,23 @@ class TestPEFTCheckpointLoading:
             patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
             patch("torch.distributed.barrier"),
             patch("megatron.hub.training.checkpointing.print_rank_0"),
+            patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.hub.training.checkpointing.unwrap_model") as mock_unwrap_model,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
+            mock_unwrap_model.return_value = mock_model
+
+            # Mock run config for non-PEFT scenario
+            mock_run_config = {
+                "model": {
+                    "tensor_model_parallel_size": 1,
+                    "pipeline_model_parallel_size": 1,
+                },
+                "checkpoint": {"save_rng": True, "save_optim": True},
+                "checkpoint_config": {"fully_parallel_save": True},
+            }
+            mock_read_run_config.return_value = mock_run_config
 
             _ = load_checkpoint(
                 mock_state,
@@ -420,8 +464,16 @@ class TestPEFTCheckpointLoading:
         mock_cfg.checkpoint.pretrained_checkpoint = "/path/to/pretrained"
         mock_cfg.checkpoint.load = "/path/to/checkpoint"
         mock_cfg.checkpoint.finetune = False
-        mock_cfg.checkpoint.load_rng = True
-        mock_cfg.checkpoint.load_optim = True
+        mock_cfg.checkpoint.load_rng = False  # Disable RNG loading for focused testing
+        mock_cfg.checkpoint.load_optim = False  # Disable optimizer loading for focused testing
+
+        # Add necessary model config attributes
+        mock_cfg.model = Mock()
+        mock_cfg.model.tensor_model_parallel_size = 1
+        mock_cfg.model.pipeline_model_parallel_size = 1
+        mock_cfg.checkpoint.auto_detect_ckpt_format = False
+        mock_cfg.checkpoint.ckpt_format = "torch_dist"
+        mock_cfg.checkpoint.non_persistent_save_interval = None
         mock_state.cfg = mock_cfg
         mock_state.train_state = Mock()
         mock_state.train_state.consumed_train_samples = 0
@@ -444,9 +496,23 @@ class TestPEFTCheckpointLoading:
             patch("megatron.core.mpu.set_virtual_pipeline_model_parallel_rank"),
             patch("torch.distributed.barrier"),
             patch("megatron.hub.training.checkpointing.print_rank_0"),
+            patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.hub.training.checkpointing.unwrap_model") as mock_unwrap_model,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
+            mock_unwrap_model.return_value = mock_model
+
+            # Mock run config for multi-model PEFT scenario
+            mock_run_config = {
+                "model": {
+                    "tensor_model_parallel_size": 1,
+                    "pipeline_model_parallel_size": 1,
+                },
+                "checkpoint": {"save_rng": True, "save_optim": True},
+                "checkpoint_config": {"fully_parallel_save": True},
+            }
+            mock_read_run_config.return_value = mock_run_config
 
             _ = load_checkpoint(
                 mock_state,

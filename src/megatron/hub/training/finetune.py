@@ -35,5 +35,5 @@ def finetune(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    assert config.checkpoint.pretrained_checkpoint is not None, "Finetune requires a pretrained checkpoint"
+    assert config.checkpoint.pretrained_checkpoint is not None, "Finetuning requires a pretrained checkpoint"
     return megatron_pretrain(config, forward_step_func)
