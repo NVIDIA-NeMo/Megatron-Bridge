@@ -76,8 +76,8 @@ def deploy_with_ray(
 
     if parallelism_per_replica != gpus_per_replica:
         logger.error(
-           f"Parallelism per replica ({parallelism_per_replica}) must equal GPUs per replica ({gpus_per_replica})"
-         )
+            f"Parallelism per replica ({parallelism_per_replica}) must equal GPUs per replica ({gpus_per_replica})"
+        )
         logger.error(f"Total GPUs: {total_gpus}, Num replicas: {num_replicas}, GPUs per replica: {gpus_per_replica}")
         logger.error(
             f"Each replica needs: tensor_parallel({tensor_model_parallel_size}) * "
@@ -141,4 +141,4 @@ def deploy_with_ray(
     except Exception as e:
         logger.error(f"Error during deployment: {str(e)}")
         ray_deployer.stop()
-        sys.exit(1) 
+        sys.exit(1)
