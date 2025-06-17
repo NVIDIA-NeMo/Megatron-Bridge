@@ -34,7 +34,6 @@ legacy_ckpt = True
 @pytest.fixture()
 def triton_server():
     # Set environment variables
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["HF_DATASETS_OFFLINE"] = "1"
     os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
     os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
@@ -46,7 +45,7 @@ def triton_server():
             "python",
             "-m",
             "torch.distributed.run",
-            "--nproc_per_node=2",
+            "--nproc_per_node=1",
             "tests/functional_tests/evaluation/deploy_in_fw_script.py",
             "--nemo2_ckpt_path",
             nemo2_ckpt_path,
