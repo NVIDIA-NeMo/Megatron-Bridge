@@ -9,7 +9,7 @@ on:
 jobs:
   pip-test:
     runs-on: ${{ matrix.arch }}
-    name: Python ${{ matrix.python-version }} on ${{ matrix.arch }}
+    name: (CPU) Python ${{ matrix.python-version }} on ${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -34,9 +34,13 @@ jobs:
 
   ngc-cuda-test:
     runs-on: linux-amd64-cpu16
-    name: NGC CUDA Test
+    name: (GPU) Python ${{ matrix.python-version }} on ${{ matrix.arch }}
     container:
       image: nvcr.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ["ubuntu-latest", "macos-latest"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
