@@ -656,6 +656,60 @@ class StragglerDetectionConfig:
     """If set, StragglerDetector is disabled on startup."""
 
 
+@dataclass
+class NVRxStragglerDetectionConfig:
+    """Configuration settings for NVIDIA Resiliency Extension straggler detection."""
+
+    enabled: bool = False
+    """Enable NVRx straggler detection."""
+
+    report_time_interval: float = 300.0
+    """Interval [seconds] of the straggler check."""
+
+    calc_relative_gpu_perf: bool = True
+    """Calculate relative GPU performance scores."""
+
+    calc_individual_gpu_perf: bool = True
+    """Calculate individual GPU performance scores."""
+
+    num_gpu_perf_scores_to_print: int = 5
+    """How many best and worst perf scores to print (0 - does not print periodically,
+    but only if stragglers are detected)."""
+
+    gpu_relative_perf_threshold: float = 0.7
+    """Threshold for relative GPU performance scores."""
+
+    gpu_individual_perf_threshold: float = 0.7
+    """Threshold for individual GPU performance scores."""
+
+    stop_if_detected: bool = False
+    """Set to True, to terminate the workload if stragglers are detected."""
+
+    enable_logging: bool = True
+    """Set to True, to log GPU performance scores."""
+
+    profiling_interval: int = 1
+    """Profiling interval passed to straggler.Detector.initialize."""
+
+    logger_name: str = "megatron_hub.NVRxStragglerDetection"
+    """Logger name for straggler detection messages."""
+
+    def __post_init__(self) -> None:
+        """Validate NVRx straggler detection configuration."""
+        if self.enabled:
+            if not (self.calc_relative_gpu_perf or self.calc_individual_gpu_perf):
+                raise ValueError(
+                    "At least one of calc_relative_gpu_perf or calc_individual_gpu_perf must be True "
+                    "when NVRx straggler detection is enabled."
+                )
+            if self.report_time_interval <= 0:
+                raise ValueError("report_time_interval must be positive.")
+            if not (0.0 <= self.gpu_relative_perf_threshold <= 1.0):
+                raise ValueError("gpu_relative_perf_threshold must be between 0.0 and 1.0.")
+            if not (0.0 <= self.gpu_individual_perf_threshold <= 1.0):
+                raise ValueError("gpu_individual_perf_threshold must be between 0.0 and 1.0.")
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -675,6 +729,7 @@ class ConfigContainer(Container):
     dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
+    nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
 
     def validate(self) -> None:
