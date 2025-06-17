@@ -21,7 +21,6 @@ from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3Config8B
-from megatron.hub.tokenizers.config import TokenizerConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -29,6 +28,7 @@ from megatron.hub.training.config import (
     LoggerConfig,
     RNGConfig,
     SchedulerConfig,
+    TokenizerConfig,
     TrainingConfig,
 )
 

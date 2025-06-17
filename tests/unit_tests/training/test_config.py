@@ -23,7 +23,6 @@ from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.models.t5 import T5Config
-from megatron.hub.tokenizers.config import TokenizerConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -35,6 +34,7 @@ from megatron.hub.training.config import (
     RerunStateMachineConfig,
     RNGConfig,
     SchedulerConfig,
+    TokenizerConfig,
     TrainingConfig,
 )
 
