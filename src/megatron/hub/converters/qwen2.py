@@ -82,8 +82,6 @@ class HFQwen2Exporter(BaseExporter):
             ),
         ]
 
-        # Convert source state dict type to target and apply transformations
-        source.to(target.dtype)
         return apply_transforms(
             source,
             target,
