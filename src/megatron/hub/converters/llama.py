@@ -14,7 +14,7 @@
 
 import logging
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class HFLlamaExporter(BaseExporter):
     """Exporter to convert megatron.hub Llama models to Hugging Face format."""
 
-    def convert_state(self, source, target, source_config=None):
+    def convert_state(self, source: Any, target: Any, source_config: Optional[Any] = None) -> Any:
         # pylint: disable=C0301
         """Convert state dict from megatron.hub format to HF format.
 
@@ -190,7 +190,7 @@ class HFLlamaImporter(BaseImporter):
 
         return LlamaForCausalLM.from_pretrained(str(self.input_path), torch_dtype="auto")
 
-    def convert_state(self, source, target):
+    def convert_state(self, source: Any, target: Any) -> None:
         """Convert state dict from HF format to megatron.hub format.
 
         Maps the weights from the HF model to the megatron.hub model according to
@@ -290,7 +290,7 @@ class HFLlamaImporter(BaseImporter):
                 )
             )
 
-        return apply_transforms(source, target, mapping=mapping, transforms=transforms)
+        apply_transforms(source, target, mapping=mapping, transforms=transforms)
 
     @property
     def hf_config(self) -> "HFLlamaConfig":
@@ -327,7 +327,7 @@ class HFLlamaImporter(BaseImporter):
         except Exception:
             generation_config = None
 
-        def make_vocab_size_divisible_by(vocab_size):
+        def make_vocab_size_divisible_by(vocab_size: int) -> int:
             base = 128
             while vocab_size % base != 0:
                 base //= 2

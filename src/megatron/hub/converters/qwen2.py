@@ -28,12 +28,15 @@ if TYPE_CHECKING:
 class HFQwen2Exporter(BaseExporter):
     """Exporter to convert megatron hub Qwen2 models to Hugging Face format."""
 
-    def convert_state(self, source: Any, target: Any) -> None:
+    def convert_state(self, source: Any, target: Any) -> Any:
         """Convert the state dict from the source megatron hub model to the target HF model.
 
         Args:
             source: A helper object (_ModelState) containing the loaded megatron hub state dict.
             target: The target Hugging Face model instance.
+
+        Returns:
+            The target model with weights transferred from source.
         """
         mapping = {
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
@@ -81,7 +84,7 @@ class HFQwen2Exporter(BaseExporter):
 
         # Convert source state dict type to target and apply transformations
         source.to(target.dtype)
-        apply_transforms(
+        return apply_transforms(
             source,
             target,
             mapping=mapping,

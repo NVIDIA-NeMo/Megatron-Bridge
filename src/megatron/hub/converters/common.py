@@ -435,7 +435,7 @@ class BaseExporter(ABC):
         return self._tokenizer
 
     @abstractmethod
-    def convert_state(self, source: Any, target: Any) -> None:
+    def convert_state(self, source: Any, target: Any) -> Any:
         """Convert the state dict from the source megatron hub model to the target HF model.
 
         Must be implemented by subclasses.
@@ -459,7 +459,7 @@ class BaseExporter(ABC):
         from transformers import AutoModelForCausalLM
         from transformers.modeling_utils import no_init_weights
 
-        with no_init_weights(True):
+        with no_init_weights():
             return AutoModelForCausalLM.from_config(self.hf_config, torch_dtype=dtype)
 
     def init_tron_model(self) -> tuple[dict[str, torch.Tensor], GPTConfig | T5Config]:
