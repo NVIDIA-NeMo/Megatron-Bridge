@@ -73,3 +73,11 @@ jobs:
           uv venv ${UV_PROJECT_ENVIRONMENT}
 
           uv sync --link-mode copy --locked --all-groups
+
+  install-test-summary:
+    needs: [pip-test, uv-test]
+    runs-on: ubuntu-latest
+    name: Install test summary
+    steps:
+      - name: Result
+        run: echo Install check successful
