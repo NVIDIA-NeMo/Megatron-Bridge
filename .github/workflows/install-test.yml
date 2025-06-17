@@ -54,7 +54,7 @@ jobs:
       - name: Install wget
         run: |
           apt-get update
-          apt-get install -y wget git
+          apt-get install -y wget git libopenmpi-dev
 
       - name: Upgrade pip
         run: |
