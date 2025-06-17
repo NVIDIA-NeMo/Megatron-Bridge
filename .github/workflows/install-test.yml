@@ -63,16 +63,10 @@ jobs:
       - name: Set up yq
         shell: bash
         run: |
-          if [[ "${{ matrix.arch }}" == "ubuntu-latest" ]]; then
-            BINARY="yq_linux_amd64"
-          else
-            BINARY="yq_linux_arm64"
-          fi
-
-          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/$BINARY.tar.gz
-          tar -xzf $BINARY.tar.gz
+          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64.tar.gz
+          tar -xzf yq_linux_amd64.tar.gz
           mkdir -p ./bin
-          mv $BINARY ./bin/yq 
+          mv yq_linux_amd64 ./bin/yq 
           chmod +x ./bin/yq
 
       - name: Install project
