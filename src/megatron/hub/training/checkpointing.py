@@ -497,101 +497,101 @@ def save_checkpoint(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     # Collect cfg, model, RNG.
-    if not torch.distributed.is_initialized() or mpu.get_expert_data_parallel_rank() == 0:
-        optim_sd_kwargs = {}
-        if cfg.optimizer.use_distributed_optimizer:
-            optim_sd_kwargs["sharding_type"] = (
-                "fully_sharded_model_space" if ckpt_cfg.fully_parallel_save else "dp_zero_gather_scatter"
-            )
-            print_rank_0(f"Storing distributed optimizer sharded state of type {optim_sd_kwargs['sharding_type']}")
-        state_dict = generate_state_dict(
-            cfg,
-            model,
-            optimizer,
-            opt_param_scheduler,
-            rng_state,
-            iteration=train_state.step,
-            optim_sd_kwargs=optim_sd_kwargs,
-            rerun_state=rerun_state,
+    optim_sd_kwargs = {}
+    if cfg.optimizer.use_distributed_optimizer:
+        optim_sd_kwargs["sharding_type"] = (
+            "fully_sharded_model_space" if ckpt_cfg.fully_parallel_save else "dp_zero_gather_scatter"
         )
+        print_rank_0(f"Storing distributed optimizer sharded state of type {optim_sd_kwargs['sharding_type']}")
 
-        if ckpt_type == CheckpointType.GLOBAL:
-            if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-                # TODO Handle non-empty directories (e.g., after a crash during saving).
-                ensure_directory_exists(checkpoint_name, check_parent=False)
-            if checkpointing_context is not None and "save_strategy" in checkpointing_context:
-                save_strategy = checkpointing_context["save_strategy"]
-                # Already saved once before - don't need to rerun sharding validation
-                validate_sharding_integrity = not ckpt_cfg.ckpt_assume_constant_structure
-            else:
-                validate_sharding_integrity = True
-                save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)
-                if ckpt_cfg.ckpt_assume_constant_structure and ckpt_cfg.ckpt_format == "torch_dist":
-                    save_strategy.use_cached_ckpt_structure = ckpt_cfg.ckpt_assume_constant_structure
-                    if checkpointing_context is not None and "load_strategy" in checkpointing_context:
-                        cached_global_metadata = getattr(
-                            checkpointing_context["load_strategy"], "cached_global_metadata", None
-                        )
-                        if cached_global_metadata is not None:
-                            logger.debug("Plugging in the read metadata from the load strategy...")
-                            save_strategy.cached_global_metadata = cached_global_metadata
-                        else:
-                            logger.debug("Failed to plug in the read metadata from the load strategy...")
+    state_dict = generate_state_dict(
+        cfg,
+        model,
+        optimizer,
+        opt_param_scheduler,
+        rng_state,
+        iteration=train_state.step,
+        optim_sd_kwargs=optim_sd_kwargs,
+        rerun_state=rerun_state,
+    )
 
-                if ckpt_cfg.fully_parallel_save:
-                    save_strategy = FullyParallelSaveStrategyWrapper(
-                        save_strategy,
-                        mpu.get_data_parallel_group(with_context_parallel=True),
-                        ckpt_cfg.ckpt_assume_constant_structure,
-                    )
-            # Store save strategy for future checkpoint saves
-            if checkpointing_context is not None:
-                checkpointing_context["save_strategy"] = save_strategy
-            end_ckpt = time()
-            logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
-            async_save_request = dist_checkpointing.save(
-                state_dict,
-                checkpoint_name,
-                save_strategy,
-                async_sharded_save=ckpt_cfg.async_save,
-                validate_access_integrity=validate_sharding_integrity,
-                preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
-            )
-            # [ModelOpt]: save sharded modelopt_state
-            if has_nvidia_modelopt:
-                save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
+    if ckpt_type == CheckpointType.GLOBAL:
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+            # TODO Handle non-empty directories (e.g., after a crash during saving).
+            ensure_directory_exists(checkpoint_name, check_parent=False)
+        if checkpointing_context is not None and "save_strategy" in checkpointing_context:
+            save_strategy = checkpointing_context["save_strategy"]
+            # Already saved once before - don't need to rerun sharding validation
+            validate_sharding_integrity = not ckpt_cfg.ckpt_assume_constant_structure
         else:
-            # [ModelOpt]: Inject modelopt_state into state_dict
-            if has_nvidia_modelopt:
-                if ckpt_type == CheckpointType.LOCAL:
-                    print_rank_0("WARNING: Local checkpointing does not support nvidia_modelopt.")
-                else:  # GLOBAL checkpoint type
-                    save_modelopt_state(model, state_dict)
-
-            end_ckpt = time()
-            logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
-            if ckpt_type == CheckpointType.LOCAL:
-                try:
-                    from megatron.core.dist_checkpointing.tensor_aware_state_dict import MCoreTensorAwareStateDict
-                except ModuleNotFoundError:
-                    raise RuntimeError(
-                        "The 'nvidia_resiliency_ext' module is required for local "
-                        "checkpointing but was not found. Please ensure it is installed."
+            validate_sharding_integrity = True
+            save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)
+            if ckpt_cfg.ckpt_assume_constant_structure and ckpt_cfg.ckpt_format == "torch_dist":
+                save_strategy.use_cached_ckpt_structure = ckpt_cfg.ckpt_assume_constant_structure
+                if checkpointing_context is not None and "load_strategy" in checkpointing_context:
+                    cached_global_metadata = getattr(
+                        checkpointing_context["load_strategy"], "cached_global_metadata", None
                     )
-                algo = ckpt_cfg.non_persistent_local_ckpt_algo
-                cached_metadata = None
-                if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
-                    cached_metadata = checkpointing_context["local_checkpoint_cache"]
-                state_dict_for_save, cacheable_metadata = MCoreTensorAwareStateDict.from_state_dict(
-                    state_dict,
-                    algo=algo,
-                    cached_metadata=cached_metadata,
-                    parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
+                    if cached_global_metadata is not None:
+                        logger.debug("Plugging in the read metadata from the load strategy...")
+                        save_strategy.cached_global_metadata = cached_global_metadata
+                    else:
+                        logger.debug("Failed to plug in the read metadata from the load strategy...")
+
+            if ckpt_cfg.fully_parallel_save:
+                save_strategy = FullyParallelSaveStrategyWrapper(
+                    save_strategy,
+                    mpu.get_data_parallel_group(with_context_parallel=True),
+                    ckpt_cfg.ckpt_assume_constant_structure,
                 )
-                async_save_request = checkpointing_context["local_checkpoint_manager"].save(
-                    state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
+        # Store save strategy for future checkpoint saves
+        if checkpointing_context is not None:
+            checkpointing_context["save_strategy"] = save_strategy
+        end_ckpt = time()
+        logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
+        async_save_request = dist_checkpointing.save(
+            state_dict,
+            checkpoint_name,
+            save_strategy,
+            async_sharded_save=ckpt_cfg.async_save,
+            validate_access_integrity=validate_sharding_integrity,
+            preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
+        )
+        # [ModelOpt]: save sharded modelopt_state
+        if has_nvidia_modelopt:
+            save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
+    else:
+        # [ModelOpt]: Inject modelopt_state into state_dict
+        if has_nvidia_modelopt:
+            if ckpt_type == CheckpointType.LOCAL:
+                print_rank_0("WARNING: Local checkpointing does not support nvidia_modelopt.")
+            else:  # GLOBAL checkpoint type
+                save_modelopt_state(model, state_dict)
+
+        end_ckpt = time()
+        logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
+        if ckpt_type == CheckpointType.LOCAL:
+            try:
+                from megatron.core.dist_checkpointing.tensor_aware_state_dict import MCoreTensorAwareStateDict
+            except ModuleNotFoundError:
+                raise RuntimeError(
+                    "The 'nvidia_resiliency_ext' module is required for local "
+                    "checkpointing but was not found. Please ensure it is installed."
                 )
-                checkpointing_context["local_checkpoint_cache"] = cacheable_metadata
+            algo = ckpt_cfg.non_persistent_local_ckpt_algo
+            cached_metadata = None
+            if ckpt_cfg.ckpt_assume_constant_structure and "local_checkpoint_cache" in checkpointing_context:
+                cached_metadata = checkpointing_context["local_checkpoint_cache"]
+            state_dict_for_save, cacheable_metadata = MCoreTensorAwareStateDict.from_state_dict(
+                state_dict,
+                algo=algo,
+                cached_metadata=cached_metadata,
+                parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
+            )
+            async_save_request = checkpointing_context["local_checkpoint_manager"].save(
+                state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
+            )
+            checkpointing_context["local_checkpoint_cache"] = cacheable_metadata
 
     start_misc = time()
     if ckpt_type != CheckpointType.LOCAL:
