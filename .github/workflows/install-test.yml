@@ -76,6 +76,8 @@ jobs:
         run: |
           echo -e "machine github.com\n  login token\n  password ${{ secrets.PAT }}" > ~/.netrc
           chmod 600 ~/.netrc 
+          python -m venv ./venv
+          source ./venv/bin/activate
 
           export PATH="./bin/:$PATH"
 
