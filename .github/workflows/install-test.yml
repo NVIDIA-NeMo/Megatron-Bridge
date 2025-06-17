@@ -35,6 +35,7 @@ jobs:
   uv-test:
     runs-on: ${{ matrix.arch }}
     name: UV on ${{ matrix.arch }}
+    environment: nemo-ci
     strategy:
       fail-fast: false
       matrix:
