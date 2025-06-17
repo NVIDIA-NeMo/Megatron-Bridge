@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def wait_for_fastapi_server(
     base_url: str = "http://0.0.0.0:8080",
-    model_name: str = "triton_model",
+    model_name: str = "megatron_model",
     max_retries: int = 600,
     retry_interval: int = 2,
 ):
