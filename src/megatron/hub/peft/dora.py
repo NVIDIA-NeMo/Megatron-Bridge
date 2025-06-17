@@ -54,14 +54,6 @@ class DoRA(PEFT, ModuleMatcher):
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
-
-    Example:
-    --------
-        >>> from megatron.hub.peft import DoRA
-        >>> from megatron.hub.models import get_base_model
-        >>> dora = DoRA(target_modules=['linear_qkv', 'linear_proj'], dim=32, alpha=64)
-        >>> base_model = get_base_model(model_config)
-        >>> adapted_model = dora(base_model, training=True)
     """
 
     target_modules: List[str] = field(
