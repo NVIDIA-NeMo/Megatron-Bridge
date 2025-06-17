@@ -290,7 +290,7 @@ class HFLlamaImporter(BaseImporter):
                 )
             )
 
-        apply_transforms(source, target, mapping=mapping, transforms=transforms)
+        return apply_transforms(source, target, mapping=mapping, transforms=transforms)
 
     @property
     def hf_config(self) -> "HFLlamaConfig":
