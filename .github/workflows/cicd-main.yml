@@ -139,6 +139,16 @@ jobs:
     needs: [cicd-unit-tests]
     runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
     name: ${{ matrix.script }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - script: L2_Launch_Training
+            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 60
+          - script: L2_Launch_Evaluation
+            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
+            timeout: 60
     environment: nemo-ci
     steps:
       - name: Checkout
@@ -147,7 +157,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           runner: ${{ runner.name }}
-          script: L2_Launch
+          script: ${{ matrix.script }}
           timeout: 60
           is_unit_test: "false"
           image: megatron_hub

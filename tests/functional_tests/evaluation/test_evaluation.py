@@ -11,21 +11,61 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import logging
 import os
-import signal
 import subprocess
-
 import pytest
-
+import signal
 from megatron.hub.evaluation.api import evaluate
 from megatron.hub.evaluation.utils.api import ApiEndpoint, ConfigParams, EvaluationConfig, EvaluationTarget
 from megatron.hub.evaluation.utils.base import wait_for_fastapi_server
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+nemo2_ckpt_path = "/home/TestData/nemo2_ckpt/llama3-1b-lingua"
+max_batch_size = 4
+legacy_ckpt = True
+
+
+@pytest.fixture()
+def triton_server():
+    # Set environment variables
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
+    os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
+
+    # Run deployment
+
+    deploy_proc = subprocess.Popen(
+        [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "tests/functional_tests/evaluation/deploy_in_fw_script.py",
+            "--nemo2_ckpt_path",
+            nemo2_ckpt_path,
+            "--max_batch_size",
+            str(max_batch_size),
+        ]
+        + (["--legacy_ckpt"] if legacy_ckpt else []),
+        env=None,
+    )
+    # Wait for server readiness
+    logger.info("Waiting for server readiness...")
+    server_ready = wait_for_fastapi_server(base_url="http://0.0.0.0:8886", max_retries=900)
+    assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
+
+    yield
+
+    deploy_proc.send_signal(signal.SIGTERM)
+    deploy_proc.wait(timeout=30)
+    try:
+        os.killpg(deploy_proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 class TestEvaluation:
@@ -34,113 +74,38 @@ class TestEvaluation:
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_gsm8k_evaluation(self):
+    def test_gsm8k_evaluation(self, triton_server):
         """
         Test GSM8K evaluation benchmark.
         """
-        nemo2_ckpt_path = "/home/TestData/nemo2_ckpt/llama3-1b-lingua"
-        max_batch_size = 4
-        eval_type = "gsm8k"
-        limit = 1
-        legacy_ckpt = True
-        port = 8899
 
-        # Set environment variables
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
-        os.environ["HF_DATASETS_OFFLINE"] = "1"
-        os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
-        os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
+        # Run evaluation
+        logger.info("Starting evaluation...")
+        api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:8886/v1/completions/")
+        eval_target = EvaluationTarget(api_endpoint=api_endpoint)
+        eval_params = {
+            "limit_samples": 1,
+        }
+        eval_config = EvaluationConfig(type="gsm8k", params=ConfigParams(**eval_params))
+        evaluate(target_cfg=eval_target, eval_cfg=eval_config)
+        logger.info("Evaluation completed.")
 
-        # Run deployment
-        deploy_proc = subprocess.Popen(
-            [
-                "python",
-                "tests/functional_tests/evaluation/deploy_in_fw_script.py",
-                "--nemo2_ckpt_path",
-                nemo2_ckpt_path,
-                "--max_batch_size",
-                str(max_batch_size),
-                "--port",
-                str(port),
-            ]
-            + (["--legacy_ckpt"] if legacy_ckpt else []),
-        )
-
-        try:
-            # Wait for server readiness
-            logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=900)
-            assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
-
-            # Run evaluation
-            logger.info("Starting evaluation...")
-            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{port}/v1/completions/")
-            eval_target = EvaluationTarget(api_endpoint=api_endpoint)
-            eval_params = {
-                "limit_samples": limit,
-            }
-            eval_config = EvaluationConfig(type=eval_type, params=ConfigParams(**eval_params))
-            evaluate(target_cfg=eval_target, eval_cfg=eval_config)
-            logger.info("Evaluation completed.")
-
-        finally:
-            deploy_proc.send_signal(signal.SIGINT)
-
-    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
-    def test_arc_challenge_evaluation(self):
+    def test_arc_challenge_evaluation(self, triton_server):
         """
         Test ARC Challenge evaluation benchmark.
         """
-        nemo2_ckpt_path = "/home/TestData/nemo2_ckpt/llama3-1b-lingua"
-        tokenizer_path = "/home/TestData/nemo2_ckpt/llama3-1b-lingua/context/lingua"
-        max_batch_size = 4
-        eval_type = "arc_challenge"
-        limit = 1
-        legacy_ckpt = True
-        port = 8999
-
-        # Set environment variables
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
-        os.environ["HF_DATASETS_OFFLINE"] = "1"
-        os.environ["HF_HOME"] = "/home/TestData/HF_HOME"
-        os.environ["HF_DATASETS_CACHE"] = f"{os.environ['HF_HOME']}/datasets"
-
-        # Run deployment
-        deploy_proc = subprocess.Popen(
-            [
-                "python",
-                "tests/functional_tests/evaluation/deploy_in_fw_script.py",
-                "--nemo2_ckpt_path",
-                nemo2_ckpt_path,
-                "--max_batch_size",
-                str(max_batch_size),
-                "--port",
-                str(port),
-            ]
-            + (["--legacy_ckpt"] if legacy_ckpt else []),
-        )
-
-        try:
-            # Wait for server readiness
-            logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=900)
-            assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
-
-            # Run evaluation
-            logger.info("Starting evaluation...")
-            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{port}/v1/completions/")
-            eval_target = EvaluationTarget(api_endpoint=api_endpoint)
-            eval_params = {
-                "limit_samples": limit,
-                "extra": {
-                    "tokenizer_backend": "huggingface",
-                    "tokenizer": tokenizer_path,
-                },
-            }
-            eval_config = EvaluationConfig(type=eval_type, params=ConfigParams(**eval_params))
-            evaluate(target_cfg=eval_target, eval_cfg=eval_config)
-            logger.info("Evaluation completed.")
-
-        finally:
-            deploy_proc.send_signal(signal.SIGINT)
+        # Run evaluation
+        logger.info("Starting evaluation...")
+        api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:8886/v1/completions/")
+        eval_target = EvaluationTarget(api_endpoint=api_endpoint)
+        eval_params = {
+            "limit_samples": 1,
+            "extra": {
+                "tokenizer_backend": "huggingface",
+                "tokenizer": "/home/TestData/nemo2_ckpt/llama3-1b-lingua/context/lingua",
+            },
+        }
+        eval_config = EvaluationConfig(type="arc_challenge", params=ConfigParams(**eval_params))
+        evaluate(target_cfg=eval_target, eval_cfg=eval_config)
+        logger.info("Evaluation completed.")
