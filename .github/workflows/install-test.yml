@@ -50,6 +50,16 @@ jobs:
 
       - name: Set up yq
         uses: mikefarah/yq@master
+        if: matrix.arch == 'ubuntu-latest'
+
+      - name: Set up Homebrew
+        if: matrix.arch == 'macos-latest'
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@main
+
+      - name: Install yq
+        if: matrix.arch == 'macos-latest'
+        run: brew install yq
 
       - name: Install dependencies with UV
         env:
