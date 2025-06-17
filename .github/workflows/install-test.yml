@@ -35,7 +35,6 @@ jobs:
   uv-test:
     runs-on: ${{ matrix.arch }}
     name: UV on ${{ matrix.arch }}
-    environment: nemo-ci
     strategy:
       fail-fast: false
       matrix:
@@ -67,16 +66,10 @@ jobs:
       - name: Install dependencies with UV
         env:
           UV_PROJECT_ENVIRONMENT: ./venv
-          PAT: ${{ secrets.PAT }}
         run: |
-          echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
-          chmod 600 ~/.netrc 
 
           export PATH=".bin/:$PATH"
 
           uv venv ${UV_PROJECT_ENVIRONMENT}
 
           uv sync --link-mode copy --locked --all-groups
-
-          bash ./docker/common/install_conflicting_deps.sh \
-            --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
