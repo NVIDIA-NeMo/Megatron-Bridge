@@ -39,6 +39,7 @@ if __name__ == "__main__":
             max_batch_size=args.max_batch_size,
             fastapi_port=8886,
             legacy_ckpt=args.legacy_ckpt,
+            model_name="megatron_model"
         )
     except Exception as e:
         logger.error(f"Deploy process encountered an error: {e}")
