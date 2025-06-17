@@ -63,7 +63,7 @@ jobs:
 
       - name: Install dependencies with UV
         env:
-          UV_PROJECT_ENVIRONMENT: /opt/venv
+          UV_PROJECT_ENVIRONMENT: ./venv
           PAT: ${{ secrets.PAT }}
         run: |
           echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
