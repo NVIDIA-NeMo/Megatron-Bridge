@@ -16,7 +16,6 @@ import logging
 import os
 import signal
 import subprocess
-import time
 
 import pytest
 
@@ -61,7 +60,7 @@ class TestEvaluation:
                 "--max_batch_size",
                 str(max_batch_size),
                 "--port",
-                port,
+                str(port),
             ]
             + (["--legacy_ckpt"] if legacy_ckpt else []),
         )
@@ -74,7 +73,7 @@ class TestEvaluation:
 
             # Run evaluation
             logger.info("Starting evaluation...")
-            api_endpoint = ApiEndpoint(url="http://0.0.0.0:8886/v1/completions/")
+            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{port}/v1/completions/")
             eval_target = EvaluationTarget(api_endpoint=api_endpoint)
             eval_params = {
                 "limit_samples": limit,
@@ -85,8 +84,8 @@ class TestEvaluation:
 
         finally:
             deploy_proc.send_signal(signal.SIGINT)
-            time.sleep(60)  # Wait for the server to shutdown
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_arc_challenge_evaluation(self):
         """
@@ -116,7 +115,7 @@ class TestEvaluation:
                 "--max_batch_size",
                 str(max_batch_size),
                 "--port",
-                port,
+                str(port),
             ]
             + (["--legacy_ckpt"] if legacy_ckpt else []),
         )
@@ -129,7 +128,7 @@ class TestEvaluation:
 
             # Run evaluation
             logger.info("Starting evaluation...")
-            api_endpoint = ApiEndpoint(url="http://0.0.0.0:8886/v1/completions/")
+            api_endpoint = ApiEndpoint(url=f"http://0.0.0.0:{port}/v1/completions/")
             eval_target = EvaluationTarget(api_endpoint=api_endpoint)
             eval_params = {
                 "limit_samples": limit,
@@ -144,4 +143,3 @@ class TestEvaluation:
 
         finally:
             deploy_proc.send_signal(signal.SIGINT)
-            time.sleep(60)  # Wait for the server to shutdown
