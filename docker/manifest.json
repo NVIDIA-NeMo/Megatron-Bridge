@@ -2,7 +2,7 @@
     "vcs-dependencies": {
         "export-deploy": {
             "repo": "https://github.com/NVIDIA-NeMo/Export-Deploy.git",
-            "ref": "fcd4e5462d2d81df36d81ce483986dd6b875023b"
+            "ref": "72b5da6e76df835ee962181a5200d08f1c981687"
         }
     }
 }
