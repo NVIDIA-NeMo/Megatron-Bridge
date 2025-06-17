@@ -82,6 +82,8 @@ jobs:
           echo -e "machine github.com\n  login token\n  password ${{ secrets.PAT }}" > ~/.netrc
           chmod 600 ~/.netrc 
 
+          export PATH="./bin/:$PATH"
+
           pip install ".[eval,recipes]"
 
           bash ./docker/common/install_conflicting_deps.sh \
