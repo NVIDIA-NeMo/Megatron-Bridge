@@ -52,14 +52,14 @@ jobs:
         uses: mikefarah/yq@master
         if: matrix.arch == 'ubuntu-latest'
 
-      - name: Set up Homebrew
+      - name: Set up yq
         if: matrix.arch == 'macos-latest'
-        id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@main
-
-      - name: Install yq
-        if: matrix.arch == 'macos-latest'
-        run: brew install yq
+        shell: bash
+        run: |
+          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64.tar.gz
+          tar -xzf yq_linux_amd64.tar.gz
+          mv yq_linux_amd64 yq 
+          chmod +x yq
 
       - name: Install dependencies with UV
         env:
@@ -68,6 +68,7 @@ jobs:
         run: |
           echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
           chmod 600 ~/.netrc 
+          export PATH=$PATH:./
 
           uv venv ${UV_PROJECT_ENVIRONMENT}
 
