@@ -54,7 +54,7 @@ jobs:
       - name: Install wget
         run: |
           apt-get update
-          apt-get install -y wget
+          apt-get install -y wget git
 
       - name: Upgrade pip
         run: |
