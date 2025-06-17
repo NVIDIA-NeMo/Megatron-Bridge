@@ -48,6 +48,3 @@ RUN patch \
     --force \
     $(python -c "import triton; print(triton.__path__[0])")/runtime/autotuner.py \
     /workspace/external/patches/triton-lang_triton_6570_lazy_init.patch     
-
-
-ñ
