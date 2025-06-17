@@ -49,22 +49,19 @@ jobs:
           version: 0.7.2
 
       - name: Set up yq
-        if: matrix.arch == 'ubuntu-latest'
         shell: bash
         run: |
-          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64.tar.gz
-          tar -xzf yq_linux_amd64.tar.gz
-          mv yq_linux_amd64 yq 
-          chmod +x yq
+          if [[ "${{ matrix.arch }}" == "ubuntu-latest" ]]; then
+            BINARY="yq_linux_amd64"
+          else
+            BINARY="yq_linux_arm64"
+          fi
 
-      - name: Set up yq
-        if: matrix.arch == 'macos-latest'
-        shell: bash
-        run: |
-          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_arm64.tar.gz
-          tar -xzf yq_linux_arm64.tar.gz
-          mv yq_linux_arm64 yq 
-          chmod +x yq
+          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/$BINARY.tar.gz
+          tar -xzf $BINARY.tar.gz
+          mkdir -p ./bin
+          mv $BINARY ./bin/yq 
+          chmod +x ./bin/yq
 
       - name: Install dependencies with UV
         env:
@@ -73,11 +70,12 @@ jobs:
         run: |
           echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
           chmod 600 ~/.netrc 
-          export PATH=$PATH:./
+
+          export PATH=".bin/:$PATH"
 
           uv venv ${UV_PROJECT_ENVIRONMENT}
 
           uv sync --link-mode copy --locked --all-groups
 
           bash ./docker/common/install_conflicting_deps.sh \
-            --export-deploy-ref $(cat ./docker/common/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
+            --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
