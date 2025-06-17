@@ -55,7 +55,6 @@ from megatron.hub.utils.common_utils import (
     is_last_rank,
     print_rank_0,
     unwrap_model,
-    use_dist_ckpt,
 )
 from megatron.hub.utils.import_utils import safe_import
 from megatron.hub.utils.log_utils import append_to_progress_log
@@ -861,11 +860,7 @@ def load_checkpoint(
 
     load_kwargs = {}
     is_dist_ckpt = False
-    if (
-        cfg.checkpoint.auto_detect_ckpt_format
-        or use_dist_ckpt(cfg.checkpoint.ckpt_format)
-        or cfg.checkpoint.non_persistent_save_interval is not None
-    ):
+    if cfg.checkpoint.auto_detect_ckpt_format or cfg.checkpoint.non_persistent_save_interval is not None:
         state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
             load_dir,
             cfg,
@@ -901,7 +896,7 @@ def load_checkpoint(
                 and not release
                 and not cfg.checkpoint.finetune
                 and cfg.checkpoint.load_rng
-                and run_config["checkpoint_config"]["save_rng"]
+                and run_config["checkpoint"]["save_rng"]
             ):
                 # we can load the rng state
                 gen_sd_rng_state = get_rng_state(data_parallel_random_init=cfg.rng.data_parallel_random_init)
@@ -916,7 +911,7 @@ def load_checkpoint(
                 not release
                 and not cfg.checkpoint.finetune
                 and cfg.checkpoint.load_optim
-                and run_config["checkpoint_config"]["save_optim"]
+                and run_config["checkpoint"]["save_optim"]
             ):
                 gen_sd_optim = optimizer
                 gen_sd_opt_param_scheduler = opt_param_scheduler
@@ -924,7 +919,7 @@ def load_checkpoint(
                 if cfg.optimizer.use_distributed_optimizer:
                     optim_sd_kwargs["sharding_type"] = (
                         "fully_sharded_model_space"
-                        if run_config["checkpoint_config"]["fully_parallel_save"]
+                        if run_config["checkpoint"]["fully_parallel_save"]
                         else "dp_zero_gather_scatter"
                     )
                     # This is for backwards-compatibility.
@@ -1359,14 +1354,8 @@ def _load_global_dist_base_checkpoint(
         return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
     if sharded_state_dict is None:
-        assert not cfg.checkpoint.auto_detect_ckpt_format and not use_dist_ckpt(cfg.checkpoint.ckpt_format), (
-            cfg.checkpoint.auto_detect_ckpt_format,
-            use_dist_ckpt(cfg.checkpoint.ckpt_format),
-        )
-        raise RuntimeError(
-            "Detected load from a distributed checkpoint, "
-            "but neither use-dist-ckpt nor auto-detect-ckpt-format is set."
-        )
+        assert not cfg.checkpoint.auto_detect_ckpt_format, "auto_detect_ckpt_format must be False"
+        raise RuntimeError("Detected load from a distributed checkpoint, but auto-detect-ckpt-format is not set.")
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
