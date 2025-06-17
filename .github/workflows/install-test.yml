@@ -49,16 +49,21 @@ jobs:
           version: 0.7.2
 
       - name: Set up yq
-        uses: mikefarah/yq@master
         if: matrix.arch == 'ubuntu-latest'
-
-      - name: Set up yq
-        if: matrix.arch == 'macos-latest'
         shell: bash
         run: |
           wget https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_amd64.tar.gz
           tar -xzf yq_linux_amd64.tar.gz
           mv yq_linux_amd64 yq 
+          chmod +x yq
+
+      - name: Set up yq
+        if: matrix.arch == 'macos-latest'
+        shell: bash
+        run: |
+          wget https://github.com/mikefarah/yq/releases/download/v4.45.4/yq_linux_arm64.tar.gz
+          tar -xzf yq_linux_arm64.tar.gz
+          mv yq_linux_arm64 yq 
           chmod +x yq
 
       - name: Install dependencies with UV
