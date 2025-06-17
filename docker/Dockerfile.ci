@@ -25,11 +25,6 @@ ENV UV_LINK_MODE=copy
 # Install all
 WORKDIR /workspace
 
-RUN bash -ex <<"EOF"
-    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
-    source ${UV_PROJECT_ENVIRONMENT}/bin/activate
-EOF
-
 # Copy necessary files for installation
 COPY pyproject.toml /workspace/
 COPY src /workspace/src
@@ -37,25 +32,21 @@ COPY README.md /workspace/
 COPY uv.lock /workspace/
 COPY docker/common/install_conflicting_deps.sh /workspace/docker/common/install_conflicting_deps.sh
 ARG EXPORT_DEPLOY_REF=ko3n1g/build/update-lock-file
-RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
-    PAT=$(cat /run/secrets/GH_TOKEN)
-    echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
-    chmod 600 ~/.netrc 
-    
-    uv sync --link-mode copy --locked --all-groups
-
-    bash /workspace/docker/common/install_conflicting_deps.sh --export-deploy-ref $EXPORT_DEPLOY_REF
-    
-    rm ~/.netrc
-EOF
+RUN --mount=type=secret,id=GH_TOKEN bash -ex -c '\
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    PAT=$(cat /run/secrets/GH_TOKEN) && \
+    echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc && \
+    chmod 600 ~/.netrc && \
+    uv sync --link-mode copy --locked --all-groups && \
+    bash /workspace/docker/common/install_conflicting_deps.sh --export-deploy-ref $EXPORT_DEPLOY_REF && \
+    rm ~/.netrc'
 
 # Fix for triton 3.3 (part of NGC PyT25.05, presumably until 25.07)
 COPY external/patches/triton-lang_triton_6570_lazy_init.patch /workspace/external/patches/triton-lang_triton_6570_lazy_init.patch
-RUN bash -exu <<"EOF"
-    patch \
-        -p1 \
-        --force \
-        $(python -c "import triton; print(triton.__path__[0])")/runtime/autotuner.py \
-        /workspace/external/patches/triton-lang_triton_6570_lazy_init.patch     
-EOF
+RUN patch \
+    -p1 \
+    --force \
+    $(python -c "import triton; print(triton.__path__[0])")/runtime/autotuner.py \
+    /workspace/external/patches/triton-lang_triton_6570_lazy_init.patch     
+
 
