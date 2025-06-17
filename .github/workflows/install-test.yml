@@ -72,6 +72,7 @@ jobs:
       - name: Install project
         env:
           PAT: ${{ secrets.PAT }}
+          UV_PROJECT_ENVIRONMENT: ./venv
         run: |
           echo -e "machine github.com\n  login token\n  password ${{ secrets.PAT }}" > ~/.netrc
           chmod 600 ~/.netrc 
