@@ -51,6 +51,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install wget
+        run: |
+          apt-get update
+          apt-get install -y wget
+
       - name: Upgrade pip
         run: |
           python -m pip install --upgrade pip
