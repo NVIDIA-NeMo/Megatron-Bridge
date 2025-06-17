@@ -25,6 +25,7 @@ from megatron.hub.evaluation.utils.base import wait_for_fastapi_server
 
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class TestEvaluation:
@@ -42,7 +43,7 @@ class TestEvaluation:
         eval_type = "gsm8k"
         limit = 1
         legacy_ckpt = True
-        port = 8886
+        port = 8899
 
         # Set environment variables
         os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
@@ -68,7 +69,7 @@ class TestEvaluation:
         try:
             # Wait for server readiness
             logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=600)
+            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=900)
             assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
 
             # Run evaluation
@@ -97,7 +98,7 @@ class TestEvaluation:
         eval_type = "arc_challenge"
         limit = 1
         legacy_ckpt = True
-        port = 8887
+        port = 8999
 
         # Set environment variables
         os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
@@ -123,7 +124,7 @@ class TestEvaluation:
         try:
             # Wait for server readiness
             logger.info("Waiting for server readiness...")
-            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=600)
+            server_ready = wait_for_fastapi_server(base_url=f"http://0.0.0.0:{port}", max_retries=900)
             assert server_ready, "Server is not ready. Please look at the deploy process log for the error"
 
             # Run evaluation

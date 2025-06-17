@@ -137,7 +137,7 @@ jobs:
 
   cicd-functional-tests:
     needs: [cicd-unit-tests]
-    runs-on: ${{ matrix.runner }}
+    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
     name: ${{ matrix.script }}
     environment: nemo-ci
     steps:
