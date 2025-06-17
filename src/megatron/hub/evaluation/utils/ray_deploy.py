@@ -1,26 +1,27 @@
 import logging
+import multiprocessing
 import signal
 import sys
 from typing import Optional
-import multiprocessing
-
-import ray
-from ray.serve import Application
 
 from nemo_deploy.deploy_ray import DeployRay
 from nemo_deploy.nlp.megatronllm_deployable_ray import MegatronRayDeployable
 
+
 logger = logging.getLogger(__name__)
+
 
 def get_available_cpus() -> int:
     """Get the number of available CPUs."""
     return multiprocessing.cpu_count()
+
 
 def signal_handler(signum, frame, ray_deployer: DeployRay):
     """Handle termination signals."""
     logger.info("Received termination signal. Shutting down...")
     ray_deployer.stop()
     sys.exit(0)
+
 
 def deploy_with_ray(
     nemo_checkpoint: str,
@@ -43,7 +44,7 @@ def deploy_with_ray(
 ) -> None:
     """
     Deploy the model using Ray Serve.
-    
+
     Args:
         nemo_checkpoint: Path to the NeMo checkpoint
         num_gpus: Number of GPUs per node
@@ -71,21 +72,13 @@ def deploy_with_ray(
     gpus_per_replica = total_gpus // num_replicas
 
     # Validate parallelism configuration
-    parallelism_per_replica = (
-        tensor_model_parallel_size
-        * pipeline_model_parallel_size
-        * context_parallel_size
-    )
+    parallelism_per_replica = tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size
 
     if parallelism_per_replica != gpus_per_replica:
         logger.error(
-            f"Parallelism per replica ({parallelism_per_replica}) must equal "
-            f"GPUs per replica ({gpus_per_replica})"
-        )
-        logger.error(
-            f"Total GPUs: {total_gpus}, Num replicas: {num_replicas}, "
-            f"GPUs per replica: {gpus_per_replica}"
-        )
+           f"Parallelism per replica ({parallelism_per_replica}) must equal GPUs per replica ({gpus_per_replica})"
+         )
+        logger.error(f"Total GPUs: {total_gpus}, Num replicas: {num_replicas}, GPUs per replica: {gpus_per_replica}")
         logger.error(
             f"Each replica needs: tensor_parallel({tensor_model_parallel_size}) * "
             f"pipeline_parallel({pipeline_model_parallel_size}) * "
@@ -93,9 +86,7 @@ def deploy_with_ray(
         )
         sys.exit(1)
 
-    logger.info(
-        f"Configuration: {num_replicas} replicas, {gpus_per_replica} GPUs per replica"
-    )
+    logger.info(f"Configuration: {num_replicas} replicas, {gpus_per_replica} GPUs per replica")
 
     # Initialize Ray deployment
     ray_deployer = DeployRay(
@@ -110,9 +101,7 @@ def deploy_with_ray(
     )
 
     # Set up signal handlers
-    signal.signal(
-        signal.SIGINT, lambda signum, frame: signal_handler(signum, frame, ray_deployer)
-    )
+    signal.signal(signal.SIGINT, lambda signum, frame: signal_handler(signum, frame, ray_deployer))
     signal.signal(
         signal.SIGTERM,
         lambda signum, frame: signal_handler(signum, frame, ray_deployer),
@@ -125,9 +114,7 @@ def deploy_with_ray(
         # Create the Multi-Rank Megatron model deployment
         app = MegatronRayDeployable.options(
             num_replicas=num_replicas,
-            ray_actor_options={
-                "num_cpus": num_cpus_per_replica
-            },
+            ray_actor_options={"num_cpus": num_cpus_per_replica},
         ).bind(
             nemo_checkpoint_filepath=nemo_checkpoint,
             num_gpus=gpus_per_replica,

@@ -108,6 +108,7 @@ def deploy(
         )
     else:  # pytriton backend
         import os
+
         import uvicorn
         from nemo_deploy import DeployPyTriton
 
