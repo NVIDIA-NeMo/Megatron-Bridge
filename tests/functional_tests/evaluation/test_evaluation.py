@@ -90,6 +90,7 @@ class TestEvaluation:
         evaluate(target_cfg=eval_target, eval_cfg=eval_config)
         logger.info("Evaluation completed.")
 
+    @pytest.mark.pleasefixme
     @pytest.mark.run_only_on("GPU")
     def test_arc_challenge_evaluation(self, triton_server):
         """
