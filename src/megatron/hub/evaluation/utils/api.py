@@ -23,7 +23,7 @@ class ApiEndpoint(BaseModel):
     """
 
     url: str = Field(description="Url of the model", default="http://0.0.0.0:8080/v1/completions/")
-    model_id: str = Field(description="Name of the model in API", default="triton_model")
+    model_id: str = Field(description="Name of the model in API", default="megatron_model")
     type: str = Field(description="The type of the target (chat or completions)", default="completions")
     nemo_triton_http_port: Optional[int] = Field(
         description="HTTP port that was used for the PyTriton server in the deploy method. Default: 8000.",

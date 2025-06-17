@@ -71,18 +71,9 @@ class LoRA(PEFT, ModuleMatcher):
         dropout_position (Literal['pre', 'post'], optional): Position for applying dropout.
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
-        dropout_recompute (bool): Enables dropout recompute using Thunder JIT compilation. When True,
-            applies thunder.jit() to the dropout layer for memory-efficient training by recomputing
-            dropout activations during backward pass instead of storing them.
+        lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
+        lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
         lora_dtype (torch.dtype): Parameter data type for LoRA weights. Default None (will use model's dtype).
-
-    References:
-    -----------
-        Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., & Chen, W. (2021).
-        LoRA: Low-Rank Adaptation of Large Language Models. arXiv preprint arXiv:2106.09685.
-        https://arxiv.org/abs/2106.09685
-
-    )
     """
 
     target_modules: List[str] = field(
@@ -113,6 +104,12 @@ class LoRA(PEFT, ModuleMatcher):
         Returns:
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
+        # Skip already transformed modules
+        adapter_types = (LinearAdapter, LoRALinear)
+        if HAVE_TE:
+            adapter_types = adapter_types + (TELinearAdapter,)
+        if isinstance(module, adapter_types):
+            return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             (match, full_name) = ans

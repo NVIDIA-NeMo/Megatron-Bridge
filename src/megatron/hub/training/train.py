@@ -41,6 +41,7 @@ from megatron.hub.training.checkpointing import maybe_finalize_async_save, save_
 from megatron.hub.training.config import ConfigContainer
 from megatron.hub.training.eval import evaluate_and_print_results
 from megatron.hub.training.initialize import destroy_global_state
+from megatron.hub.training.nvrx_straggler import check_nvrx_straggler_detection, safe_shutdown_nvrx_straggler_manager
 from megatron.hub.training.state import GlobalState
 from megatron.hub.utils import flop_utils
 from megatron.hub.utils.common_utils import get_world_size_safe, print_rank_0
@@ -139,6 +140,20 @@ def train(
             enabled=not config.straggler.disable_straggler_on_startup,
             port=config.straggler.straggler_ctrlr_port,
         )
+
+    # Initialize NVRx straggler detection if enabled
+    nvrx_straggler_manager = global_state.nvrx_straggler_manager
+    if nvrx_straggler_manager is not None:
+        try:
+            # Initialize the straggler detector first
+            nvrx_straggler_manager.initialize()
+            # Wrap the train_step function for monitoring
+            # Note: The nvidia-resiliency-ext library will monitor the actual train_step calls
+            nvrx_straggler_manager.wrap_train_step_function(train_step)
+        except Exception as e:
+            print_rank_0(f"Failed to initialize NVRx straggler detection: {e}")
+            # Set to None to disable further checks
+            global_state._nvrx_straggler_manager = None
 
     num_microbatches = get_num_microbatches()
     eval_duration = 0.0
@@ -393,6 +408,9 @@ def train(
     fault_tolerance.on_checkpointing_start(global_state)
     maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
+
+    # Shutdown NVRx straggler detection if enabled
+    safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
 
     # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
     if should_exit:
@@ -876,11 +894,29 @@ def checkpoint_and_decide_exit(
 
         return True
 
+    # Exit based on NVRx straggler detection
+    if check_nvrx_straggler_detection(state.nvrx_straggler_manager):
+        if state.cfg.checkpoint.save is not None and not saved_checkpoint:
+            save_checkpoint_and_time(
+                state,
+                model,
+                optimizer,
+                opt_param_scheduler,
+                num_floating_point_operations_so_far,
+                checkpointing_context,
+                train_data_iterator=train_data_iterator,
+            )
+        barrier_and_log("Exiting program due to straggler detection.")
+        return True
+
     return False
 
 
 def _finish_train(global_state: GlobalState):
     ckpt_cfg = global_state.cfg.checkpoint
+
+    # Shutdown NVRx straggler detection if enabled
+    safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
 
     fault_tolerance.on_checkpointing_start(global_state)
     maybe_finalize_async_save(global_state=global_state, blocking=True, terminate=True, ckpt_cfg=ckpt_cfg)

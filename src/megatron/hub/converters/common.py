@@ -339,18 +339,18 @@ class BaseImporter(ABC):
             self.convert_state(source, target[0])
             state = GlobalState()
             state.cfg = ConfigContainer(
-                model_config=self.tron_config,
-                train_config=None,
-                optimizer_config=OptimizerConfig(use_distributed_optimizer=False),
-                ddp_config=None,
-                scheduler_config=None,
-                dataset_config=None,
-                logger_config=LoggerConfig(),
-                tokenizer_config=None,
-                checkpoint_config=CheckpointConfig(
+                model=self.tron_config,
+                train=None,
+                optimizer=OptimizerConfig(use_distributed_optimizer=False),
+                ddp=None,
+                scheduler=None,
+                dataset=None,
+                logger=LoggerConfig(),
+                tokenizer=None,
+                checkpoint=CheckpointConfig(
                     async_save=False, save=str(self.output_path), save_optim=False, ckpt_format="torch_dist"
                 ),
-                dist_config=None,
+                dist=None,
             )
             save_checkpoint(
                 state=state,
