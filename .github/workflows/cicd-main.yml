@@ -143,10 +143,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - script: L2_Launch_Training
+          - script: L2_Launch_training
             runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
             timeout: 60
-          - script: L2_Launch_Evaluation
+          - script: L2_Launch_evaluation
             runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
             timeout: 60
     environment: nemo-ci
