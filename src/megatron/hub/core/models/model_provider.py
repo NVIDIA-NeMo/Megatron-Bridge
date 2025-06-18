@@ -1,6 +1,6 @@
-"""Model provider utilities for Megatron-Core GPT models.
+"""Model provider utilities for Megatron-Core models.
 
-This module provides infrastructure for creating and configuring GPT models
+This module provides infrastructure for creating and configuring models
 with various parallelism strategies including tensor parallelism (TP),
 pipeline parallelism (PP), virtual pipeline parallelism (VPP), and
 data parallelism (DP). It handles model initialization, wrapping,
@@ -20,6 +20,12 @@ from megatron.core.distributed import (
 from megatron.core.enums import ModelType
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
+
+
+try:
+    from megatron.core.fp8_utils import correct_amax_history_if_needed
+except ImportError:
+    correct_amax_history_if_needed = None
 
 
 def get_model(
@@ -84,7 +90,8 @@ def get_model(
     if model_config.fp16 or model_config.bf16:
         model = [Float16Module(model_config, model_module) for model_module in model]
 
-    # model = _fix_float_8(model)
+    if correct_amax_history_if_needed is not None:
+        model = correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
         model = _ddp_wrap(
@@ -238,38 +245,6 @@ def _print_num_params(model: list[MegatronModule]):
             ),
             flush=True,
         )
-
-
-def _fix_float_8(model: list[MegatronModule]):
-    """Fix Float8 tensor amax history after FP16/BF16 conversion.
-
-    When model.bfloat16() or model.half() is called on Float8Tensors,
-    it performs an inplace copy that writes incorrect values to amax_history.
-    This function corrects those values by either using the high precision
-    initial value or resetting to 0.
-
-    Args:
-        model: List of model modules potentially containing Float8 parameters
-
-    Returns:
-        list[MegatronModule]: The input model list (modified in-place)
-    """
-    # The model_module.bfloat16()/model_module.half() above will call the inplace copy of TE's
-    # Float8Tensor, which will write an unwanted value (amax calculated from the current fp8
-    # param) to its amax_history. The following logic will correct the amax_history back.
-    from megatron.core.utils import is_float8tensor
-
-    for model_module in model:
-        for param in model_module.parameters():
-            if is_float8tensor(param) and param._fp8_meta is not None:
-                fp8_meta = param._fp8_meta["scaling_fwd"]
-                fp8_meta_index = param._fp8_meta_index
-                if hasattr(param, "get_high_precision_init_val"):
-                    fp8_meta.amax_history[0][fp8_meta_index].copy_(param.get_high_precision_init_val().abs().max())
-                else:
-                    fp8_meta.amax_history[0][fp8_meta_index] = 0
-
-    return model
 
 
 @runtime_checkable
