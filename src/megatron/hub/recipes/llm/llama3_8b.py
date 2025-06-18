@@ -19,6 +19,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
+from megatron.hub.recipes.utils import mock_dataset_config, optimizer_config
 from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3Config8B
 from megatron.hub.training.config import (
@@ -210,7 +211,7 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    opt_config = OptimizerConfig(
+    opt_config, scheduler = optimizer_config(
         optimizer="adam",
         lr=lr,
         min_lr=min_lr,
@@ -235,16 +236,7 @@ def pretrain_config(
             micro_batch_size=micro_batch_size,
         ),
         optimizer=opt_config,
-        scheduler=SchedulerConfig(
-            start_weight_decay=0.033,
-            end_weight_decay=0.033,
-            weight_decay_incr_style="constant",
-            lr_decay_style="cosine",
-            lr_warmup_iters=2000,
-            lr_warmup_init=0.0,
-            lr_decay_iters=train_iters,
-            override_opt_param_scheduler=True,
-        ),
+        scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
@@ -253,7 +245,7 @@ def pretrain_config(
             average_in_collective=True,
             use_distributed_optimizer=True,
         ),
-        dataset=GPTDatasetConfig(
+        dataset=mock_dataset_config(
             random_seed=1234,
             reset_attention_mask=False,
             reset_position_ids=False,
