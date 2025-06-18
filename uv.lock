@@ -13,7 +13,10 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "tiktoken", specifier = ">=0.9.0" }]
+overrides = [
+    { name = "megatron-core", extras = ["dev"], git = "https://github.com/NVIDIA/Megatron-LM.git?rev=c40f31f307221a8458c0775658d19da89303c26b" },
+    { name = "tiktoken", specifier = ">=0.9.0" },
+]
 
 [[package]]
 name = "absl-py"
@@ -2732,7 +2735,7 @@ requires-dist = [
     { name = "datasets" },
     { name = "einops", specifier = ">=0.8.1" },
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
-    { name = "megatron-core", extras = ["dev"], git = "https://github.com/NVIDIA/Megatron-LM.git?rev=c40f31f307221a8458c0775658d19da89303c26b" },
+    { name = "megatron-core", git = "https://github.com/NVIDIA/Megatron-LM.git?rev=c40f31f307221a8458c0775658d19da89303c26b" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
     { name = "numpy", specifier = "<2" },
     { name = "nvidia-lm-eval", marker = "extra == 'eval'" },
@@ -3183,7 +3186,7 @@ nlp-only = [
     { name = "jieba" },
     { name = "markdown2" },
     { name = "matplotlib" },
-    { name = "megatron-core" },
+    { name = "megatron-core", extra = ["dev"] },
     { name = "multi-storage-client" },
     { name = "nltk" },
     { name = "numpy" },
