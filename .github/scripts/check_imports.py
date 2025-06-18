@@ -99,15 +99,6 @@ class ImportChecker:
 
         return modules
 
-    def get_root_exception(self, exc: BaseException) -> BaseException:
-        while True:
-            if exc.__cause__:
-                exc = exc.__cause__
-            elif exc.__context__:
-                exc = exc.__context__
-            else:
-                return exc
-
     def import_module(self, module_name: str) -> Tuple[str, str]:
         """
         Try to import a module and return success status and error message.
@@ -154,7 +145,6 @@ class ImportChecker:
                 self.failure_count += 1
                 self.failures[module_name] = error_msg
 
-    def print_summary(self) -> None:
         """Print a summary of the import check results."""
         total = self.success_count + self.failure_count + self.graceful_count + self.skipped_count
 
@@ -185,9 +175,6 @@ class ImportChecker:
                     if line.strip():
                         print(f"  {line}")
 
-    def get_exit_code(self) -> int:
-        """Return appropriate exit code based on results."""
-        # Return 1 if there are any failed imports (not graceful ones)
         return 1 if self.failure_count > 0 else 0
 
 
@@ -195,9 +182,7 @@ def main():
     """Main entry point."""
 
     checker = ImportChecker(package_name="megatron.hub")
-    checker.check_all_imports()
-    checker.print_summary()
-    return checker.get_exit_code()
+    return checker.check_all_imports()
 
 
 if __name__ == "__main__":
