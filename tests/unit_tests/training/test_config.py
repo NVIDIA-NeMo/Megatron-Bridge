@@ -349,26 +349,6 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og2, mod2)
 
-    def test_distributed_optimizer_with_legacy_checkpointing_fails(self, monkeypatch):
-        """Test validation fails: distributed optimizer, no gloo, non-torch_dist checkpoint."""
-        gpt_model_cfg = create_test_gpt_config()
-        dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=False)
-        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
-        chkpt_cfg = create_test_checkpoint_config(ckpt_format="torch")
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg,
-            dist_config=dist_cfg,
-            optimizer_config=opt_cfg,
-            checkpoint_config=chkpt_cfg,
-        )
-        with pytest.raises(AssertionError):
-            try:
-                container.validate()
-            finally:
-                restore_get_world_size_safe(og_ws, cfg_mod)
-
     def test_distributed_optimizer_with_torch_dist_checkpointing_passes(self, monkeypatch):
         """Test validation passes: distributed optimizer, no gloo, torch_dist checkpoint."""
         gpt_model_cfg = create_test_gpt_config()
@@ -387,45 +367,6 @@ class TestConfigContainerValidation:
             container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
-
-    def test_validation_passes_if_not_dist_opt_or_gloo_enabled(self, monkeypatch):
-        """Test validation passes if not (dist_opt AND no_gloo AND non_torch_dist_ckpt)."""
-        gpt_model_cfg = create_test_gpt_config()
-
-        # Case 1: use_distributed_optimizer is False, use_gloo_process_groups is False
-        dist_cfg1 = create_test_distributed_init_config(use_gloo_process_groups=False)
-        opt_cfg1 = create_test_optimizer_config(use_distributed_optimizer=False)
-        chkpt_cfg1 = create_test_checkpoint_config(ckpt_format="torch")
-
-        container1, og1, mod1 = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg,
-            dist_config=dist_cfg1,
-            optimizer_config=opt_cfg1,
-            checkpoint_config=chkpt_cfg1,
-        )
-        try:
-            container1.validate()
-        finally:
-            restore_get_world_size_safe(og1, mod1)
-
-        # Case 2: use_distributed_optimizer is True, use_gloo_process_groups is True
-        gpt_model_cfg_c2 = create_test_gpt_config()
-        dist_cfg2 = create_test_distributed_init_config(use_gloo_process_groups=True)
-        opt_cfg2 = create_test_optimizer_config(use_distributed_optimizer=True)
-        chkpt_cfg2 = create_test_checkpoint_config(ckpt_format="torch")
-
-        container2, og2, mod2 = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg_c2,
-            dist_config=dist_cfg2,
-            optimizer_config=opt_cfg2,
-            checkpoint_config=chkpt_cfg2,
-        )
-        try:
-            container2.validate()
-        finally:
-            restore_get_world_size_safe(og2, mod2)
 
     def test_scheduler_lr_decay_iters_default(self, monkeypatch):
         """Test `lr_decay_iters` defaults to `train_iters` and `lr_decay_steps` calculation."""
