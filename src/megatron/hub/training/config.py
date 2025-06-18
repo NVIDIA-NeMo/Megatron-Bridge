@@ -371,11 +371,6 @@ class CheckpointConfig:
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
 
-    auto_detect_ckpt_format: bool = False
-    """Determine if the checkpoint format is in legacy or distributed format. If False, expects
-    distributed checkpoint iff args.ckpt_format != "torch". Might slow down loading a bit
-    (double rank0 ckpt load)."""
-
     ckpt_format: Literal["torch_dist", "zarr"] = "torch_dist"
     """Checkpoint format to use."""
 

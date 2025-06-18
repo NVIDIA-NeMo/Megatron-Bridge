@@ -1340,8 +1340,7 @@ def _load_global_dist_base_checkpoint(
         return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
     if sharded_state_dict is None:
-        assert not cfg.checkpoint.auto_detect_ckpt_format, "auto_detect_ckpt_format must be False"
-        raise RuntimeError("Detected load from a distributed checkpoint, but auto-detect-ckpt-format is not set.")
+        raise RuntimeError("Detected load from a distributed checkpoint, but sharded state dict is not provided.")
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)

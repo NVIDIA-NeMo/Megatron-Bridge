@@ -348,7 +348,6 @@ def load_checkpoint_fixtures():
     mock_cfg.rng.data_parallel_random_init = False
     mock_cfg.optimizer = Mock()
     mock_cfg.optimizer.use_distributed_optimizer = False
-    mock_cfg.checkpoint.auto_detect_ckpt_format = True
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_save_interval = None
 
