@@ -137,7 +137,7 @@ jobs:
       - name: Run import checks
         run: |
           uv pip install --no-deps -e .
-          python .github/scripts/check_imports.py
+          uv run python .github/scripts/check_imports.py
 
   install-test-summary:
     needs: [pip-test, uv-test, ngc-cuda-test]
