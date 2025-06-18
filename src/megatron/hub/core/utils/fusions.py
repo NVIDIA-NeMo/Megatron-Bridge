@@ -70,7 +70,7 @@ def can_enable_gradient_accumulation_fusion() -> bool:
         bool: True if gradient accumulation fusion is available.
     """
     try:
-        import fused_weight_gradient_mlp_cuda # noqa: F401
+        import fused_weight_gradient_mlp_cuda  # noqa: F401
 
         return True
     except ImportError:
