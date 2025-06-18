@@ -9,7 +9,7 @@ on:
 jobs:
   pip-test:
     runs-on: ${{ matrix.arch }}
-    name: Pip - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'Linux' || 'Darwin' }} - No CUDA
+    name: Pip - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
       fail-fast: false
       matrix:
