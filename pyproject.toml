@@ -65,7 +65,7 @@ dependencies = [
     "torch>=2.7.0",
     "transformers>=4.51.3",
     "wandb>=0.19.10",
-    "megatron-core",
+    "megatron-core[dev]",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
