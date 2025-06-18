@@ -104,7 +104,8 @@ jobs:
         run: |
           echo -e "machine github.com\n  login token\n  password ${{ secrets.PAT }}" > ~/.netrc
           chmod 600 ~/.netrc 
-          python -m venv ./venv
+
+          uv venv ${UV_PROJECT_ENVIRONMENT}
           source ./venv/bin/activate
 
           export PATH="./bin/:$PATH"
@@ -114,8 +115,6 @@ jobs:
           bash ./docker/common/install_conflicting_deps.sh \
             --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
 
-      - name: Run import checks
-        run: |
           uv pip install --no-deps -e .
           python .github/scripts/check_imports.py
 
