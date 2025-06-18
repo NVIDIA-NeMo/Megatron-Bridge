@@ -421,7 +421,6 @@ class TestLoadCheckpoint:
     @patch("megatron.hub.training.checkpointing.mpu")
     @patch("megatron.hub.training.checkpointing.get_rerun_state_machine")
     @patch("megatron.hub.training.checkpointing.tensor_parallel")
-    @patch("megatron.hub.training.checkpointing.use_dist_ckpt")
     @patch("megatron.hub.training.checkpointing.generate_state_dict")
     @patch("megatron.hub.training.checkpointing.get_rng_state")
     @patch("random.setstate")
@@ -442,7 +441,6 @@ class TestLoadCheckpoint:
         mock_random_setstate,
         mock_get_rng_state,
         mock_generate_state_dict,
-        mock_use_dist_ckpt,
         mock_tensor_parallel,
         mock_rerun_machine,
         mock_mpu,
@@ -470,7 +468,6 @@ class TestLoadCheckpoint:
         mock_read_state.return_value = mock_train_state
 
         # Mock utility functions
-        mock_use_dist_ckpt.return_value = True
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
 
