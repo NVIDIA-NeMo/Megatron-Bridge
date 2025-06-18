@@ -181,9 +181,9 @@ def setup(
 
     # For PEFT: pretrained_checkpoint is loaded earlier in setup_model, so only load if cfg.checkpoint.load is set
     # For non-PEFT: support both load and pretrained_checkpoint paths
-    if (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (
-        cfg.checkpoint.pretrained_checkpoint is not None and cfg.peft is None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
-    ):
+    should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (cfg.checkpoint.pretrained_checkpoint is not None and cfg.peft is None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
+
+    if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
         load_checkpoint(
             state,

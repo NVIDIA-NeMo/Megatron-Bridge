@@ -859,6 +859,146 @@ def load_checkpoint(
     model = unwrap_model(model)
 
     load_kwargs = {}
+<<<<<<< HEAD
+=======
+    is_dist_ckpt = False
+    if (
+        cfg.checkpoint.auto_detect_ckpt_format
+        or use_dist_ckpt(cfg.checkpoint.ckpt_format)
+        or cfg.checkpoint.non_persistent_save_interval is not None
+    ):
+        state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
+            load_dir,
+            cfg,
+            rank0=True,
+            checkpointing_context=checkpointing_context,
+        )
+        run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_name))
+
+        is_dist_ckpt = ckpt_type == CheckpointType.LOCAL or dist_checkpointing.check_is_distributed_checkpoint(
+            checkpoint_name
+        )
+        if is_dist_ckpt:
+            # TODO: Make read_run_config() return a ConfigContainer object
+            ckpt_tp_pp = (
+                run_config["model"]["tensor_model_parallel_size"],
+                run_config["model"]["pipeline_model_parallel_size"],
+                run_config["model"].get("encoder_tensor_model_parallel_size", 0),
+                run_config["model"].get("encoder_pipeline_model_parallel_size", 0),
+            )
+            run_tp_pp = (
+                cfg.model.tensor_model_parallel_size,
+                cfg.model.pipeline_model_parallel_size,
+                getattr(cfg.model, "encoder_tensor_model_parallel_size", 0),
+                getattr(cfg.model, "encoder_pipeline_model_parallel_size", 0),
+            )
+            mismatch_msg = "(TP, PP, encoder TP, encoder PP) mismatch after resume ({} vs {} from checkpoint)".format(
+                run_tp_pp, ckpt_tp_pp
+            )
+
+            # Determine if RNG state will be loaded
+            if (
+                ckpt_tp_pp == run_tp_pp
+                and not release
+                and not cfg.checkpoint.finetune
+                and cfg.checkpoint.load_rng
+                and run_config["checkpoint"]["save_rng"]
+            ):
+                gen_sd_rng_state = get_rng_state(
+                    data_parallel_random_init=cfg.rng.data_parallel_random_init, use_dist_ckpt=True
+                )  # we can load the rng state
+            else:
+                gen_sd_rng_state = None
+                if ckpt_tp_pp != run_tp_pp:
+                    print_rank_0("{}: RNG state will be ignored".format(mismatch_msg))
+
+            optim_sd_kwargs = dict(is_loading=True)
+            # Determine if optimizer state will be loaded
+            if (
+                not release
+                and not cfg.checkpoint.finetune
+                and cfg.checkpoint.load_optim
+                and run_config["checkpoint"]["save_optim"]
+            ):
+                gen_sd_optim = optimizer
+                gen_sd_opt_param_scheduler = opt_param_scheduler
+
+                if cfg.optimizer.use_distributed_optimizer:
+                    optim_sd_kwargs["sharding_type"] = (
+                        "fully_sharded_model_space"
+                        if run_config["checkpoint"]["fully_parallel_save"]
+                        else "dp_zero_gather_scatter"
+                    )
+                    # This is for backwards-compatibility.
+                    # Can be removed once 'fully_sharded_bucket_space' loading is removed
+                    for maybe_dist_opt_optim_state in (state_dict["optimizer"], *state_dict["optimizer"].values()):
+                        if "param_state_sharding_type" in maybe_dist_opt_optim_state:
+                            if maybe_dist_opt_optim_state["param_state_sharding_type"] == "fully_sharded_bucket_space":
+                                print_rank_0(
+                                    "Detected deprecated `fully_sharded_bucket_space` "
+                                    "DistributedOptimizer checkpoint format"
+                                )
+                                optim_sd_kwargs["sharding_type"] = maybe_dist_opt_optim_state[
+                                    "param_state_sharding_type"
+                                ]
+                            break
+
+                    if ckpt_tp_pp != run_tp_pp and optim_sd_kwargs["sharding_type"] != "fully_sharded_model_space":
+                        raise RuntimeError(
+                            f"{mismatch_msg}: not supported for DistributedOptimizer "
+                            f"with sharding type {optim_sd_kwargs['sharding_type']}. "
+                            f"Please use `ckpt-fully-parallel-save` flag during checkpoint saving."
+                        )
+            else:
+                gen_sd_optim = None
+                gen_sd_opt_param_scheduler = None
+
+            # Determine if rerun state will be loaded
+            if (
+                ckpt_tp_pp == run_tp_pp
+                and not release
+                and not cfg.checkpoint.finetune
+                and "rerun_state_machine" in state_dict
+            ):
+                rerun_state_machine = get_rerun_state_machine()
+                gen_sd_rerun_state = rerun_state_machine.state_dict(data_iterator=None, ckpt_format="torch_dist")
+            else:
+                gen_sd_rerun_state = None
+                if ckpt_tp_pp != run_tp_pp:
+                    print_rank_0("{}: Rerun state will be ignored".format(mismatch_msg))
+
+            # [ModelOpt]: IMPORTANT! Restoring modelopt_state (sharded or not) must be performed
+            # after the model instance has been created and before _load_base_checkpoint is called.
+            if has_nvidia_modelopt:
+                if ckpt_type == CheckpointType.LOCAL:
+                    print_rank_0("WARNING: Local checkpointing does not support nvidia_modelopt.")
+                elif ckpt_type == CheckpointType.GLOBAL:
+                    restore_modelopt_state(model, state_dict)
+                else:
+                    restore_sharded_modelopt_state(model, checkpoint_name)
+
+            # [ModelOpt]: Initial loading from non-resume sharded checkpoint to a Distillation Model
+            # will result in key mismatch with loss modules potentially containing parameters, since
+            # it requires generating a state_dict before loading. Here we hide those modules if present.
+            with contextlib.ExitStack() as stack:  # Allows multiple context managers for each model shard
+                if cfg.checkpoint.finetune and hasattr(model[0], "hide_loss_modules"):
+                    for m in model:
+                        stack.enter_context(m.hide_loss_modules())
+                load_kwargs["sharded_state_dict"] = generate_state_dict(
+                    cfg,
+                    model,
+                    gen_sd_optim,
+                    gen_sd_opt_param_scheduler,
+                    gen_sd_rng_state,
+                    use_dist_ckpt=True,
+                    optim_sd_kwargs=optim_sd_kwargs,
+                    rerun_state=gen_sd_rerun_state,
+                )
+
+            # When "--fp8-param-gather" is disabled, this function doesn't modify anything.
+            fix_fp8_params_lose_precision_when_loading_dist_ckpt(load_kwargs["sharded_state_dict"])
+
+>>>>>>> 0e029d8 (add more peft checkpoint tests)
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir,
         cfg,
