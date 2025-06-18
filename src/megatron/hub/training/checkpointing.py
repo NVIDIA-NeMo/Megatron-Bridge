@@ -865,6 +865,12 @@ def load_checkpoint(
         rank0=True,
         checkpointing_context=checkpointing_context,
     )
+
+    # Checkpoint not loaded.
+    if state_dict is None:
+        # Iteration and num_floating_point_operations_so_far default to 0.
+        return 0, 0
+
     run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_name))
 
     # TODO: Make read_run_config() return a ConfigContainer object
@@ -979,11 +985,6 @@ def load_checkpoint(
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir, cfg, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
     )
-
-    # Checkpoint not loaded.
-    if state_dict is None:
-        # Iteration and num_floating_point_operations_so_far default to 0.
-        return 0, 0
 
     # Set checkpoint version.
     set_checkpoint_version(state_dict.get("checkpoint_version", 0))

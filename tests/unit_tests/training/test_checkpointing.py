@@ -498,7 +498,7 @@ class TestLoadCheckpoint:
                 "tensor_model_parallel_size": 1,
                 "pipeline_model_parallel_size": 1,
             },
-            "checkpoint_config": {
+            "checkpoint": {
                 "save_rng": True,
                 "save_optim": True,
                 "fully_parallel_save": False,
