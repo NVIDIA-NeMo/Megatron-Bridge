@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Set
 from collections import defaultdict
 import argparse
-
+from megatron.hub.utils.import_utils import UnavailableError
 
 class ImportChecker:
     """Check imports for all modules in a package."""
