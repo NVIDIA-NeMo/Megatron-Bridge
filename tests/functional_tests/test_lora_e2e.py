@@ -36,7 +36,6 @@ from megatron.hub.training.config import (
 )
 from megatron.hub.training.finetune import finetune
 from megatron.hub.utils.common_utils import print_rank_0
-from megatron.hub.utils.config_utils import InstantiationMode
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -83,8 +82,6 @@ class TestLoRAE2E:
                 )
                 metadata_file = os.path.join(initial_checkpoint_dir, ".metadata")
                 assert os.path.exists(metadata_file), "Initial checkpoint metadata file not found"
-
-                print_rank_0(f"Initial checkpoint created successfully at {initial_checkpoint_dir}")
 
             resume_cfg = self._create_lora_config(
                 pretrained_checkpoint_path,
@@ -153,10 +150,8 @@ class TestLoRAE2E:
         # Load the original configuration from the checkpoint
         config_yaml_path = os.path.join(pretrained_checkpoint_path, "iter_0000000", "run_config.yaml")
 
-        if not os.path.exists(config_yaml_path):
-            pytest.skip(f"Pretrained checkpoint not found at: {pretrained_checkpoint_path}")
-
-        cfg = ConfigContainer.from_yaml(config_yaml_path, mode=InstantiationMode.LENIENT)
+        assert os.path.exists(config_yaml_path), f"Pretrained checkpoint not found at: {pretrained_checkpoint_path}"
+        cfg = ConfigContainer.from_yaml(config_yaml_path)
 
         # LoRA configuration
         lora_config = LoRA(
@@ -191,7 +186,7 @@ class TestLoRAE2E:
         cfg.model.sequence_parallel = False
         cfg.model.use_cpu_initialization = True
         cfg.model.cross_entropy_loss_fusion = False
-        cfg.model.seq_length = 512  # Match dataset sequence length
+        cfg.model.seq_length = 512
 
         # Distributed configuration
         cfg.dist = DistributedInitConfig()
@@ -244,7 +239,7 @@ class TestLoRAE2E:
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=512,  # Reduced sequence length for memory efficiency
+            sequence_length=512,
             num_dataset_builder_threads=1,
             data_sharding=True,
             dataloader_type="single",
