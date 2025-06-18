@@ -87,7 +87,7 @@ jobs:
 
           export PATH="./bin/:$PATH"
 
-          pip install ".[eval,recipes]"
+          uv sync --link-mode copy --locked --all-groups
 
           bash ./docker/common/install_conflicting_deps.sh \
             --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
