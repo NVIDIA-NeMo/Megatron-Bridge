@@ -127,7 +127,7 @@ class ImportChecker:
             tb = traceback.format_exc()
             if "UnavailableError" in tb:
                 return "graceful", "UnavailableError detected during import"
-            return "failed", f"{tb}"
+            return "failed", f"{str(tb)}"
 
     def check_all_imports(self) -> None:
         """Check imports for all discovered modules."""
