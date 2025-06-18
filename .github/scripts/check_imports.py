@@ -25,8 +25,6 @@ import sys
 import traceback
 from typing import Dict, List, Tuple
 
-from megatron.hub.utils.import_utils import UnavailableError
-
 
 class ImportChecker:
     """Check imports for all modules in a package."""
