@@ -56,10 +56,32 @@ def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
         fp8=bool(config.num_moe_experts and (config.fp8 is not None)),
     )
 
+def transformer_engine_full_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Create a full Transformer Engine layer specification with autocast support.
 
-def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
-    """Create a local layer specification without Transformer Engine."""
-    return get_gpt_layer_local_spec(
+    Args:
+        config: GPT configuration object
+
+    Returns:
+        ModuleSpec: Module specification for full TE layers
+    """
+    from megatron.hub.models.gpt_full_te_layer_autocast_spec import get_gpt_full_te_layer_autocast_spec
+
+    return get_gpt_full_te_layer_autocast_spec(transformer_config=config)
+
+
+def local_layer_spec(config: "GPTConfig") -> ModuleSpec:
+    """Create a local layer specification without Transformer Engine.
+
+    Args:
+        config: GPT configuration object
+
+    Returns:
+        ModuleSpec: Module specification for local implementation layers
+    """
+    from megatron.core.models.gpt import gpt_layer_specs
+
+    return gpt_layer_specs.get_gpt_layer_local_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
         qk_layernorm=config.qk_layernorm,
@@ -70,11 +92,10 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
     if HAVE_TE:
-        # Re-instate this when we have a path for it in Megatron-Core
-        # if config.use_transformer_engine_full_layer_spec:
-        #     return transformer_engine_full_layer_spec(config)
-        # else:
-        return transformer_engine_layer_spec(config)
+        if config.use_transformer_engine_full_layer_spec:
+            return transformer_engine_full_layer_spec(config)
+        else:
+            return transformer_engine_layer_spec(config)
     else:
         return local_layer_spec(config)
 
