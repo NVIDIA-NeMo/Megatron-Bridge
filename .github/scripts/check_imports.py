@@ -26,14 +26,7 @@ import sys
 import traceback
 from typing import Dict, List, Tuple
 
-
-# Import UnavailableError for handling graceful failures
-try:
-    from megatron.hub.utils.import_utils import UnavailableError
-except ImportError:
-    # Fallback if UnavailableError is not available
-    class UnavailableError(Exception):
-        pass
+from megatron.hub.utils.import_utils import UnavailableError
 
 
 class ImportChecker:
