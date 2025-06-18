@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "pull-request/[0-9]+"
+env:
+  UV_PROJECT_ENVIRONMENT: ./venv
 
 jobs:
   pip-test:
@@ -81,7 +83,6 @@ jobs:
       - name: Install project
         env:
           PAT: ${{ secrets.PAT }}
-          UV_PROJECT_ENVIRONMENT: ./venv
         shell: bash
         run: |
           echo -e "machine github.com\n  login token\n  password ${{ secrets.PAT }}" > ~/.netrc
@@ -124,13 +125,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies with UV
-        env:
-          UV_PROJECT_ENVIRONMENT: ./venv
+
         run: |
 
           export PATH=".bin/:$PATH"
 
-          uv venv ${UV_PROJECT_ENVIRONMENT}
+          uv venv
 
           uv sync --link-mode copy --locked --all-groups
 
