@@ -109,7 +109,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Llama3Config8B)
+        assert isinstance(config.model, Llama3ModelProvider8B)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251
