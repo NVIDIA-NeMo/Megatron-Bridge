@@ -18,7 +18,11 @@ from typing import Iterable
 
 import torch
 from megatron.core import parallel_state
+<<<<<<<< HEAD:src/megatron/hub/training/gpt_step.py
 from megatron.core.models.gpt.gpt_model import GPTModel
+========
+from megatron.core.models.gpt_provider import GPTModelProvider
+>>>>>>>> 3d41e42 (Refactor to model-providers):src/megatron/hub/training/step.py
 from megatron.core.utils import get_batch_on_this_cp_rank
 
 from megatron.hub.training.config import ConfigContainer, FinetuningDatasetConfig
@@ -211,7 +215,7 @@ def get_batch(
     return batch.values()
 
 
-def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -> tuple[torch.Tensor, partial]:
+def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModelProvider) -> tuple[torch.Tensor, partial]:
     """Forward training step.
 
     Args:
