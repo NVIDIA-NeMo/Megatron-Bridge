@@ -385,11 +385,6 @@ class CheckpointConfig:
     ckpt_convert_save: Optional[str] = None
     """Save directory for converted checkpoint."""
 
-    ckpt_convert_update_legacy_dist_opt_format: bool = False
-    """When loading a checkpoint, update the legacy format for the distributed optimizer,
-    which previously used a merged param/grad buffer and a different bucket mapping.
-    The legacy format was deprecated on Feb 13, 2024."""
-
     fully_parallel_save: bool = True
     """Disable applying full save parallelization across DP for distributed checkpoints.
     Depending on ckpt format might decrease the number of files in the checkpoint.
