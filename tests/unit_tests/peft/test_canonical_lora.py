@@ -221,10 +221,10 @@ class TestCanonicalLoRA:
         def mock_get_attrs(module):
             if hasattr(module, "out_features"):
                 if module.out_features == 1536:  # linear_qkv
-                    return (False, 512, 1536, False)
+                    return (False, 512, 1536, False, True)
                 elif module.out_features == 2048:  # linear_fc1
-                    return (False, 512, 2048, False)
-            return (False, 512, 512, False)  # default
+                    return (False, 512, 2048, False, True)
+            return (False, 512, 512, False, True)  # default
 
         with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
             # Mock ParallelLinearAdapter
@@ -485,7 +485,7 @@ class TestCanonicalLoRA:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False)
+            mock_get_attrs.return_value = (False, 512, 1536, False, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -523,7 +523,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 1536, False)
+            mock_get_attrs.return_value = (False, 512, 1536, False, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
@@ -545,7 +545,7 @@ class TestCanonicalLoRAMegatronLayers:
 
         # Mock the get_adapter_attributes_from_linear function
         with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 2048, False)
+            mock_get_attrs.return_value = (False, 512, 2048, False, True)
 
             # Mock ParallelLinearAdapter
             with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:

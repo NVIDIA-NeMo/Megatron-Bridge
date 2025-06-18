@@ -66,10 +66,10 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool]:
+def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool, bool]:
     """Returns attributes from the base layer.
 
-    input_is_parallel, in_features, out_features, disable_sequence_parallel_comm
+    input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
 
     This function analyzes a linear module and extracts key attributes needed for adapter configuration,
     particularly for PEFT adapters in distributed training scenarios.
@@ -83,12 +83,13 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
             - in_features: Input feature dimension
             - out_features: Output feature dimension
             - disable_sequence_parallel_comm: Whether to disable sequence parallel communication
+            - base_linear_is_parallel: Whether the base linear layer uses parallelization
 
     Raises:
         NotImplementedError: If the layer type is not recognized for LoRA adaptation.
     """
     disable_sequence_parallel_comm = not m.config.sequence_parallel
-
+    base_linear_is_parallel = True
     if HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
         input_is_parallel = False
         # m.in_features and m.out_features are divided by tp_size already,
@@ -127,6 +128,7 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
         input_is_parallel = False
         in_features = m.in_features
         out_features = m.out_features
+        base_linear_is_parallel = False
     elif isinstance(m, ColumnParallelLinear):
         input_is_parallel = False
         in_features = m.input_size
@@ -138,7 +140,7 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
     else:
         raise NotImplementedError(f"Layer type is unrecognized for LoRA: {type(m)}")
 
-    return input_is_parallel, in_features, out_features, disable_sequence_parallel_comm
+    return input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
 
 
 def is_expert_linear(fqn: str) -> bool:
@@ -366,6 +368,7 @@ class ParallelLinearAdapter(nn.Module):
         a2a_experimental: Whether to use experimental all-to-all communication (default: False).
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
+        base_linear_is_parallel: Whether the base linear layer uses parallelization (default: True).
     """
 
     def __init__(
@@ -385,6 +388,7 @@ class ParallelLinearAdapter(nn.Module):
         a2a_experimental: bool = False,
         is_expert: bool = False,
         disable_sequence_parallel_comm: bool = True,
+        base_linear_is_parallel: bool = True,
         **kwargs,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
@@ -454,6 +458,10 @@ class ParallelLinearAdapter(nn.Module):
         lin_out_gather_output = True if input_is_parallel else False
         if self.use_a2a and input_is_parallel and _sequence_parallel:
             lin_out_gather_output = False
+
+        if not base_linear_is_parallel:
+            lin_out_gather_output = True
+
         self.linear_out = ColumnParallelLinear(
             dim,
             out_features,
@@ -478,6 +486,9 @@ class ParallelLinearAdapter(nn.Module):
         model_parallel_config.sequence_parallel = _sequence_parallel
         self.disable_sequence_parallel_comm = disable_sequence_parallel_comm
         if not _sequence_parallel:
+            self.disable_sequence_parallel_comm = True
+
+        if not base_linear_is_parallel:
             self.disable_sequence_parallel_comm = True
 
     def _get_activation_fn(self, activation: str) -> nn.Module:
