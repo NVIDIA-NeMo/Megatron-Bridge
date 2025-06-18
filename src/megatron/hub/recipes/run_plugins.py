@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -23,6 +24,8 @@ from megatron.hub.training.config import (
     ProfilingConfig,
 )
 
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 # This file contains plugins based on NeMo-Run's run.Plugin API.
 # Plugins operate both on a configured task and an executor at the same time, and are specific to NeMo-Run.
@@ -56,10 +59,10 @@ class PreemptionPlugin(run.Plugin):
                 task.args.append(
                     f"train.exit_signal_handler_for_dataloader={str(self.enable_exit_handler_for_data_loader)}"
                 )
-                print(
+                logger.info(
                     f"{self.__class__.__name__} added CLI override: train.exit_signal_handler={str(self.enable_exit_handler)}"
                 )
-                print(
+                logger.info(
                     f"{self.__class__.__name__} added CLI override: train.exit_signal_handler_for_dataloader={str(self.enable_exit_handler_for_data_loader)}"
                 )
         else:
@@ -71,7 +74,7 @@ class PreemptionPlugin(run.Plugin):
         # Apply signal configuration for both task types when using SlurmExecutor
         if isinstance(executor, run.SlurmExecutor):
             # Sends a SIGTERM self.preempt_time seconds before hitting time limit
-            print(
+            logger.info(
                 f"{self.__class__.__name__} will send a SIGTERM {self.preempt_time} seconds before the job's time limit for your Slurm executor."
             )
             executor.signal = f"TERM@{self.preempt_time}"
@@ -119,19 +122,19 @@ class FaultTolerancePlugin(run.Plugin):
                 f"ft.calc_ft_timeouts={str(self.calc_ft_timeouts).lower()}",
             ]
             task.args.extend(cli_overrides)
-            print(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+            logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
             # For run.Partial, modify the task config directly
             # Configure fault tolerance in task config
-            if not hasattr(task, "ft"):
+            if not hasattr(task.config, "ft") or task.config.ft is None:
                 task.config.ft = FaultToleranceConfig()
 
             task.config.ft.enable_ft_package = self.enable_ft_package
             task.config.ft.calc_ft_timeouts = self.calc_ft_timeouts
 
             # Check if nsys profiling is enabled and warn if so
-            if hasattr(task, "profiling") and task.config.profiling and task.config.profiling.use_nsys_profiler:
-                print("Warning: Nsys not supported with the FaultTolerancePlugin.")
+            if hasattr(task.config, "profiling") and task.config.profiling and task.config.profiling.use_nsys_profiler:
+                logger.warning("Warning: Nsys not supported with the FaultTolerancePlugin.")
                 task.config.profiling.use_nsys_profiler = False
 
 
@@ -159,6 +162,7 @@ class NsysPlugin(run.Plugin):
     profile_ranks: Optional[list[int]] = None
     nsys_trace: Optional[list[str]] = None
     record_shapes: bool = False
+    nsys_gpu_metrics: bool = False
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
         """Set up the nsys profiling plugin."""
@@ -169,6 +173,14 @@ class NsysPlugin(run.Plugin):
         if isinstance(executor, run.SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
             launcher.nsys_filename = "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"
+
+        if self.nsys_gpu_metrics:
+            if hasattr(launcher, "nsys_gpu_metrics"):
+                launcher.nsys_gpu_metrics = self.nsys_gpu_metrics
+            else:
+                logger.warning(
+                    "Unable to enable nsys gpu metrics collection. Please upgrade Nemo-Run to include commit 70a0df4."
+                )
 
         # Configure profiling in task config
         if isinstance(task, run.Script):
@@ -181,11 +193,11 @@ class NsysPlugin(run.Plugin):
                 f"profiling.record_shapes={str(self.record_shapes).lower()}",
             ]
             task.args.extend(cli_overrides)
-            print(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+            logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         elif isinstance(task, run.Partial):
             # For run.Partial, modify the task config directly
-            if not hasattr(task, "config"):
-                task.config.profiling = run.Config(ProfilingConfig)
+            if not hasattr(task.config, "profiling") or task.config.profiling is None:
+                task.config.profiling = ProfilingConfig()
 
             task.config.profiling.use_nsys_profiler = True
             task.config.profiling.profile_step_start = self.profile_step_start
@@ -233,12 +245,12 @@ class PyTorchProfilerPlugin(run.Plugin):
                 f"profiling.record_shapes={str(self.record_shapes).lower()}",
             ]
             task.args.extend(cli_overrides)
-            print(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+            logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
             # For run.Partial, modify the task config directly
             # Configure profiling in task config
-            if not hasattr(task, "config"):
-                task.config.profiling = run.Config(ProfilingConfig)
+            if not hasattr(task.config, "profiling") or task.config.profiling is None:
+                task.config.profiling = ProfilingConfig()
 
             task.config.profiling.use_pytorch_profiler = True
             task.config.profiling.profile_step_start = self.profile_step_start
@@ -291,7 +303,7 @@ class WandbPlugin(run.Plugin):
                 cli_overrides.append(f"logger.wandb_save_dir={self.save_dir}")
 
                 task.args.extend(cli_overrides)
-                print(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             else:
                 # For run.Partial, modify the task config directly
                 if hasattr(task, "config"):
@@ -303,7 +315,7 @@ class WandbPlugin(run.Plugin):
                     task.config.logger.wandb_exp_name = exp_name
                     task.config.logger.wandb_save_dir = self.save_dir
         else:
-            print(
+            logger.warning(
                 f"Warning: The {self.__class__.__name__} will have no effect as WANDB_API_KEY environment variable is not set."
             )
 
@@ -389,7 +401,7 @@ class PerfEnvPlugin(run.Plugin):
                     f"train.manual_gc_interval={self.manual_gc_interval}",
                 ]
                 task.args.extend(cli_overrides)
-                print(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             elif hasattr(task, "config"):
                 # For run.Partial, modify the task config directly
                 task.config.train.manual_gc = True
