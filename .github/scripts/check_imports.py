@@ -19,7 +19,6 @@ This script recursively discovers all Python modules in the specified package
 and attempts to import them, reporting any import errors.
 """
 
-import argparse
 import importlib
 import os
 import sys
@@ -34,7 +33,6 @@ class ImportChecker:
 
     def __init__(self, package_name: str = "megatron.hub", verbose: bool = False):
         self.package_name = package_name
-        self.verbose = verbose
         self.success_count = 0
         self.failure_count = 0
         self.graceful_count = 0
@@ -103,6 +101,15 @@ class ImportChecker:
 
         return modules
 
+    def get_root_exception(self, exc: BaseException) -> BaseException:
+        while True:
+            if exc.__cause__:
+                exc = exc.__cause__
+            elif exc.__context__:
+                exc = exc.__context__
+            else:
+                return exc
+
     def import_module(self, module_name: str) -> Tuple[str, str]:
         """
         Try to import a module and return success status and error message.
@@ -112,19 +119,17 @@ class ImportChecker:
             status can be: "success", "graceful", or "failed"
         """
         try:
-            # Clear any existing module from sys.modules to force reimport
             if module_name in sys.modules:
                 del sys.modules[module_name]
 
             importlib.import_module(module_name)
             return "success", ""
 
-        except UnavailableError as e:
-            return "graceful", f"UnavailableError: {str(e)}"
-        except Exception as e:
-            # All other exceptions are treated as failures
+        except Exception:
             tb = traceback.format_exc()
-            return "failed", f"{type(e).__name__}: {str(e)}\n{tb}"
+            if "UnavailableError" in tb:
+                return "graceful", "UnavailableError detected during import"
+            return "failed", f"{tb}"
 
     def check_all_imports(self) -> None:
         """Check imports for all discovered modules."""
@@ -139,42 +144,17 @@ class ImportChecker:
         print("=" * 60)
 
         for i, module_name in enumerate(modules, 1):
-            if self.verbose:
-                print(f"[{i}/{len(modules)}] Checking {module_name}...", end=" ")
-
             status, error_msg = self.import_module(module_name)
 
             if status == "success":
                 self.success_count += 1
                 self.successes.append(module_name)
-                if self.verbose:
-                    print("✓ OK")
             elif status == "graceful":
                 self.graceful_count += 1
                 self.graceful_failures[module_name] = error_msg
-                if self.verbose:
-                    print("~ GRACEFUL")
-                    print(f"    {error_msg.split(chr(10))[0]}")  # First line only
-                    if "UnavailableError" in error_msg:
-                        print("    (This is an expected graceful failure)")
             else:  # failed
                 self.failure_count += 1
                 self.failures[module_name] = error_msg
-                if self.verbose:
-                    print("✗ FAILED")
-                    print(f"    Error: {error_msg.split(chr(10))[0]}")  # First line only
-
-    def debug_graceful_failures(self) -> None:
-        """Debug method to help understand graceful failure detection."""
-        if not self.graceful_failures:
-            print("No graceful failures detected.")
-            return
-
-        print(f"\n🔍 DEBUG: Found {len(self.graceful_failures)} graceful failures:")
-        for module_name, error_msg in self.graceful_failures.items():
-            print(f"\n• {module_name}")
-            print(f"  Error type: {error_msg.split(':')[0] if ':' in error_msg else 'Unknown'}")
-            print(f"  Message: {error_msg}")
 
     def print_summary(self) -> None:
         """Print a summary of the import check results."""
@@ -193,13 +173,6 @@ class ImportChecker:
         if self.graceful_failures:
             print(f"\n🟡 GRACEFULLY HANDLED ({len(self.graceful_failures)}):")
             print("-" * 40)
-            for module_name, error_msg in self.graceful_failures.items():
-                print(f"\n• {module_name}")
-                # Show only the first few lines of error to keep output manageable
-                error_lines = error_msg.split("\n")[:2]
-                for line in error_lines:
-                    if line.strip():
-                        print(f"  {line}")
 
         if self.failures:
             print(f"\n❌ FAILED IMPORTS ({len(self.failures)}):")
@@ -207,18 +180,12 @@ class ImportChecker:
             for module_name, error_msg in self.failures.items():
                 print(f"\n• {module_name}")
                 # Show only the first few lines of error to keep output manageable
-                error_lines = error_msg.split("\n")[:3]
+                error_lines = error_msg.split("\n")
                 for line in error_lines:
+                    # if self.package_name.replace(".", os.sep) not in line:
+                    #     continue
                     if line.strip():
                         print(f"  {line}")
-                if len(error_msg.split("\n")) > 3:
-                    print("  ...")
-
-        if self.successes and self.verbose:
-            print(f"\n✅ SUCCESSFUL IMPORTS ({len(self.successes)}):")
-            print("-" * 40)
-            for module_name in self.successes:
-                print(f"• {module_name}")
 
     def get_exit_code(self) -> int:
         """Return appropriate exit code based on results."""
@@ -228,38 +195,11 @@ class ImportChecker:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Check that all modules in a package can be imported")
-    parser.add_argument(
-        "--package", "-p", default="megatron.hub", help="Package name to check (default: megatron.hub)"
-    )
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Only show summary (overrides verbose)")
-    parser.add_argument("--debug", "-d", action="store_true", help="Enable debug output for graceful failures")
 
-    args = parser.parse_args()
-
-    # Set verbosity
-    verbose = args.verbose and not args.quiet
-
-    try:
-        checker = ImportChecker(package_name=args.package, verbose=verbose)
-        checker.check_all_imports()
-
-        if args.debug:
-            checker.debug_graceful_failures()
-
-        checker.print_summary()
-
-        return checker.get_exit_code()
-
-    except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
-        return 130
-    except Exception as e:
-        print(f"Error: {e}")
-        if verbose:
-            traceback.print_exc()
-        return 1
+    checker = ImportChecker(package_name="megatron.hub")
+    checker.check_all_imports()
+    checker.print_summary()
+    return checker.get_exit_code()
 
 
 if __name__ == "__main__":

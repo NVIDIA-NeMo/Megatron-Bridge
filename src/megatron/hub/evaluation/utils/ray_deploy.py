@@ -4,8 +4,16 @@ import signal
 import sys
 from typing import Optional
 
-from nemo_deploy.deploy_ray import DeployRay
-from nemo_deploy.nlp.megatronllm_deployable_ray import MegatronRayDeployable
+from megatron.hub.utils.import_utils import UnavailableError
+
+
+try:
+    from nemo_deploy.deploy_ray import DeployRay
+    from nemo_deploy.nlp.megatronllm_deployable_ray import MegatronRayDeployable
+except (ImportError, ModuleNotFoundError) as e:
+    raise UnavailableError(
+        "nemo-deploy is not available. Please install it with `pip install nemo-export-deploy`."
+    ) from e
 
 
 logger = logging.getLogger(__name__)

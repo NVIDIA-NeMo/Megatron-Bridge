@@ -18,6 +18,7 @@
 
 import importlib
 import logging
+import sys
 import traceback
 from contextlib import contextmanager
 from typing import Tuple
@@ -84,10 +85,18 @@ class UnavailableMeta(type):
         return super(UnavailableMeta, meta).__new__(meta, name, bases, dct)
 
     def __call__(cls, *args, **kwargs):
-        raise UnavailableError(cls._msg)
+        if hasattr(cls, "_original_exception"):
+            # Re-raise the original exception with its traceback
+            raise cls._original_exception
+        else:
+            raise UnavailableError(cls._msg)
 
     def __getattr__(cls, name):
-        raise UnavailableError(cls._msg)
+        if hasattr(cls, "_original_exception"):
+            # Re-raise the original exception with its traceback
+            raise cls._original_exception
+        else:
+            raise UnavailableError(cls._msg)
 
     def __eq__(cls, other):
         raise UnavailableError(cls._msg)
@@ -271,18 +280,25 @@ def safe_import(module, *, msg=None, alt=None) -> Tuple[object, bool]:
     try:
         return importlib.import_module(module), True
     except ImportError as e:
-        # Capture the original exception info to preserve the full traceback
-        exception_text = traceback.format_exception(type(e), e, e.__traceback__)
-        logger.debug(f"Import of {module} failed with: {''.join(exception_text)}")
+        # Store the original exception for better error reporting
+        original_exception = e
+        exception_text = traceback.format_exc()
+        logger.debug(f"Import of {module} failed with: {exception_text}")
     except Exception as e:
-        # Capture the original exception info to preserve the full traceback
-        exception_text = traceback.format_exception(type(e), e, e.__traceback__)
-        logger.debug(f"Unexpected error importing {module}: {''.join(exception_text)}")
+        # Store the original exception for better error reporting
+        original_exception = e
+        exception_text = traceback.format_exc()
+        logger.debug(f"Unexpected error importing {module}: {exception_text}")
         raise
     if msg is None:
         msg = f"{module} could not be imported"
     if alt is None:
-        return UnavailableMeta(module.rsplit(".")[-1], (), {"_msg": msg}), False
+        # Create a placeholder that will raise the original exception when used
+        placeholder = (
+            UnavailableMeta(module.rsplit(".")[-1], (), {"_msg": msg, "_original_exception": original_exception}),
+            False,
+        )
+        return placeholder
     else:
         return alt, False
 
@@ -315,25 +331,30 @@ def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None
         imported_module = importlib.import_module(module)
         return getattr(imported_module, symbol), True
     except ImportError as e:
-        # Capture the original exception info to preserve the full traceback
-        exception_text = traceback.format_exception(type(e), e, e.__traceback__)
-        logger.debug(f"Import of {module} failed with: {''.join(exception_text)}")
+        # Store the original exception for better error reporting
+        original_exception = e
+        exception_text = traceback.format_exc()
+        logger.debug(f"Import of {module} failed with: {exception_text}")
     except AttributeError as e:
         # if there is a fallback module try it.
         if fallback_module is not None:
             return safe_import_from(fallback_module, symbol, msg=msg, alt=alt, fallback_module=None)
-        # Capture the original exception info to preserve the full traceback
-        exception_text = traceback.format_exception(type(e), e, e.__traceback__)
-        logger.info(f"Import of {symbol} from {module} failed with: {''.join(exception_text)}")
+        # Store the original exception for better error reporting
+        original_exception = e
+        exception_text = traceback.format_exc()
+        logger.info(f"Import of {symbol} from {module} failed with: {exception_text}")
     except Exception as e:
-        # Capture the original exception info to preserve the full traceback
-        exception_text = traceback.format_exception(type(e), e, e.__traceback__)
-        logger.debug(f"Unexpected error importing {symbol} from {module}: {''.join(exception_text)}")
+        # Store the original exception for better error reporting
+        original_exception = e
+        exception_text = traceback.format_exc()
+        logger.debug(f"Unexpected error importing {symbol} from {module}: {exception_text}")
         raise
     if msg is None:
         msg = f"{module}.{symbol} could not be imported"
     if alt is None:
-        return UnavailableMeta(symbol, (), {"_msg": msg}), False
+        # Create a placeholder that will raise the original exception when used
+        placeholder = UnavailableMeta(symbol, (), {"_msg": msg, "_original_exception": original_exception}), False
+        return placeholder
     else:
         return alt, False
 
