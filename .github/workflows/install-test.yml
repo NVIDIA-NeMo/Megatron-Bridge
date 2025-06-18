@@ -6,7 +6,7 @@ on:
       - main
       - "pull-request/[0-9]+"
 env:
-  UV_PROJECT_ENVIRONMENT: ./venv
+  UV_PROJECT_ENVIRONMENT: "./venv"
 
 jobs:
   pip-test:
@@ -125,7 +125,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies with UV
-
         run: |
 
           export PATH=".bin/:$PATH"
@@ -134,8 +133,6 @@ jobs:
 
           uv sync --link-mode copy --locked --all-groups
 
-      - name: Run import checks
-        run: |
           uv pip install --no-deps -e .
           uv run python .github/scripts/check_imports.py
 
