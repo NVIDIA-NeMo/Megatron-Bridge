@@ -141,6 +141,14 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.eod_mask_loss is not None
 
 
+@dataclass
+class MockGPTDatasetConfig(GPTDatasetConfig):
+    """Modifies GPTDatasetConfig to enforce necessary options for creating a mock dataset."""
+
+    blend: None = field(init=False, repr=False, default=None)
+    blend_per_split: None = field(init=False, repr=False, default=None)
+
+
 @dataclass(kw_only=True)
 class FinetuningDatasetConfig(DataloaderConfig):
     """Configuration specific to finetuning datasets, inheriting from DataloaderConfig."""
