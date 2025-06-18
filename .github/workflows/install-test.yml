@@ -9,7 +9,7 @@ on:
 jobs:
   pip-test:
     runs-on: ${{ matrix.arch }}
-    name: (CPU) Python ${{ matrix.python-version }} on ${{ matrix.arch }}
+    name: Pip - Python ${{ matrix.python-version }} - ${{ matrix.arch }} - No CUDA
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +34,7 @@ jobs:
 
   ngc-cuda-test:
     runs-on: linux-amd64-cpu16
-    name: (GPU) Python ${{ matrix.python-version }}
+    name: UV - Python ${{ matrix.python-version }} - NGC CUDA
     container:
       image: nvcr.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
     environment: nemo-ci
@@ -94,11 +94,12 @@ jobs:
 
   uv-test:
     runs-on: ${{ matrix.arch }}
-    name: UV on ${{ matrix.arch }}
+    name: UV - Python ${{ matrix.python-version }} - ${{ matrix.arch }} - No CUDA
     strategy:
       fail-fast: false
       matrix:
         arch: ["ubuntu-latest", "macos-latest"]
+        python-version: ["3.12"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -107,6 +108,11 @@ jobs:
         uses: astral-sh/setup-uv@v1
         with:
           version: 0.7.2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies with UV
         env:
