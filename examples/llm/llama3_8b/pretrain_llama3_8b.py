@@ -57,7 +57,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.hub.models.utils import forward_step
+from megatron.hub.training.step import forward_step
 from megatron.hub.recipes.llm.llama3_8b import pretrain_config
 from megatron.hub.training.config import ConfigContainer
 from megatron.hub.training.pretrain import pretrain

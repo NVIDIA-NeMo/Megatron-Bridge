@@ -20,8 +20,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.llama import Llama32Config1B
-from megatron.hub.models.utils import forward_step
+from megatron.hub.models.llama import Llama32ModelProvider1B
+from megatron.hub.training.step import forward_step
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -54,7 +54,7 @@ class TestPretrain:
             seq_length = 512
             total_iters = 100
 
-            model_cfg = Llama32Config1B(
+            model_cfg = Llama32ModelProvider1B(
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,

@@ -21,8 +21,9 @@ from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.hub.models.gpt import get_vocab_size
-from megatron.hub.utils.import_utils import safe_import
+from megatron.hub.common.model_provider_mixin import ModelProviderMixin
+from megatron.hub.core.utils.import_utils import safe_import
+from megatron.hub.models.gpt_provider import get_vocab_size
 
 
 _, HAVE_TE = safe_import("transformer_engine")
@@ -31,7 +32,7 @@ _, HAVE_TE = safe_import("transformer_engine")
 logger = logging.getLogger(__name__)
 
 
-def transformer_engine_layer_spec(encoder_config: "T5Config", decoder_config: "T5Config") -> ModuleSpec:
+def transformer_engine_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5ModelProvider") -> ModuleSpec:
     """Spec for T5 when using transformer_engine mcore implementation"""
     from megatron.core.models.T5.t5_spec import (
         get_t5_decoder_with_transformer_engine_block_spec,
@@ -44,7 +45,7 @@ def transformer_engine_layer_spec(encoder_config: "T5Config", decoder_config: "T
     return [en_block_spec, de_block_spec]
 
 
-def local_layer_spec(encoder_config: "T5Config", decoder_config: "T5Config") -> ModuleSpec:
+def local_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5ModelProvider") -> ModuleSpec:
     """Spec for T5 when using local mcore implementation"""
     from megatron.core.models.T5.t5_spec import (
         get_t5_decoder_with_local_block_spec,
@@ -57,7 +58,7 @@ def local_layer_spec(encoder_config: "T5Config", decoder_config: "T5Config") -> 
     return [en_block_spec, de_block_spec]
 
 
-def default_layer_spec(encoder_config: "T5Config", decoder_config: "T5Config") -> ModuleSpec:
+def default_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5ModelProvider") -> ModuleSpec:
     """Set layer spec conditioning on whether transformer_engine is available"""
     if HAVE_TE:
         return transformer_engine_layer_spec(encoder_config, decoder_config)
@@ -66,7 +67,7 @@ def default_layer_spec(encoder_config: "T5Config", decoder_config: "T5Config") -
 
 
 @dataclass
-class T5Config(TransformerConfig):
+class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     """Model config for T5 model. Adpated from megatron.core.models.t5.t5_model.T5Model"""
 
     encoder_num_layers: int = None
@@ -96,12 +97,12 @@ class T5Config(TransformerConfig):
     distribute_saved_activations: bool = False
     enable_autocast: bool = False
 
-    transformer_layer_spec: Union[ModuleSpec, Callable[["T5Config"], ModuleSpec]] = default_layer_spec
+    transformer_layer_spec: Union[ModuleSpec, Callable[["T5ModelProvider"], ModuleSpec]] = default_layer_spec
 
     vocab_size: Optional[int] = None
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
 
-    def configure_model(self, tokenizer) -> "MCoreT5Model":
+    def provide(self, pre_process=None, post_process=None, tokenizer=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""
 
         vp_size = self.virtual_pipeline_model_parallel_size

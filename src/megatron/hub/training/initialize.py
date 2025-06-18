@@ -29,8 +29,7 @@ from megatron.core.num_microbatches_calculator import (
 )
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
 from megatron.hub.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
 

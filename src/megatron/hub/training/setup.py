@@ -26,8 +26,7 @@ from megatron.core.transformer import MegatronModule
 
 from megatron.hub.data.loaders import setup_data_iterators
 from megatron.hub.models import get_model_from_config
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.tokenizers.tokenizer import build_tokenizer
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.checkpointing import checkpoint_exists, init_checkpointing_context, load_checkpoint, init_async_checkpoint_worker
@@ -242,7 +241,7 @@ def setup(
 
 def _update_model_config_funcs(
     model: MegatronModule,
-    model_config: GPTConfig | T5Config,
+    model_config: GPTModelProvider | T5ModelProvider,
     ddp_config: DistributedDataParallelConfig,
     optimizer: MegatronOptimizer,
     *,

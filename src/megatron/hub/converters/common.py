@@ -28,13 +28,29 @@ from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShard
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models.gpt import GPTConfig, torch_dtype_from_mcore_config
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.hub.training.checkpointing import save_checkpoint
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
 from megatron.hub.training.state import GlobalState
 from megatron.hub.utils.instantiate_utils import instantiate
+
+
+def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
+    """Convert Megatron-Core config dtype settings to torch dtype.
+
+    Args:
+        config: Megatron-Core configuration object with bf16/fp16 flags.
+
+    Returns:
+        The corresponding torch dtype.
+    """
+    if hasattr(config, "bf16") and config.bf16:
+        return torch.bfloat16
+    elif hasattr(config, "fp16") and config.fp16:
+        return torch.float16
+    else:
+        return torch.float32
 
 
 if TYPE_CHECKING:

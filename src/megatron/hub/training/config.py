@@ -24,8 +24,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.tokenizers.config import TokenizerConfig
 from megatron.hub.utils.common_utils import get_world_size_safe
 from megatron.hub.utils.config_utils import ConfigContainer as Container

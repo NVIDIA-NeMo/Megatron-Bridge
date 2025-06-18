@@ -1,0 +1,371 @@
+import contextlib
+import inspect
+import logging
+from dataclasses import dataclass, field
+from functools import partial
+from typing import Any, Callable, Literal, Optional, Union
+
+import torch
+from megatron.core import parallel_state
+from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.enums import ModelType
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_local_spec as default_layer_spec,
+)
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.utils import get_te_version
+
+from megatron.hub.common.model_provider_mixin import ModelProviderMixin
+from megatron.hub.core.utils import fusions
+
+
+logger = logging.getLogger(__name__)
+
+# Check if transformer engine is available
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+    TE_VERSION = get_te_version()
+except ImportError:
+    HAVE_TE = False
+    TE_VERSION = None
+
+
+@dataclass
+class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
+    """Configuration and provider for Megatron Core GPT models.
+
+    This class extends TransformerConfig with GPT-specific parameters and
+    provides a method to instantiate configured GPT models.
+    """
+
+    # Model configuration
+    fp16_lm_cross_entropy: bool = False
+    parallel_output: bool = True
+    share_embeddings_and_output_weights: bool = True
+    make_vocab_size_divisible_by: int = 128
+    position_embedding_type: Literal["learned_absolute", "rope"] = "learned_absolute"
+    rotary_base: int = 10000
+    rotary_percent: float = 1.0
+    seq_len_interpolation_factor: Optional[float] = None
+    seq_length: int = 1024
+    attention_softmax_in_fp32: bool = False
+    deallocate_pipeline_outputs: bool = True
+    scatter_embedding_sequence_parallel: bool = True
+    tp_only_amax_red: bool = False
+    tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
+    """Config file when tp_comm_overlap is enabled."""
+
+    use_transformer_engine_full_layer_spec: bool = False
+    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
+
+    generation_config: Optional[Any] = None
+
+    vocab_size: Optional[int] = None
+
+    # Multi-token prediction
+    mtp_enabled: bool = False
+
+    # Additional parameters that might be needed
+    init_model_with_meta_device: bool = False
+    use_te_rng_tracker: bool = False
+    enable_cuda_graph: bool = False
+    virtual_pipeline_model_parallel_size: Optional[int] = None
+    account_for_embedding_in_pipeline_split: bool = False
+    account_for_loss_in_pipeline_split: bool = False
+
+    # Fusions
+    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
+    cross_entropy_loss_fusion: bool = True  # Generally beneficial, no specific dependencies
+    gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
+    bias_activation_fusion: bool = False  # Disabled by default as it can interfere with certain architectures
+    persist_layer_norm: bool = True  # Generally beneficial for performance
+    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
+    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+
+    model_transform: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None
+
+    def provide(self, pre_process=None, post_process=None, tokenizer=None) -> MCoreGPTModel:
+        """Configure and instantiate a Megatron Core GPT model based on this configuration.
+
+        Args:
+            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
+            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
+            tokenizer: Tokenizer used with the model
+
+        Returns:
+            MCoreGPTModel: Configured Megatron Core GPT model instance
+        """
+        # Validate fusion configurations
+        if not fusions.validate_rope_fusion_compatibility(self):
+            self.apply_rope_fusion = False
+
+        if self.enable_cuda_graph:
+            assert HAVE_TE, "Transformer Engine is required for cudagraphs."
+            assert getattr(self, "use_te_rng_tracker", False), (
+                "Transformer engine's RNG tracker is required for cudagraphs, it can be "
+                "enabled with use_te_rng_tracker=True'."
+            )
+
+        vp_size = self.virtual_pipeline_model_parallel_size
+        is_pipeline_asymmetric = getattr(self, "account_for_embedding_in_pipeline_split", False) or getattr(
+            self, "account_for_loss_in_pipeline_split", False
+        )
+        if vp_size and not is_pipeline_asymmetric:
+            p_size = self.pipeline_model_parallel_size
+            assert (self.num_layers // p_size) % vp_size == 0, (
+                "Make sure the number of model chunks is the same across all pipeline stages."
+            )
+
+        transformer_layer_spec = self.transformer_layer_spec
+        if not isinstance(transformer_layer_spec, ModuleSpec):
+            transformer_layer_spec = transformer_layer_spec()
+
+        if self.vocab_size is not None:
+            vocab_size = self.vocab_size
+            if tokenizer is not None:
+                logger.info(
+                    f"Use preset vocab_size: {vocab_size}, original vocab_size: {tokenizer.vocab_size}, dummy tokens:"
+                    f" {vocab_size - tokenizer.vocab_size}."
+                )
+        else:
+            vocab_size = get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by)
+
+        # Initialize model as meta data instead of allocating data on a device
+        model_init_device_context = contextlib.nullcontext
+        if self.init_model_with_meta_device:
+            model_init_device_context = partial(torch.device, device="meta")
+
+        # Check if mtp_block_spec parameter is supported
+        kwargs = {}
+        if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
+            kwargs["mtp_block_spec"] = mtp_block_spec(self)
+
+        with model_init_device_context():
+            model = MCoreGPTModel(
+                self,
+                transformer_layer_spec=transformer_layer_spec,
+                vocab_size=vocab_size,
+                max_sequence_length=self.seq_length,
+                fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                parallel_output=self.parallel_output,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                position_embedding_type=self.position_embedding_type,
+                rotary_percent=self.rotary_percent,
+                rotary_base=self.rotary_base,
+                seq_len_interpolation_factor=self.seq_len_interpolation_factor,
+                pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
+                post_process=post_process or parallel_state.is_pipeline_last_stage(),
+                scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
+                **kwargs,
+            )
+
+        # If using full TE layer, need to set TP, CP group since the module call
+        # is not routed through megatron core, which normally handles passing the
+        # TP, CP group to the TE modules.
+        # Deep iterate but skip self to avoid infinite recursion.
+        if HAVE_TE and self.use_transformer_engine_full_layer_spec:
+            # Copied from:
+            # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
+            if parallel_state.get_tensor_model_parallel_world_size() > 1:
+                for index, child in enumerate(model.modules()):
+                    if index == 0:
+                        continue
+                    if hasattr(child, "set_tensor_parallel_group"):
+                        tp_group = parallel_state.get_tensor_model_parallel_group()
+                        child.set_tensor_parallel_group(tp_group)
+
+            if parallel_state.get_context_parallel_world_size() > 1:
+                cp_stream = torch.cuda.Stream()
+                for index, child in enumerate(model.modules()):
+                    if index == 0:
+                        continue
+                    if hasattr(child, "set_context_parallel_group"):
+                        child.set_context_parallel_group(
+                            parallel_state.get_context_parallel_group(),
+                            parallel_state.get_context_parallel_global_ranks(),
+                            cp_stream,
+                        )
+
+        return model
+
+    def get_model(
+        self,
+        ddp_config: DistributedDataParallelConfig | None = None,
+        model_type=ModelType.encoder_or_decoder,
+        overlap_param_gather_with_optimizer_step: bool = False,
+        fp16: bool | None = None,
+        bf16: bool | None = None,
+        use_torch_fsdp2: bool = False,
+        wrap_with_ddp: bool = True,
+        data_parallel_random_init: bool = True,
+        use_cpu_initialization: None | bool = False,
+        init_model_with_meta_device: bool | None = None,
+    ) -> list[MCoreGPTModel]:
+        model = super().get_model(
+            ddp_config=ddp_config,
+            model_type=model_type,
+            overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
+            fp16=fp16,
+            bf16=bf16,
+            use_torch_fsdp2=use_torch_fsdp2,
+            wrap_with_ddp=wrap_with_ddp,
+            data_parallel_random_init=data_parallel_random_init,
+            use_cpu_initialization=use_cpu_initialization,
+            init_model_with_meta_device=init_model_with_meta_device,
+        )
+
+        if self.model_transform:
+            _model = self.model_transform(model)
+            if _model is not None:
+                model = _model
+
+        return model
+
+    @property
+    def meta_model(self) -> list[MCoreGPTModel]:
+        _model_transform = self.model_transform
+        self.model_transform = None
+
+        meta_model = super().meta_model
+
+        self.model_transform = _model_transform
+
+        return meta_model
+
+
+def get_vocab_size(config: TransformerConfig, vocab_size: int, make_vocab_size_divisible_by: int) -> int:
+    """Calculate padded vocab size for tensor parallelism."""
+    after = vocab_size
+    multiple = make_vocab_size_divisible_by * config.tensor_model_parallel_size
+    after = ((after + multiple - 1) // multiple) * multiple
+    logger.info(
+        f"Padded vocab_size from {vocab_size} to {after} for tensor parallel size "
+        f"{config.tensor_model_parallel_size} and make_vocab_size_divisible_by {make_vocab_size_divisible_by}"
+    )
+    return after
+
+
+def mtp_block_spec(config: "GPTModelProvider") -> Optional[ModuleSpec]:
+    """Get multi-token prediction block specification if enabled."""
+    if not config.mtp_enabled:
+        return None
+
+    from megatron.core.models.gpt.gpt_layer_specs import get_mtp_layer_spec
+
+    return get_mtp_layer_spec()
+
+
+@dataclass
+class GPTProvider126M(GPTModelProvider):
+    """Configuration for a 126M parameter GPT model.
+
+    Predefined configuration for a small GPT model with 12 layers,
+    768 hidden size, and 12 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 12
+    hidden_size: int = 768
+    ffn_hidden_size: int = 3072
+    num_attention_heads: int = 12
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+
+
+@dataclass
+class GPTProvider5B(GPTModelProvider):
+    """Configuration for a 5B parameter GPT model.
+
+    Predefined configuration for a medium-sized GPT model with 24 layers,
+    4096 hidden size, and 32 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 24
+    hidden_size: int = 4096
+    ffn_hidden_size: int = 16384
+    num_attention_heads: int = 32
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+
+
+@dataclass
+class GPTProvider7B(GPTModelProvider):
+    """Configuration for a 7B parameter GPT model.
+
+    Predefined configuration for a medium-sized GPT model with 32 layers,
+    4096 hidden size, and 32 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 32
+    hidden_size: int = 4096
+    ffn_hidden_size: int = 10880
+    num_attention_heads: int = 32
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+
+
+@dataclass
+class GPTProvider20B(GPTModelProvider):
+    """Configuration for a 20B parameter GPT model.
+
+    Predefined configuration for a large GPT model with 44 layers,
+    6144 hidden size, and 48 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 44
+    hidden_size: int = 6144
+    ffn_hidden_size: int = 24576
+    num_attention_heads: int = 48
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+
+
+@dataclass
+class GPTProvider40B(GPTModelProvider):
+    """Configuration for a 40B parameter GPT model.
+
+    Predefined configuration for a large GPT model with 48 layers,
+    8192 hidden size, and 64 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 48
+    hidden_size: int = 8192
+    ffn_hidden_size: int = 32768
+    num_attention_heads: int = 64
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+
+
+@dataclass
+class GPTProvider175B(GPTModelProvider):
+    """Configuration for a 175B parameter GPT model.
+
+    Predefined configuration for a massive GPT model with 96 layers,
+    12288 hidden size, and 96 attention heads.
+    """
+
+    seq_length: int = 2048
+    num_layers: int = 96
+    hidden_size: int = 12288
+    ffn_hidden_size: int = 49152
+    num_attention_heads: int = 96
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    bias_activation_fusion: bool = True
+    bias_dropout_add_fusion: bool = True
+    use_transformer_engine_full_layer_spec: bool = True
+    layernorm_zero_centered_gamma: bool = True
