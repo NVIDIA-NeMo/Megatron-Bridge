@@ -74,7 +74,7 @@ dependencies = [
     "tiktoken>=0.9.0",
     "tqdm>=4.67.1",
     "nvidia-modelopt[torch]; sys_platform != 'darwin'",
-    "nvidia-resiliency-ext",
+    "nvidia-resiliency-ext; sys_platform != 'darwin'",
     "hydra-core>1.3,<=1.3.2",
 ]
 
