@@ -44,7 +44,6 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
-from megatron.core.transformer.module import MegatronModule
 
 from megatron.hub.core.utils.common_utils import (
     get_rank_safe,
@@ -757,52 +756,6 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     torch.save(dataloader_save_dict, data_state_save_path)
 
 
-def get_model_state_dict(model: MegatronModule, use_dist_ckpt: bool, peft_config: Optional[PEFT]) -> dict[str, Any]:
-    """Get model state dict, filtering for PEFT adapters if applicable.
-
-    Args:
-        model: The model to get state dict from
-        use_dist_ckpt: Whether distributed checkpointing is being used
-        peft_config: PEFT configuration if applicable
-
-    Returns:
-        Model state dict, filtered for adapters if PEFT is enabled
-    """
-    if use_dist_ckpt:
-        model_state_dict = model.sharded_state_dict()
-    else:
-        model_state_dict = model.state_dict_for_save_checkpoint()
-
-    # Filter for PEFT adapters if PEFT is enabled
-    if peft_config is not None:
-        model_state_dict = filter_peft_adapter_state_dict(model_state_dict, peft_config)
-
-    return model_state_dict
-
-
-def filter_peft_adapter_state_dict(state_dict: dict[str, Any], peft_config: PEFT) -> dict[str, Any]:
-    """Filter state dict to only include PEFT adapter parameters.
-
-    Uses the PEFT configuration's adapter_key_filter method to determine which
-    parameters should be included, ensuring consistency with saving logic.
-
-    Args:
-        state_dict: The full model state dict
-        peft_config: PEFT configuration containing adapter key filtering logic
-
-    Returns:
-        Filtered state dict containing only adapter parameters
-    """
-    filtered_dict = {}
-
-    for key, value in state_dict.items():
-        # Use the PEFT config's adapter_key_filter method to determine if this is an adapter param
-        if peft_config.adapter_key_filter(key):
-            filtered_dict[key] = value
-
-    return filtered_dict
-
-
 def generate_state_dict(
     cfg: ConfigContainer,
     model: Union[torch.nn.Module, list[torch.nn.Module]],
@@ -833,8 +786,6 @@ def generate_state_dict(
     state_dict["checkpoint_version"] = 3.0
     if iteration is not None:
         state_dict["iteration"] = iteration
-
-    peft_config = cfg.peft
 
     if len(model) == 1:
         state_dict["model"] = model[0].sharded_state_dict()
@@ -1054,53 +1005,27 @@ def load_checkpoint(
 
     # Model.
     if not skip_load_to_model_and_opt:
-        # Check if this is a PEFT resume scenario where we need to filter adapter weights
-        is_peft_resume = cfg.peft is not None and cfg.checkpoint.pretrained_checkpoint is not None
+        # Check if this is resuming from a checkpoint saved during training that contains only the PEFT adapter states
+        # This situation occurs when:
+        # 1. The PEFT config is set
+        # 2. Loading from a checkpoint saved during training (not loading from a pretrained checkpoint)
+        # 3. Not in finetune mode
+        is_peft_resume = (
+            cfg.peft is not None
+            and cfg.checkpoint.load is not None
+            and load_dir == cfg.checkpoint.load
+            and not cfg.checkpoint.finetune
+        )
 
         if is_peft_resume:
-            print_rank_0("PEFT Resume: Loading only adapter weights from checkpoint")
-            # Filter state dict to only include adapter weights
-            filtered_model_state = {}
+            state_dict = apply_peft_adapter_filter_to_state_dict(state_dict, cfg.peft)
 
-            if len(model) == 1:
-                full_model_state = state_dict["model"]
-                # Use existing adapter key filtering logic
-                filtered_model_state = filter_peft_adapter_state_dict(full_model_state, cfg.peft)
-
-                # Log filtering results for debugging
-                total_params = len(full_model_state)
-                adapter_params = len(filtered_model_state)
-                print_rank_0(f"PEFT Resume: Filtered {adapter_params}/{total_params} parameters as adapters")
-
-                if adapter_params == 0:
-                    print_rank_0("WARNING: No adapter parameters found in checkpoint. This may indicate a mismatch.")
-
-                model[0].load_state_dict(filtered_model_state, strict=False)
-            else:
-                for i in range(len(model)):
-                    mpu.set_virtual_pipeline_model_parallel_rank(i)
-                    full_model_state = state_dict[f"model{i}"]
-                    # Use existing adapter key filtering logic
-                    filtered_model_state = filter_peft_adapter_state_dict(full_model_state, cfg.peft)
-
-                    # Log filtering results for debugging
-                    total_params = len(full_model_state)
-                    adapter_params = len(filtered_model_state)
-                    print_rank_0(
-                        f"PEFT Resume: Model {i} - Filtered {adapter_params}/{total_params} parameters as adapters"
-                    )
-
-                    if adapter_params == 0:
-                        print_rank_0(f"WARNING: No adapter parameters found in model {i} checkpoint.")
-
-                    model[i].load_state_dict(filtered_model_state, strict=False)
+        load_strict = False if is_peft_resume else strict
+        if len(model) == 1:
+            model[0].load_state_dict(state_dict["model"], strict=load_strict)
         else:
-            # Regular checkpoint loading (non-PEFT or initial PEFT training)
-            if len(model) == 1:
-                model[0].load_state_dict(state_dict["model"], strict=strict)
-            else:
-                for i in range(len(model)):
-                    model[i].load_state_dict(state_dict["model%d" % i], strict=strict)
+            for i in range(len(model)):
+                model[i].load_state_dict(state_dict["model%d" % i], strict=load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
@@ -1304,6 +1229,58 @@ def fix_fp8_params_lose_precision_when_loading_dist_ckpt(state_dict: dict[str, A
             for _, sharded_tensor in state_dict[key].items():
                 if is_float8tensor(sharded_tensor.data):
                     sharded_tensor.data = sharded_tensor.data.from_float8().cpu()
+
+
+def apply_peft_adapter_filter_to_state_dict(state_dict: dict[str, Any], peft_config: Optional[PEFT]) -> dict[str, Any]:
+    """Post-process a complete state dict to filter for save PEFT adapter parameters only.
+
+    This function takes a complete state dict (generated by generate_state_dict) and
+    filters it to retain only PEFT adapter parameters for checkpoint saving.
+    Follows the same key logic pattern as generate_state_dict for consistency.
+
+    Args:
+        state_dict: Complete state dict from generate_state_dict()
+        peft_config: PEFT configuration for filtering logic
+
+    Returns:
+        Filtered state dict containing only adapter parameters in model weights,
+        while preserving all non-model metadata (checkpoint_version, iteration, etc.)
+    """
+    if peft_config is None:
+        return state_dict
+
+    filtered_dict = {}
+    for key, value in state_dict.items():
+        if key == "model":
+            filtered_dict[key] = filter_model_state_dict_for_adapters(value, peft_config)
+        elif key.startswith("model") and key != "model" and key[5:].isdigit():
+            filtered_dict[key] = filter_model_state_dict_for_adapters(value, peft_config)
+        else:
+            filtered_dict[key] = value
+
+    return filtered_dict
+
+
+def filter_model_state_dict_for_adapters(model_state_dict: dict[str, Any], peft_config: PEFT) -> dict[str, Any]:
+    """Filter a single model state dict to only include PEFT adapter parameters.
+
+    Uses the PEFT configuration's adapter_key_filter method to determine which
+    parameters should be included, ensuring consistency with saving logic.
+
+    Args:
+        model_state_dict: A single model's state
+        peft_config: PEFT configuration containing adapter key filtering logic
+
+    Returns:
+        Filtered model state dict containing only adapter parameters
+    """
+    filtered_dict = {}
+
+    for key, value in model_state_dict.items():
+        if peft_config.adapter_key_filter(key):
+            filtered_dict[key] = value
+
+    return filtered_dict
 
 
 def _transpose_first_dim(

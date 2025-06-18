@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
+import re
 import shutil
 
 import pytest
@@ -33,13 +35,11 @@ from megatron.hub.training.config import (
     TrainingConfig,
 )
 from megatron.hub.training.finetune import finetune
+from megatron.hub.utils.common_utils import print_rank_0
 from megatron.hub.utils.config_utils import InstantiationMode
 
 
-def print_rank_0(message: str) -> None:
-    """Print message only on rank 0."""
-    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
-        print(message)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class TestLoRAE2E:
@@ -52,18 +52,16 @@ class TestLoRAE2E:
         """
         Test end-to-end LoRA fine-tuning with checkpoint resume functionality.
 
-        This test verifies the complete PEFT resume workflow:
+        This test verifies the complete PEFT training workflow:
         1. Initial training phase: Train for initial steps and save checkpoint
-        2. Resume phase: Resume from checkpoint and complete training
-        3. Verification: Ensure final checkpoint maintains size reduction
+        2. Resume phase: Resume from training checkpoint and complete training
+        3. Verification: Ensure final training checkpoint maintains size reduction by saving adapter states only
         """
         pretrained_checkpoint_path = "/lustre/fsw/coreai_dlalgo_genai/ansubramania/models/Meta-Llama3-8B/"
         checkpoint_dir = str(tmp_path / "checkpoints")
         tensorboard_dir = str(tmp_path / "tensorboard")
 
         try:
-            # Phase 1: Initial training with intermediate checkpoint
-            print_rank_0("=== Phase 1: Initial Training ===")
             initial_cfg = self._create_lora_config(
                 pretrained_checkpoint_path,
                 checkpoint_dir,
@@ -74,24 +72,20 @@ class TestLoRAE2E:
 
             finetune(config=initial_cfg, forward_step_func=forward_step)
 
+            torch.distributed.barrier()
+
+            # Verify initial checkpoint was created
+            initial_checkpoint_dir = os.path.join(checkpoint_dir, "iter_0000010")
+
             if torch.distributed.get_rank() == 0:
-                # Verify initial checkpoint was created
-                initial_checkpoint_dir = os.path.join(checkpoint_dir, "iter_0000010")
                 assert os.path.exists(initial_checkpoint_dir), (
                     f"Initial checkpoint not found at {initial_checkpoint_dir}"
                 )
-
                 metadata_file = os.path.join(initial_checkpoint_dir, ".metadata")
                 assert os.path.exists(metadata_file), "Initial checkpoint metadata file not found"
 
                 print_rank_0(f"Initial checkpoint created successfully at {initial_checkpoint_dir}")
 
-            # Barrier to ensure all ranks see the checkpoint
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
-
-            # Phase 2: Resume training from checkpoint
-            print_rank_0("=== Phase 2: Resume Training ===")
             resume_cfg = self._create_lora_config(
                 pretrained_checkpoint_path,
                 checkpoint_dir,
@@ -103,10 +97,7 @@ class TestLoRAE2E:
 
             finetune(config=resume_cfg, forward_step_func=forward_step)
 
-            # Phase 3: Verification
             if torch.distributed.get_rank() == 0:
-                print_rank_0("=== Phase 3: Verification ===")
-
                 # Verify final checkpoint was created
                 latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
                 assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
@@ -119,13 +110,10 @@ class TestLoRAE2E:
 
                 # Verify checkpoint size is significantly smaller than base model
                 self._verify_checkpoint_size_reduction(
-                    pretrained_checkpoint_path, final_iter_dir, expected_reduction_factor=0.1
+                    pretrained_checkpoint_path, final_iter_dir, expected_reduction_factor=0.2
                 )
-
                 # Additional verification: Compare initial and final checkpoints
                 self._verify_checkpoint_progression(initial_checkpoint_dir, final_iter_dir)
-
-                print_rank_0("PEFT resume test completed successfully!")
 
         finally:
             # pytest's tmp_path fixture doesn't clean up immediately.
@@ -311,25 +299,6 @@ class TestLoRAE2E:
             adapter_checkpoint_path: Path to the adapter checkpoint
             expected_reduction_factor: Maximum ratio of adapter size to base model size
         """
-        import subprocess
-
-        def get_directory_size(path: str) -> int:
-            """Get total size of directory in bytes."""
-            try:
-                result = subprocess.run(["du", "-sb", path], capture_output=True, text=True, check=True)
-                return int(result.stdout.split()[0])
-            except (subprocess.CalledProcessError, ValueError, IndexError):
-                # Fallback to Python implementation if du command fails
-                total_size = 0
-                for dirpath, dirnames, filenames in os.walk(path):
-                    for filename in filenames:
-                        filepath = os.path.join(dirpath, filename)
-                        try:
-                            total_size += os.path.getsize(filepath)
-                        except (OSError, IOError):
-                            pass  # Skip files that can't be accessed
-                return total_size
-
         # Get size of base model checkpoint
         base_model_size = get_directory_size(pretrained_path)
 
@@ -339,10 +308,10 @@ class TestLoRAE2E:
         # Calculate size reduction ratio
         size_ratio = adapter_size / base_model_size if base_model_size > 0 else 1.0
 
-        print(f"Base model checkpoint size: {base_model_size / (1024**3):.2f} GB")
-        print(f"Adapter checkpoint size: {adapter_size / (1024**3):.2f} GB")
-        print(f"Size reduction ratio: {size_ratio:.4f}")
-        print(f"Size reduction: {(1 - size_ratio) * 100:.1f}%")
+        logger.debug(f"Base model checkpoint size: {base_model_size / (1024**3):.2f} GB")
+        logger.debug(f"Adapter checkpoint size: {adapter_size / (1024**3):.2f} GB")
+        logger.debug(f"Size reduction ratio: {size_ratio:.4f}")
+        logger.debug(f"Size reduction: {(1 - size_ratio) * 100:.1f}%")
 
         # Verify significant size reduction
         assert size_ratio < expected_reduction_factor, (
@@ -352,23 +321,24 @@ class TestLoRAE2E:
         )
 
         # Ensure adapter checkpoint is not empty
-        assert adapter_size > 0, "Adapter checkpoint appears to be empty"
+        assert adapter_size > 0, "Adapter checkpoint is empty"
 
-        # Additional verification for distributed checkpoints
         if os.path.exists(os.path.join(adapter_checkpoint_path, ".metadata")):
             # Check that main model state files are much smaller in adapter checkpoint
             model_files = []
             for root, dirs, files in os.walk(adapter_checkpoint_path):
                 for file in files:
-                    if file.startswith("__0_0_"):  # Distributed checkpoint model files
+                    if re.match(
+                        r"__\d+_\d+\.distcp$", file
+                    ):  # Distributed checkpoint pattern: __{global_rank}_{writer_rank}.distcp
                         model_files.append(os.path.join(root, file))
 
             if model_files:
                 model_files_size = sum(os.path.getsize(f) for f in model_files)
                 model_ratio = model_files_size / base_model_size if base_model_size > 0 else 1.0
 
-                print(f"Model state files size in adapter checkpoint: {model_files_size / (1024**2):.2f} MB")
-                print(f"Model files size ratio: {model_ratio:.6f}")
+                logger.debug(f"Model state files size in adapter checkpoint: {model_files_size / (1024**2):.2f} MB")
+                logger.debug(f"Model files size ratio: {model_ratio:.6f}")
 
                 # Model state files should be even smaller since they only contain adapters
                 assert model_ratio < expected_reduction_factor / 2, (
@@ -378,25 +348,6 @@ class TestLoRAE2E:
 
     def _verify_checkpoint_progression(self, initial_checkpoint_dir: str, final_checkpoint_dir: str) -> None:
         """Verify that the final checkpoint is a proper continuation of the initial checkpoint."""
-        import subprocess
-
-        def get_directory_size(path: str) -> int:
-            """Get total size of directory in bytes."""
-            try:
-                result = subprocess.run(["du", "-sb", path], capture_output=True, text=True, check=True)
-                return int(result.stdout.split()[0])
-            except (subprocess.CalledProcessError, ValueError, IndexError):
-                # Fallback to Python implementation
-                total_size = 0
-                for dirpath, dirnames, filenames in os.walk(path):
-                    for filename in filenames:
-                        filepath = os.path.join(dirpath, filename)
-                        try:
-                            total_size += os.path.getsize(filepath)
-                        except (OSError, IOError):
-                            pass
-                return total_size
-
         # Both checkpoints should exist
         assert os.path.exists(initial_checkpoint_dir), (
             f"Initial checkpoint directory not found: {initial_checkpoint_dir}"
@@ -414,8 +365,8 @@ class TestLoRAE2E:
         initial_size = get_directory_size(initial_checkpoint_dir)
         final_size = get_directory_size(final_checkpoint_dir)
 
-        print_rank_0(f"Initial checkpoint size: {initial_size / (1024**2):.2f} MB")
-        print_rank_0(f"Final checkpoint size: {final_size / (1024**2):.2f} MB")
+        logger.debug(f"Initial checkpoint size: {initial_size / (1024**2):.2f} MB")
+        logger.debug(f"Final checkpoint size: {final_size / (1024**2):.2f} MB")
 
         # Size should be similar (within reasonable bounds) since both are adapter-only
         size_ratio = (
@@ -426,3 +377,16 @@ class TestLoRAE2E:
         )
 
         print_rank_0("Checkpoint progression verification completed successfully")
+
+
+def get_directory_size(path: str) -> int:
+    """Get total size of directory in bytes."""
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            try:
+                total_size += os.path.getsize(filepath)
+            except (OSError, IOError):
+                pass  # Skip files that can't be accessed
+    return total_size

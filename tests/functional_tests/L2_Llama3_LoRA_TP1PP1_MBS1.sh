@@ -17,18 +17,5 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
 
-echo "=== Starting LoRA End-to-End Test with PEFT Resume ==="
-echo "Test includes:"
-echo "  1. Initial training phase (10 iterations)"
-echo "  2. Checkpoint saving"
-echo "  3. Resume training phase (10 more iterations)"
-echo "  4. Verification of checkpoint size reduction"
-echo "  5. Verification of PEFT resume functionality"
-
-echo "Running test with coverage collection..."
 python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m pytest tests/functional_tests/test_lora_e2e.py -v -s -x --tb=short
-
-echo "Combining coverage data..."
 coverage combine
-
-echo "=== LoRA End-to-End Test with PEFT Resume Completed Successfully ==="
