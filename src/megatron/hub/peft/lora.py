@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 
 from megatron.hub.peft.base import PEFT
-from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
+from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
 from megatron.hub.peft.module_matcher import ModuleMatcher
 from megatron.hub.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 from megatron.hub.utils.import_utils import safe_import
@@ -30,10 +30,12 @@ logger = logging.getLogger(__name__)
 
 try:
     import transformer_engine.pytorch as te
+    from megatron.hub.peft.lora_layers import TELinearAdapter
 
     HAVE_TE = True
 except ImportError:
     te = None
+    TELinearAdapter = None
     HAVE_TE = False
 
 if torch.cuda.is_available():
