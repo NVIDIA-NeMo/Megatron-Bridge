@@ -18,7 +18,6 @@
 
 import importlib
 import logging
-import sys
 import traceback
 from contextlib import contextmanager
 from typing import Tuple
