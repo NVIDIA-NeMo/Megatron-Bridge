@@ -16,10 +16,19 @@ import logging
 import time
 from typing import Callable, Optional
 
-import nvidia_resiliency_ext.straggler as straggler
 import torch
 
 from megatron.hub.training.config import NVRxStragglerDetectionConfig
+
+
+try:
+    import nvidia_resiliency_ext.straggler as straggler
+except ImportError:
+    from megatron.hub.utils.import_utils import UnavailableError
+
+    raise UnavailableError(
+        "nvidia-resiliency-ext is not available. Please install it via `pip install nvidia-resiliency-ext`."
+    )
 
 
 class NVRxStragglerDetectionManager:

@@ -112,7 +112,8 @@ class ImportChecker:
 
             importlib.import_module(module_name)
             return True, ""
-
+        except UnavailableError as e:
+            return True, f"Missing but gracefully handled: {str(e)}"
         except ImportError as e:
             return False, f"ImportError: {str(e)}"
         except ModuleNotFoundError as e:
