@@ -89,15 +89,6 @@ class ImportChecker:
                         if not self.should_skip_module(full_module_name):
                             modules.append(full_module_name)
 
-            # Also try to discover using pkgutil
-            try:
-                for importer, modname, ispkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
-                    if not self.should_skip_module(modname):
-                        modules.append(modname)
-            except Exception as e:
-                if self.verbose:
-                    print(f"Warning: pkgutil discovery failed: {e}")
-
             # Remove duplicates and sort
             modules = sorted(list(set(modules)))
 

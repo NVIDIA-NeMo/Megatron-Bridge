@@ -32,7 +32,7 @@ jobs:
 
       - name: Install project
         run: |
-          pip install ".[eval,recipes]"
+          pip install .
 
       - name: Run import checks
         run: |
