@@ -1,4 +1,3 @@
-from megatron.hub.models.llama.llama_causal_bridge import MegatronCausalLlamaBridge  # noqa: F401
 from megatron.hub.models.llama.llama_provider import (
     CodeLlamaModelProvider7B,
     CodeLlamaModelProvider13B,

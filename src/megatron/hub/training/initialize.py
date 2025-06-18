@@ -105,7 +105,7 @@ def initialize_megatron(
 
 
 def torch_dist_init(
-    model_config: GPTConfig | T5Config,
+    model_config: GPTModelProvider | T5ModelProvider,
     dist_config: DistributedInitConfig,
     rng_config: RNGConfig,
     micro_batch_size: int,
@@ -210,7 +210,7 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
     )
 
 
-def set_jit_fusion_options(model_config: GPTConfig | T5Config, micro_batch_size: int) -> None:
+def set_jit_fusion_options(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
     """Set PyTorch JIT layer fusion options and warmup JIT functions.
 
     Configures the JIT fuser (nvFuser or legacy) based on the PyTorch version
@@ -256,7 +256,7 @@ def destroy_global_state() -> None:
     destroy_rerun_state_machine()
 
 
-def _initialize_tp_communicators(model_config: GPTConfig | T5Config, micro_batch_size: int) -> None:
+def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
     """initializing the communicators with user buffers for high-performance tensor-model-parallel
     communication overlap"""
 
@@ -308,7 +308,7 @@ def _initialize_tp_communicators(model_config: GPTConfig | T5Config, micro_batch
 
 
 def _initialize_distributed(
-    model_config: GPTConfig | T5Config,
+    model_config: GPTModelProvider | T5ModelProvider,
     dist_config: DistributedInitConfig,
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
@@ -404,7 +404,7 @@ def _set_random_seed(
         tensor_parallel.model_parallel_cuda_manual_seed(seed, te_rng_tracker, inference_rng_tracker)
 
 
-def _warmup_jit_function(model_config: GPTConfig | T5Config, micro_batch_size: int) -> None:
+def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
     """Compilie JIT functions before the main training steps"""
     if model_config.fp8:
         dtype = torch.float8

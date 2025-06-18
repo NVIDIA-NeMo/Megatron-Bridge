@@ -279,11 +279,11 @@ class BaseImporter(ABC):
             save_hf_tokenizer_assets(str(self.input_path), str(self.output_path / HF_ASSETS_DIR))
         )
 
-    def init_tron_model(self, cfg: GPTConfig | T5Config) -> list[MegatronModule]:
+    def init_tron_model(self, cfg: GPTModelProvider | T5ModelProvider) -> list[MegatronModule]:
         """Initialize the target megatron model on CPU.
 
         Args:
-            cfg: The megatron hub model configuration (e.g., GPTConfig).
+            cfg: The megatron hub model configuration (e.g., GPTModelProvider).
 
         Returns:
             A list containing the initialized megatron module.
@@ -329,7 +329,7 @@ class BaseImporter(ABC):
 
     @property
     @abstractmethod
-    def tron_config(self) -> GPTConfig | T5Config:
+    def tron_config(self) -> GPTModelProvider | T5ModelProvider:
         """Get the megatron hub model configuration object derived from the HF config.
 
         Must be implemented by subclasses.
@@ -419,11 +419,11 @@ class BaseExporter(ABC):
         raise NotImplementedError
 
     @property
-    def tron_config(self) -> GPTConfig | T5Config:
+    def tron_config(self) -> GPTModelProvider | T5ModelProvider:
         """Get the megatron hub configuration loaded from the checkpoint.
 
         Returns:
-            The loaded megatron hub configuration instance (e.g., GPTConfig).
+            The loaded megatron hub configuration instance (e.g., GPTModelProvider).
 
         Raises:
             ValueError: If the config has not been loaded yet (e.g., before `apply`).
@@ -478,7 +478,7 @@ class BaseExporter(ABC):
         with no_init_weights(True):
             return AutoModelForCausalLM.from_config(self.hf_config, torch_dtype=dtype)
 
-    def init_tron_model(self) -> tuple[dict[str, torch.Tensor], GPTConfig | T5Config]:
+    def init_tron_model(self) -> tuple[dict[str, torch.Tensor], GPTModelProvider | T5ModelProvider]:
         """Load the megatron hub model state dict and config from a distributed checkpoint.
 
         Loads the full state dict directly without initializing the full megatron hub model

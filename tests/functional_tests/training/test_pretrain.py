@@ -21,7 +21,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.models.llama import Llama32ModelProvider1B
-from megatron.hub.training.step import forward_step
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -33,6 +32,7 @@ from megatron.hub.training.config import (
     TrainingConfig,
 )
 from megatron.hub.training.pretrain import pretrain
+from megatron.hub.training.step import forward_step
 
 
 class TestPretrain:

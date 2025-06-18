@@ -18,11 +18,11 @@ import logging
 
 import nemo_run as run
 
-from megatron.hub.training.step import forward_step
 from megatron.hub.recipes.llm.llama3_8b import pretrain_config
 from megatron.hub.recipes.utils.nemo_run_utils import get_partial_fn
 from megatron.hub.training.config import ConfigContainer, ProfilingConfig
 from megatron.hub.training.pretrain import pretrain
+from megatron.hub.training.step import forward_step
 
 
 logger: logging.Logger = logging.getLogger(__name__)

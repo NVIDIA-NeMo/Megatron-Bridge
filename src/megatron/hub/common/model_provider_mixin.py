@@ -9,24 +9,11 @@ from megatron.core.enums import ModelType
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.common.config import ConfigProtocol, from_pretrained, save_pretrained
+from megatron.hub.common.config import from_pretrained, save_pretrained
 from megatron.hub.core.models.model_provider import get_model
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
-
-
-class GetModelKwargs(TypedDict, total=False):
-    ddp_config: DistributedDataParallelConfig | None
-    model_type: ModelType
-    overlap_param_gather_with_optimizer_step: bool
-    fp16: bool | None
-    bf16: bool | None
-    use_torch_fsdp2: bool
-    wrap_with_ddp: bool
-    data_parallel_random_init: bool
-    use_cpu_initialization: bool | None
-    init_model_with_meta_device: bool | None
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
@@ -139,6 +126,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             config_name = cls.CONFIG_NAME.rsplit(".", 1)[0]
         if mode is None:
             from megatron.hub.core.utils.instantiate_utils import InstantiationMode
+
             mode = InstantiationMode.LENIENT
         return from_pretrained(
             cls,
@@ -146,7 +134,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             trust_remote_code=trust_remote_code,
             mode=mode,
             config_name=config_name,
-            **kwargs
+            **kwargs,
         )
 
     def save_pretrained(
@@ -161,10 +149,32 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             config_name = self.CONFIG_NAME.rsplit(".", 1)[0]
         if config_format is None:
             config_format = self.DEFAULT_CONFIG_FORMAT
-        return save_pretrained(
-            self,
-            save_directory,
-            config_format=config_format,
-            config_name=config_name,
-            **kwargs
-        )
+        return save_pretrained(self, save_directory, config_format=config_format, config_name=config_name, **kwargs)
+
+
+class GetModelKwargs(TypedDict, total=False):
+    """Keyword arguments for the get_model method.
+
+    Attributes:
+        ddp_config: Configuration for distributed data parallel.
+        model_type: Type of model (encoder, decoder, or both).
+        overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
+        fp16: Override FP16 setting.
+        bf16: Override BF16 setting.
+        use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
+        wrap_with_ddp: Whether to wrap model with DDP.
+        data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
+        use_cpu_initialization: Initialize model on CPU.
+        init_model_with_meta_device: Initialize model on meta device.
+    """
+
+    ddp_config: DistributedDataParallelConfig | None
+    model_type: ModelType
+    overlap_param_gather_with_optimizer_step: bool
+    fp16: bool | None
+    bf16: bool | None
+    use_torch_fsdp2: bool
+    wrap_with_ddp: bool
+    data_parallel_random_init: bool
+    use_cpu_initialization: bool | None
+    init_model_with_meta_device: bool | None
