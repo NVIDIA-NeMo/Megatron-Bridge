@@ -290,7 +290,7 @@ class TestGetModel:
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
-    @patch("megatron.hub.core.models.model_provider._fix_float_8")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.hub.core.models.model_provider._ddp_wrap")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
     def test_get_model_basic(
@@ -331,7 +331,7 @@ class TestGetModel:
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
-    @patch("megatron.hub.core.models.model_provider._fix_float_8")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.hub.core.models.model_provider._ddp_wrap")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
     @patch("megatron.hub.core.models.model_provider.Float16Module")
@@ -373,7 +373,7 @@ class TestGetModel:
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
-    @patch("megatron.hub.core.models.model_provider._fix_float_8")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.hub.core.models.model_provider._ddp_wrap")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
     def test_get_model_cpu_initialization(
@@ -410,7 +410,7 @@ class TestGetModel:
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
-    @patch("megatron.hub.core.models.model_provider._fix_float_8")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
     def test_get_model_no_ddp_wrap(
         self,
@@ -443,7 +443,7 @@ class TestGetModel:
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
-    @patch("megatron.hub.core.models.model_provider._fix_float_8")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.hub.core.models.model_provider._ddp_wrap")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
     def test_get_model_fsdp2_cpu_init(
@@ -551,7 +551,7 @@ class TestEdgeCases:
         model_provider = Mock()
         ddp_config = DistributedDataParallelConfig()
 
-        with patch("megatron.hub.core.models.model_provider._fix_float_8") as mock_fix:
+        with patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed") as mock_fix:
             with patch("megatron.hub.core.models.model_provider._ddp_wrap") as mock_wrap:
                 mock_fix.return_value = [model]
                 mock_wrap.return_value = [model]
