@@ -25,8 +25,8 @@ from megatron.hub.models.utils import forward_step
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    GPTDatasetConfig,
     LoggerConfig,
+    MockGPTDatasetConfig,
     RNGConfig,
     SchedulerConfig,
     TokenizerConfig,
@@ -108,7 +108,7 @@ class TestPretrain:
                     average_in_collective=True,
                     use_distributed_optimizer=True,
                 ),
-                dataset=GPTDatasetConfig(
+                dataset=MockGPTDatasetConfig(
                     random_seed=1234,
                     reset_attention_mask=False,
                     reset_position_ids=False,

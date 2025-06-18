@@ -22,8 +22,8 @@ from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedInitConfig,
-    GPTDatasetConfig,
     LoggerConfig,
+    MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
     RNGConfig,
     SchedulerConfig,
@@ -59,7 +59,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         make_vocab_size_divisible_by=128,
     )
 
-    dataset_config = GPTDatasetConfig(
+    dataset_config = MockGPTDatasetConfig(
         random_seed=1234,
         reset_attention_mask=False,
         reset_position_ids=False,
