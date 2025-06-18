@@ -6,16 +6,25 @@ This script recursively discovers all Python modules in the specified package
 and attempts to import them, reporting any import errors.
 """
 
-import os
-import sys
-import importlib
-import pkgutil
-import traceback
-from pathlib import Path
-from typing import List, Dict, Tuple, Set
-from collections import defaultdict
 import argparse
-from megatron.hub.utils.import_utils import UnavailableError
+import importlib
+import os
+import pkgutil
+import sys
+import traceback
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+
+
+# Import UnavailableError for handling graceful failures
+try:
+    from megatron.hub.utils.import_utils import UnavailableError
+except ImportError:
+    # Fallback if UnavailableError is not available
+    class UnavailableError(Exception):
+        pass
+
 
 class ImportChecker:
     """Check imports for all modules in a package."""
@@ -25,9 +34,11 @@ class ImportChecker:
         self.verbose = verbose
         self.success_count = 0
         self.failure_count = 0
+        self.graceful_count = 0
         self.skipped_count = 0
         self.failures: Dict[str, str] = {}
         self.successes: List[str] = []
+        self.graceful_failures: Dict[str, str] = {}
         self.skipped: List[str] = []
 
         # Modules to skip (known problematic ones)
@@ -98,12 +109,13 @@ class ImportChecker:
 
         return modules
 
-    def import_module(self, module_name: str) -> Tuple[bool, str]:
+    def import_module(self, module_name: str) -> Tuple[str, str]:
         """
         Try to import a module and return success status and error message.
 
         Returns:
-            Tuple of (success: bool, error_message: str)
+            Tuple of (status: str, error_message: str)
+            status can be: "success", "graceful", or "failed"
         """
         try:
             # Clear any existing module from sys.modules to force reimport
@@ -111,17 +123,14 @@ class ImportChecker:
                 del sys.modules[module_name]
 
             importlib.import_module(module_name)
-            return True, ""
+            return "success", ""
+
         except UnavailableError as e:
-            return True, f"Missing but gracefully handled: {str(e)}"
-        except ImportError as e:
-            return False, f"ImportError: {str(e)}"
-        except ModuleNotFoundError as e:
-            return False, f"ModuleNotFoundError: {str(e)}"
+            return "graceful", f"UnavailableError: {str(e)}"
         except Exception as e:
-            # Capture full traceback for other errors
+            # All other exceptions are treated as failures
             tb = traceback.format_exc()
-            return False, f"{type(e).__name__}: {str(e)}\n{tb}"
+            return "failed", f"{type(e).__name__}: {str(e)}\n{tb}"
 
     def check_all_imports(self) -> None:
         """Check imports for all discovered modules."""
@@ -139,32 +148,64 @@ class ImportChecker:
             if self.verbose:
                 print(f"[{i}/{len(modules)}] Checking {module_name}...", end=" ")
 
-            success, error_msg = self.import_module(module_name)
+            status, error_msg = self.import_module(module_name)
 
-            if success:
+            if status == "success":
                 self.success_count += 1
                 self.successes.append(module_name)
                 if self.verbose:
                     print("✓ OK")
-            else:
+            elif status == "graceful":
+                self.graceful_count += 1
+                self.graceful_failures[module_name] = error_msg
+                if self.verbose:
+                    print("~ GRACEFUL")
+                    print(f"    {error_msg.split(chr(10))[0]}")  # First line only
+                    if "UnavailableError" in error_msg:
+                        print(f"    (This is an expected graceful failure)")
+            else:  # failed
                 self.failure_count += 1
                 self.failures[module_name] = error_msg
                 if self.verbose:
                     print("✗ FAILED")
                     print(f"    Error: {error_msg.split(chr(10))[0]}")  # First line only
 
+    def debug_graceful_failures(self) -> None:
+        """Debug method to help understand graceful failure detection."""
+        if not self.graceful_failures:
+            print("No graceful failures detected.")
+            return
+
+        print(f"\n🔍 DEBUG: Found {len(self.graceful_failures)} graceful failures:")
+        for module_name, error_msg in self.graceful_failures.items():
+            print(f"\n• {module_name}")
+            print(f"  Error type: {error_msg.split(':')[0] if ':' in error_msg else 'Unknown'}")
+            print(f"  Message: {error_msg}")
+
     def print_summary(self) -> None:
         """Print a summary of the import check results."""
-        total = self.success_count + self.failure_count + self.skipped_count
+        total = self.success_count + self.failure_count + self.graceful_count + self.skipped_count
 
         print("\n" + "=" * 60)
         print("IMPORT CHECK SUMMARY")
         print("=" * 60)
         print(f"Total modules checked: {total}")
         print(f"Successful imports:    {self.success_count} ({self.success_count / total * 100:.1f}%)")
+        print(f"Gracefully handled:    {self.graceful_count} ({self.graceful_count / total * 100:.1f}%)")
         print(f"Failed imports:        {self.failure_count} ({self.failure_count / total * 100:.1f}%)")
         if self.skipped_count > 0:
             print(f"Skipped modules:       {self.skipped_count} ({self.skipped_count / total * 100:.1f}%)")
+
+        if self.graceful_failures:
+            print(f"\n🟡 GRACEFULLY HANDLED ({len(self.graceful_failures)}):")
+            print("-" * 40)
+            for module_name, error_msg in self.graceful_failures.items():
+                print(f"\n• {module_name}")
+                # Show only the first few lines of error to keep output manageable
+                error_lines = error_msg.split("\n")[:2]
+                for line in error_lines:
+                    if line.strip():
+                        print(f"  {line}")
 
         if self.failures:
             print(f"\n❌ FAILED IMPORTS ({len(self.failures)}):")
@@ -187,6 +228,7 @@ class ImportChecker:
 
     def get_exit_code(self) -> int:
         """Return appropriate exit code based on results."""
+        # Return 1 if there are any failed imports (not graceful ones)
         return 1 if self.failure_count > 0 else 0
 
 
@@ -198,6 +240,7 @@ def main():
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--quiet", "-q", action="store_true", help="Only show summary (overrides verbose)")
+    parser.add_argument("--debug", "-d", action="store_true", help="Enable debug output for graceful failures")
 
     args = parser.parse_args()
 
@@ -207,6 +250,10 @@ def main():
     try:
         checker = ImportChecker(package_name=args.package, verbose=verbose)
         checker.check_all_imports()
+
+        if args.debug:
+            checker.debug_graceful_failures()
+
         checker.print_summary()
 
         return checker.get_exit_code()

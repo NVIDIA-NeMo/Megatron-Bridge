@@ -19,7 +19,6 @@ target-version = "py310"
 # Exclude common directories that shouldn't be linted
 exclude = [
     ".git",
-    ".github",
     ".venv",
     "venv",
     "__pycache__",
@@ -31,27 +30,25 @@ exclude = [
 ]
 
 # Files to completely ignore
-extend-exclude = [
-    "*.ipynb",
-]
+extend-exclude = ["*.ipynb"]
 
 [lint]
 # Configure imports sorting to match isort
 select = [
-    "F541",  # f-string without any placeholders
-    "F841",  # local variable assigned but never used
-    "F401",  # imported but unused
-    "E741",  # ambiguous variable name
-    "F821",  # undefined name
-    "E266",  # too many leading '#' for block comment
-    "I",     # isort
-    "D101",  # docstring
+    "F541", # f-string without any placeholders
+    "F841", # local variable assigned but never used
+    "F401", # imported but unused
+    "E741", # ambiguous variable name
+    "F821", # undefined name
+    "E266", # too many leading '#' for block comment
+    "I",    # isort
+    "D101", # docstring
     "D103",
 ]
 
 # Additional rules can be added here
 ignore = [
-    "E501",  # Line too long - handled by formatter
+    "E501", # Line too long - handled by formatter
 ]
 
 [lint.isort]
@@ -61,18 +58,24 @@ known-third-party = [
     "megatron.core",
     "megatron",
     # Other common dependencies
-    "torch", 
-    "transformers", 
+    "torch",
+    "transformers",
     "datasets",
     "accelerate",
     "wandb",
     "omegaconf",
     "hydra",
     "numpy",
-    "examples", 
-    "scripts"
+    "examples",
+    "scripts",
 ]
-section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
 lines-after-imports = 2
 # Force imports from the same module to be on separate lines for clarity
 force-single-line = false
