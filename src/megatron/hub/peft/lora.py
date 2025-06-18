@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 try:
     import transformer_engine.pytorch as te
+
     from megatron.hub.peft.lora_layers import TELinearAdapter
 
     HAVE_TE = True
