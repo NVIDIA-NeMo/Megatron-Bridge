@@ -42,7 +42,7 @@ RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
     echo -e "machine github.com\n  login token\n  password $PAT" > ~/.netrc
     chmod 600 ~/.netrc 
     
-    uv sync --link-mode copy --locked --all-groups
+    uv sync --link-mode copy --locked --all-groups --no-install-package torch --no-install-package torchvision --no-install-package triton
 
     bash /workspace/docker/common/install_conflicting_deps.sh --export-deploy-ref $EXPORT_DEPLOY_REF
     
