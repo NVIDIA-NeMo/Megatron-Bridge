@@ -127,7 +127,7 @@ jobs:
       - name: Install dependencies with UV
         run: |
 
-          export PATH=".bin/:$PATH"
+          export PATH="${UV_PROJECT_ENVIRONMENT}/bin/:$PATH"
 
           uv venv ${UV_PROJECT_ENVIRONMENT}
 
