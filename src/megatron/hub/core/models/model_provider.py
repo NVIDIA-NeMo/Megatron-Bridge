@@ -105,7 +105,11 @@ def get_model(
     return model
 
 
-def _create_model(model_provider, model_type, init_model_with_meta_device=False):
+def _create_model(
+    model_provider: Callable[..., nn.Module],
+    model_type: ModelType,
+    init_model_with_meta_device: bool = False,
+) -> list[MegatronModule]:
     """Create model instances with appropriate pipeline parallel configuration.
 
     Handles virtual pipeline parallelism (VPP) by creating multiple model
@@ -184,11 +188,11 @@ def _create_model(model_provider, model_type, init_model_with_meta_device=False)
 
 def _ddp_wrap(
     model: list[MegatronModule],
-    use_torch_fsdp2,
-    data_parallel_random_init,
-    ddp_config,
-    overlap_param_gather_with_optimizer_step,
-):
+    use_torch_fsdp2: bool,
+    data_parallel_random_init: bool,
+    ddp_config: DistributedDataParallelConfig,
+    overlap_param_gather_with_optimizer_step: bool,
+) -> list[MegatronModule]:
     """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
 
     Args:
@@ -227,7 +231,7 @@ def _ddp_wrap(
     return model
 
 
-def _print_num_params(model: list[MegatronModule]):
+def _print_num_params(model: list[MegatronModule]) -> None:
     """Print the number of parameters in the model on rank 0.
 
     Only prints on data parallel rank 0 to avoid duplicate output.
