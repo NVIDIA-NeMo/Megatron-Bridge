@@ -60,7 +60,7 @@ from omegaconf import OmegaConf
 from megatron.hub.models.utils import forward_step
 from megatron.hub.recipes.llm.llama3_8b import pretrain_config
 from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import pretrain
 from megatron.hub.utils.omegaconf_utils import apply_overrides, create_omegaconf_dict_config, parse_hydra_overrides
 
 
@@ -161,8 +161,8 @@ def main() -> None:
     logger.info("----------------------------------")
 
     # Start training
-    logger.debug("Starting Megatron pretraining...")
-    megatron_pretrain(config=cfg, forward_step_func=forward_step)
+    logger.debug("Starting pretraining...")
+    pretrain(config=cfg, forward_step_func=forward_step)
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import pretrain
 
 
 class TestPretrain:
@@ -138,7 +138,7 @@ class TestPretrain:
             )
 
             # Run training
-            megatron_pretrain(cfg, forward_step)
+            pretrain(cfg, forward_step)
 
             # Check for the latest checkpoint tracker file
             if torch.distributed.get_rank() == 0:

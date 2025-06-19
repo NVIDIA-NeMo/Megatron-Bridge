@@ -26,7 +26,7 @@ from megatron.hub.utils.log_utils import barrier_and_log
 
 
 @experimental_fn
-def megatron_pretrain(
+def pretrain(
     config: ConfigContainer,
     forward_step_func: Callable,
 ) -> None:
