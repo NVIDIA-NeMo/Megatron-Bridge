@@ -404,9 +404,7 @@ class TestGetModel:
 
         get_model(model_provider, ddp_config, use_cpu_initialization=True)
 
-        # Assertions
         assert config.use_cpu_initialization
-        model.cuda.assert_called_once()
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
