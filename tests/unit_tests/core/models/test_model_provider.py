@@ -304,7 +304,7 @@ class TestGetModel:
         """Test basic get_model functionality."""
         # Setup mocks
         config = create_test_config()
-        config.use_cpu_initialization = False
+        config.use_cpu_initialization = True  # Use CPU init to avoid CUDA
         config.init_model_with_meta_device = False
         config.fp16 = False
         config.bf16 = False
@@ -347,7 +347,7 @@ class TestGetModel:
         """Test get_model with FP16 enabled."""
         # Setup mocks
         config = create_test_config()
-        config.use_cpu_initialization = False
+        config.use_cpu_initialization = True  # Use CPU init to avoid CUDA
         config.init_model_with_meta_device = False
         config.fp16 = False  # Will be overridden
         config.bf16 = False
@@ -387,7 +387,7 @@ class TestGetModel:
         """Test get_model with CPU initialization."""
         # Setup mocks
         config = create_test_config()
-        config.use_cpu_initialization = False  # Will be overridden
+        config.use_cpu_initialization = True  # Already set to True
         config.init_model_with_meta_device = False
         config.fp16 = False
         config.bf16 = False
@@ -422,7 +422,7 @@ class TestGetModel:
         """Test get_model without DDP wrapping."""
         # Setup mocks
         config = create_test_config()
-        config.use_cpu_initialization = False
+        config.use_cpu_initialization = True  # Use CPU init to avoid CUDA
         config.init_model_with_meta_device = False
         config.fp16 = False
         config.bf16 = False
