@@ -14,6 +14,7 @@
 
 import abc
 import os
+from pathlib import Path
 from typing import Generic, TypedDict, TypeVar, Unpack
 
 import torch
@@ -25,6 +26,7 @@ from megatron.core.transformer.module import MegatronModule
 
 from megatron.hub.common.config import from_pretrained, save_pretrained
 from megatron.hub.core.models.model_provider import get_model
+from megatron.hub.core.utils.instantiate_utils import InstantiationMode
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
@@ -124,7 +126,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             init_model_with_meta_device=init_model_with_meta_device,
         )
 
-    def initialize_model_parallel(self, seed: int | None = None, seed_kwargs: dict | None = None, **model_parallel_kwargs) -> None:
+    def initialize_model_parallel(
+        self, seed: int | None = None, seed_kwargs: dict | None = None, **model_parallel_kwargs
+    ) -> None:
         """Initializes model parallelism and sets the random seed.
 
         This is a convenience method that sets up tensor, pipeline, and other
@@ -166,9 +170,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_model_name_or_path,
+        pretrained_model_name_or_path: str | Path,
         trust_remote_code: bool = False,
-        mode=None,
+        mode: InstantiationMode | None = None,
         config_name: str | None = None,
         **kwargs,
     ):
@@ -191,8 +195,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         if config_name is None:
             config_name = cls.CONFIG_NAME.rsplit(".", 1)[0]
         if mode is None:
-            from megatron.hub.core.utils.instantiate_utils import InstantiationMode
-
             mode = InstantiationMode.LENIENT
         return from_pretrained(
             cls,
@@ -205,7 +207,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
 
     def save_pretrained(
         self,
-        save_directory,
+        save_directory: str | Path,
         config_format: str | None = None,
         config_name: str | None = None,
         **kwargs,
