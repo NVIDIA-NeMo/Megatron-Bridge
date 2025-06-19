@@ -1,25 +1,11 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import os
 from unittest.mock import MagicMock, patch
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.hub.models.t5_provider import T5ModelProvider
 from megatron.hub.training.comm_overlap import (
     CommOverlapConfig,
     TransformerLayerTPOverlapCfg,
@@ -46,7 +32,7 @@ def create_gpt_config(**kwargs):
     if kwargs.get("pipeline_model_parallel_size", defaults["pipeline_model_parallel_size"]) > 1:
         defaults["pipeline_dtype"] = "fp32"
     defaults.update(kwargs)
-    return GPTConfig(**defaults)
+    return GPTModelProvider(**defaults)
 
 
 def create_t5_config(**kwargs):
@@ -68,7 +54,7 @@ def create_t5_config(**kwargs):
     if kwargs.get("pipeline_model_parallel_size", defaults["pipeline_model_parallel_size"]) > 1:
         defaults["pipeline_dtype"] = "fp32"
     defaults.update(kwargs)
-    return T5Config(**defaults)
+    return T5ModelProvider(**defaults)
 
 
 class TestMegatronCommOverlapConfig:

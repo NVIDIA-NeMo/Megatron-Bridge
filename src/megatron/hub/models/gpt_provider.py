@@ -1,3 +1,17 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import contextlib
 import inspect
 import logging
@@ -7,14 +21,11 @@ from typing import Any, Callable, Literal, Optional, Union
 
 import torch
 from megatron.core import parallel_state
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.enums import ModelType
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec as default_layer_spec,
 )
 from megatron.core.transformer import ModuleSpec
-from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_te_version
 
@@ -86,8 +97,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     persist_layer_norm: bool = True  # Generally beneficial for performance
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
-
-    model_transform: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None
 
     def provide(self, pre_process=None, post_process=None, tokenizer=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
@@ -192,50 +201,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                         )
 
         return model
-
-    def get_model(
-        self,
-        ddp_config: DistributedDataParallelConfig | None = None,
-        model_type=ModelType.encoder_or_decoder,
-        overlap_param_gather_with_optimizer_step: bool = False,
-        fp16: bool | None = None,
-        bf16: bool | None = None,
-        use_torch_fsdp2: bool = False,
-        wrap_with_ddp: bool = True,
-        data_parallel_random_init: bool = True,
-        use_cpu_initialization: None | bool = False,
-        init_model_with_meta_device: bool | None = None,
-    ) -> list[MCoreGPTModel]:
-        model = super().get_model(
-            ddp_config=ddp_config,
-            model_type=model_type,
-            overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
-            fp16=fp16,
-            bf16=bf16,
-            use_torch_fsdp2=use_torch_fsdp2,
-            wrap_with_ddp=wrap_with_ddp,
-            data_parallel_random_init=data_parallel_random_init,
-            use_cpu_initialization=use_cpu_initialization,
-            init_model_with_meta_device=init_model_with_meta_device,
-        )
-
-        if self.model_transform:
-            _model = self.model_transform(model)
-            if _model is not None:
-                model = _model
-
-        return model
-
-    @property
-    def meta_model(self) -> list[MCoreGPTModel]:
-        _model_transform = self.model_transform
-        self.model_transform = None
-
-        meta_model = super().meta_model
-
-        self.model_transform = _model_transform
-
-        return meta_model
 
 
 def get_vocab_size(config: TransformerConfig, vocab_size: int, make_vocab_size_divisible_by: int) -> int:

@@ -1,17 +1,3 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import datetime
 import os
 from unittest.mock import patch
@@ -23,7 +9,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models import get_base_model
+from megatron.hub.core.models.model_provider import get_model
 from megatron.hub.models.gpt import GPTConfig
 from megatron.hub.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear
@@ -703,7 +689,7 @@ class TestCanonicalLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
-        base_model = get_base_model(config)
+        base_model = get_model(config)
 
         # Verify we got a list of Megatron modules
         assert isinstance(base_model, list)
@@ -774,7 +760,7 @@ class TestCanonicalLoRAMegatronIntegration:
         )
 
         # Get and adapt model
-        base_model = get_base_model(config)
+        base_model = get_model(config)
 
         # Ensure model is on CUDA if available
         if torch.cuda.is_available():

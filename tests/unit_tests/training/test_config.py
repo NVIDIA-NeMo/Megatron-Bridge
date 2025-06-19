@@ -1,17 +1,3 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Unit tests for configuration validation in megatron.hub.training.config."""
 
 from typing import Any, Optional, Union
@@ -21,8 +7,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.hub.models.t5_provider import T5ModelProvider
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -58,7 +44,7 @@ def mock_get_world_size_safe(world_size_to_return: int):
     return _mock
 
 
-def create_test_gpt_config(**kwargs: Any) -> GPTConfig:
+def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     """Creates an instance of GPTConfig for testing."""
     defaults = {
         "num_layers": 1,
@@ -68,10 +54,10 @@ def create_test_gpt_config(**kwargs: Any) -> GPTConfig:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return GPTConfig(**defaults)
+    return GPTModelProvider(**defaults)
 
 
-def create_test_t5_config(**kwargs: Any) -> T5Config:
+def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
     """Creates an instance of T5Config with sensible defaults for testing."""
     defaults = {
         "num_layers": 1,
@@ -81,7 +67,7 @@ def create_test_t5_config(**kwargs: Any) -> T5Config:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return T5Config(**defaults)
+    return T5ModelProvider(**defaults)
 
 
 def create_test_training_config(**kwargs: Any) -> TrainingConfig:
@@ -181,7 +167,7 @@ def create_test_nvrx_straggler_config(**kwargs: Any) -> NVRxStragglerDetectionCo
 
 def create_test_config_container(
     world_size_override: int,
-    model_config: Union[GPTConfig, T5Config],
+    model_config: Union[GPTModelProvider, T5ModelProvider],
     train_config: Optional[TrainingConfig] = None,
     optimizer_config: Optional[OptimizerConfig] = None,
     scheduler_config: Optional[SchedulerConfig] = None,
@@ -218,7 +204,7 @@ def create_test_config_container(
     final_dataset_config: Union[GPTDatasetConfig, FinetuningDatasetConfig]
     if dataset_config_override:
         final_dataset_config = dataset_config_override
-    elif isinstance(model_config, (GPTConfig, T5Config)):  # T5 also uses GPTDataset for these tests
+    elif isinstance(model_config, (GPTModelProvider, T5ModelProvider)):  # T5 also uses GPTDataset for these tests
         final_dataset_config = create_test_gpt_dataset_config(sequence_length=model_config.seq_length)
     else:
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
