@@ -1,3 +1,17 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Fusion capability checks for Megatron models.
 
 This module provides functions to check if various fusion optimizations
@@ -6,11 +20,8 @@ can be enabled based on the current environment and dependencies.
 
 import logging
 import os
-from typing import TYPE_CHECKING
 
-
-if TYPE_CHECKING:
-    from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +134,7 @@ def can_enable_masked_softmax_fusion() -> bool:
         return False
 
 
-def validate_rope_fusion_compatibility(model_provider: "GPTModelProvider") -> bool:
+def validate_rope_fusion_compatibility(config: TransformerConfig) -> bool:
     """Validate if RoPE fusion is compatible with the current model configuration.
 
     Args:
@@ -132,11 +143,11 @@ def validate_rope_fusion_compatibility(model_provider: "GPTModelProvider") -> bo
     Returns:
         bool: True if RoPE fusion is compatible, False otherwise.
     """
-    if not model_provider.apply_rope_fusion:
+    if not config.apply_rope_fusion:
         return True
 
     # Check for multi_latent_attention incompatibility
-    if getattr(model_provider, "multi_latent_attention", False):
+    if getattr(config, "multi_latent_attention", False):
         if LOG_FUSION_DISABLE:
             logger.warning(
                 "apply_rope_fusion is enabled but not compatible with multi_latent_attention. "
@@ -145,7 +156,7 @@ def validate_rope_fusion_compatibility(model_provider: "GPTModelProvider") -> bo
         return False
 
     # Check TE version for rotary_interleaved
-    if getattr(model_provider, "rotary_interleaved", False):
+    if getattr(config, "rotary_interleaved", False):
         try:
             from megatron.core.utils import get_te_version, is_te_min_version
 

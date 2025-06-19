@@ -1,16 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Unit tests for configuration validation in megatron.hub.training.config."""
 
 from typing import Any, Optional, Union
 
@@ -28,7 +16,6 @@ from megatron.hub.training.config import (
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     LoggerConfig,
-    MockGPTDatasetConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
     RNGConfig,
@@ -245,79 +232,6 @@ def restore_get_world_size_safe(original_func, module_ref):
     """
     if original_func is not None:
         module_ref.get_world_size_safe = original_func
-
-
-class TestMockGPTDatasetConfig:
-    """Tests desired behavior for MockGPTDatasetConfig."""
-
-    def test_initialization(self):
-        """Test that blend and blend_per_split fields are always None in MockGPTDatasetConfig."""
-        config = MockGPTDatasetConfig(
-            random_seed=1234,
-            sequence_length=512,
-            reset_position_ids=False,
-            reset_attention_mask=False,
-            eod_mask_loss=False,
-        )
-
-        # Should be an instance of both MockGPTDatasetConfig and GPTDatasetConfig
-        from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
-        from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
-
-        assert isinstance(config, MockGPTDatasetConfig)
-        assert isinstance(config, GPTDatasetConfig)
-        assert isinstance(config, MCoreGPTDatasetConfig)
-        assert isinstance(config, BlendedMegatronDatasetConfig)
-
-        # Should have all the expected fields from parent class
-        assert hasattr(config, "random_seed")
-        assert hasattr(config, "sequence_length")
-        assert hasattr(config, "path_to_cache")
-
-        # Verify blend fields are None and cannot be accessed via __dict__
-        assert config.blend is None
-        assert config.blend_per_split is None
-        assert config.mock  # should be set by BlendedMegatronDatasetConfig post-init
-        assert "blend" not in config.__dict__
-        assert "blend_per_split" not in config.__dict__
-
-    def test_cannot_set_blend_fields(self):
-        """Test that blend and blend_per_split fields cannot be set during initialization."""
-        # These should raise a TypeError because blend and blend_per_split are marked as init=False
-        with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend'"):
-            MockGPTDatasetConfig(
-                random_seed=1234,
-                sequence_length=512,
-                reset_position_ids=False,
-                reset_attention_mask=False,
-                eod_mask_loss=False,
-                blend=(["some", "data", "paths"], None),  # This should fail
-            )
-
-        with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend_per_split'"):
-            MockGPTDatasetConfig(
-                random_seed=1234,
-                sequence_length=512,
-                reset_position_ids=False,
-                reset_attention_mask=False,
-                eod_mask_loss=False,
-                blend_per_split=[
-                    (["train", "paths"], None),
-                    (["valid", "paths"], None),
-                    (["test", "paths"], None),
-                ],  # This should fail
-            )
-
-        with pytest.raises(TypeError, match="got an unexpected keyword argument"):
-            MockGPTDatasetConfig(
-                random_seed=1234,
-                sequence_length=512,
-                reset_position_ids=False,
-                reset_attention_mask=False,
-                eod_mask_loss=False,
-                blend=(["some", "data", "paths"], None),
-                blend_per_split=[(["train", "paths"], None), (["valid", "paths"], None), (["test", "paths"], None)],
-            )
 
 
 class TestConfigContainerValidation:
