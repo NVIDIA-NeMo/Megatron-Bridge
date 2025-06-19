@@ -22,13 +22,13 @@ from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 
 from megatron.hub.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.hub.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
-from megatron.hub.tokenizers.tokenizer import MegatronTokenizer
 from megatron.hub.training.config import (
     DataloaderConfig,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     MockGPTDatasetConfig,
 )
+from megatron.hub.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.hub.utils.common_utils import print_rank_0
 
 

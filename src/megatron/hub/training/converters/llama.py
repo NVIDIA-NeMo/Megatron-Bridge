@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from megatron.hub.converters.common import BaseExporter, BaseImporter, dtype_from_hf
-from megatron.hub.converters.state_transform import TransformFns, apply_transforms, state_transform
 from megatron.hub.models.llama import Llama4Config, Llama31Config, LlamaConfig
+from megatron.hub.training.converters.common import BaseExporter, BaseImporter, dtype_from_hf
+from megatron.hub.training.converters.state_transform import TransformFns, apply_transforms, state_transform
 
 
 if TYPE_CHECKING:

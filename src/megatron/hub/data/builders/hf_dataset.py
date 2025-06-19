@@ -27,8 +27,8 @@ from tqdm import tqdm
 from megatron.hub.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.data.datasets.sft import get_dataset_root
-from megatron.hub.tokenizers.tokenizer import MegatronTokenizer
 from megatron.hub.training.config import FinetuningDatasetConfig
+from megatron.hub.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.hub.utils.common_utils import print_rank_0
 
 

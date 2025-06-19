@@ -21,7 +21,7 @@ import torch
 
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.data.datasets.sft import create_sft_dataset
-from megatron.hub.tokenizers.tokenizer import _HuggingFaceTokenizer
+from megatron.hub.training.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.hub.utils.common_utils import get_rank_safe, print_rank_0
 
 
