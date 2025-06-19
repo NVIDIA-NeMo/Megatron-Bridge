@@ -16,10 +16,9 @@ import os
 from typing import List, Optional
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.recipes.utils import mock_dataset_config, optimizer_config
+from megatron.hub.recipes.utils import distributed_fused_adam_with_cosine_annealing, ddp_config
 from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3Config8B
 from megatron.hub.training.config import (
@@ -225,6 +224,9 @@ def pretrain_config(
         clip_grad=1.0,
     )
 
+    # DDP config
+    ddp_config = ddp_config()
+
     # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
@@ -237,15 +239,8 @@ def pretrain_config(
         ),
         optimizer=opt_config,
         scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=True,
-            overlap_param_gather=True,
-            average_in_collective=True,
-            use_distributed_optimizer=True,
-        ),
-        dataset=mock_dataset_config(
+        ddp=ddp_config,
+        dataset=GPTDatasetConfig(
             random_seed=1234,
             reset_attention_mask=False,
             reset_position_ids=False,

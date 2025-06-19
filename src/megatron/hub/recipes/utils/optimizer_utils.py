@@ -16,7 +16,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.hub.training.config import SchedulerConfig
 
 
-def optimizer_config(
+def distributed_fused_adam_with_cosine_annealing(
     lr_warmup_iters: int = 2000,
     constant_steps: int = 0,
     adam_beta1: float = 0.9,
