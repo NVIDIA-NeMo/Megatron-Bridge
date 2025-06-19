@@ -124,15 +124,3 @@ def unwrap_model(
     if not return_list:
         return unwrapped_model[0]
     return unwrapped_model
-
-
-def use_dist_ckpt(ckpt_format: str) -> bool:
-    """Check if the checkpoint format indicates a distributed checkpoint.
-
-    Args:
-        ckpt_format: The checkpoint format string (e.g., "torch", "torch_dist").
-
-    Returns:
-        True if the format is not "torch", False otherwise.
-    """
-    return ckpt_format != "torch"
