@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 import torch.nn as nn
 
-from megatron.hub.core.utils.common_utils import (
+from megatron.hub.utils.common_utils import (
     get_local_rank_preinit,
     get_rank_safe,
     get_world_size_safe,
@@ -29,7 +29,6 @@ from megatron.hub.core.utils.common_utils import (
     print_rank_0,
     print_rank_last,
     unwrap_model,
-    use_dist_ckpt,
 )
 
 
@@ -154,7 +153,7 @@ class TestGetLocalRankPreinit:
 class TestPrintRank0:
     """Test print_rank_0 function."""
 
-    @patch("megatron.hub.core.utils.common_utils.get_rank_safe")
+    @patch("megatron.hub.utils.common_utils.get_rank_safe")
     @patch("builtins.print")
     def test_print_on_rank_0(self, mock_print, mock_get_rank_safe):
         """Test print_rank_0 prints message when rank is 0."""
@@ -166,7 +165,7 @@ class TestPrintRank0:
         mock_get_rank_safe.assert_called_once()
         mock_print.assert_called_once_with(message, flush=True)
 
-    @patch("megatron.hub.core.utils.common_utils.get_rank_safe")
+    @patch("megatron.hub.utils.common_utils.get_rank_safe")
     @patch("builtins.print")
     def test_no_print_on_non_zero_rank(self, mock_print, mock_get_rank_safe):
         """Test print_rank_0 does not print message when rank is not 0."""
@@ -226,7 +225,7 @@ class TestPrintRankLast:
     """Test print_rank_last function."""
 
     @patch("torch.distributed.is_initialized")
-    @patch("megatron.hub.core.utils.common_utils.is_last_rank")
+    @patch("megatron.hub.utils.common_utils.is_last_rank")
     @patch("builtins.print")
     def test_print_on_last_rank_when_initialized(self, mock_print, mock_is_last_rank, mock_is_initialized):
         """Test print_rank_last prints message when torch.distributed is initialized and rank is last."""
@@ -241,7 +240,7 @@ class TestPrintRankLast:
         mock_print.assert_called_once_with(message, flush=True)
 
     @patch("torch.distributed.is_initialized")
-    @patch("megatron.hub.core.utils.common_utils.is_last_rank")
+    @patch("megatron.hub.utils.common_utils.is_last_rank")
     @patch("builtins.print")
     def test_no_print_on_non_last_rank_when_initialized(self, mock_print, mock_is_last_rank, mock_is_initialized):
         """Test print_rank_last does not print message when torch.distributed is initialized and rank is not last."""
@@ -421,36 +420,6 @@ class TestUnwrapModel:
 
         result = unwrap_model(nested_model, module_instances=(WrapperType,))
         assert result is base_model
-
-
-class TestUseDistCkpt:
-    """Test use_dist_ckpt function."""
-
-    def test_torch_format_returns_false(self):
-        """Test use_dist_ckpt returns False for 'torch' format."""
-        result = use_dist_ckpt("torch")
-        assert result is False
-
-    def test_torch_dist_format_returns_true(self):
-        """Test use_dist_ckpt returns True for 'torch_dist' format."""
-        result = use_dist_ckpt("torch_dist")
-        assert result is True
-
-    def test_other_formats_return_true(self):
-        """Test use_dist_ckpt returns True for other formats."""
-        test_formats = ["zarr", "msgpack", "custom_format", ""]
-
-        for fmt in test_formats:
-            result = use_dist_ckpt(fmt)
-            assert result is True, f"Failed for format: {fmt}"
-
-    def test_case_sensitivity(self):
-        """Test use_dist_ckpt is case sensitive."""
-        result = use_dist_ckpt("TORCH")
-        assert result is True
-
-        result = use_dist_ckpt("Torch")
-        assert result is True
 
 
 class TestIntegration:
