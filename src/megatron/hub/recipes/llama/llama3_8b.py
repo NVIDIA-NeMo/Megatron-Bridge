@@ -17,16 +17,17 @@ from typing import List, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig
 
+from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3ModelProvider8B
-from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
+    SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
 )
@@ -126,9 +127,78 @@ def pretrain_config(
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    blend, blend_per_split, split = get_blend_fields_from_data_paths(
-        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
+    # Dataset configuration logic based on mock vs real data
+    has_any_data_config = any(
+        [data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path]
     )
+
+    if mock or not has_any_data_config:
+        # Mock data configuration
+        mock = True
+        blend = None  # Will trigger mock mode automatically
+        blend_per_split = None  # Will trigger mock mode automatically
+        split = "1,1,1"  # Equal splits for testing
+        data_path = None  # No real data path needed
+    else:
+        # Real data configuration
+        mock = False
+        blend_weights, blend_per_split_weights = get_blend_and_blend_per_split(
+            data_paths=data_paths,
+            data_args_path=data_args_path,
+            train_data_paths=train_data_path,
+            valid_data_paths=valid_data_path,
+            test_data_paths=test_data_path,
+            per_split_data_args_path=per_split_data_args_path,
+        )
+
+        if blend_weights is None and blend_per_split_weights is None:
+            # No weights returned, fall back to mock mode
+            mock = True
+            blend = None
+            blend_per_split = None
+            split = "1,1,1"
+            data_path = None
+        elif blend_per_split_weights is not None:
+            # Prioritize blend_per_split_weights over blend_weights if both are provided
+            # For per-split, we need to construct the paths for each split
+            train_paths = train_data_path or []
+            valid_paths = valid_data_path or []
+            test_paths = test_data_path or []
+
+            blend_per_split = [
+                (train_paths, blend_per_split_weights[0]) if train_paths else None,
+                (valid_paths, blend_per_split_weights[1]) if valid_paths else None,
+                (test_paths, blend_per_split_weights[2]) if test_paths else None,
+            ]
+            # When using blend_per_split, split should be None and blend should be None
+            split = None
+            blend = None
+        elif blend_weights is not None:
+            # Construct data_path from the inputs
+            if data_paths is not None:
+                data_path = data_paths
+            elif data_args_path is not None:
+                data_path = data_args_path
+            else:
+                data_path = []
+                if train_data_path:
+                    data_path.extend(train_data_path)
+                if valid_data_path:
+                    data_path.extend(valid_data_path)
+                if test_data_path:
+                    data_path.extend(test_data_path)
+                if per_split_data_args_path:
+                    data_path = per_split_data_args_path
+
+            blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
+            blend_per_split = None
+            # When using regular blend, we can use split
+            split = "9999,8,2"
+        else:
+            # This shouldn't happen, but just in case
+            blend = None
+            blend_per_split = None
+            split = "9999,8,2"
 
     model_cfg = model_config(
         tensor_parallelism=tensor_parallelism,
@@ -139,15 +209,18 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
+    opt_config = OptimizerConfig(
+        optimizer="adam",
+        lr=lr,
+        min_lr=min_lr,
+        weight_decay=0.1,
+        bf16=True,
+        fp16=False,
         adam_beta1=0.9,
         adam_beta2=0.95,
         adam_eps=1e-5,
-        weight_decay=0.1,
-        max_lr=lr,
-        min_lr=min_lr,
+        use_distributed_optimizer=True,
+        clip_grad=1.0,
     )
 
     # Config Container
@@ -161,7 +234,16 @@ def pretrain_config(
             micro_batch_size=micro_batch_size,
         ),
         optimizer=opt_config,
-        scheduler=scheduler,
+        scheduler=SchedulerConfig(
+            start_weight_decay=0.033,
+            end_weight_decay=0.033,
+            weight_decay_incr_style="constant",
+            lr_decay_style="cosine",
+            lr_warmup_iters=2000,
+            lr_warmup_init=0.0,
+            lr_decay_iters=train_iters,
+            override_opt_param_scheduler=True,
+        ),
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
