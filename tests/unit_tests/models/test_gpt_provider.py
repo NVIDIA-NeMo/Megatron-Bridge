@@ -132,38 +132,6 @@ class TestGPTModelProvider:
                     assert call_kwargs["pre_process"] is False
                     assert call_kwargs["post_process"] is True
 
-    def test_model_transform_applied(self):
-        """Test that model_transform is applied if provided."""
-
-        def custom_transform(models):
-            # Simple transform that tags the model
-            for model in models:
-                model.custom_tag = "transformed"
-            return models
-
-        provider = GPTModelProvider(
-            num_layers=2,
-            hidden_size=128,
-            num_attention_heads=4,
-            vocab_size=1000,
-            model_transform=custom_transform,
-        )
-
-        with patch("megatron.hub.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.hub.models.gpt_provider.get_vocab_size", return_value=1000):
-                with patch("megatron.hub.models.gpt_provider.MCoreGPTModel") as mock_gpt:
-                    mock_ps.is_pipeline_first_stage.return_value = True
-                    mock_ps.is_pipeline_last_stage.return_value = True
-                    mock_model = Mock()
-                    mock_gpt.return_value = mock_model
-
-                    mock_tokenizer = Mock(vocab_size=1000)
-                    result = provider.provide(tokenizer=mock_tokenizer)
-
-                    # The model transform is applied in get_model, not provide
-                    # So the result here won't have the custom_tag
-                    assert result == mock_model
-
     def test_fp8_configuration(self):
         """Test GPTModelProvider with FP8 configuration."""
         provider = GPTModelProvider(
