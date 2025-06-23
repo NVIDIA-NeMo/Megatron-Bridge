@@ -20,7 +20,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.data.loaders import get_blend_and_blend_per_split
-from megatron.hub.models.llama import Llama3Config8B
+from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -40,7 +40,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 2,
     sequence_parallelism: bool = False,
-) -> Llama3Config8B:
+) -> Llama3ModelProvider8B:
     """
     Configure the Llama3 8B model.
 
@@ -55,7 +55,7 @@ def model_config(
     Returns:
         Llama3Config8B: Configuration for the Llama3 8B model.
     """
-    return Llama3Config8B(
+    return Llama3ModelProvider8B(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,
