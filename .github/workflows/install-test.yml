@@ -51,9 +51,18 @@ jobs:
         run: |
           pip install .
 
-      - name: Run import checks
-        run: |
-          python .github/scripts/check_imports.py
+      - name: Checkout check-imports
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: ko3n1g/feat/check-import-action
+          path: FW-CI-templates
+
+      - name: Check imports for megatron-hub
+        uses: ./FW-CI-templates/.github/actions/check-imports
+        with:
+          package-name: megatron.hub
+          python-binary: python
 
   ngc-cuda-test:
     runs-on: linux-amd64-cpu16
@@ -116,7 +125,19 @@ jobs:
             --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
 
           uv pip install --no-deps -e .
-          python .github/scripts/check_imports.py
+
+      - name: Checkout check-imports
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: ko3n1g/feat/check-import-action
+          path: FW-CI-templates
+
+      - name: Check imports for megatron-hub
+        uses: ./FW-CI-templates/.github/actions/check-imports
+        with:
+          package-name: megatron.hub
+          python-binary: ./venv/bin/python
 
   uv-test:
     runs-on: ${{ matrix.arch }}
@@ -149,8 +170,18 @@ jobs:
 
           uv sync --link-mode copy --locked --all-groups
 
-          uv pip install --no-deps -e .
-          uv run python .github/scripts/check_imports.py
+      - name: Checkout check-imports
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: ko3n1g/feat/check-import-action
+          path: FW-CI-templates
+
+      - name: Check imports for megatron-hub
+        uses: ./FW-CI-templates/.github/actions/check-imports
+        with:
+          package-name: megatron.hub
+          python-binary: ./venv/bin/python
 
   install-test-summary:
     needs: [pip-test, uv-test, ngc-cuda-test]
