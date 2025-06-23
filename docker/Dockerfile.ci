@@ -60,6 +60,7 @@ RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
         --no-install-package nvidia-cusolver-cu12 \
         --no-install-package nvidia-cusparse-cu12 \
         --no-install-package nvidia-cusparselt-cu12 \
+        --no-install-package nvidia-nccl-cu12 \
 
     bash /workspace/docker/common/install_conflicting_deps.sh --export-deploy-ref $EXPORT_DEPLOY_REF
     
