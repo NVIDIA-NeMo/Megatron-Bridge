@@ -15,7 +15,6 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.core.models.model_provider import get_model
 from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.dora import DoRA
 from megatron.hub.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
@@ -511,7 +510,7 @@ class TestDoRAMegatronIntegration:
     def test_dora_with_gpt_model(self):
         """Test DoRA application to a real GPT model from get_base_model."""
         # Create a minimal GPT configuration
-        config = GPTModelProvider(
+        model_provider = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=2,
@@ -519,7 +518,7 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
-        base_model = get_model(config)
+        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
         assert isinstance(base_model, list)
@@ -558,7 +557,7 @@ class TestDoRAMegatronIntegration:
 
     def test_dora_parameter_counting(self):
         """Test that DoRA adds the expected number of parameters."""
-        config = GPTModelProvider(
+        model_provider = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -566,7 +565,7 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        base_model = get_model(config)
+        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
         if torch.cuda.is_available():
             base_model = [chunk.cuda() for chunk in base_model]
 
@@ -586,7 +585,7 @@ class TestDoRAMegatronIntegration:
     def test_dora_transform_idempotent_megatron_model(self):
         """Test that DoRA transform is idempotent when applied to real Megatron models."""
         # Create a minimal GPT configuration
-        config = GPTModelProvider(
+        model_provider = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -594,7 +593,7 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        base_model = get_model(config)
+        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
 
         # Ensure model is on CUDA if available
         if torch.cuda.is_available():
@@ -646,7 +645,7 @@ class TestDoRAMegatronIntegration:
 
     def test_dora_forward_pass(self):
         """Test that DoRA adapted model can perform forward pass."""
-        config = GPTModelProvider(
+        model_provider = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -654,7 +653,7 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        base_model = get_model(config)
+        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
         if torch.cuda.is_available():
             base_model = [chunk.cuda() for chunk in base_model]
 
@@ -669,7 +668,7 @@ class TestDoRAMegatronIntegration:
         model_device = next(adapted_model[0].parameters()).device
 
         # Create input tensors in the format expected by Megatron models
-        input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len), device=model_device)
+        input_ids = torch.randint(0, model_provider.vocab_size, (batch_size, seq_len), device=model_device)
         position_ids = torch.arange(seq_len, dtype=torch.long, device=model_device).unsqueeze(0).expand(batch_size, -1)
 
         # Create 4D causal attention mask [batch_size, 1, seq_len, seq_len]
@@ -694,7 +693,7 @@ class TestDoRAMegatronIntegration:
                 else:
                     logits = output
 
-                expected_shape = (batch_size, seq_len, config.vocab_size)
+                expected_shape = (batch_size, seq_len, model_provider.vocab_size)
                 assert logits.shape == expected_shape, f"Expected {expected_shape}, got {logits.shape}"
 
                 # Count DoRA adaptations
@@ -703,7 +702,7 @@ class TestDoRAMegatronIntegration:
 
     def test_dora_different_targets(self):
         """Test DoRA with different target module configurations."""
-        config = GPTModelProvider(
+        model_provider = GPTModelProvider(
             num_layers=2,
             hidden_size=64,
             num_attention_heads=2,
@@ -721,7 +720,7 @@ class TestDoRAMegatronIntegration:
 
         for targets in target_configs:
             # Create fresh model for each configuration
-            base_model = get_model(config)
+            base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
             if torch.cuda.is_available():
                 base_model = [chunk.cuda() for chunk in base_model]
 
