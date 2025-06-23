@@ -189,7 +189,7 @@ class TestPretrainConfig:
         assert config.dataset.blend_per_split is None
         assert config.dataset.split == "1,1,1"
 
-    @patch("megatron.hub.recipes.llm.llama3_8b.get_blend_and_blend_per_split")
+    @patch("megatron.hub.models.llama.recipes.llama3_8b.get_blend_and_blend_per_split")
     def test_pretrain_config_with_data_paths(self, mock_get_blend):
         """Test pretrain_config with data paths provided."""
         # Mock the blend function to return some sample data
@@ -209,7 +209,7 @@ class TestPretrainConfig:
         assert config.dataset.blend is not None
         assert config.dataset.blend_per_split is None
 
-    @patch("megatron.hub.recipes.llm.llama3_8b.get_blend_and_blend_per_split")
+    @patch("megatron.hub.models.llama.recipes.llama3_8b.get_blend_and_blend_per_split")
     def test_pretrain_config_with_train_valid_test_paths(self, mock_get_blend):
         """Test pretrain_config with separate train/valid/test paths."""
         mock_get_blend.return_value = (
@@ -233,7 +233,7 @@ class TestPretrainConfig:
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is not None
 
-    @patch("megatron.hub.recipes.llm.llama3_8b.get_blend_and_blend_per_split")
+    @patch("megatron.hub.models.llama.recipes.llama3_8b.get_blend_and_blend_per_split")
     def test_pretrain_config_prioritizes_blend_per_split(self, mock_get_blend):
         """Test that blend_per_split_weights takes priority over blend_weights when both are provided."""
         mock_get_blend.return_value = (
@@ -258,7 +258,7 @@ class TestPretrainConfig:
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is not None
 
-    @patch("megatron.hub.recipes.llm.llama3_8b.get_blend_and_blend_per_split")
+    @patch("megatron.hub.models.llama.recipes.llama3_8b.get_blend_and_blend_per_split")
     def test_pretrain_config_fallback_to_mock_when_no_weights(self, mock_get_blend):
         """Test pretrain_config falls back to mock when no weights are returned."""
         # Mock function returns None for both weights

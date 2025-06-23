@@ -152,13 +152,28 @@ def pretrain_config(
         )
 
         if blend_weights is None and blend_per_split_weights is None:
-            # No data provided, fall back to mock mode
+            # No weights returned, fall back to mock mode
             mock = True
             blend = None
             blend_per_split = None
             split = "1,1,1"
             data_path = None
-        else:
+        elif blend_per_split_weights is not None:
+            # Prioritize blend_per_split_weights over blend_weights if both are provided
+            # For per-split, we need to construct the paths for each split
+            train_paths = train_data_path or []
+            valid_paths = valid_data_path or []
+            test_paths = test_data_path or []
+
+            blend_per_split = [
+                (train_paths, blend_per_split_weights[0]) if train_paths else None,
+                (valid_paths, blend_per_split_weights[1]) if valid_paths else None,
+                (test_paths, blend_per_split_weights[2]) if test_paths else None,
+            ]
+            # When using blend_per_split, split should be None and blend should be None
+            split = None
+            blend = None
+        elif blend_weights is not None:
             # Construct data_path from the inputs
             if data_paths is not None:
                 data_path = data_paths
@@ -175,31 +190,15 @@ def pretrain_config(
                 if per_split_data_args_path:
                     data_path = per_split_data_args_path
 
-            # Create the tuples expected by BlendedMegatronDatasetConfig
-            # Prioritize blend_per_split_weights over blend_weights if both are provided
-            if blend_per_split_weights is not None:
-                # For per-split, we need to construct the paths for each split
-                train_paths = train_data_path or []
-                valid_paths = valid_data_path or []
-                test_paths = test_data_path or []
-
-                blend_per_split = [
-                    (train_paths, blend_per_split_weights[0]) if train_paths else None,
-                    (valid_paths, blend_per_split_weights[1]) if valid_paths else None,
-                    (test_paths, blend_per_split_weights[2]) if test_paths else None,
-                ]
-                # When using blend_per_split, split should be None and blend should be None
-                split = None
-                blend = None
-            elif blend_weights is not None:
-                blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
-                blend_per_split = None
-                # When using regular blend, we can use split
-                split = "9999,8,2"
-            else:
-                blend = None
-                blend_per_split = None
-                split = "9999,8,2"
+            blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
+            blend_per_split = None
+            # When using regular blend, we can use split
+            split = "9999,8,2"
+        else:
+            # This shouldn't happen, but just in case
+            blend = None
+            blend_per_split = None
+            split = "9999,8,2"
 
     model_cfg = model_config(
         tensor_parallelism=tensor_parallelism,
