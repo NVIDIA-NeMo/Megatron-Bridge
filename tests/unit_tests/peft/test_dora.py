@@ -143,7 +143,8 @@ class TestDoRA:
             512,
             256,
             True,
-        )  # input_is_parallel, in_features, out_features, disable_sp_comm
+            True,
+        )  # input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel
 
         # Create test module with config
         test_module = nn.Linear(512, 256)
@@ -211,7 +212,7 @@ class TestDoRA:
 
         mock_gather.side_effect = mock_gather_func
 
-        mock_get_attributes.return_value = (True, 256, 128, False)
+        mock_get_attributes.return_value = (True, 256, 128, False, True)
 
         test_module = nn.Linear(256, 128)
         test_module.config = MockModelParallelConfig()
@@ -258,7 +259,7 @@ class TestDoRA:
 
         # Mock get_adapter_attributes_from_linear to return appropriate values
         def mock_get_attributes_func(module):
-            return (False, module.in_features, module.out_features, False)
+            return (False, module.in_features, module.out_features, False, True)
 
         mock_get_attributes.side_effect = mock_get_attributes_func
 
@@ -306,7 +307,7 @@ class TestDoRA:
 
         # Mock get_adapter_attributes_from_linear to return appropriate values
         def mock_get_attributes_func(module):
-            return (False, module.in_features, module.out_features, False)
+            return (False, module.in_features, module.out_features, False, True)
 
         mock_get_attributes.side_effect = mock_get_attributes_func
 
@@ -351,7 +352,9 @@ class TestDoRA:
         test_module.config.sequence_parallel = True
 
         # Should match with wildcard
-        with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear", return_value=(False, 10, 10, False)):
+        with patch(
+            "megatron.hub.peft.dora.get_adapter_attributes_from_linear", return_value=(False, 10, 10, False, True)
+        ):
             with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(10)):
                 result = dora.transform(test_module, name="linear_qkv", prefix="layer.0.attention")
                 assert isinstance(result, DoRALinear)
@@ -374,7 +377,7 @@ class TestDoRA:
 
         # Mock all the necessary functions for DoRA transform
         with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
-            mock_get_attrs.return_value = (False, 512, 256, False)
+            mock_get_attrs.return_value = (False, 512, 256, False, True)
 
             with patch("megatron.hub.peft.utils.ColumnParallelLinear") as mock_col_linear:
                 # Create mocks for the adapters that will be created
@@ -414,7 +417,7 @@ class TestDoRA:
         with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
 
             def mock_get_attributes_func(module):
-                return (False, module.in_features, module.out_features, False)
+                return (False, module.in_features, module.out_features, False, True)
 
             mock_get_attrs.side_effect = mock_get_attributes_func
 

@@ -273,32 +273,41 @@ class TestGetAdapterAttributes:
         """Test with ColumnParallelLinear."""
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
 
-        input_is_parallel, in_features, out_features, disable_sp_comm = get_adapter_attributes_from_linear(linear)
+        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            get_adapter_attributes_from_linear(linear)
+        )
 
         assert not input_is_parallel
         assert in_features == 100
         assert out_features == 50
         assert disable_sp_comm  # Should be True when sequence_parallel is False
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
     def test_get_adapter_attributes_row_parallel(self):
         """Test with RowParallelLinear."""
         linear = MockRowParallelLinear(input_size=100, output_size=50)
 
-        input_is_parallel, in_features, out_features, disable_sp_comm = get_adapter_attributes_from_linear(linear)
+        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            get_adapter_attributes_from_linear(linear)
+        )
 
         assert input_is_parallel
         assert in_features == 100
         assert out_features == 50
         assert disable_sp_comm
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
     def test_get_adapter_attributes_sequence_parallel(self):
         """Test with sequence parallel enabled."""
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
         linear.config.sequence_parallel = True
 
-        input_is_parallel, in_features, out_features, disable_sp_comm = get_adapter_attributes_from_linear(linear)
+        input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
+            get_adapter_attributes_from_linear(linear)
+        )
 
         assert not disable_sp_comm  # Should be False when sequence_parallel is True
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
     def test_get_adapter_attributes_unsupported_module(self):
         """Test with unsupported module type."""
@@ -307,6 +316,18 @@ class TestGetAdapterAttributes:
 
         with pytest.raises(NotImplementedError):
             get_adapter_attributes_from_linear(linear)
+
+    def test_get_adapter_attributes_base_linear_is_parallel_flag(self):
+        """Test that base_linear_is_parallel flag is correctly returned."""
+        # Test with ColumnParallelLinear - should return True for base_linear_is_parallel
+        column_linear = MockColumnParallelLinear(input_size=100, output_size=50)
+        _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(column_linear)
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
+
+        # Test with RowParallelLinear - should return True for base_linear_is_parallel
+        row_linear = MockRowParallelLinear(input_size=100, output_size=50)
+        _, _, _, _, base_linear_is_parallel = get_adapter_attributes_from_linear(row_linear)
+        assert base_linear_is_parallel  # Should be True for parallel linear layers
 
 
 class TestParallelLinearAdapter:
