@@ -16,7 +16,7 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.hub.core.models.model_provider import get_model
-from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.dora import DoRA
 from megatron.hub.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from tests.unit_tests.peft.test_utils import MockModelParallelConfig
@@ -511,7 +511,7 @@ class TestDoRAMegatronIntegration:
     def test_dora_with_gpt_model(self):
         """Test DoRA application to a real GPT model from get_base_model."""
         # Create a minimal GPT configuration
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=2,
@@ -558,7 +558,7 @@ class TestDoRAMegatronIntegration:
 
     def test_dora_parameter_counting(self):
         """Test that DoRA adds the expected number of parameters."""
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -586,7 +586,7 @@ class TestDoRAMegatronIntegration:
     def test_dora_transform_idempotent_megatron_model(self):
         """Test that DoRA transform is idempotent when applied to real Megatron models."""
         # Create a minimal GPT configuration
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -646,7 +646,7 @@ class TestDoRAMegatronIntegration:
 
     def test_dora_forward_pass(self):
         """Test that DoRA adapted model can perform forward pass."""
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -703,7 +703,7 @@ class TestDoRAMegatronIntegration:
 
     def test_dora_different_targets(self):
         """Test DoRA with different target module configurations."""
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=2,
             hidden_size=64,
             num_attention_heads=2,

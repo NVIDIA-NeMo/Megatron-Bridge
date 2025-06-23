@@ -10,7 +10,7 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.hub.core.models.model_provider import get_model
-from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.lora import LoRA, LoRAMerge
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear
 
@@ -600,7 +600,7 @@ class TestLoRAMegatronIntegration:
         """Test LoRA application to a real GPT model from get_base_model."""
 
         # Create a minimal GPT configuration
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=2,
@@ -659,7 +659,7 @@ class TestLoRAMegatronIntegration:
         """Test forward pass through LoRA-adapted Megatron model."""
 
         # Create minimal config for fast testing
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -720,7 +720,7 @@ class TestLoRAMegatronIntegration:
         """Test LoRA merge functionality with Megatron models."""
 
         # Create minimal config
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -782,7 +782,7 @@ class TestLoRAMegatronIntegration:
 
     def test_lora_different_targets(self):
         """Test LoRA with different target module configurations."""
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=2,
             hidden_size=64,
             num_attention_heads=2,
@@ -818,7 +818,7 @@ class TestLoRAMegatronIntegration:
     def test_lora_transform_idempotent_megatron_model(self):
         """Test that LoRA transform is idempotent when applied to real Megatron models."""
         # Create a minimal GPT configuration
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,

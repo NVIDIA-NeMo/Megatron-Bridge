@@ -145,9 +145,9 @@ def pretrain_config(
         blend_weights, blend_per_split_weights = get_blend_and_blend_per_split(
             data_paths=data_paths,
             data_args_path=data_args_path,
-            train_data_path=train_data_path,
-            valid_data_path=valid_data_path,
-            test_data_path=test_data_path,
+            train_data_paths=train_data_path,
+            valid_data_paths=valid_data_path,
+            test_data_paths=test_data_path,
             per_split_data_args_path=per_split_data_args_path,
         )
 

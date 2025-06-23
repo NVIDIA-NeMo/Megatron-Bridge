@@ -10,7 +10,7 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.hub.core.models.model_provider import get_model
-from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear
 
@@ -681,7 +681,7 @@ class TestCanonicalLoRAMegatronIntegration:
         """Test CanonicalLoRA application to a real GPT model from get_base_model."""
 
         # Create a minimal GPT configuration
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=2,
@@ -751,7 +751,7 @@ class TestCanonicalLoRAMegatronIntegration:
         """Test forward pass through CanonicalLoRA-adapted Megatron model."""
 
         # Create minimal config for fast testing
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
