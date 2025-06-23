@@ -170,6 +170,8 @@ jobs:
 
           uv sync --link-mode copy --locked --all-groups
 
+          uv pip install --no-deps -e .
+
       - name: Checkout check-imports
         uses: actions/checkout@v4
         with:
