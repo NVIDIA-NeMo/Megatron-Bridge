@@ -28,16 +28,11 @@ from megatron.hub.utils.import_utils import safe_import
 
 logger = logging.getLogger(__name__)
 
-try:
-    import transformer_engine.pytorch as te
-
+te, HAVE_TE = safe_import("transformer_engine.pytorch")
+if HAVE_TE:
     from megatron.hub.peft.lora_layers import TELinearAdapter
-
-    HAVE_TE = True
-except ImportError:
-    te = None
+else:
     TELinearAdapter = None
-    HAVE_TE = False
 
 if torch.cuda.is_available():
     bitsandbytes, HAVE_BNB = safe_import("bitsandbytes")
@@ -127,6 +122,8 @@ class LoRA(PEFT, ModuleMatcher):
                 ):
                     lora_cls = patch_linear_module
                 elif HAVE_TE and module.__class__ == te.Linear:
+                    if TELinearAdapter is None:
+                        raise ImportError("TELinearAdapter is not available")
                     lora_cls = TELinearAdapter
                 else:
                     lora_cls = LinearAdapter
