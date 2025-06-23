@@ -94,8 +94,7 @@ class ImportChecker:
             modules = sorted(list(set(modules)))
 
         except ImportError as e:
-            print(f"Error: Could not import package '{self.package_name}': {e}")
-            return []
+            raise ImportError(f"Could not import package '{self.package_name}': {e}") from e
 
         return modules
 
