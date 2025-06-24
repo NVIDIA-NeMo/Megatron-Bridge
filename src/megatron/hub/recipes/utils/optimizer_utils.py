@@ -32,7 +32,7 @@ def distributed_fused_adam_with_cosine_annealing(
     optimizer = OptimizerConfig(
         optimizer="adam",
         lr=max_lr,
-        min_lr = min_lr,
+        min_lr=min_lr,
         weight_decay=0.1,
         bf16=True,
         fp16=False,

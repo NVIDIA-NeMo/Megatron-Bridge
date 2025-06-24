@@ -17,18 +17,16 @@ from typing import List, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.recipes.utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3Config8B
+from megatron.hub.recipes.utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
-    SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
 )
