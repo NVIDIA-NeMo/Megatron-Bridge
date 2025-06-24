@@ -1,2 +1,1 @@
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.hub.recipes.utils.ddp_utils import ddp_config
