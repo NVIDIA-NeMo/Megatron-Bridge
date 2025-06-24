@@ -225,9 +225,6 @@ def pretrain_config(
         clip_grad=1.0,
     )
 
-    # DDP config
-    ddp_config = ddp_config()
-
     # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
