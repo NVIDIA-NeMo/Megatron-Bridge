@@ -19,8 +19,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.hub.models.llama import Llama3Config8B
-from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
