@@ -23,7 +23,12 @@ from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 from megatron.hub.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.hub.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
 from megatron.hub.tokenizers.tokenizer import MegatronTokenizer
-from megatron.hub.training.config import DataloaderConfig, FinetuningDatasetConfig, GPTDatasetConfig
+from megatron.hub.training.config import (
+    DataloaderConfig,
+    FinetuningDatasetConfig,
+    GPTDatasetConfig,
+    MockGPTDatasetConfig,
+)
 from megatron.hub.utils.common_utils import print_rank_0
 
 
@@ -143,6 +148,7 @@ def finetuning_train_valid_test_datasets_provider(
 
 _REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig]], Callable] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
+    MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     HFDatasetConfig: hf_train_valid_test_datasets_provider,
     FinetuningDatasetConfig: finetuning_train_valid_test_datasets_provider,
 }

@@ -19,6 +19,7 @@ from typing import Any, Optional, Union
 
 import torch
 
+from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.data.datasets.sft import create_sft_dataset
 from megatron.hub.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.hub.utils.common_utils import get_rank_safe, print_rank_0
@@ -42,7 +43,7 @@ class FinetuningDatasetBuilder:
         seed (int, optional): Random seed for data shuffling. Defaults to 1234.
         memmap_workers (int, optional): Number of worker processes for memmap datasets. Defaults to 1.
         max_train_samples (int, optional): Maximum number of training samples. Defaults to None.
-        packed_sequence_specs (Optional[dict], optional): Specifications for packed sequences. Defaults to None.
+        packed_sequence_specs (Optional[PackedSequenceSpecs], optional): Specifications for packed sequences. Defaults to None.
         dataset_kwargs (Optional[dict[str, Any]], optional): Additional dataset creation arguments. Defaults to None.
         do_validation (bool, optional): Whether to build the validation dataset. Defaults to True.
         do_test (bool, optional): Whether to build the test dataset. Defaults to True.
@@ -56,7 +57,7 @@ class FinetuningDatasetBuilder:
         seed: int = 1234,
         memmap_workers: int = 1,
         max_train_samples: Optional[int] = None,
-        packed_sequence_specs: Optional[dict[str, Any]] = None,
+        packed_sequence_specs: Optional[PackedSequenceSpecs] = None,
         dataset_kwargs: Optional[dict[str, Any]] = None,
         do_validation: bool = True,
         do_test: bool = True,
@@ -68,13 +69,9 @@ class FinetuningDatasetBuilder:
         self.memmap_workers = memmap_workers
         self.max_train_samples = max_train_samples
         self.packed_sequence_specs = packed_sequence_specs
-        self.packed_sequence_size = (
-            -1 if not packed_sequence_specs else packed_sequence_specs.get("packed_sequence_size", -1)
-        )
+        self.packed_sequence_size = -1 if not packed_sequence_specs else packed_sequence_specs.packed_sequence_size
         self.dataset_kwargs = dataset_kwargs or {}
-        self._pad_cu_seqlens = (
-            False if not packed_sequence_specs else packed_sequence_specs.get("pad_cu_seqlens", False)
-        )
+        self._pad_cu_seqlens = False if not packed_sequence_specs else packed_sequence_specs.pad_cu_seqlens
 
         self.do_validation = do_validation
         self.do_test = do_test
@@ -247,8 +244,8 @@ class FinetuningDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
-            if self.packed_sequence_specs.get("packed_metadata_path") is not None:
-                return self.packed_sequence_specs["packed_metadata_path"]
+            if self.packed_sequence_specs.packed_metadata_path is not None:
+                return self.packed_sequence_specs.packed_metadata_path
             return self.default_pack_path / f"{self.packed_sequence_size}_metadata.jsonl"
         else:
             raise ValueError("pack_metadata invalid since packed sequence size is not specified.")
@@ -267,8 +264,8 @@ class FinetuningDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
-            if self.packed_sequence_specs.get("packed_train_data_path") is not None:
-                return self.packed_sequence_specs["packed_train_data_path"]
+            if self.packed_sequence_specs.packed_train_data_path is not None:
+                return self.packed_sequence_specs.packed_train_data_path
             return self.default_pack_path / f"training_{self.packed_sequence_size}.npy"
         else:
             raise ValueError("`train_path_packed` invalid since packed sequence size is not specified.")
@@ -287,8 +284,8 @@ class FinetuningDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
-            if self.packed_sequence_specs.get("packed_val_data_path") is not None:
-                return self.packed_sequence_specs["packed_val_data_path"]
+            if self.packed_sequence_specs.packed_val_data_path is not None:
+                return self.packed_sequence_specs.packed_val_data_path
             return self.default_pack_path / f"validation_{self.packed_sequence_size}.npy"
         else:
             raise ValueError("`validation_path_packed` invalid since packed sequence size is not specified.")
@@ -305,8 +302,8 @@ class FinetuningDatasetBuilder:
 
     def _extract_tokenizer_model_name(self) -> str:
         """Automatically get the model name from model path."""
-        if self.packed_sequence_specs and self.packed_sequence_specs.get("tokenizer_model_name") is not None:
-            return self.packed_sequence_specs["tokenizer_model_name"]
+        if self.packed_sequence_specs and self.packed_sequence_specs.tokenizer_model_name is not None:
+            return self.packed_sequence_specs.tokenizer_model_name
         elif isinstance(self.tokenizer, _HuggingFaceTokenizer):
             name = self.tokenizer._tokenizer.name_or_path
             if name.endswith("context/nemo_tokenizer"):
