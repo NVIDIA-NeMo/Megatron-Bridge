@@ -24,6 +24,7 @@ import torch.nn.init as init
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
+from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -462,3 +463,36 @@ class TestNemoRunCompatibility:
         # Test that they have the same arguments
         assert wrapped_partial.mean == original_partial.keywords["mean"]
         assert wrapped_partial.std == original_partial.keywords["std"]
+
+
+class TestOptimizerConfig:
+    """Test optimizer and scheduler configs."""
+
+    def test_optimizer_config(self):
+        """Test optimizer config."""
+
+        optim_cfg, _ = distributed_fused_adam_with_cosine_annealing(
+            adam_beta2=0.98,
+            adam_eps=1e-5,
+            weight_decay=0.01,
+            max_lr=3e-4,
+            min_lr=3e-5,
+        )
+
+        assert isinstance(optim_cfg, OptimizerConfig)
+        assert optim_cfg.lr == 3e-4
+        assert optim_cfg.weight_decay == 0.01
+        assert optim_cfg.adam_beta2 == 0.98
+        assert optim_cfg.bf16 == True
+    
+    def test_scheduler_config(self):
+        """Test scheduler config."""
+
+        _, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+            lr_warmup_iters=1999,
+            lr_decay_iters=12345,
+        )
+
+        assert isinstance(scheduler_cfg, SchedulerConfig)
+        assert scheduler_cfg.lr_warmup_iters == 1999
+        assert scheduler_cfg.lr_decay_iters == 12345
