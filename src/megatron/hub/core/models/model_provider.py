@@ -105,7 +105,7 @@ def get_model(
         model = [Float16Module(model_config, model_module) for model_module in model]
 
     if correct_amax_history_if_needed is not None:
-        model = correct_amax_history_if_needed(model)
+        correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
         model = _ddp_wrap(

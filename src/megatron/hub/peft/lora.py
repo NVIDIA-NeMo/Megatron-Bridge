@@ -111,7 +111,7 @@ class LoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(module, name, prefix)) is not None:
             (match, full_name) = ans
-            if isinstance(module, nn.Linear) or module.__class__ == te.Linear:
+            if isinstance(module, nn.Linear) or (HAVE_TE and module.__class__ == te.Linear):
                 # Will use the `patch_linear_module` function if:
                 # - is FSDP v1
                 # - is DTensor (has _local_tensor attribute)
