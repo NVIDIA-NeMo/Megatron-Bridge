@@ -63,7 +63,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """
         pass
 
-    def get_model(
+    def provide_models(
         self,
         ddp_config: DistributedDataParallelConfig | None = None,
         model_type=ModelType.encoder_or_decoder,
@@ -156,7 +156,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
 
     def __call__(self, **kwargs: Unpack["GetModelKwargs"]) -> list[ModelT]:
         """A convenience wrapper around `get_model`."""
-        return self.get_model(**kwargs)
+        return self.provide_models(**kwargs)
 
     @property
     def meta_model(self) -> list[ModelT]:

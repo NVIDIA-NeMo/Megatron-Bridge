@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Unit tests for megatron.hub.training.checkpointing module."""
 
 import tempfile
@@ -32,10 +33,10 @@ from megatron.hub.training.checkpointing import (
     get_checkpoint_run_config_filename,
     get_checkpoint_train_state_filename,
     get_rng_state,
-    has_nvidia_modelopt,
     init_checkpointing_context,
     load_checkpoint,
     save_checkpoint,
+    has_nvidia_modelopt
 )
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer
 from megatron.hub.training.state import GlobalState, TrainState
@@ -236,7 +237,7 @@ def _patch_modelopt_state_saver():
     """Conditionally patch modelopt state saving function."""
     if has_nvidia_modelopt:
         return patch("megatron.hub.training.checkpointing.save_sharded_modelopt_state")
-    return patch.object(_dummy_obj, "save_sharded_modelopt_state")
+    return patch.object(_dummy_obj, 'save_sharded_modelopt_state')
 
 
 class TestSaveCheckpoint:
