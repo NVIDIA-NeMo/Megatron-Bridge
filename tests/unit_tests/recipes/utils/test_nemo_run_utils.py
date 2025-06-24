@@ -14,12 +14,17 @@
 
 """Tests for nemo_run_utils module."""
 
+import pytest
+
+
+pytest.importorskip("nemo_run")
+
+
 import dataclasses
 import enum
 import functools
 
 import nemo_run as run
-import pytest
 import torch.nn.init as init
 from megatron.core.optimizer import OptimizerConfig
 

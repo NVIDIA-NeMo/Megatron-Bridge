@@ -36,9 +36,17 @@ from megatron.hub.training.checkpointing import (
     init_checkpointing_context,
     load_checkpoint,
     save_checkpoint,
+    has_nvidia_modelopt
 )
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer
 from megatron.hub.training.state import GlobalState, TrainState
+
+
+class _DummyClass:
+    save_sharded_modelopt_state = None
+
+
+_dummy_obj = _DummyClass()
 
 
 class TestCheckpointUtilities:
@@ -225,6 +233,13 @@ def save_checkpoint_fixtures():
     }
 
 
+def _patch_modelopt_state_saver():
+    """Conditionally patch modelopt state saving function."""
+    if has_nvidia_modelopt:
+        return patch("megatron.hub.training.checkpointing.save_sharded_modelopt_state")
+    return patch.object(_dummy_obj, 'save_sharded_modelopt_state')
+
+
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
@@ -232,7 +247,7 @@ class TestSaveCheckpoint:
     @patch("megatron.hub.training.checkpointing.is_last_rank")
     @patch("torch.save")
     @patch("shutil.copy")
-    @patch("megatron.hub.training.checkpointing.save_sharded_modelopt_state")
+    @_patch_modelopt_state_saver()
     @patch("megatron.hub.training.checkpointing.unwrap_model")
     @patch("megatron.hub.training.checkpointing.get_rng_state")
     @patch("megatron.hub.training.checkpointing.get_rerun_state_machine")
