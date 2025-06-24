@@ -258,7 +258,7 @@ class TestLoRA:
             from megatron.hub.peft.lora_layers import TELinearAdapter
 
             # Create a real TE Linear layer
-            te_linear = te.Linear(256, 512, bias=True)
+            te_linear = te.Linear(256, 512, bias=True, device="cuda" if torch.cuda.is_available() else "cpu")
 
             # Create model with the TE linear layer
             model = nn.Module()
