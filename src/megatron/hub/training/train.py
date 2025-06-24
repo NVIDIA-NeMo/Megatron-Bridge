@@ -36,6 +36,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 
+from megatron.hub.core.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.hub.training.config import ConfigContainer
@@ -44,7 +45,6 @@ from megatron.hub.training.initialize import destroy_global_state
 from megatron.hub.training.nvrx_straggler import check_nvrx_straggler_detection, safe_shutdown_nvrx_straggler_manager
 from megatron.hub.training.state import GlobalState
 from megatron.hub.training.utils import flop_utils
-from megatron.hub.core.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.hub.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.hub.training.utils.train_utils import (
     calc_params_l2_norm,

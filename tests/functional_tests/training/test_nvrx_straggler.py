@@ -30,6 +30,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
+from megatron.hub.core.utils.common_utils import get_rank_safe, print_rank_0
 from megatron.hub.models.llama import Llama32ModelProvider1B
 from megatron.hub.training.config import (
     CheckpointConfig,
@@ -46,7 +47,6 @@ from megatron.hub.training.config import (
 from megatron.hub.training.gpt_step import forward_step
 from megatron.hub.training.pretrain import pretrain
 from megatron.hub.training.state import GlobalState
-from megatron.hub.core.utils.common_utils import get_rank_safe, print_rank_0
 
 
 def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:

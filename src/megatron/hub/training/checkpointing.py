@@ -45,10 +45,6 @@ from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 
-from megatron.hub.training import fault_tolerance
-from megatron.hub.training.config import CheckpointConfig, ConfigContainer
-from megatron.hub.training.state import GlobalState, TrainState
-from megatron.hub.training.utils import wandb_utils
 from megatron.hub.core.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
@@ -57,6 +53,10 @@ from megatron.hub.core.utils.common_utils import (
     unwrap_model,
 )
 from megatron.hub.core.utils.import_utils import safe_import
+from megatron.hub.training import fault_tolerance
+from megatron.hub.training.config import CheckpointConfig, ConfigContainer
+from megatron.hub.training.state import GlobalState, TrainState
+from megatron.hub.training.utils import wandb_utils
 from megatron.hub.training.utils.log_utils import append_to_progress_log
 
 

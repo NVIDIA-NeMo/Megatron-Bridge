@@ -56,9 +56,9 @@ from typing import List
 
 import torch
 
+from megatron.hub.core.utils.common_utils import get_rank_safe, print_rank_0
 from megatron.hub.training.config import ConfigContainer, FaultToleranceConfig
 from megatron.hub.training.state import GlobalState
-from megatron.hub.core.utils.common_utils import get_rank_safe, print_rank_0
 
 
 _NUM_WARMUP_ITERS: int = 1

@@ -19,11 +19,11 @@ from typing import List, Literal, Optional
 import torch
 import torch.nn as nn
 
+from megatron.hub.core.utils.import_utils import safe_import
 from megatron.hub.peft.base import PEFT
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
 from megatron.hub.peft.module_matcher import ModuleMatcher
 from megatron.hub.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
-from megatron.hub.core.utils.import_utils import safe_import
 
 
 logger = logging.getLogger(__name__)

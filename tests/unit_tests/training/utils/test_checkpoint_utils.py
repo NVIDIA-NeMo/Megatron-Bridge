@@ -413,7 +413,10 @@ class TestCheckpointUtils:
             try:
                 with (
                     patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-                    patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+                    patch(
+                        "megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized",
+                        return_value=False,
+                    ),
                     patch("builtins.open", mock_open(read_data=config_yaml)),
                 ):
                     result = read_run_config("concurrent_config.yaml")
@@ -624,7 +627,8 @@ class TestCheckpointUtils:
             patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=rank),
             patch("megatron.hub.training.utils.checkpoint_utils.get_world_size_safe", return_value=world_size),
             patch(
-                "megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=(world_size > 1)
+                "megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized",
+                return_value=(world_size > 1),
             ),
         ):
             # Mock torch.distributed.get_rank as well
