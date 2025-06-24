@@ -87,7 +87,7 @@ class UnavailableMeta(type):
         raise UnavailableError(cls._msg)
 
     def __getattr__(cls, name):
-        raise UnavailableError(cls._msg)
+        raise AttributeError(cls._msg)
 
     def __eq__(cls, other):
         raise UnavailableError(cls._msg)

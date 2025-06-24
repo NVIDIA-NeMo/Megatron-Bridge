@@ -25,7 +25,6 @@ from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
 from megatron.hub.data.loaders import setup_data_iterators
-from megatron.hub.models import get_model_from_config
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.tokenizers.tokenizer import build_tokenizer
 from megatron.hub.training import fault_tolerance
@@ -162,9 +161,8 @@ def setup(
 
     # Model, optimizer, and learning rate.
     timers("model-and-optimizer-setup", log_level=0).start(barrier=True)
-    model = get_model_from_config(
-        cfg.model,
-        cfg.ddp,
+    model = cfg.model(
+        ddp_config=cfg.ddp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
