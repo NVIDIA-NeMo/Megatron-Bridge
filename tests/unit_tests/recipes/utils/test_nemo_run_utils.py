@@ -484,7 +484,7 @@ class TestOptimizerUtils:
         assert optim_cfg.weight_decay == 0.01
         assert optim_cfg.adam_beta2 == 0.98
         assert optim_cfg.bf16 == True
-    
+
     def test_scheduler_config(self):
         """Test scheduler config."""
 
