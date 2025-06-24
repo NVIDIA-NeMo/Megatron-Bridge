@@ -21,11 +21,11 @@ def distributed_fused_adam_with_cosine_annealing(
     constant_steps: int = 0,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
-    adam_eps: float 1e-5,
+    adam_eps: float = 1e-5,
     max_lr: float = 1e-4,
     min_lr: float = 1e-4,
     clip_grad: float = 1.0,
-) -> tuple[OptimizerConfig, SchedulerConfig]::
+) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler.
     """

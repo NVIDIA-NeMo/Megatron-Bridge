@@ -211,7 +211,7 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    opt_config, scheduler = optimizer_config(
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         optimizer="adam",
         lr=lr,
         min_lr=min_lr,
