@@ -465,7 +465,7 @@ class TestNemoRunCompatibility:
         assert wrapped_partial.std == original_partial.keywords["std"]
 
 
-class TestOptimizerConfig:
+class TestOptimizerUtils:
     """Test optimizer and scheduler configs."""
 
     def test_optimizer_config(self):
