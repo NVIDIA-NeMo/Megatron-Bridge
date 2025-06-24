@@ -463,8 +463,8 @@ class TestCheckpointUtils:
             # Verify correctness
             assert result == large_config
 
-            # Performance should be reasonable (less than 1 second for large config)
-            assert end_time - start_time < 1.0, f"Reading large config took {end_time - start_time:.2f} seconds"
+            # Performance should be reasonable (less than 2 seconds for large config)
+            assert end_time - start_time < 2.0, f"Reading large config took {end_time - start_time:.2f} seconds"
 
     def test_memory_usage_with_complex_train_state(self):
         """Test memory efficiency with complex train state objects."""

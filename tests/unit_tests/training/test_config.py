@@ -30,6 +30,7 @@ from megatron.hub.training.config import (
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     LoggerConfig,
+    MockGPTDatasetConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
     RNGConfig,
@@ -248,6 +249,79 @@ def restore_get_world_size_safe(original_func, module_ref):
         module_ref.get_world_size_safe = original_func
 
 
+class TestMockGPTDatasetConfig:
+    """Tests desired behavior for MockGPTDatasetConfig."""
+
+    def test_initialization(self):
+        """Test that blend and blend_per_split fields are always None in MockGPTDatasetConfig."""
+        config = MockGPTDatasetConfig(
+            random_seed=1234,
+            sequence_length=512,
+            reset_position_ids=False,
+            reset_attention_mask=False,
+            eod_mask_loss=False,
+        )
+
+        # Should be an instance of both MockGPTDatasetConfig and GPTDatasetConfig
+        from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
+        from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
+
+        assert isinstance(config, MockGPTDatasetConfig)
+        assert isinstance(config, GPTDatasetConfig)
+        assert isinstance(config, MCoreGPTDatasetConfig)
+        assert isinstance(config, BlendedMegatronDatasetConfig)
+
+        # Should have all the expected fields from parent class
+        assert hasattr(config, "random_seed")
+        assert hasattr(config, "sequence_length")
+        assert hasattr(config, "path_to_cache")
+
+        # Verify blend fields are None and cannot be accessed via __dict__
+        assert config.blend is None
+        assert config.blend_per_split is None
+        assert config.mock  # should be set by BlendedMegatronDatasetConfig post-init
+        assert "blend" not in config.__dict__
+        assert "blend_per_split" not in config.__dict__
+
+    def test_cannot_set_blend_fields(self):
+        """Test that blend and blend_per_split fields cannot be set during initialization."""
+        # These should raise a TypeError because blend and blend_per_split are marked as init=False
+        with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend'"):
+            MockGPTDatasetConfig(
+                random_seed=1234,
+                sequence_length=512,
+                reset_position_ids=False,
+                reset_attention_mask=False,
+                eod_mask_loss=False,
+                blend=(["some", "data", "paths"], None),  # This should fail
+            )
+
+        with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend_per_split'"):
+            MockGPTDatasetConfig(
+                random_seed=1234,
+                sequence_length=512,
+                reset_position_ids=False,
+                reset_attention_mask=False,
+                eod_mask_loss=False,
+                blend_per_split=[
+                    (["train", "paths"], None),
+                    (["valid", "paths"], None),
+                    (["test", "paths"], None),
+                ],  # This should fail
+            )
+
+        with pytest.raises(TypeError, match="got an unexpected keyword argument"):
+            MockGPTDatasetConfig(
+                random_seed=1234,
+                sequence_length=512,
+                reset_position_ids=False,
+                reset_attention_mask=False,
+                eod_mask_loss=False,
+                blend=(["some", "data", "paths"], None),
+                blend_per_split=[(["train", "paths"], None), (["valid", "paths"], None), (["test", "paths"], None)],
+            )
+
+
 class TestConfigContainerValidation:
     """Tests for the `validate` method of the `ConfigContainer` class."""
 
@@ -349,26 +423,6 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og2, mod2)
 
-    def test_distributed_optimizer_with_legacy_checkpointing_fails(self, monkeypatch):
-        """Test validation fails: distributed optimizer, no gloo, non-torch_dist checkpoint."""
-        gpt_model_cfg = create_test_gpt_config()
-        dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=False)
-        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
-        chkpt_cfg = create_test_checkpoint_config(ckpt_format="torch")
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg,
-            dist_config=dist_cfg,
-            optimizer_config=opt_cfg,
-            checkpoint_config=chkpt_cfg,
-        )
-        with pytest.raises(AssertionError):
-            try:
-                container.validate()
-            finally:
-                restore_get_world_size_safe(og_ws, cfg_mod)
-
     def test_distributed_optimizer_with_torch_dist_checkpointing_passes(self, monkeypatch):
         """Test validation passes: distributed optimizer, no gloo, torch_dist checkpoint."""
         gpt_model_cfg = create_test_gpt_config()
@@ -387,45 +441,6 @@ class TestConfigContainerValidation:
             container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
-
-    def test_validation_passes_if_not_dist_opt_or_gloo_enabled(self, monkeypatch):
-        """Test validation passes if not (dist_opt AND no_gloo AND non_torch_dist_ckpt)."""
-        gpt_model_cfg = create_test_gpt_config()
-
-        # Case 1: use_distributed_optimizer is False, use_gloo_process_groups is False
-        dist_cfg1 = create_test_distributed_init_config(use_gloo_process_groups=False)
-        opt_cfg1 = create_test_optimizer_config(use_distributed_optimizer=False)
-        chkpt_cfg1 = create_test_checkpoint_config(ckpt_format="torch")
-
-        container1, og1, mod1 = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg,
-            dist_config=dist_cfg1,
-            optimizer_config=opt_cfg1,
-            checkpoint_config=chkpt_cfg1,
-        )
-        try:
-            container1.validate()
-        finally:
-            restore_get_world_size_safe(og1, mod1)
-
-        # Case 2: use_distributed_optimizer is True, use_gloo_process_groups is True
-        gpt_model_cfg_c2 = create_test_gpt_config()
-        dist_cfg2 = create_test_distributed_init_config(use_gloo_process_groups=True)
-        opt_cfg2 = create_test_optimizer_config(use_distributed_optimizer=True)
-        chkpt_cfg2 = create_test_checkpoint_config(ckpt_format="torch")
-
-        container2, og2, mod2 = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg_c2,
-            dist_config=dist_cfg2,
-            optimizer_config=opt_cfg2,
-            checkpoint_config=chkpt_cfg2,
-        )
-        try:
-            container2.validate()
-        finally:
-            restore_get_world_size_safe(og2, mod2)
 
     def test_scheduler_lr_decay_iters_default(self, monkeypatch):
         """Test `lr_decay_iters` defaults to `train_iters` and `lr_decay_steps` calculation."""

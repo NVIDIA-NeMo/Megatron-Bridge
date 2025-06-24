@@ -141,6 +141,14 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.eod_mask_loss is not None
 
 
+@dataclass
+class MockGPTDatasetConfig(GPTDatasetConfig):
+    """Modifies GPTDatasetConfig to enforce necessary options for creating a mock dataset."""
+
+    blend: None = field(init=False, repr=False, default=None)
+    blend_per_split: None = field(init=False, repr=False, default=None)
+
+
 @dataclass(kw_only=True)
 class FinetuningDatasetConfig(DataloaderConfig):
     """Configuration specific to finetuning datasets, inheriting from DataloaderConfig."""
@@ -371,12 +379,7 @@ class CheckpointConfig:
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
 
-    auto_detect_ckpt_format: bool = False
-    """Determine if the checkpoint format is in legacy or distributed format. If False, expects
-    distributed checkpoint iff args.ckpt_format != "torch". Might slow down loading a bit
-    (double rank0 ckpt load)."""
-
-    ckpt_format: Literal["torch", "torch_dist", "zarr"] = "torch_dist"
+    ckpt_format: Literal["torch_dist", "zarr"] = "torch_dist"
     """Checkpoint format to use."""
 
     ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
@@ -384,11 +387,6 @@ class CheckpointConfig:
 
     ckpt_convert_save: Optional[str] = None
     """Save directory for converted checkpoint."""
-
-    ckpt_convert_update_legacy_dist_opt_format: bool = False
-    """When loading a checkpoint, update the legacy format for the distributed optimizer,
-    which previously used a merged param/grad buffer and a different bucket mapping.
-    The legacy format was deprecated on Feb 13, 2024."""
 
     fully_parallel_save: bool = True
     """Disable applying full save parallelization across DP for distributed checkpoints.
