@@ -221,6 +221,9 @@ class UnavailableMeta(type):
     def __len__(cls):
         raise UnavailableError(cls._msg)
 
+    def __getitem__(cls, item):
+        raise UnavailableError(cls._msg)
+
 
 def is_unavailable(obj):
     """Helper to check if given symbol is actually a placeholder"""

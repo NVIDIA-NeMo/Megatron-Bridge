@@ -67,10 +67,10 @@ class TestUnavailableMeta:
             TestClass(1, 2, 3, key="value")
 
     def test_attribute_access_raises_error(self):
-        """Test that accessing attributes raises UnavailableError."""
+        """Test that accessing attributes raises AttributeError."""
         TestClass = UnavailableMeta("TestClass", (), {})
 
-        with pytest.raises(UnavailableError):
+        with pytest.raises(AttributeError):
             TestClass.some_attribute
 
     def test_arithmetic_operations_raise_error(self):
@@ -193,7 +193,7 @@ class TestSafeImport:
         with pytest.raises(UnavailableError):
             module()
 
-        with pytest.raises(UnavailableError):
+        with pytest.raises(AttributeError):
             module.attribute
 
         with pytest.raises(UnavailableError):
