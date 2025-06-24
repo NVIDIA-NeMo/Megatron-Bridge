@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from packaging.version import Version as PkgVersion
 
-from megatron.hub.utils.import_utils import (
+from megatron.hub.core.utils.import_utils import (
     UnavailableError,
     UnavailableMeta,
     get_torch_version,
@@ -352,19 +352,19 @@ class TestTorchVersionUtils:
 
     def test_is_torch_min_version_true(self):
         """Test is_torch_min_version returns True when torch version meets minimum."""
-        with patch("megatron.hub.utils.import_utils.get_torch_version", return_value=PkgVersion("2.0.0")):
+        with patch("megatron.hub.core.utils.import_utils.get_torch_version", return_value=PkgVersion("2.0.0")):
             assert is_torch_min_version("1.9.0") is True
             assert is_torch_min_version("2.0.0") is True
 
     def test_is_torch_min_version_false(self):
         """Test is_torch_min_version returns False when torch version is below minimum."""
-        with patch("megatron.hub.utils.import_utils.get_torch_version", return_value=PkgVersion("1.8.0")):
+        with patch("megatron.hub.core.utils.import_utils.get_torch_version", return_value=PkgVersion("1.8.0")):
             assert is_torch_min_version("1.9.0") is False
             assert is_torch_min_version("2.0.0") is False
 
     def test_is_torch_min_version_without_equality(self):
         """Test is_torch_min_version with check_equality=False."""
-        with patch("megatron.hub.utils.import_utils.get_torch_version", return_value=PkgVersion("2.0.0")):
+        with patch("megatron.hub.core.utils.import_utils.get_torch_version", return_value=PkgVersion("2.0.0")):
             assert is_torch_min_version("1.9.0", check_equality=False) is True
             assert is_torch_min_version("2.0.0", check_equality=False) is False
             assert is_torch_min_version("2.1.0", check_equality=False) is False

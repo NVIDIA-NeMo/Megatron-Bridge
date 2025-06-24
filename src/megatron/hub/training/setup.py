@@ -33,8 +33,8 @@ from megatron.hub.training.config import ConfigContainer
 from megatron.hub.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.hub.training.optim import setup_optimizer
 from megatron.hub.training.state import GlobalState
-from megatron.hub.utils.common_utils import print_rank_0
-from megatron.hub.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.hub.core.utils.common_utils import print_rank_0
+from megatron.hub.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 
 
 try:

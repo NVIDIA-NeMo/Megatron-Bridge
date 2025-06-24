@@ -31,7 +31,7 @@ from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_
 
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
-from megatron.hub.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
+from megatron.hub.core.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
 
 
 def initialize_megatron(

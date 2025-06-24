@@ -20,7 +20,7 @@ from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinea
 from torch import nn
 
 from megatron.hub.peft.utils import wildcard_match
-from megatron.hub.utils.import_utils import safe_import_from
+from megatron.hub.core.utils.import_utils import safe_import_from
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(

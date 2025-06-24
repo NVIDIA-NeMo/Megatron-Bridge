@@ -14,7 +14,7 @@ from megatron.hub.training.tokenizers.bert_tokenization import FullTokenizer as 
 from megatron.hub.training.tokenizers.config import TokenizerConfig
 from megatron.hub.training.tokenizers.gpt2_tokenization import GPT2Tokenizer
 from megatron.hub.training.tokenizers.multimodal_tokenizer import MultimodalTokenizer
-from megatron.hub.utils.common_utils import get_rank_safe, print_rank_0
+from megatron.hub.core.utils.common_utils import get_rank_safe, print_rank_0
 
 
 class MegatronTokenizer(MegatronTokenizerCore):
