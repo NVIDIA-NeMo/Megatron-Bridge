@@ -210,17 +210,14 @@ def pretrain_config(
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
-        optimizer="adam",
-        lr=lr,
-        min_lr=min_lr,
-        weight_decay=0.1,
-        bf16=True,
-        fp16=False,
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=train_iters,
         adam_beta1=0.9,
         adam_beta2=0.95,
         adam_eps=1e-5,
-        use_distributed_optimizer=True,
-        clip_grad=1.0,
+        weight_decay=0.1,
+        max_lr=lr,
+        min_lr=min_lr,
     )
 
     # Config Container

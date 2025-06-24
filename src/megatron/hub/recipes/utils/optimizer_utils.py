@@ -18,12 +18,13 @@ from megatron.hub.training.config import SchedulerConfig
 
 def distributed_fused_adam_with_cosine_annealing(
     lr_warmup_iters: int = 2000,
-    constant_steps: int = 0,
+    lr_decay_iters: int = 2000,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
     adam_eps: float = 1e-5,
+    weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: float = 1e-4,
+    min_lr: float = 1e-5,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
@@ -33,7 +34,7 @@ def distributed_fused_adam_with_cosine_annealing(
         optimizer="adam",
         lr=max_lr,
         min_lr=min_lr,
-        weight_decay=0.1,
+        weight_decay=weight_decay,
         bf16=True,
         fp16=False,
         adam_beta1=adam_beta1,
@@ -50,7 +51,7 @@ def distributed_fused_adam_with_cosine_annealing(
         lr_decay_style="cosine",
         lr_warmup_iters=lr_warmup_iters,
         lr_warmup_init=0.0,
-        lr_decay_iters=train_iters,
+        lr_decay_iters=lr_decay_iters,
         override_opt_param_scheduler=True,
     )
 
