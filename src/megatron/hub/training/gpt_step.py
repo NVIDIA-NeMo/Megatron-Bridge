@@ -21,6 +21,7 @@ from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.utils import get_batch_on_this_cp_rank
 
+from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.training.config import ConfigContainer, FinetuningDatasetConfig
 from megatron.hub.training.losses import masked_next_token_loss
 from megatron.hub.training.state import GlobalState

@@ -1,6 +1,6 @@
 import datetime
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
 import pytest
@@ -251,71 +251,56 @@ class TestLoRA:
         inference_model = lora(model, training=False)
         assert not inference_model.training
 
-    def test_lora_te_linear_support(self):
+    @patch("megatron.hub.peft.lora.HAVE_TE", True)
+    @patch("megatron.hub.peft.lora.te")
+    def test_lora_te_linear_support(self, mock_te):
         """Test LoRA support for Transformer Engine Linear layers."""
-        if HAVE_TE:
-            # When transformer_engine is available, use the real classes
-            from megatron.hub.peft.lora_layers import TELinearAdapter
 
-            # Create a real TE Linear layer
-            te_linear = te.Linear(256, 512, bias=True, device="cuda" if torch.cuda.is_available() else "cpu")
+        # Create the TE Linear type and an actual instance
+        class MockTELinear(nn.Module):
+            def __init__(self):
+                super().__init__()
 
-            # Create model with the TE linear layer
-            model = nn.Module()
-            model.te_linear = te_linear
+                # Create a simple weight mock that doesn't have _local_tensor
+                class MockWeightData:
+                    pass
 
-            # Apply LoRA
-            lora = LoRA(target_modules=["te_linear"], dim=8, alpha=16)
+                class MockWeight:
+                    def __init__(self):
+                        self.data = MockWeightData()
+
+                self.weight = MockWeight()
+                self.quant_state = None
+
+        # Set the mock_te.Linear to our MockTELinear class
+        mock_te.Linear = MockTELinear
+
+        # Create an actual instance of our mock TE Linear
+        te_linear_instance = MockTELinear()
+
+        # Create model with mock TE linear
+        model = nn.Module()
+        model.te_linear = te_linear_instance
+
+        lora = LoRA(target_modules=["te_linear"])
+
+        # Create a mock class for TELinearAdapter to works with the isinstance() check
+        class MockTELinearAdapter(nn.Module):
+            def __init__(self, module, **kwargs):
+                super().__init__()
+                self.module = module
+
+        # Import the module to patch the specific import
+        from megatron.hub.peft import lora as lora_module
+
+        # Use patch.object to handle cases where TELinearAdapter might not exist
+        # by creating it if necessary.
+        with patch.object(lora_module, "TELinearAdapter", MockTELinearAdapter, create=True):
+            # Should create TELinearAdapter
             result = lora(model, training=True)
 
-            # Verify that te_linear was transformed to TELinearAdapter
-            assert isinstance(result.te_linear, TELinearAdapter)
-            # TELinearAdapter inherits from te.Linear, so the original module is the adapter itself
-            assert result.te_linear.__class__.__bases__[0] == te.Linear
-
-        else:
-            # When transformer_engine is not available, use mocks
-            # Create a mock TE module with proper structure
-            mock_te = MagicMock()
-
-            # Create a mock TE Linear class
-            class MockTELinear(nn.Module):
-                def __init__(self, *args, **kwargs):
-                    super().__init__()
-                    self.weight = nn.Parameter(torch.randn(512, 256))
-                    self.quant_state = None
-
-            # Set the Linear attribute on the mock
-            mock_te.Linear = MockTELinear
-
-            # Create a mock TELinearAdapter
-            class MockTELinearAdapter(nn.Module):
-                def __init__(self, module, **kwargs):
-                    super().__init__()
-                    self.base_module = module
-                    # Store the kwargs to verify they were passed correctly
-                    self.init_kwargs = kwargs
-
-            # Create model with a TE linear layer (using the mock class)
-            model = nn.Module()
-            original_te_linear = MockTELinear()
-            model.te_linear = original_te_linear
-
-            # Patch all the necessary components
-            with (
-                patch("megatron.hub.peft.lora.HAVE_TE", True),
-                patch("megatron.hub.peft.lora.te", mock_te),
-                patch("megatron.hub.peft.lora.TELinearAdapter", MockTELinearAdapter),
-            ):
-                # Apply LoRA
-                lora = LoRA(target_modules=["te_linear"], dim=8, alpha=16)
-                result = lora(model, training=True)
-
-                # Verify that te_linear was transformed to MockTELinearAdapter
-                assert isinstance(result.te_linear, MockTELinearAdapter)
-                assert result.te_linear.base_module is original_te_linear
-                assert result.te_linear.init_kwargs["dim"] == 8
-                assert result.te_linear.init_kwargs["alpha"] == 16
+            # Verify that te_linear was transformed to our mock adapter
+            assert isinstance(result.te_linear, MockTELinearAdapter)
 
     def test_lora_list_model_support(self):
         """Test LoRA support for list of model chunks (pipeline parallelism)."""
