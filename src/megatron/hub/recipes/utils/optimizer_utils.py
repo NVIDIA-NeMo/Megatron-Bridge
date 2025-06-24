@@ -18,6 +18,7 @@ from megatron.hub.training.config import SchedulerConfig
 
 
 def distributed_fused_adam_with_cosine_annealing(
+    precision: str = "bf16-mixed",
     lr_warmup_iters: int = 2000,
     lr_decay_iters: int = 2000,
     adam_beta1: float = 0.9,
@@ -36,8 +37,8 @@ def distributed_fused_adam_with_cosine_annealing(
         lr=max_lr,
         min_lr=min_lr,
         weight_decay=weight_decay,
-        bf16=True,
-        fp16=False,
+        bf16=precision == "bf16-mixed",
+        fp16=precision == "16-mixed",
         adam_beta1=adam_beta1,
         adam_beta2=adam_beta2,
         adam_eps=adam_eps,
