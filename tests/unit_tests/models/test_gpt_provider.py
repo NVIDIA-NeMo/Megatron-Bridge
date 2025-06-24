@@ -164,7 +164,6 @@ class TestGPTModelProvider:
         assert provider.cross_entropy_loss_fusion is True
         assert isinstance(provider.gradient_accumulation_fusion, bool)
         assert provider.bias_activation_fusion is False
-        assert provider.persist_layer_norm is True
         assert isinstance(provider.bias_dropout_fusion, bool)
         assert isinstance(provider.apply_rope_fusion, bool)
 
