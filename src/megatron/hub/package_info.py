@@ -24,15 +24,12 @@ VERSION = (MAJOR, MINOR, PATCH, PRE_RELEASE)
 __shortversion__ = ".".join(map(str, VERSION[:3]))
 __version__ = ".".join(map(str, VERSION[:3])) + "".join(VERSION[3:])
 
-# Simple version string for build tools
-__version_string__ = "0.1.0rc0"
-
 __package_name__ = "megatron.hub"
 __contact_names__ = "NVIDIA"
 __contact_emails__ = "nemo-toolkit@nvidia.com"
 __homepage__ = "https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/stable/"
-__repository_url__ = "https://github.com/nvidia/nemo"
-__download_url__ = "https://github.com/NVIDIA/NeMo-LM/releases"
+__repository_url__ = "https://github.com/NVIDIA-NeMo/Megatron-Hub"
+__download_url__ = "https://github.com/NVIDIA-NeMo/Megatron-Hub/releases"
 __description__ = "Megatron-Hub"
 __license__ = "Apache2"
-__keywords__ = "deep learning, machine learning, gpu, NLP, NeMo, NeMo-LM, nvidia, pytorch, torch, language"
+__keywords__ = "deep learning, machine learning, gpu, NLP, NeMo, Megatron-Hub, nvidia, pytorch, torch, language"

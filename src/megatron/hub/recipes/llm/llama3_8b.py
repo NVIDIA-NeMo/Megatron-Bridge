@@ -18,9 +18,9 @@ from typing import List, Optional
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.hub.data.loaders import get_blend_and_blend_per_split
 from megatron.hub.models.llama import Llama3Config8B
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -126,79 +126,9 @@ def pretrain_config(
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    # Dataset configuration logic based on mock vs real data
-    has_any_data_config = any(
-        [data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path]
+    blend, blend_per_split, split = get_blend_fields_from_data_paths(
+        data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
-
-    if mock or not has_any_data_config:
-        # Mock data configuration
-        mock = True
-        blend = None  # Will trigger mock mode automatically
-        blend_per_split = None  # Will trigger mock mode automatically
-        split = "1,1,1"  # Equal splits for testing
-        data_path = None  # No real data path needed
-    else:
-        # Real data configuration
-        mock = False
-        blend_weights, blend_per_split_weights = get_blend_and_blend_per_split(
-            data_paths=data_paths,
-            data_args_path=data_args_path,
-            train_data_path=train_data_path,
-            valid_data_path=valid_data_path,
-            test_data_path=test_data_path,
-            per_split_data_args_path=per_split_data_args_path,
-        )
-
-        if blend_weights is None and blend_per_split_weights is None:
-            # No data provided, fall back to mock mode
-            mock = True
-            blend = None
-            blend_per_split = None
-            split = "1,1,1"
-            data_path = None
-        else:
-            # Construct data_path from the inputs
-            if data_paths is not None:
-                data_path = data_paths
-            elif data_args_path is not None:
-                data_path = data_args_path
-            else:
-                data_path = []
-                if train_data_path:
-                    data_path.extend(train_data_path)
-                if valid_data_path:
-                    data_path.extend(valid_data_path)
-                if test_data_path:
-                    data_path.extend(test_data_path)
-                if per_split_data_args_path:
-                    data_path = per_split_data_args_path
-
-            # Create the tuples expected by BlendedMegatronDatasetConfig
-            # Prioritize blend_per_split_weights over blend_weights if both are provided
-            if blend_per_split_weights is not None:
-                # For per-split, we need to construct the paths for each split
-                train_paths = train_data_path or []
-                valid_paths = valid_data_path or []
-                test_paths = test_data_path or []
-
-                blend_per_split = [
-                    (train_paths, blend_per_split_weights[0]) if train_paths else None,
-                    (valid_paths, blend_per_split_weights[1]) if valid_paths else None,
-                    (test_paths, blend_per_split_weights[2]) if test_paths else None,
-                ]
-                # When using blend_per_split, split should be None and blend should be None
-                split = None
-                blend = None
-            elif blend_weights is not None:
-                blend = (data_path if isinstance(data_path, list) else [data_path], blend_weights)
-                blend_per_split = None
-                # When using regular blend, we can use split
-                split = "9999,8,2"
-            else:
-                blend = None
-                blend_per_split = None
-                split = "9999,8,2"
 
     model_cfg = model_config(
         tensor_parallelism=tensor_parallelism,
