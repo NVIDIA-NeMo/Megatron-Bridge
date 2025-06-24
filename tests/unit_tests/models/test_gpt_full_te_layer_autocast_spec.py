@@ -58,7 +58,7 @@ class TestApexGuardDefaults:
         guard = ApexGuardDefaults()
         assert guard.any_attribute is None
         assert guard.another_attribute is None
-        assert guard.method() is None
+        assert guard.method is None
 
     def test_apex_guard_defaults_multiple_accesses(self):
         """Test that ApexGuardDefaults consistently returns None."""
@@ -67,11 +67,8 @@ class TestApexGuardDefaults:
         # Multiple accesses should all return None
         assert guard.attr1 is None
         assert guard.attr2 is None
-        assert guard.method1() is None
-        assert guard.method2() is None
-
-        # Chained access should also work
-        assert guard.attr1.attr2 is None
+        assert guard.method1 is None
+        assert guard.method2 is None
 
 
 class TestTorchDtypeFromPrecision:
@@ -149,6 +146,7 @@ class TestAutocastTransformerLayer:
             "params_dtype": torch.float32,
         }
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_autocast_transformer_layer_init(self, basic_config):
         """Test AutocastTransformerLayer initialization."""
         layer = AutocastTransformerLayer(**basic_config)
@@ -156,6 +154,7 @@ class TestAutocastTransformerLayer:
         assert isinstance(layer, AutocastTransformerLayer)
         assert layer.dtype == torch.float16  # Default autocast_dtype is 16
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_autocast_transformer_layer_with_bf16(self, basic_config):
         """Test AutocastTransformerLayer with bf16 precision."""
         basic_config["autocast_dtype"] = "bf16"
@@ -163,6 +162,7 @@ class TestAutocastTransformerLayer:
 
         assert layer.dtype == torch.bfloat16
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_autocast_transformer_layer_with_fp32(self, basic_config):
         """Test AutocastTransformerLayer with fp32 precision."""
         basic_config["autocast_dtype"] = 32
@@ -203,6 +203,7 @@ class TestAutocastTransformerLayer:
             assert isinstance(result, torch.Tensor)
             mock_forward.assert_called_once()
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_autocast_transformer_layer_forward_fp32_no_autocast(self, basic_config):
         """Test forward pass with fp32 (no autocast)."""
         basic_config["autocast_dtype"] = 32
@@ -287,18 +288,27 @@ class TestTETransformerLayerAutocast:
         mock_pp_rank.return_value = 0
         mock_pp_world_size.return_value = 1
 
+        # Ensure external_cuda_graph is False so we get tuple return
+        mock_config.external_cuda_graph = False
+
         with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
-            # Setup mock transformer layer
             mock_transformer = Mock()
             mock_transformer.forward.return_value = torch.randn(2, 4, 512)
             mock_autocast.return_value = mock_transformer
 
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
+            # Ensure layer is not in training mode to avoid external_cuda_graph path
+            layer.training = False
 
             hidden_states = torch.randn(2, 4, 512)
             attention_mask = torch.ones(2, 4, 4).bool()
 
-            result, context = layer.forward(hidden_states, attention_mask=attention_mask)
+            # Test that forward returns (hidden_states, None)
+            forward_result = layer.forward(hidden_states, attention_mask=attention_mask)
+
+            assert isinstance(forward_result, tuple)
+            assert len(forward_result) == 2
+            result, context = forward_result
 
             assert isinstance(result, torch.Tensor)
             assert context is None
@@ -336,7 +346,14 @@ class TestTETransformerLayerAutocast:
         mock_config.enable_cuda_graph = True
 
         with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
-            with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.CudaGraphManager"):
+            with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
+                # Create a proper mock instance that inherits from nn.Module
+                class MockCudaGraphManager(torch.nn.Module):
+                    def __init__(self, config):
+                        super().__init__()
+
+                mock_cuda_manager.return_value = MockCudaGraphManager(mock_config)
+
                 layer = TETransformerLayerAutocast(mock_config, layer_number=0)
                 layer.training = True
 
@@ -449,19 +466,31 @@ class TestWithoutTransformerEngine:
         with pytest.raises(AssertionError, match="Please ensure Transformer Engine is installed"):
             get_gpt_full_te_layer_autocast_spec(mock_config)
 
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False)
     def test_autocast_transformer_layer_without_te(self):
         """Test that AutocastTransformerLayer raises assertion when TE is not available."""
-        with pytest.raises(AssertionError, match="AutocastTransformerLayer requires Transformer Engine"):
-            # This would only work if we could import the class, which we can't without TE
-            pass
+        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
+            with pytest.raises(AssertionError, match="AutocastTransformerLayer requires Transformer Engine"):
+                # Try to create an instance with some dummy config
+                basic_config = {
+                    "hidden_size": 512,
+                    "ffn_hidden_size": 2048,
+                    "layernorm_epsilon": 1e-5,
+                    "num_attention_heads": 8,
+                    "init_method": lambda x: x,
+                    "output_layer_init_method": lambda x: x,
+                    "hidden_dropout": 0.1,
+                    "attention_dropout": 0.1,
+                    "tp_size": 1,
+                    "params_dtype": torch.float32,
+                }
+                AutocastTransformerLayer(**basic_config)
 
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False)
     def test_te_transformer_layer_autocast_without_te(self):
         """Test that TETransformerLayerAutocast raises assertion when TE is not available."""
-        with pytest.raises(AssertionError, match="TETransformerLayerAutocast requires Transformer Engine"):
-            # This would only work if we could import the class, which we can't without TE
-            pass
+        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
+            with pytest.raises(AssertionError, match="TETransformerLayerAutocast requires Transformer Engine"):
+                mock_config = Mock()
+                TETransformerLayerAutocast(mock_config, layer_number=0)
 
 
 class TestVersionCompatibility:
