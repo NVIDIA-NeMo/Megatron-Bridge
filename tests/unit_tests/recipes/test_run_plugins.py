@@ -44,7 +44,7 @@ def create_test_config(**kwargs):
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.optimizer import OptimizerConfig
 
-    from megatron.hub.models.llama import Llama3Config8B
+    from megatron.hub.models.llama import Llama3ModelProvider8B
     from megatron.hub.training.config import (
         CheckpointConfig,
         ConfigContainer,
@@ -75,7 +75,7 @@ def create_test_config(**kwargs):
     min_lr = kwargs.pop("min_lr", 1e-5)
 
     # Create model config with apply_rope_fusion=False
-    model_cfg = Llama3Config8B(
+    model_cfg = Llama3ModelProvider8B(
         apply_rope_fusion=False,  # Disable to avoid TE/Apex requirement
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,

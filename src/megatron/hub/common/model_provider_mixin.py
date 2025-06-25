@@ -15,7 +15,7 @@
 import abc
 import os
 from pathlib import Path
-from typing import Generic, TypedDict, TypeVar, Unpack
+from typing import Callable, Generic, TypedDict, TypeVar, Unpack
 
 import torch
 from megatron.core import parallel_state
@@ -36,9 +36,14 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     """A mixin that implements the ModelProvider pattern for Megatron-Hub.
 
     The ModelProvider pattern solves ecosystem fragmentation by providing a standardized
-    way to instantiate models. This mixin provides a consistent `get_model()` method that
-    handles the complexity of distributed training setup, along with HuggingFace-inspired
+    way to instantiate models. This mixin provides a consistent `provide_models()` method
+    that handles the complexity of distributed training setup, along with HuggingFace-inspired
     `.from_pretrained()` and `.save_pretrained()` for interoperability.
+
+    For advanced customization, multiple hooks can be registered via `register_pre_wrap_hook`
+    and `register_post_wrap_hook`. These hooks allow modifying the model before and after
+    it's wrapped for distributed training (e.g., freezing layers, logging). The composed
+    hooks can be accessed via the `pre_wrap_hook` and `post_wrap_hook` properties.
 
     Subclasses must implement the `provide` method to define the model architecture.
     """
@@ -75,6 +80,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         data_parallel_random_init: bool = True,
         use_cpu_initialization: None | bool = False,
         init_model_with_meta_device: bool | None = None,
+        pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
+        post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -94,6 +101,10 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
             use_cpu_initialization: Initialize model on CPU.
             init_model_with_meta_device: Initialize model on meta device.
+            pre_wrap_hook: A single callable to modify the model before it's wrapped. If provided,
+                this will override all hooks registered via `register_pre_wrap_hook`.
+            post_wrap_hook: A single callable to modify the model after it's wrapped. If provided,
+                this will override all hooks registered via `register_post_wrap_hook`.
 
         Returns:
             A list containing the wrapped model instance.
@@ -112,7 +123,10 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             print("Model parallel not initialized, initializing...")
             self.initialize_model_parallel(seed=0)
 
-        return get_model(
+        final_pre_wrap_hook = pre_wrap_hook or self.pre_wrap_hook
+        final_post_wrap_hook = post_wrap_hook or self.post_wrap_hook
+
+        model = get_model(
             self.provide,
             ddp_config=ddp_config,
             model_type=model_type,
@@ -124,7 +138,15 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             data_parallel_random_init=data_parallel_random_init,
             use_cpu_initialization=use_cpu_initialization,
             init_model_with_meta_device=init_model_with_meta_device,
+            pre_wrap_hook=final_pre_wrap_hook,
         )
+
+        if final_post_wrap_hook:
+            _model = final_post_wrap_hook(model)
+            if _model is not None:
+                model = _model
+
+        return model
 
     def initialize_model_parallel(
         self, seed: int | None = None, seed_kwargs: dict | None = None, **model_parallel_kwargs
@@ -155,7 +177,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             model_parallel_cuda_manual_seed(seed, **seed_kwargs)
 
     def __call__(self, **kwargs: Unpack["GetModelKwargs"]) -> list[ModelT]:
-        """A convenience wrapper around `get_model`."""
+        """A convenience wrapper around `provide_models`."""
         return self.provide_models(**kwargs)
 
     @property
@@ -166,6 +188,98 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         GPU memory.
         """
         return self(wrap_with_ddp=False, init_model_with_meta_device=True)
+
+    @property
+    def pre_wrap_hook(self) -> Callable[[list[MegatronModule]], list[MegatronModule]] | None:
+        """A composed callable of all registered pre-wrap hooks.
+
+        This read-only property returns a single function that executes all registered
+        pre-wrap hooks in order. The hook is applied before the model is passed to the DDP
+        wrapper and can be used for tasks like freezing layers or altering model structure.
+
+        Use `register_pre_wrap_hook` to add a hook to the execution chain.
+
+        Returns:
+            A callable that executes all registered pre-wrap hooks in order, or None if no
+            hooks are registered.
+        """
+        if not hasattr(self, "_pre_wrap_hooks") or not self._pre_wrap_hooks:
+            return None
+
+        def composed_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+            for hook in self._pre_wrap_hooks:
+                model = hook(model)
+            return model
+
+        return composed_hook
+
+    def register_pre_wrap_hook(
+        self,
+        hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+        prepend: bool = False,
+    ) -> None:
+        """Registers a hook to be executed before the model is wrapped.
+
+        The hook should be a callable that accepts a list of `MegatronModule` instances
+        and returns a (potentially modified) list of `MegatronModule` instances.
+
+        Args:
+            hook: The hook to register.
+            prepend: If True, the hook is inserted at the beginning of the execution
+                chain. Otherwise, it is appended to the end.
+        """
+        if not hasattr(self, "_pre_wrap_hooks"):
+            self._pre_wrap_hooks = []
+        if prepend:
+            self._pre_wrap_hooks.insert(0, hook)
+        else:
+            self._pre_wrap_hooks.append(hook)
+
+    @property
+    def post_wrap_hook(self) -> Callable[[list[MegatronModule]], list[MegatronModule]] | None:
+        """A composed callable of all registered post-wrap hooks.
+
+        This read-only property returns a single function that executes all registered
+        post-wrap hooks in order. The hook is applied after the model has been wrapped by
+        DDP and is useful for tasks like logging or attaching custom attributes.
+
+        Use `register_post_wrap_hook` to add a hook to the execution chain.
+
+        Returns:
+            A callable that executes all registered post-wrap hooks in order, or None if no
+            hooks are registered.
+        """
+        if not hasattr(self, "_post_wrap_hooks") or not self._post_wrap_hooks:
+            return None
+
+        def composed_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+            for hook in self._post_wrap_hooks:
+                model = hook(model)
+            return model
+
+        return composed_hook
+
+    def register_post_wrap_hook(
+        self,
+        hook: Callable[[list[MegatronModule]], list[MegatronModule]],
+        prepend: bool = False,
+    ) -> None:
+        """Registers a hook to be executed after the model is wrapped.
+
+        The hook should be a callable that accepts a list of `MegatronModule` instances
+        and returns a (potentially modified) list of `MegatronModule` instances.
+
+        Args:
+            hook: The hook to register.
+            prepend: If True, the hook is inserted at the beginning of the execution
+                chain. Otherwise, it is appended to the end.
+        """
+        if not hasattr(self, "_post_wrap_hooks"):
+            self._post_wrap_hooks = []
+        if prepend:
+            self._post_wrap_hooks.insert(0, hook)
+        else:
+            self._post_wrap_hooks.append(hook)
 
     @classmethod
     def from_pretrained(
@@ -231,7 +345,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
 
 
 class GetModelKwargs(TypedDict, total=False):
-    """Keyword arguments for the get_model method.
+    """Keyword arguments for the `provide_models` method.
 
     Attributes:
         ddp_config: Configuration for distributed data parallel.
@@ -244,6 +358,8 @@ class GetModelKwargs(TypedDict, total=False):
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
         use_cpu_initialization: Initialize model on CPU.
         init_model_with_meta_device: Initialize model on meta device.
+        pre_wrap_hook: A single callable that overrides all registered pre-wrap hooks.
+        post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
     """
 
     ddp_config: DistributedDataParallelConfig | None
@@ -256,3 +372,5 @@ class GetModelKwargs(TypedDict, total=False):
     data_parallel_random_init: bool
     use_cpu_initialization: bool | None
     init_model_with_meta_device: bool | None
+    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
+    post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
