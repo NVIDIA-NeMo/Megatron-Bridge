@@ -17,12 +17,22 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-import nemo_run as run
-
 from megatron.hub.training.config import (
     FaultToleranceConfig,
     ProfilingConfig,
 )
+from megatron.hub.utils.import_utils import MISSING_NEMO_RUN_MSG
+
+
+try:
+    import nemo_run as run
+
+    HAVE_NEMO_RUN = True
+except (ImportError, ModuleNotFoundError) as e:
+    from unittest.mock import MagicMock
+
+    run = MagicMock()
+    HAVE_NEMO_RUN = False
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -51,6 +61,9 @@ class PreemptionPlugin(run.Plugin):
     enable_exit_handler_for_data_loader: bool = False
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
+
         """Set up the preemption plugin."""
         if isinstance(task, run.Script):
             # For run.Script, append CLI overrides to the script arguments
@@ -106,6 +119,9 @@ class FaultTolerancePlugin(run.Plugin):
     rank_heartbeat_timeout: int = 300
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
+
         """Set up the fault tolerance plugin."""
         # Set up fault tolerance launcher for both task types
         executor.launcher = run.FaultTolerance(
@@ -165,6 +181,8 @@ class NsysPlugin(run.Plugin):
     nsys_gpu_metrics: bool = False
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
@@ -232,6 +250,9 @@ class PyTorchProfilerPlugin(run.Plugin):
     record_shapes: bool = False
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
+
         """Set up the PyTorch profiler plugin."""
         if isinstance(task, run.Script):
             # For run.Script, append CLI overrides to the script arguments
@@ -287,6 +308,9 @@ class WandbPlugin(run.Plugin):
     log_task_config: bool = True
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
+
         """Set up the wandb plugin."""
         if "WANDB_API_KEY" in os.environ:
             executor.env_vars["WANDB_API_KEY"] = os.environ["WANDB_API_KEY"]
@@ -370,6 +394,9 @@ class PerfEnvPlugin(run.Plugin):
 
     def setup(self, task: run.Partial | run.Script, executor: run.Executor):
         """Enable the performance environment settings"""
+
+        if not HAVE_NEMO_RUN:
+            raise ImportError(MISSING_NEMO_RUN_MSG)
 
         # Environment variables work for both task types
 

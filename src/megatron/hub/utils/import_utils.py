@@ -41,6 +41,7 @@ MISSING_NEMO_EXPORT_DEPLOY_MSG = (
 MISSING_NVRX_MSG = (
     "nvidia-resiliency-ext is not available. Please install it with `pip install nvidia-resiliency-ext`."
 )
+MISSING_NEMO_RUN_MSG = "nemo-run is not available. Please install it with `pip install nemo-run`."
 
 
 class UnavailableError(Exception):
