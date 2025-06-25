@@ -134,7 +134,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     cross_entropy_loss_fusion: bool = True  # Generally beneficial, no specific dependencies
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     bias_activation_fusion: bool = False  # Disabled by default as it can interfere with certain architectures
-    persist_layer_norm: bool = True  # Generally beneficial for performance
+    persist_layer_norm: bool = False
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 

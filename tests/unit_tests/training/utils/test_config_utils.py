@@ -23,8 +23,8 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 import torch
 
+from megatron.hub.core.utils.instantiate_utils import InstantiationMode
 from megatron.hub.training.utils.config_utils import ConfigContainer
-from megatron.hub.training.utils.instantiate_utils import InstantiationMode
 
 
 # Test functions for callable testing
@@ -127,7 +127,11 @@ class TestConfigContainer_FromDict:
     @patch("megatron.hub.training.utils.config_utils.instantiate")
     def test_from_dict_basic(self, mock_instantiate):
         """Test basic from_dict functionality."""
-        config_dict = {"_target_": "test_config_utils.TestConfigContainer", "name": "from_dict", "value": 300}
+        config_dict = {
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
+            "name": "from_dict",
+            "value": 300,
+        }
 
         expected_config = TestConfigContainer(name="from_dict", value=300)
         mock_instantiate.return_value = expected_config
@@ -141,7 +145,10 @@ class TestConfigContainer_FromDict:
     @patch("megatron.hub.training.utils.config_utils.instantiate")
     def test_from_dict_with_mode(self, mock_instantiate):
         """Test from_dict with different instantiation modes."""
-        config_dict = {"_target_": "test_config_utils.TestConfigContainer", "name": "lenient"}
+        config_dict = {
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
+            "name": "lenient",
+        }
 
         expected_config = TestConfigContainer(name="lenient")
         mock_instantiate.return_value = expected_config
@@ -160,7 +167,11 @@ class TestConfigContainer_FromDict:
 
     def test_from_dict_extra_keys_strict_mode(self):
         """Test from_dict raises error for extra keys in strict mode."""
-        config_dict = {"_target_": "test_config_utils.TestConfigContainer", "name": "test", "extra_key": "should_fail"}
+        config_dict = {
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
+            "name": "test",
+            "extra_key": "should_fail",
+        }
 
         with pytest.raises(ValueError, match="Dictionary contains extra keys"):
             TestConfigContainer.from_dict(config_dict, mode=InstantiationMode.STRICT)
@@ -169,7 +180,7 @@ class TestConfigContainer_FromDict:
     def test_from_dict_extra_keys_lenient_mode(self, mock_instantiate):
         """Test from_dict removes extra keys in lenient mode."""
         config_dict = {
-            "_target_": "test_config_utils.TestConfigContainer",
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
             "name": "test",
             "extra_key": "should_be_removed",
         }
@@ -183,12 +194,12 @@ class TestConfigContainer_FromDict:
         called_dict = mock_instantiate.call_args[0][0]
         assert "extra_key" not in called_dict
         assert called_dict["name"] == "test"
-        assert called_dict["_target_"] == "test_config_utils.TestConfigContainer"
+        assert called_dict["_target_"] == "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer"
 
     def test_from_dict_preserves_original(self):
         """Test that from_dict doesn't modify the original dictionary."""
         original_dict = {
-            "_target_": "test_config_utils.TestConfigContainer",
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
             "name": "original",
             "extra_key": "should_be_preserved_in_original",
         }
@@ -217,7 +228,7 @@ class TestConfigContainer_FromYaml:
         """Test successful YAML loading."""
         mock_exists.return_value = True
         yaml_content = """
-        _target_: test_config_utils.TestConfigContainer
+        _target_: tests.unit_tests.training.utils.test_config_utils.TestConfigContainer
         name: yaml_config
         value: 500
         """
@@ -225,7 +236,11 @@ class TestConfigContainer_FromYaml:
 
         # Mock yaml.safe_load to return parsed content
         with patch("yaml.safe_load") as mock_yaml_load:
-            config_dict = {"_target_": "test_config_utils.TestConfigContainer", "name": "yaml_config", "value": 500}
+            config_dict = {
+                "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
+                "name": "yaml_config",
+                "value": 500,
+            }
             mock_yaml_load.return_value = config_dict
 
             # Mock OmegaConf methods
@@ -277,7 +292,7 @@ class TestConfigContainer_ToDict:
         result = config.to_dict()
 
         expected = {
-            "_target_": "test_config_utils.TestConfigContainer",
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
             "name": "test",
             "value": 123,
             "description": "test desc",
@@ -301,16 +316,22 @@ class TestConfigContainer_ToDict:
 
         # Check the structure
         assert "_target_" in result
-        assert result["_target_"] == "test_config_utils.ComplexConfigContainer"
+        assert result["_target_"] == "tests.unit_tests.training.utils.test_config_utils.ComplexConfigContainer"
 
         # Check nested ConfigContainer
-        assert result["simple_config"]["_target_"] == "test_config_utils.TestConfigContainer"
+        assert (
+            result["simple_config"]["_target_"]
+            == "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer"
+        )
         assert result["simple_config"]["name"] == "nested"
         assert result["simple_config"]["value"] == 456
 
         # Check nested regular dataclass
-        assert result["nested_data"]["_target_"] == "test_config_utils.NestedDataclass"
-        assert result["nested_data"]["simple"]["_target_"] == "test_config_utils.SimpleDataclass"
+        assert result["nested_data"]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.NestedDataclass"
+        assert (
+            result["nested_data"]["simple"]["_target_"]
+            == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
+        )
         assert result["nested_data"]["simple"]["name"] == "inner"
         assert result["nested_data"]["simple"]["value"] == 789
 
@@ -337,7 +358,7 @@ class TestConfigContainer_ConvertValueToDict:
         result = TestConfigContainer._convert_value_to_dict(config)
 
         expected = {
-            "_target_": "test_config_utils.TestConfigContainer",
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
             "name": "convert_test",
             "value": 999,
             "description": "A test configuration",
@@ -350,7 +371,11 @@ class TestConfigContainer_ConvertValueToDict:
         simple = SimpleDataclass(name="simple_test", value=555)
         result = TestConfigContainer._convert_value_to_dict(simple)
 
-        expected = {"_target_": "test_config_utils.SimpleDataclass", "name": "simple_test", "value": 555}
+        expected = {
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass",
+            "name": "simple_test",
+            "value": 555,
+        }
 
         assert result == expected
 
@@ -360,7 +385,7 @@ class TestConfigContainer_ConvertValueToDict:
         result = TestConfigContainer._convert_value_to_dict(items)
 
         assert len(result) == 3
-        assert result[0]["_target_"] == "test_config_utils.SimpleDataclass"
+        assert result[0]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
         assert result[0]["name"] == "item1"
         assert result[1] == "string_item"
         assert result[2] == 42
@@ -371,7 +396,7 @@ class TestConfigContainer_ConvertValueToDict:
         result = TestConfigContainer._convert_value_to_dict(items)
 
         assert len(result) == 2
-        assert result[0]["_target_"] == "test_config_utils.SimpleDataclass"
+        assert result[0]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
         assert result[1] == "string"
 
     def test_convert_dict(self):
@@ -383,9 +408,12 @@ class TestConfigContainer_ConvertValueToDict:
         }
         result = TestConfigContainer._convert_value_to_dict(data)
 
-        assert result["config"]["_target_"] == "test_config_utils.SimpleDataclass"
+        assert result["config"]["_target_"] == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
         assert result["value"] == 123
-        assert result["nested"]["inner"]["_target_"] == "test_config_utils.SimpleDataclass"
+        assert (
+            result["nested"]["inner"]["_target_"]
+            == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
+        )
 
     def test_convert_primitive_types(self):
         """Test converting primitive types."""
@@ -525,8 +553,14 @@ class TestConfigContainer_Integration:
 
         # Convert back (would work if instantiate is properly implemented)
         # This tests the dict structure is correct for round-trip
-        assert config_dict["simple_config"]["_target_"] == "test_config_utils.TestConfigContainer"
-        assert config_dict["nested_data"]["_target_"] == "test_config_utils.NestedDataclass"
+        assert (
+            config_dict["simple_config"]["_target_"]
+            == "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer"
+        )
+        assert (
+            config_dict["nested_data"]["_target_"]
+            == "tests.unit_tests.training.utils.test_config_utils.NestedDataclass"
+        )
 
     def test_yaml_roundtrip_structure(self):
         """Test YAML conversion produces expected structure."""
@@ -538,7 +572,7 @@ class TestConfigContainer_Integration:
 
                 # Verify the dictionary passed to yaml.safe_dump
                 call_args = mock_dump.call_args[0][0]
-                assert call_args["_target_"] == "test_config_utils.TestConfigContainer"
+                assert call_args["_target_"] == "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer"
                 assert call_args["name"] == "yaml_roundtrip"
                 assert call_args["value"] == 1234
 
@@ -552,7 +586,7 @@ class TestConfigContainer_Integration:
 
         # Test with extra keys in strict mode
         invalid_strict_dict = {
-            "_target_": "test_config_utils.TestConfigContainer",
+            "_target_": "tests.unit_tests.training.utils.test_config_utils.TestConfigContainer",
             "name": "test",
             "invalid_field": "should_fail",
         }
@@ -615,7 +649,10 @@ class TestConfigContainer_EdgeCases:
 
         # Verify complex nested structure conversion
         assert len(result["nested_list"]) == 2
-        assert result["nested_list"][0]["item1"]["_target_"] == "test_config_utils.SimpleDataclass"
+        assert (
+            result["nested_list"][0]["item1"]["_target_"]
+            == "tests.unit_tests.training.utils.test_config_utils.SimpleDataclass"
+        )
         assert result["nested_dict"]["group1"][0]["name"] == "group1_item1"
 
 
@@ -629,7 +666,7 @@ class TestConfigContainer_CallablesAndPartials:
 
         # Verify the structure includes _target_
         assert "_target_" in result
-        assert "test_config_utils.CallableDataclass" in result["_target_"]
+        assert "tests.unit_tests.training.utils.test_config_utils.CallableDataclass" in result["_target_"]
 
         # Regular fields should be preserved
         assert result["name"] == "callable_test"

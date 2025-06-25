@@ -23,6 +23,7 @@ import os
 
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+
 logger = logging.getLogger(__name__)
 
 # Control whether to log warnings when fusions are disabled
