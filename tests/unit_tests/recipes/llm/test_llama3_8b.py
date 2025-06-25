@@ -213,20 +213,20 @@ class TestPretrainConfig:
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is not None
 
-    def test_pretrain_config_prioritizes_blend_per_split(self):
-        """Test that blend_per_split_weights takes priority over blend_weights when both are provided."""
+    def test_pretrain_config_prioritizes_blend(self):
+        """Test that blend takes priority over blend_per_split when both are provided."""
 
         config = pretrain_config(
             train_data_path=["/path/to/train1", "/path/to/train2"],
             valid_data_path=["/path/to/valid1", "/path/to/valid2"],
             test_data_path=["/path/to/test1", "/path/to/test2"],
-            data_paths=["/path/to/data1", "/path/to/data2"],  # This would normally use blend_weights
+            data_paths=["/path/to/data1", "/path/to/data2"],
         )
 
-        # Should prioritize blend_per_split over blend
-        assert config.dataset.split is None
-        assert config.dataset.blend is None
-        assert config.dataset.blend_per_split is not None
+        # Should prioritize blend over blend_per_split
+        assert config.dataset.split == "9999,8,2"
+        assert config.dataset.blend is not None
+        assert config.dataset.blend_per_split is None
 
     def test_pretrain_config_fallback_to_mock_when_no_weights(self):
         """Test pretrain_config falls back to mock when no weights are returned."""
