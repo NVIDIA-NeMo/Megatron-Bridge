@@ -18,16 +18,20 @@ import signal
 import sys
 from typing import Optional
 
-from megatron.hub.utils.import_utils import UnavailableError
+from megatron.hub.utils.import_utils import MISSING_NEMO_EXPORT_DEPLOY_MSG
 
 
 try:
     from nemo_deploy.deploy_ray import DeployRay
     from nemo_deploy.nlp.megatronllm_deployable_ray import MegatronRayDeployable
+
+    HAVE_NEMO_EXPORT_DEPLOY = True
 except (ImportError, ModuleNotFoundError) as e:
-    raise UnavailableError(
-        "nemo-deploy is not available. Please install it with `pip install nemo-export-deploy`."
-    ) from e
+    from unittest.mock import MagicMock
+
+    DeployRay = MagicMock
+    MegatronRayDeployable = MagicMock
+    HAVE_NEMO_EXPORT_DEPLOY = False
 
 
 logger = logging.getLogger(__name__)
@@ -86,6 +90,9 @@ def deploy_with_ray(
         include_dashboard: Whether to include Ray dashboard
         cuda_visible_devices: CUDA visible devices string
     """
+    if not HAVE_NEMO_EXPORT_DEPLOY:
+        raise ImportError(MISSING_NEMO_EXPORT_DEPLOY_MSG)
+
     # Calculate total GPUs
     total_gpus = num_gpus * num_nodes
     logger.info(f"Total GPUs: {total_gpus}")

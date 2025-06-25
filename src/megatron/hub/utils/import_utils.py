@@ -35,6 +35,9 @@ GPU_INSTALL_STRING = (
     """https://pypi.nvidia.com nemo-curator[cuda12x]`
 or use `pip install --extra-index-url https://pypi.nvidia.com ".[cuda12x]"` if installing from source"""
 )
+MISSING_NEMO_EXPORT_DEPLOY_MSG = (
+    "nemo-export-deploy is not available. Please install it with `pip install nemo-export-deploy`."
+)
 
 
 class UnavailableError(Exception):
