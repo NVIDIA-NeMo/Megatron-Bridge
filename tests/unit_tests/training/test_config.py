@@ -690,3 +690,40 @@ class TestRerunConfigValidation:
         with pytest.raises(AssertionError, match="report_time_interval must be positive"):
             cfg.report_time_interval = -100.0
             cfg.__post_init__()
+
+    def test_rerun_validate_config_container(self):
+        import copy
+        from dataclasses import fields
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_cfg)
+
+        def check_container_state_matches(cfg1, cfg2):
+            for f1 in fields(cfg1):
+                sub_cfg1 = getattr(cfg1, f1.name)
+                assert hasattr(cfg2, f1.name)
+                sub_cfg2 = getattr(cfg2, f1.name)
+                assert sub_cfg1 == sub_cfg2
+            for f2 in fields(cfg2):
+                sub_cfg2 = getattr(cfg2, f2.name)
+                assert hasattr(cfg1, f2.name)
+                sub_cfg1 = getattr(cfg2, f2.name)
+                assert sub_cfg1 == sub_cfg2
+
+        try:
+            # idempotency
+            full_cfg.validate()
+            full_cfg_copy = copy.deepcopy(full_cfg)
+            check_container_state_matches(full_cfg, full_cfg_copy)
+            full_cfg.validate()
+            check_container_state_matches(full_cfg, full_cfg_copy)
+
+            # test rerun of validate with valid and invalid changes
+            full_cfg.scheduler.lr_decay_iters = 20
+            full_cfg.validate()
+
+            with pytest.raises(AssertionError, match="start_weight_decay"):
+                full_cfg.scheduler.start_weight_decay = -5.2
+                full_cfg.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
