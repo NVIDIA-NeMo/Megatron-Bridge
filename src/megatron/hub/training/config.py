@@ -15,7 +15,7 @@
 import logging
 import os
 import signal
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
@@ -688,6 +688,12 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        # Re-run post-inits of sub-configs
+        for f in fields(self):
+            sub_cfg = getattr(self, f.name)
+            if hasattr(sub_cfg, "__post_init__"):
+                sub_cfg.__post_init__()
+
         # Run validations
 
         # Distributed
