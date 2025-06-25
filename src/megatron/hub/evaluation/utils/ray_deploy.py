@@ -26,7 +26,7 @@ try:
     from nemo_deploy.nlp.megatronllm_deployable_ray import MegatronRayDeployable
 
     HAVE_NEMO_EXPORT_DEPLOY = True
-except (ImportError, ModuleNotFoundError) as e:
+except (ImportError, ModuleNotFoundError):
     from unittest.mock import MagicMock
 
     DeployRay = MagicMock

@@ -14,6 +14,7 @@
 
 import logging
 import os
+import types
 from dataclasses import dataclass
 from typing import Optional
 
@@ -28,10 +29,11 @@ try:
     import nemo_run as run
 
     HAVE_NEMO_RUN = True
-except (ImportError, ModuleNotFoundError) as e:
+except (ImportError, ModuleNotFoundError):
     from unittest.mock import MagicMock
 
     run = MagicMock()
+    run.Plugin = types.new_class("Plugin", ())
     HAVE_NEMO_RUN = False
 
 

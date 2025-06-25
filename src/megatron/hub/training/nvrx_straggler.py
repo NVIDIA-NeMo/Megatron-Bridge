@@ -26,7 +26,7 @@ try:
     import nvidia_resiliency_ext.straggler as straggler
 
     HAVE_NVRX = True
-except (ImportError, ModuleNotFoundError) as e:
+except (ImportError, ModuleNotFoundError):
     HAVE_NVRX = False
 
 
