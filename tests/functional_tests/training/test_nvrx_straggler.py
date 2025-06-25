@@ -44,8 +44,8 @@ from megatron.hub.training.config import (
     TrainingConfig,
 )
 from megatron.hub.training.pretrain import pretrain
-from megatron.hub.training.step import forward_step
 from megatron.hub.training.state import GlobalState
+from megatron.hub.training.step import forward_step
 from megatron.hub.utils.common_utils import get_rank_safe, print_rank_0
 
 
