@@ -38,6 +38,9 @@ or use `pip install --extra-index-url https://pypi.nvidia.com ".[cuda12x]"` if i
 MISSING_NEMO_EXPORT_DEPLOY_MSG = (
     "nemo-export-deploy is not available. Please install it with `pip install nemo-export-deploy`."
 )
+MISSING_NVRX_MSG = (
+    "nvidia-resiliency-ext is not available. Please install it with `pip install nvidia-resiliency-ext`."
+)
 
 
 class UnavailableError(Exception):
