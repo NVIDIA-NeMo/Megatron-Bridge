@@ -49,7 +49,6 @@ class LlamaModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     share_embeddings_and_output_weights: bool = False
     persist_layer_norm: bool = False
-    fused_layer_norm: bool = False
 
 
 @dataclass
@@ -107,16 +106,8 @@ class Llama3ModelProvider(LlamaModelProvider):
     """
 
     num_query_groups: int = 8
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-    normalization: str = "RMSNorm"
     init_method_std: float = 0.01
     layernorm_epsilon: float = 1.0e-05
-    add_bias_linear: bool = False
-    activation_func: Callable = F.silu
-    gated_linear_unit: bool = True
-    share_embeddings_and_output_weights: bool = False
-    position_embedding_type: str = "rope"
     rotary_percent: float = 1.0
 
 
