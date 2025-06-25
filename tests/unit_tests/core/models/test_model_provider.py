@@ -530,7 +530,7 @@ class TestGetModel:
         model_provider = Mock()
         ddp_config = DistributedDataParallelConfig()
 
-        result = get_model(model_provider, ddp_config, pre_wrap_hook=pre_wrap_hook, use_cpu_initialization=True)
+        result = get_model(model_provider, ddp_config, pre_wrap_hook=pre_wrap_hook)
 
         # Assertions
         assert result == [hooked_model]
