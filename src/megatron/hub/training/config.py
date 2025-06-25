@@ -136,9 +136,9 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         """Post-initialization checks for GPT dataset config."""
         super(MCoreGPTDatasetConfig, self).__post_init__()
 
-        assert self.reset_position_ids is not None
-        assert self.reset_attention_mask is not None
-        assert self.eod_mask_loss is not None
+        assert self.reset_position_ids is not None, "reset_position_ids must be defined."
+        assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
+        assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
 
 
 @dataclass
@@ -219,7 +219,7 @@ class SchedulerConfig:
     def __post_init__(self):
         """Post-initialization checks for scheduler config."""
         if self.start_weight_decay is not None:
-            assert self.start_weight_decay >= 0.0
+            assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
             assert self.end_weight_decay >= self.start_weight_decay
 
         if self.override_opt_param_scheduler:
