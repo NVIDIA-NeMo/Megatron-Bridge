@@ -14,6 +14,7 @@
 
 import argparse
 import logging
+import traceback
 
 from megatron.hub.evaluation.api import deploy
 
@@ -28,7 +29,6 @@ def get_args():
     parser.add_argument("--nemo2_ckpt_path", type=str, help="NeMo 2.0 ckpt path")
     parser.add_argument("--max_batch_size", type=int, help="Max BS for the model")
     parser.add_argument("--legacy_ckpt", action="store_true", help="Whether the nemo checkpoint is in legacy format")
-    parser.add_argument("--port", type=int, help="Port")
     return parser.parse_args()
 
 
@@ -38,9 +38,13 @@ if __name__ == "__main__":
         deploy(
             nemo_checkpoint=args.nemo2_ckpt_path,
             max_batch_size=args.max_batch_size,
-            fastapi_port=args.port,
+            fastapi_port=8886,
             legacy_ckpt=args.legacy_ckpt,
+            model_name="megatron_model",
         )
     except Exception as e:
-        logger.error(f"Deploy process encountered an error: {e}")
+        with open("deploy_error.log", "w") as f:
+            f.write(str(e))
+        logger.error(f"Test Deploy process encountered an error: {str(e)}")
+        traceback.print_exc()
     logger.info("Deploy process terminated.")

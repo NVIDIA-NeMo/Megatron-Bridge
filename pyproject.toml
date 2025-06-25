@@ -20,7 +20,7 @@ include = ["megatron.hub", "megatron.hub.*"]
 
 [project]
 name = "megatron-hub"
-description = "NeMo - a toolkit for Conversational AI"
+description = "Megatron Hub: Training Recipes for Megatron-based LLM and VLM models"
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
@@ -33,7 +33,6 @@ keywords = [
     "deep",
     "gpu",
     "language",
-    "learning",
     "learning",
     "machine",
     "nvidia",
@@ -143,8 +142,8 @@ nemo-legacy = [
 lm = "megatron.hub"
 
 [project.urls]
-Download = "https://github.com/NVIDIA/NeMo-LM/releases"
-Homepage = "https://github.com/nvidia/nemo"
+Download = "https://github.com/NVIDIA-NeMo/Megatron-Hub/releases"
+Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Hub"
 
 [tool.pytest.ini_options]
 # durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.

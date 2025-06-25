@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 def wait_for_fastapi_server(
     base_url: str = "http://0.0.0.0:8080",
-    model_name: str = "triton_model",
+    model_name: str = "megatron_model",
     max_retries: int = 600,
-    retry_interval: int = 2,
+    retry_interval: int = 10,
 ):
     """
     Wait for FastAPI server and model to be ready.
@@ -59,7 +59,9 @@ def wait_for_fastapi_server(
             logger.info("Server is ready.")
 
             # Check model readiness
-            response = requests.post(completions_url, json={"model": model_name, "prompt": "hello", "max_tokens": 1})
+            response = requests.post(
+                completions_url, json={"model": model_name, "prompt": "hello", "max_tokens": 1}, timeout=3
+            )
             if response.status_code != 200:
                 logger.info(f"Model is not ready. HTTP status code: {response.status_code}")
                 time.sleep(retry_interval)

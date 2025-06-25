@@ -22,7 +22,7 @@ from megatron.hub.models.utils import forward_step
 from megatron.hub.recipes.llm.llama3_8b import pretrain_config
 from megatron.hub.recipes.utils.nemo_run_utils import get_partial_fn
 from megatron.hub.training.config import ConfigContainer, ProfilingConfig
-from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import pretrain
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def main(args: argparse.Namespace) -> None:
     cfg.profiling.record_shapes = True
 
     # Create a run.Partial object for the pretrain function
-    fn = get_partial_fn(megatron_pretrain, cfg, forward_step)
+    fn = get_partial_fn(pretrain, cfg, forward_step)
 
     logger.info(f"Launching locally with TorchRun with nproc_per_node={args.nproc_per_node}")
     executor = run.LocalExecutor(ntasks_per_node=args.nproc_per_node, launcher="torchrun")

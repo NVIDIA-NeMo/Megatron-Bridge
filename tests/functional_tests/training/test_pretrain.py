@@ -25,14 +25,14 @@ from megatron.hub.models.utils import forward_step
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    GPTDatasetConfig,
     LoggerConfig,
+    MockGPTDatasetConfig,
     RNGConfig,
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import pretrain
 
 
 class TestPretrain:
@@ -108,7 +108,7 @@ class TestPretrain:
                     average_in_collective=True,
                     use_distributed_optimizer=True,
                 ),
-                dataset=GPTDatasetConfig(
+                dataset=MockGPTDatasetConfig(
                     random_seed=1234,
                     reset_attention_mask=False,
                     reset_position_ids=False,
@@ -138,7 +138,7 @@ class TestPretrain:
             )
 
             # Run training
-            megatron_pretrain(cfg, forward_step)
+            pretrain(cfg, forward_step)
 
             # Check for the latest checkpoint tracker file
             if torch.distributed.get_rank() == 0:

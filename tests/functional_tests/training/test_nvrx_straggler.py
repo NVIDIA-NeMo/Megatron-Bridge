@@ -1,8 +1,22 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 #!/usr/bin/env python3
 """
 End-to-end functional test for NVRx straggler detection with megatron/hub training.
 
-This test runs the actual megatron_pretrain function with NVRx straggler detection
+This test runs the actual pretrain function with NVRx straggler detection
 enabled, using mock data and a tiny model configuration for fast testing.
 """
 
@@ -22,15 +36,15 @@ from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedInitConfig,
-    GPTDatasetConfig,
     LoggerConfig,
+    MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
     RNGConfig,
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import pretrain
 from megatron.hub.training.state import GlobalState
 from megatron.hub.utils.common_utils import get_rank_safe, print_rank_0
 
@@ -59,7 +73,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         make_vocab_size_divisible_by=128,
     )
 
-    dataset_config = GPTDatasetConfig(
+    dataset_config = MockGPTDatasetConfig(
         random_seed=1234,
         reset_attention_mask=False,
         reset_position_ids=False,
@@ -226,7 +240,7 @@ def test_nvrx_straggler_detection_end_to_end(sleep_time: float = 1.0):
     This test:
     1. Sets up a complete megatron training configuration
     2. Uses mock data and small model for fast execution
-    3. Runs the actual megatron_pretrain function
+    3. Runs the actual pretrain function
     4. Verifies NVRx straggler detection is working by checking logs
     """
     rank = get_rank_safe()
@@ -244,7 +258,7 @@ def test_nvrx_straggler_detection_end_to_end(sleep_time: float = 1.0):
             forward_step_func = create_timed_forward_step_func(sleep_time=sleep_time)
 
             try:
-                megatron_pretrain(
+                pretrain(
                     config=config,
                     forward_step_func=forward_step_func,
                 )
@@ -306,9 +320,6 @@ def test_nvrx_straggler_detection_end_to_end(sleep_time: float = 1.0):
                 file_handler.close()
             for handler in logging.root.handlers[:]:
                 logging.root.removeHandler(handler)
-
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
 
 
 def main():

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ jobs:
         run: |
           LAST_PRS=$(gh api graphql -f query='
             query {
-              repository(owner: "NVIDIA", name: "NeMo-LM") {
+              repository(owner: "NVIDIA-NeMo", name: "Megatron-Hub") {
                 pullRequests(states: MERGED, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
                   nodes {
                     number
