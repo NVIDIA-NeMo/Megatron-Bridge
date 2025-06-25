@@ -655,10 +655,13 @@ class TestRerunConfigValidation:
             cfg.__post_init__()
 
     def test_gptdataset_config(self):
-        self._check_post_init_idempotency(create_test_gpt_dataset_config)
+        def gpt_dataset_seqlen_1024():
+            return create_test_gpt_dataset_config(1024)
+
+        self._check_post_init_idempotency(gpt_dataset_seqlen_1024)
 
         # Test rerun of post-init with valid and invalid changes
-        cfg = create_test_gpt_dataset_config(1024)
+        cfg = gpt_dataset_seqlen_1024()
         cfg.random_seed = 2468
         cfg.__post_init__()
 
