@@ -33,7 +33,6 @@ from megatron.hub.training.config import (
 )
 from megatron.hub.training.gpt_step import forward_step
 from megatron.hub.training.pretrain import pretrain
-from megatron.hub.training.step import forward_step
 
 
 class TestPretrain:
