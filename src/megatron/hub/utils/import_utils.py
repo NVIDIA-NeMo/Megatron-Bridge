@@ -35,13 +35,6 @@ GPU_INSTALL_STRING = (
     """https://pypi.nvidia.com nemo-curator[cuda12x]`
 or use `pip install --extra-index-url https://pypi.nvidia.com ".[cuda12x]"` if installing from source"""
 )
-MISSING_NEMO_EXPORT_DEPLOY_MSG = (
-    "nemo-export-deploy is not available. Please install it with `pip install nemo-export-deploy`."
-)
-MISSING_NVRX_MSG = (
-    "nvidia-resiliency-ext is not available. Please install it with `pip install nvidia-resiliency-ext`."
-)
-MISSING_NEMO_RUN_MSG = "nemo-run is not available. Please install it with `pip install nemo-run`."
 
 
 class UnavailableError(Exception):
@@ -91,18 +84,10 @@ class UnavailableMeta(type):
         return super(UnavailableMeta, meta).__new__(meta, name, bases, dct)
 
     def __call__(cls, *args, **kwargs):
-        if hasattr(cls, "_original_exception"):
-            # Re-raise the original exception with its traceback
-            raise cls._original_exception
-        else:
-            raise UnavailableError(cls._msg)
+        raise UnavailableError(cls._msg)
 
     def __getattr__(cls, name):
-        if hasattr(cls, "_original_exception"):
-            # Re-raise the original exception with its traceback
-            raise cls._original_exception
-        else:
-            raise UnavailableError(cls._msg)
+        raise UnavailableError(cls._msg)
 
     def __eq__(cls, other):
         raise UnavailableError(cls._msg)
@@ -285,26 +270,16 @@ def safe_import(module, *, msg=None, alt=None) -> Tuple[object, bool]:
     """
     try:
         return importlib.import_module(module), True
-    except ImportError as e:
-        # Store the original exception for better error reporting
-        original_exception = e
+    except ImportError:
         exception_text = traceback.format_exc()
         logger.debug(f"Import of {module} failed with: {exception_text}")
-    except Exception as e:
-        # Store the original exception for better error reporting
-        original_exception = e
+    except Exception:
         exception_text = traceback.format_exc()
-        logger.debug(f"Unexpected error importing {module}: {exception_text}")
         raise
     if msg is None:
         msg = f"{module} could not be imported"
     if alt is None:
-        # Create a placeholder that will raise the original exception when used
-        placeholder = (
-            UnavailableMeta(module.rsplit(".")[-1], (), {"_msg": msg, "_original_exception": original_exception}),
-            False,
-        )
-        return placeholder
+        return UnavailableMeta(module.rsplit(".")[-1], (), {"_msg": msg}), False
     else:
         return alt, False
 
@@ -336,31 +311,22 @@ def safe_import_from(module, symbol, *, msg=None, alt=None, fallback_module=None
     try:
         imported_module = importlib.import_module(module)
         return getattr(imported_module, symbol), True
-    except ImportError as e:
-        # Store the original exception for better error reporting
-        original_exception = e
+    except ImportError:
         exception_text = traceback.format_exc()
         logger.debug(f"Import of {module} failed with: {exception_text}")
-    except AttributeError as e:
+    except AttributeError:
         # if there is a fallback module try it.
         if fallback_module is not None:
             return safe_import_from(fallback_module, symbol, msg=msg, alt=alt, fallback_module=None)
-        # Store the original exception for better error reporting
-        original_exception = e
         exception_text = traceback.format_exc()
         logger.info(f"Import of {symbol} from {module} failed with: {exception_text}")
-    except Exception as e:
-        # Store the original exception for better error reporting
-        original_exception = e
+    except Exception:
         exception_text = traceback.format_exc()
-        logger.debug(f"Unexpected error importing {symbol} from {module}: {exception_text}")
         raise
     if msg is None:
         msg = f"{module}.{symbol} could not be imported"
     if alt is None:
-        # Create a placeholder that will raise the original exception when used
-        placeholder = UnavailableMeta(symbol, (), {"_msg": msg, "_original_exception": original_exception}), False
-        return placeholder
+        return UnavailableMeta(symbol, (), {"_msg": msg}), False
     else:
         return alt, False
 
