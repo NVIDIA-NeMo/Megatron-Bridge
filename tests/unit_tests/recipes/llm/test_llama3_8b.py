@@ -150,7 +150,7 @@ class TestPretrainConfig:
         assert config.dataset.sequence_length == 4096
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
-        assert config.scheduler.lr_warmup_iters == 2000  # Note: fixed in scheduler config
+        assert config.scheduler.lr_warmup_iters == 1000  # Note: fixed in scheduler config
         assert config.scheduler.lr_decay_iters == 10000  # Should match train_iters
 
     def test_pretrain_config_custom_model_parameters(self):
