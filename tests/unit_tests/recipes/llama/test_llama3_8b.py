@@ -216,17 +216,6 @@ class TestPretrainConfig:
 
     def test_pretrain_config_prioritizes_blend(self):
         """Test that blend takes priority over blend_per_split when both are provided."""
-        """Test that blend_per_split_weights takes priority over blend_weights when both are provided."""
-        mock_get_blend.return_value = (
-            [0.5, 0.5],  # blend_weights
-            [
-                [0.8, 0.2],  # train split weights
-                [0.7, 0.3],  # valid split weights
-                [0.6, 0.4],  # test split weights
-            ],  # blend_per_split_weights
-        )
->>>>>>> 56bd822 (Fix according to PR-comments):tests/unit_tests/recipes/llama/test_llama3_8b.py
-
         config = pretrain_config(
             train_data_path=["/path/to/train1", "/path/to/train2"],
             valid_data_path=["/path/to/valid1", "/path/to/valid2"],
