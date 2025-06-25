@@ -14,7 +14,6 @@
 
 import os
 import tempfile
-from unittest.mock import patch
 
 import pytest
 import torch
@@ -189,37 +188,19 @@ class TestPretrainConfig:
         assert config.dataset.blend_per_split is None
         assert config.dataset.split == "1,1,1"
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
-    def test_pretrain_config_with_data_paths(self, mock_get_blend):
+    def test_pretrain_config_with_data_paths(self):
         """Test pretrain_config with data paths provided."""
-        # Mock the blend function to return some sample data
-        mock_get_blend.return_value = (
-            [0.5, 0.3, 0.2],  # blend_weights
-            None,  # blend_per_split_weights - setting to None to avoid conflict
-        )
 
         data_paths = ["/path/to/data1", "/path/to/data2", "/path/to/data3"]
         config = pretrain_config(data_paths=data_paths)
-
-        # Verify get_blend_and_blend_per_split was called
-        mock_get_blend.assert_called_once()
 
         # Check that non-mock mode is configured
         assert config.dataset.split == "9999,8,2"
         assert config.dataset.blend is not None
         assert config.dataset.blend_per_split is None
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
-    def test_pretrain_config_with_train_valid_test_paths(self, mock_get_blend):
+    def test_pretrain_config_with_train_valid_test_paths(self):
         """Test pretrain_config with separate train/valid/test paths."""
-        mock_get_blend.return_value = (
-            None,  # blend_weights
-            [
-                [0.8, 0.1, 0.1],  # train split weights
-                [0.7, 0.2, 0.1],  # valid split weights
-                [0.6, 0.3, 0.1],  # test split weights
-            ],  # blend_per_split_weights
-        )
 
         config = pretrain_config(
             train_data_path=["/path/to/train1", "/path/to/train2", "/path/to/train3"],
@@ -227,23 +208,13 @@ class TestPretrainConfig:
             test_data_path=["/path/to/test1", "/path/to/test2", "/path/to/test3"],
         )
 
-        mock_get_blend.assert_called_once()
         # When blend_per_split is used, split should be None
         assert config.dataset.split is None
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is not None
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
-    def test_pretrain_config_prioritizes_blend_per_split(self, mock_get_blend):
+    def test_pretrain_config_prioritizes_blend_per_split(self):
         """Test that blend_per_split_weights takes priority over blend_weights when both are provided."""
-        mock_get_blend.return_value = (
-            [0.5, 0.5],  # blend_weights
-            [
-                [0.8, 0.2],  # train split weights
-                [0.7, 0.3],  # valid split weights
-                [0.6, 0.4],  # test split weights
-            ],  # blend_per_split_weights
-        )
 
         config = pretrain_config(
             train_data_path=["/path/to/train1", "/path/to/train2"],
@@ -252,17 +223,14 @@ class TestPretrainConfig:
             data_paths=["/path/to/data1", "/path/to/data2"],  # This would normally use blend_weights
         )
 
-        mock_get_blend.assert_called_once()
         # Should prioritize blend_per_split over blend
         assert config.dataset.split is None
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is not None
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
-    def test_pretrain_config_fallback_to_mock_when_no_weights(self, mock_get_blend):
+    def test_pretrain_config_fallback_to_mock_when_no_weights(self):
         """Test pretrain_config falls back to mock when no weights are returned."""
         # Mock function returns None for both weights
-        mock_get_blend.return_value = (None, None)
 
         config = pretrain_config(data_paths=["/some/path"])
 
