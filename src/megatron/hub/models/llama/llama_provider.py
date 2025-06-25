@@ -108,7 +108,6 @@ class Llama3ModelProvider(LlamaModelProvider):
     init_method_std: float = 0.01
     layernorm_epsilon: float = 1.0e-05
     rotary_percent: float = 1.0
-    vocab_size: int = 128256
 
 
 @dataclass
