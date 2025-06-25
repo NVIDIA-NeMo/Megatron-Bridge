@@ -42,7 +42,7 @@ def get_partial_fn(
     and forward_step_func.
 
     Args:
-        target_fn: The target function to be wrapped in run.Partial (e.g., megatron_pretrain).
+        target_fn: The target function to be wrapped in run.Partial (e.g., pretrain).
         config: The ConfigContainer dataclass instance.
         forward_step_func: The forward step function to use for training.
 
