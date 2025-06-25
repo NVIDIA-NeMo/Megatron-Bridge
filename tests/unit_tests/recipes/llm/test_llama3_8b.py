@@ -14,6 +14,7 @@
 
 import os
 import tempfile
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -228,9 +229,11 @@ class TestPretrainConfig:
         assert config.dataset.blend is not None
         assert config.dataset.blend_per_split is None
 
-    def test_pretrain_config_fallback_to_mock_when_no_weights(self):
+    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
+    def test_pretrain_config_fallback_to_mock_when_no_weights(self, mock_get_blend):
         """Test pretrain_config falls back to mock when no weights are returned."""
         # Mock function returns None for both weights
+        mock_get_blend.return_value = (None, None)
 
         config = pretrain_config(data_paths=["/some/path"])
 
