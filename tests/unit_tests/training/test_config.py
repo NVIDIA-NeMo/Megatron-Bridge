@@ -686,11 +686,11 @@ class TestRerunConfigValidation:
         self._check_post_init_idempotency(create_test_nvrx_straggler_config)
 
         # Test rerun of post-init with valid and invalid changes
-        cfg = create_test_nvrx_straggler_config()
+        cfg = create_test_nvrx_straggler_config(enabled=True)
         cfg.num_gpu_perf_scores_to_print = 2
         cfg.__post_init__()
 
-        with pytest.raises(AssertionError, match="report_time_interval must be positive"):
+        with pytest.raises(ValueError, match="report_time_interval must be positive"):
             cfg.report_time_interval = -100.0
             cfg.__post_init__()
 
