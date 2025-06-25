@@ -24,7 +24,7 @@ def wait_for_fastapi_server(
     base_url: str = "http://0.0.0.0:8080",
     model_name: str = "megatron_model",
     max_retries: int = 600,
-    retry_interval: int = 2,
+    retry_interval: int = 10,
 ):
     """
     Wait for FastAPI server and model to be ready.
