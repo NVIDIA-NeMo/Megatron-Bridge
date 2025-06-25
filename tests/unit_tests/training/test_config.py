@@ -31,6 +31,7 @@ from megatron.hub.training.config import (
     GPTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
+    NVRxStragglerDetectionConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
     RNGConfig,
@@ -166,6 +167,16 @@ def create_test_profiling_config(**kwargs: Any) -> ProfilingConfig:
     }
     defaults.update(kwargs)
     return ProfilingConfig(**defaults)
+
+
+def create_test_nvrx_straggler_config(**kwargs: Any) -> NVRxStragglerDetectionConfig:
+    """Creates an instance of NVRxStragglerDetectionConfig with defaults for testing."""
+    defaults = {
+        "calc_relative_gpu_perf": True,
+        "calc_individual_gpu_perf": True,
+    }
+    defaults.update(kwargs)
+    return NVRxStragglerDetectionConfig(**defaults)
 
 
 def create_test_config_container(
@@ -612,3 +623,70 @@ class TestConfigContainerValidation:
                 container.validate()
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestRerunConfigValidation:
+    """
+    Test that any assertions or modifications done by __post_init__() functions
+    are idempotent when the config is unchanged. Tests the same for ConfigContainer.validate().
+    """
+
+    def _check_post_init_idempotency(self, cfg_init_fn):
+        import copy
+
+        cfg = cfg_init_fn()
+        cfg_copy = copy.deepcopy(cfg)
+        assert cfg == cfg_copy
+
+        # rerun post-init
+        cfg.__post_init__()
+        assert cfg == cfg_copy
+
+    def test_scheduler_config(self):
+        self._check_post_init_idempotency(create_test_scheduler_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_scheduler_config(lr_decay_iters=10)
+        cfg.lr_decay_iters = 20
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="start_weight_decay"):
+            cfg.start_weight_decay = -5.2
+            cfg.__post_init__()
+
+    def test_gptdataset_config(self):
+        self._check_post_init_idempotency(create_test_gpt_dataset_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_gpt_dataset_config(1024)
+        cfg.random_seed = 2468
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="reset_position_ids"):
+            cfg.reset_position_ids = None
+            cfg.__post_init__()
+
+    def test_profiling_config(self):
+        self._check_post_init_idempotency(create_test_profiling_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_profiling_config()
+        cfg.profile_step_end = 1000
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="one of pytorch or nsys profiler should be enabled"):
+            cfg.use_nsys_profiler = True
+            cfg.use_pytorch_profiler = True
+            cfg.__post_init__()
+
+    def test_nvrx_straggler_config(self):
+        self._check_post_init_idempotency(create_test_nvrx_straggler_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_nvrx_straggler_config()
+        cfg.num_gpu_perf_scores_to_print = 2
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="report_time_interval must be positive"):
+            cfg.report_time_interval = -100.0
+            cfg.__post_init__()
