@@ -15,7 +15,7 @@
 from typing import Callable
 
 from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.pretrain import megatron_pretrain
+from megatron.hub.training.pretrain import pretrain
 from megatron.hub.utils.decorators import experimental_fn
 
 
@@ -36,4 +36,4 @@ def finetune(
         incompatible ways without notice.
     """
     assert config.checkpoint.pretrained_checkpoint is not None, "Finetuning requires a pretrained checkpoint"
-    return megatron_pretrain(config, forward_step_func)
+    return pretrain(config, forward_step_func)
