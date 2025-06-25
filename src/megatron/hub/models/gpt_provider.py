@@ -23,7 +23,8 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
-    get_gpt_layer_local_spec as default_layer_spec,
+    get_gpt_layer_local_spec,
+    get_gpt_layer_with_transformer_engine_spec,
 )
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -44,6 +45,38 @@ try:
 except ImportError:
     HAVE_TE = False
     TE_VERSION = None
+
+
+def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Create a Transformer Engine layer specification based on the provided config."""
+    return get_gpt_layer_with_transformer_engine_spec(
+        num_experts=config.num_moe_experts,
+        moe_grouped_gemm=config.moe_grouped_gemm,
+        qk_layernorm=config.qk_layernorm,
+        fp8=bool(config.num_moe_experts and (config.fp8 is not None)),
+    )
+
+
+def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Create a local layer specification without Transformer Engine."""
+    return get_gpt_layer_local_spec(
+        num_experts=config.num_moe_experts,
+        moe_grouped_gemm=config.moe_grouped_gemm,
+        qk_layernorm=config.qk_layernorm,
+        normalization=config.normalization,
+    )
+
+
+def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Determine the most appropriate layer specification based on availability."""
+    if HAVE_TE:
+        # Re-instate this when we have a path for it in Megatron-Core
+        # if config.use_transformer_engine_full_layer_spec:
+        #     return transformer_engine_full_layer_spec(config)
+        # else:
+        return transformer_engine_layer_spec(config)
+    else:
+        return local_layer_spec(config)
 
 
 @dataclass
@@ -77,6 +110,13 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     generation_config: Optional[Any] = None
 
     vocab_size: Optional[int] = None
+
+    # MoE / FP8
+    num_moe_experts: Optional[int] = None
+    moe_grouped_gemm: bool = False
+    qk_layernorm: bool = False
+    fp8: Optional[str] = None
+    normalization: str = "LayerNorm"
 
     # Multi-token prediction
     mtp_enabled: bool = False
@@ -132,7 +172,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
         transformer_layer_spec = self.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):
-            transformer_layer_spec = transformer_layer_spec()
+            transformer_layer_spec = transformer_layer_spec(self)
 
         if self.vocab_size is not None:
             vocab_size = self.vocab_size
@@ -240,7 +280,6 @@ class GPTProvider126M(GPTModelProvider):
     num_attention_heads: int = 12
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -258,7 +297,6 @@ class GPTProvider5B(GPTModelProvider):
     num_attention_heads: int = 32
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -276,7 +314,6 @@ class GPTProvider7B(GPTModelProvider):
     num_attention_heads: int = 32
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -294,7 +331,6 @@ class GPTProvider20B(GPTModelProvider):
     num_attention_heads: int = 48
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -312,7 +348,6 @@ class GPTProvider40B(GPTModelProvider):
     num_attention_heads: int = 64
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
 
 
 @dataclass
@@ -332,5 +367,4 @@ class GPTProvider175B(GPTModelProvider):
     attention_dropout: float = 0.0
     bias_activation_fusion: bool = True
     bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
     layernorm_zero_centered_gamma: bool = True

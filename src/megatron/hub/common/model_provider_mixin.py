@@ -174,11 +174,11 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             **model_parallel_kwargs,
         )
         if seed is not None:
-            model_parallel_cuda_manual_seed(seed, **seed_kwargs)
+            model_parallel_cuda_manual_seed(seed, **(seed_kwargs or {}))
 
-    def __call__(self, **kwargs: Unpack["GetModelKwargs"]) -> list[ModelT]:
+    def __call__(self, *args, **kwargs: Unpack["GetModelKwargs"]) -> list[ModelT]:
         """A convenience wrapper around `provide_models`."""
-        return self.provide_models(**kwargs)
+        return self.provide_models(*args, **kwargs)
 
     @property
     def meta_model(self) -> list[ModelT]:
