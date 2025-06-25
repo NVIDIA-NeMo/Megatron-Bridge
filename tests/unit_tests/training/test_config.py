@@ -698,7 +698,10 @@ class TestRerunConfigValidation:
         import copy
         from dataclasses import fields
 
-        gpt_cfg = create_test_gpt_config()
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
         full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_cfg)
 
         def check_container_state_matches(cfg1, cfg2):
