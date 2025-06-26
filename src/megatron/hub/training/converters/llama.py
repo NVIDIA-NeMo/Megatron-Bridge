@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from megatron.hub.models.llama import Llama4Config, Llama31Config, LlamaConfig
+from megatron.hub.models.llama import Llama4ModelProvider, Llama31ModelProvider, LlamaModelProvider
 from megatron.hub.training.converters.common import BaseExporter, BaseImporter, dtype_from_hf
 from megatron.hub.training.converters.state_transform import TransformFns, apply_transforms, state_transform
 
@@ -149,7 +149,7 @@ class HFLlamaExporter(BaseExporter):
 
         rope_scaling = None
         # For Llama 3.1 and Llama 3.2, rope_scaling is used and thus needed to parsed to the config
-        if isinstance(source, Llama31Config):
+        if isinstance(source, Llama31ModelProvider):
             rope_scaling = {
                 "factor": source.scale_factor,
                 "low_freq_factor": source.low_freq_factor,
@@ -307,14 +307,14 @@ class HFLlamaImporter(BaseImporter):
         return self._hf_config
 
     @property
-    def tron_config(self) -> LlamaConfig:
-        """Create a megatron.hub LlamaConfig from the HF model config.
+    def tron_config(self) -> LlamaModelProvider:
+        """Create a megatron.hub LlamaModelProvider from the HF model config.
 
         Translates the HF configuration parameters to the equivalent megatron.hub
         configuration.
 
         Returns:
-            LlamaConfig: megatron.hub configuration for Llama models
+            LlamaModelProvider: megatron.hub configuration for Llama models
         """
         if self._tron_config is not None:
             return self._tron_config
@@ -335,14 +335,14 @@ class HFLlamaImporter(BaseImporter):
 
         if getattr(source, "rope_scaling", None) is not None and source.rope_scaling.get("rope_type") == "llama3":
             # Apply Llama3.1 customize rope scaling
-            cls = partial(Llama31Config, scale_factor=source.rope_scaling.get("factor", 8.0))
+            cls = partial(Llama31ModelProvider, scale_factor=source.rope_scaling.get("factor", 8.0))
         else:
-            cls = LlamaConfig
+            cls = LlamaModelProvider
 
         args = {}
         if "llama4" in getattr(source, "model_type", None):
             # Llama4 Uses MoE Arch
-            cls = Llama4Config
+            cls = Llama4ModelProvider
             # Parse Llama4 related args
             if getattr(source, "model_type", None) == "llama4":
                 # Passing in a VL Llama4 Config

@@ -28,12 +28,12 @@ from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShard
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
 
+from megatron.hub.core.utils.instantiate_utils import instantiate
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.training.checkpointing import save_checkpoint
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
 from megatron.hub.training.state import GlobalState
 from megatron.hub.training.tokenizers.tokenizer import _HuggingFaceTokenizer
-from megatron.hub.training.utils.instantiate_utils import instantiate
 
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
@@ -139,7 +139,7 @@ def get_full_mcore_state_dict(dist_ckpt_folder: Path, model_cfg: Any) -> dict[st
             model_cfg.params_dtype = torch_dtype_from_mcore_config(model_cfg)
 
         with megatron_cpu_init_context(model_cfg):
-            model = model_cfg.configure_model(None)
+            model = model_cfg.provide()
 
         strategy = TorchDistLoadShardedStrategy()
         state_dict = strategy.load(model.sharded_state_dict(), Path(dist_ckpt_folder))
@@ -289,7 +289,7 @@ class BaseImporter(ABC):
             A list containing the initialized megatron module.
         """
         with megatron_cpu_init_context(cfg):
-            model = cfg.configure_model(tokenizer=self.tokenizer)
+            model = cfg.provide()
         return [model]
 
     @abstractmethod
