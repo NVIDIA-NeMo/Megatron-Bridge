@@ -2722,7 +2722,7 @@ dependencies = [
     { name = "tiktoken" },
     { name = "torch" },
     { name = "tqdm" },
-    { name = "transformer-engine", extra = ["pytorch"] },
+    { name = "transformer-engine", extra = ["pytorch"], marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
     { name = "wandb" },
 ]
@@ -2793,7 +2793,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.9.0" },
     { name = "torch", specifier = "==2.7.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "transformer-engine", extras = ["pytorch"], specifier = "==2.4.0" },
+    { name = "transformer-engine", extras = ["pytorch"], marker = "sys_platform != 'darwin'", specifier = "==2.4.0" },
     { name = "transformers", specifier = ">=4.51.3" },
     { name = "uvicorn", marker = "extra == 'eval'" },
     { name = "wandb", specifier = ">=0.19.10" },
