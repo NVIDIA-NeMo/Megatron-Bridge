@@ -101,11 +101,9 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          runner: ${{ runner.name }}
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout || 10 }}
           is_unit_test: "true"
-          image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
           cpu-only: ${{ matrix.cpu-only || false }}
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -127,7 +125,6 @@ jobs:
           script: L2_Launch_training
           timeout: 60
           is_unit_test: "false"
-          image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
           cpu-only: false
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
