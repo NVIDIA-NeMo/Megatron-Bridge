@@ -12,28 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Automatic bridge selection for Megatron-Hub models.
-
-This module provides AutoBridge, which automatically selects the appropriate
-bridge based on the model configuration without requiring users to know which
-specific bridge to use.
-
-The AutoBridge examines model architectures and selects the first compatible
-bridge from a predefined list. This allows users to work with models without
-needing to understand the underlying bridge implementation details.
-
-Example:
-    >>> from megatron.hub import AutoBridge
-    >>>
-    >>> # Automatically loads with the correct bridge type
-    >>> bridge = AutoBridge.from_pretrained("meta-llama/Llama-3-8B")
-    >>>
-    >>> # Convert to Megatron format
-    >>> provider = bridge.to_provider()
-    >>> model = provider(wrap_with_ddp=False)
-"""
-
 from pathlib import Path
 from typing import Any, List, Protocol, Type, Union
 
