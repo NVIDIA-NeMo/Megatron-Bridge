@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import os
 from typing import Any, Optional
 
@@ -41,31 +40,22 @@ from megatron.hub.training.finetune import finetune
 def squad_process_example_fn(example: dict[str, Any], tokenizer: Optional[Any] = None) -> ProcessExampleOutput:
     """Format SQuAD examples into instruction-following format."""
     result = {}
-    # Write each example as a JSON line in the output file
     result["input"] = "Context: " + example["context"] + " Question: " + example["question"] + " Answer:"
     result["output"] = example["answers"]["text"][0]
     return result
 
 
 def main():
-    """Main execution function."""
-    parser = argparse.ArgumentParser(description="Megatron Hub Llama3-8B LoRA Fine-tuning on SQuAD")
-    parser.add_argument("--max-steps", type=int, default=1000, help="Maximum training steps")
-    parser.add_argument("--seq-length", type=int, default=2048, help="Sequence length (default: 2048 to match NeMo)")
-    parser.add_argument("--global-batch-size", type=int, default=128, help="Global batch size (NeMo default: 128)")
-    parser.add_argument("--micro-batch-size", type=int, default=1, help="Micro batch size (NeMo default: 1)")
-    parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--save-dir", type=str, default="./nemo_lm_experiments", help="Directory to save experiments")
-    parser.add_argument("--num-nodes", type=int, default=1, help="Number of nodes")
-    parser.add_argument("--num-gpus-per-node", type=int, default=8, help="Number of GPUs per node")
+    """
+    This script finetunes a llama3 8b model on the SQuAD dataset.
+    """
 
-    args = parser.parse_args()
-
-    global_batch_size = args.global_batch_size  # 128 nemo default
-    micro_batch_size = args.micro_batch_size  # 1 nemo default
-    seq_length = args.seq_length  # 2048 nemo default
-    max_steps = args.max_steps
-    lr = args.learning_rate  # 1e-4 (NeMo's LoRA default)
+    # Hyperparameters
+    max_steps = 1000
+    seq_length = 2048
+    global_batch_size = 128
+    micro_batch_size = 1
+    lr = 1e-4
 
     model_cfg = Llama3Config8B(
         tensor_model_parallel_size=1,
@@ -74,17 +64,14 @@ def main():
         sequence_parallel=False,
         seq_length=seq_length,
         bf16=True,
-        params_dtype=torch.bfloat16,  # match nemo b16 mixzed precision default
-        cross_entropy_loss_fusion=False,  # match nemo default
+        params_dtype=torch.bfloat16,
+        cross_entropy_loss_fusion=False,
     )
 
-    # Load SQuAD dataset
-    print("Loading SQuAD dataset...")
     squad_dataset = datasets.load_dataset("squad")
 
     pretrained_checkpoint = "/lustre/fsw/coreai_dlalgo_genai/ansubramania/models/Meta-Llama3-8B"
 
-    # Dataset configuration using HF dataset builder
     dataset_config = HFDatasetConfig(
         dataset_name="squad",
         process_example_fn=squad_process_example_fn,
@@ -99,7 +86,6 @@ def main():
         delete_raw=True,
     )
 
-    # Tokenizer configuration - using Llama3-8B tokenizer
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=os.path.join(pretrained_checkpoint, "hf_assets"),
@@ -125,7 +111,7 @@ def main():
         weight_decay_incr_style="constant",
         lr_decay_style="cosine",
         lr_decay_iters=max_steps,
-        lr_warmup_iters=50,  # warmup_steps = 50 (NeMo default)
+        lr_warmup_iters=50,
         lr_warmup_init=0.0,
         override_opt_param_scheduler=True,
     )
@@ -133,7 +119,7 @@ def main():
     ddp_config = DistributedDataParallelConfig(
         check_for_nan_in_grad=True,
         grad_reduce_in_fp32=True,
-        use_distributed_optimizer=False,  # Disabled for LoRA
+        use_distributed_optimizer=False,
     )
 
     checkpoint_dir = "/lustre/fsw/coreai_dlalgo_genai/ansubramania/checkpoints/megatron_hub_peft"
@@ -144,7 +130,6 @@ def main():
     os.makedirs(tensorboard_dir, exist_ok=True)
     os.makedirs(wandb_save_dir, exist_ok=True)
 
-    # Logger configuration with W&B - matching the pattern from user's example
     logger_config = LoggerConfig(
         wandb_project="megatron-hub-custom-loop-peft",
         wandb_entity="nvidia",
@@ -160,7 +145,6 @@ def main():
         logging_level="INFO",
     )
 
-    # Checkpoint configuration
     checkpoint_config = CheckpointConfig(
         save_interval=200,
         save=None,
@@ -170,11 +154,9 @@ def main():
         pretrained_checkpoint=pretrained_checkpoint,
     )
 
-    # RNG configuration
     rng_config = RNGConfig(seed=1234)
     lora_config = LoRA(dim=8, alpha=16)
 
-    # Create the main configuration container
     cfg = ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -197,6 +179,7 @@ def main():
     )
 
     finetune(config=cfg, forward_step_func=forward_step)
+    torch.distributed.destroy_process_group()
 
 
 # def import_llama3_8b():
