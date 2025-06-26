@@ -11,16 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Megatron Hub - A component of the Megatron ecosystem."""
 
-from megatron.hub import models as _models
-from megatron.hub.bridge.auto_bridge import AutoBridge
-from megatron.hub.bridge.causal_bridge import CausalLMBridge
-from megatron.hub.models import *  # noqa: F403
+from megatron.hub.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.hub.bridge.hf_pretrained.vlm import PreTrainedVLM
 
 
-__all__ = [
-    "AutoBridge",
-    "CausalLMBridge",
-    *_models.__all__,
-]
+__all__ = ["PreTrainedCausalLM", "PreTrainedVLM"]
