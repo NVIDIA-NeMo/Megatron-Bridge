@@ -860,6 +860,33 @@ def load_checkpoint(
             raise FileNotFoundError("No checkpoint found in load directory or pretrained directory")
         cfg.checkpoint.finetune = True
 
+    return _load_checkpoint_from_path(
+        load_dir, state, model, optimizer, opt_param_scheduler, strict, checkpointing_context
+    )
+
+
+def _load_checkpoint_from_path(
+    load_dir: str,
+    state: GlobalState,
+    model: Union[torch.nn.Module, list[torch.nn.Module]],
+    optimizer: Optional[torch.optim.Optimizer],
+    opt_param_scheduler: Optional[Any],
+    strict: bool = True,
+    checkpointing_context: Optional[dict[str, Any]] = None,
+    skip_load_to_model_and_opt: bool = False,
+) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
+    """Load a checkpoint from a given path.
+
+    Args:
+        load_dir: The directory containing the checkpoint.
+        state: The GlobalState object.
+        model: The model module(s) to load state into.
+    """
+    if not checkpoint_exists(load_dir):
+        raise FileNotFoundError(f"No checkpoint found for the path {load_dir}")
+
+    cfg = state.cfg
+
     model = unwrap_model(model)
 
     load_kwargs = {}
@@ -986,6 +1013,24 @@ def load_checkpoint(
     # When "--fp8-param-gather" is disabled, this function doesn't modify anything.
     fix_fp8_params_lose_precision_when_loading_dist_ckpt(load_kwargs["sharded_state_dict"])
 
+    # For PEFT, check if resuming from a checkpoint saved during training, which contains only the PEFT adapter states
+    # This situation occurs when:
+    # 1. The PEFT config is set
+    # 2. Loading from a checkpoint saved during training (not loading from a pretrained checkpoint)
+    # 3. Not in finetune mode
+    is_peft_resume = (
+        cfg.peft is not None
+        and cfg.checkpoint.load is not None
+        and load_dir == cfg.checkpoint.load
+        and load_dir != cfg.checkpoint.pretrained_checkpoint
+        and not cfg.checkpoint.finetune
+    )
+
+    if is_peft_resume:
+        load_kwargs["sharded_state_dict"] = apply_peft_adapter_filter_to_state_dict(
+            load_kwargs["sharded_state_dict"], cfg.peft
+        )
+
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir, cfg, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
     )
@@ -1009,21 +1054,6 @@ def load_checkpoint(
 
     # Model.
     if not skip_load_to_model_and_opt:
-        # Check if this is resuming from a checkpoint saved during training that contains only the PEFT adapter states
-        # This situation occurs when:
-        # 1. The PEFT config is set
-        # 2. Loading from a checkpoint saved during training (not loading from a pretrained checkpoint)
-        # 3. Not in finetune mode
-        is_peft_resume = (
-            cfg.peft is not None
-            and cfg.checkpoint.load is not None
-            and load_dir == cfg.checkpoint.load
-            and not cfg.checkpoint.finetune
-        )
-
-        if is_peft_resume:
-            state_dict = apply_peft_adapter_filter_to_state_dict(state_dict, cfg.peft)
-
         load_strict = False if is_peft_resume else strict
         if len(model) == 1:
             model[0].load_state_dict(state_dict["model"], strict=load_strict)
@@ -1255,9 +1285,7 @@ def apply_peft_adapter_filter_to_state_dict(state_dict: dict[str, Any], peft_con
 
     filtered_dict = {}
     for key, value in state_dict.items():
-        if key == "model":
-            filtered_dict[key] = filter_model_state_dict_for_adapters(value, peft_config)
-        elif key.startswith("model") and key != "model" and key[5:].isdigit():
+        if key == "model" or (key.startswith("model") and key != "model" and key[5:].isdigit()):
             filtered_dict[key] = filter_model_state_dict_for_adapters(value, peft_config)
         else:
             filtered_dict[key] = value

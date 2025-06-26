@@ -26,13 +26,9 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.hub.core.utils.common_utils import get_world_size_safe
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
-from megatron.hub.training.tokenizers.config import TokenizerConfig
-<<<<<<< HEAD
-from megatron.hub.training.utils.config_utils import _ConfigContainerBase as Container
-=======
-from megatron.hub.training.utils.config_utils import ConfigContainer as Container
 from megatron.hub.peft.base import PEFT
->>>>>>> b107b8f (more load tests)
+from megatron.hub.training.tokenizers.config import TokenizerConfig
+from megatron.hub.training.utils.config_utils import _ConfigContainerBase as Container
 
 
 @dataclass(kw_only=True)

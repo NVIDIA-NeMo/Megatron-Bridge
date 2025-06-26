@@ -35,5 +35,7 @@ def finetune(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    assert config.checkpoint.pretrained_checkpoint is not None, "Finetuning requires a pretrained checkpoint"
+    assert config.checkpoint.pretrained_checkpoint is not None or config.checkpoint.load is not None, (
+        "Finetuning requires a loading from a pretrained checkpoint or resuming from a checkpoint"
+    )
     return pretrain(config, forward_step_func)
