@@ -173,12 +173,6 @@ runs:
         echo "$cmd" | tee "retry_job.sh"
         bash retry_job.sh
 
-    - name: Install dependencies
-      shell: bash
-      run: |
-        docker exec -e PAT=${{ inputs.PAT }} nemo_container_${{ github.run_id }} \
-          bash docker/common/install.sh --base-image cuda
-
     - name: Create run-script
       id: create
       shell: bash
