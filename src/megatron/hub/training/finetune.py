@@ -14,9 +14,9 @@
 
 from typing import Callable
 
+from megatron.hub.core.utils.decorators import experimental_fn
 from megatron.hub.training.config import ConfigContainer
 from megatron.hub.training.pretrain import pretrain
-from megatron.hub.utils.decorators import experimental_fn
 
 
 @experimental_fn

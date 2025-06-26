@@ -53,12 +53,12 @@ from megatron.hub.core.utils.common_utils import (
     unwrap_model,
 )
 from megatron.hub.core.utils.import_utils import safe_import
+from megatron.hub.peft.base import PEFT
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer
 from megatron.hub.training.state import GlobalState, TrainState
 from megatron.hub.training.utils import wandb_utils
 from megatron.hub.training.utils.log_utils import append_to_progress_log
-from megatron.hub.peft.base import PEFT
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -796,10 +796,7 @@ def generate_state_dict(
     else:
         for i in range(len(model)):
             state_dict["model%d" % i] = model[i].sharded_state_dict()
-<<<<<<< HEAD
 
-=======
->>>>>>> 48c63c8 (rebase)
     # Optimizer stuff.
     if cfg.checkpoint.save_optim:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):

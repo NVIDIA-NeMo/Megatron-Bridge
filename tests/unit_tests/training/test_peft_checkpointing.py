@@ -26,8 +26,7 @@ import torch.nn as nn
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models import get_base_model, get_distributed_model
-from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.base import PEFT
 from megatron.hub.peft.lora import LoRA
 from megatron.hub.training.checkpointing import (
@@ -522,9 +521,10 @@ class TestPEFTCheckpointLoading:
             patch("megatron.hub.training.checkpointing.read_train_state") as mock_read_train_state,
             patch("megatron.hub.training.checkpointing.get_checkpoint_train_state_filename"),
             patch("megatron.hub.training.checkpointing.update_num_microbatches"),
-            patch("megatron.hub.training.checkpointing.fix_query_key_value_ordering"),
             patch("megatron.hub.training.checkpointing.get_checkpoint_version") as mock_get_version,
             patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
+            patch("megatron.hub.training.checkpointing.fix_fp8_params_lose_precision_when_loading_dist_ckpt"),
+            patch("megatron.hub.training.checkpointing.restore_sharded_modelopt_state"),
             patch("torch.distributed.barrier"),
             patch("megatron.hub.training.checkpointing.print_rank_0"),
             patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
@@ -615,9 +615,10 @@ class TestPEFTCheckpointLoading:
             patch("megatron.hub.training.checkpointing.read_train_state") as mock_read_train_state,
             patch("megatron.hub.training.checkpointing.get_checkpoint_train_state_filename"),
             patch("megatron.hub.training.checkpointing.update_num_microbatches"),
-            patch("megatron.hub.training.checkpointing.fix_query_key_value_ordering"),
             patch("megatron.hub.training.checkpointing.get_checkpoint_version") as mock_get_version,
             patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
+            patch("megatron.hub.training.checkpointing.fix_fp8_params_lose_precision_when_loading_dist_ckpt"),
+            patch("megatron.hub.training.checkpointing.restore_sharded_modelopt_state"),
             patch("torch.distributed.barrier"),
             patch("megatron.hub.training.checkpointing.print_rank_0"),
             patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
@@ -713,9 +714,10 @@ class TestPEFTCheckpointLoading:
             patch("megatron.hub.training.checkpointing.read_train_state") as mock_read_train_state,
             patch("megatron.hub.training.checkpointing.get_checkpoint_train_state_filename"),
             patch("megatron.hub.training.checkpointing.update_num_microbatches"),
-            patch("megatron.hub.training.checkpointing.fix_query_key_value_ordering"),
             patch("megatron.hub.training.checkpointing.get_checkpoint_version") as mock_get_version,
             patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
+            patch("megatron.hub.training.checkpointing.fix_fp8_params_lose_precision_when_loading_dist_ckpt"),
+            patch("megatron.hub.training.checkpointing.restore_sharded_modelopt_state"),
             patch("megatron.core.mpu.set_virtual_pipeline_model_parallel_rank"),
             patch("torch.distributed.barrier"),
             patch("megatron.hub.training.checkpointing.print_rank_0"),
@@ -830,28 +832,15 @@ class TestPEFTCheckpointingIntegration:
     def gpt_model_and_config(self):
         """Create a minimal GPT model with Megatron modules for integration testing."""
 
-        # Create minimal GPT config for testing
-        gpt_config = GPTConfig(
+        # Create minimal GPT model provider for testing
+        model_provider = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=4,
             seq_length=64,
             vocab_size=256,
             ffn_hidden_size=256,
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
         )
-
-        base_model = get_base_model(gpt_config)
-
-        # Verify we got Megatron modules
-        assert isinstance(base_model, list)
-        assert len(base_model) > 0
-        assert all(isinstance(chunk, MegatronModule) for chunk in base_model)
-
-        # Move to CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
 
         # Create LoRA PEFT config
         lora_config = LoRA(
@@ -861,14 +850,47 @@ class TestPEFTCheckpointingIntegration:
             dropout=0.1,
         )
 
-        return base_model, lora_config
+        return model_provider, lora_config
+
+    def _create_lora_pre_wrap_hook(self, lora_config: LoRA):
+        """Create a pre-wrap hook that applies LoRA to the model.
+
+        Args:
+            lora_config: LoRA configuration instance
+
+        Returns:
+            A callable hook that can be registered with the model provider
+        """
+
+        def lora_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+            """Pre-wrap hook that applies LoRA transformation.
+
+            Args:
+                model: List of base model modules before distributed wrapping
+
+            Returns:
+                List of LoRA-transformed model modules
+            """
+            return lora_config(model, training=True)
+
+        return lora_pre_wrap_hook
 
     def test_filter_model_state_dict_for_adapters_integration_with_peft(self, gpt_model_and_config):
         """Test filter_model_state_dict_for_adapters with real GPT model and LoRA PEFT."""
-        model, lora_config = gpt_model_and_config
+        model_provider, lora_config = gpt_model_and_config
 
-        # Apply PEFT to the model
-        peft_model = lora_config(model, training=True)
+        # Register LoRA pre-wrap hook and get model with PEFT applied
+        lora_hook = self._create_lora_pre_wrap_hook(lora_config)
+        model_provider.register_pre_wrap_hook(lora_hook)
+        peft_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+
+        # Verify we got Megatron modules
+        assert isinstance(peft_model, list)
+        assert len(peft_model) > 0
+        assert all(isinstance(chunk, MegatronModule) for chunk in peft_model)
+
+        # Move to CUDA
+        peft_model = [chunk.cuda() for chunk in peft_model]
 
         # Set up params_to_save for the PEFT config
         lora_config.set_params_to_save(peft_model)
@@ -902,10 +924,13 @@ class TestPEFTCheckpointingIntegration:
 
     def test_apply_peft_adapter_filter_integration(self, gpt_model_and_config):
         """Test apply_peft_adapter_filter_to_state_dict with real model state dict."""
-        model, lora_config = gpt_model_and_config
+        model_provider, lora_config = gpt_model_and_config
 
-        # Apply PEFT to the model
-        peft_model = lora_config(model, training=True)
+        # Register LoRA pre-wrap hook and get model with PEFT applied
+        lora_hook = self._create_lora_pre_wrap_hook(lora_config)
+        model_provider.register_pre_wrap_hook(lora_hook)
+        peft_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        peft_model = [chunk.cuda() for chunk in peft_model]
         lora_config.set_params_to_save(peft_model)
 
         # Create a realistic complete state dict
@@ -943,37 +968,28 @@ class TestPEFTCheckpointingIntegration:
 
     def test_adapter_filtering_with_distributed_model(self, gpt_model_and_config):
         """Test that adapter filtering works with distributed models (DDP/FSDP wrapped)."""
-        model, lora_config = gpt_model_and_config
+        model_provider, lora_config = gpt_model_and_config
 
-        # Apply PEFT to the base model
-        peft_model = lora_config(model, training=True)
-        lora_config.set_params_to_save(peft_model)
+        # Register LoRA pre-wrap hook
+        lora_hook = self._create_lora_pre_wrap_hook(lora_config)
+        model_provider.register_pre_wrap_hook(lora_hook)
 
         # Create DDP config
         ddp_config = DistributedDataParallelConfig()
 
-        # Wrap the model with distributed wrappers (DDP)
-        distributed_model = get_distributed_model(
-            model=peft_model,
-            model_config=GPTConfig(
-                num_layers=2,
-                hidden_size=128,
-                num_attention_heads=4,
-                seq_length=64,
-                vocab_size=256,
-                ffn_hidden_size=256,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-            ),
+        # Get the model with distributed wrappers (DDP) and PEFT applied via hook
+        distributed_model = model_provider(
             ddp_config=ddp_config,
             overlap_param_gather_with_optimizer_step=False,
             use_torch_fsdp2=False,
             wrap_with_ddp=True,
             data_parallel_random_init=False,
         )
+        distributed_model = [chunk.cuda() for chunk in distributed_model]
+        lora_config.set_params_to_save(distributed_model)
 
         # Verify the model is wrapped with DDP
-        assert len(distributed_model) == len(peft_model)
+        assert len(distributed_model) > 0
 
         # Get state dict from the distributed model (should be able to get through DDP wrapper)
         distributed_model_state_dict = distributed_model[0].sharded_state_dict()
