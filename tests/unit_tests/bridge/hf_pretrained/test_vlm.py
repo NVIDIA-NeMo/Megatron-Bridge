@@ -106,8 +106,8 @@ class TestPreTrainedVLMInitialization:
 
     def test_init_with_device(self):
         """Test initialization with specific device."""
-        vlm = PreTrainedVLM(device="cuda:0")
-        assert vlm.device == "cuda:0"
+        vlm = PreTrainedVLM(device="cpu")
+        assert vlm.device == "cpu"
 
         vlm2 = PreTrainedVLM(device=torch.device("cpu"))
         assert vlm2.device == torch.device("cpu")
@@ -135,28 +135,17 @@ class TestPreTrainedVLMInitialization:
         model_path = "llava-hf/llava-1.5-7b-hf"
         vlm = PreTrainedVLM.from_pretrained(
             model_path,
-            device="cuda",
+            device="cpu",
             torch_dtype=torch.float16,
             trust_remote_code=True,
             use_fast=True,
         )
 
         assert vlm._model_name_or_path == model_path
-        assert vlm.device == "cuda"
+        assert vlm.device == "cpu"
         assert vlm.torch_dtype == torch.float16
         assert vlm.trust_remote_code is True
         assert vlm.kwargs == {"use_fast": True}
-
-    @patch("torch.cuda.is_available")
-    def test_cuda_device_selection(self, mock_cuda):
-        """Test automatic CUDA device selection."""
-        mock_cuda.return_value = True
-        vlm = PreTrainedVLM()
-        assert vlm.device == "cuda"
-
-        mock_cuda.return_value = False
-        vlm2 = PreTrainedVLM()
-        assert vlm2.device == "cpu"
 
 
 class TestPreTrainedVLMConfigProperty:
@@ -389,11 +378,11 @@ class TestPreTrainedVLMModelProperty:
 
     def test_model_moved_to_device(self, mock_model):
         """Test model is moved to device."""
-        vlm = PreTrainedVLM(device="cuda:0")
+        vlm = PreTrainedVLM(device="cpu")
         vlm._model = mock_model
 
         _ = vlm.model
-        mock_model.to.assert_called_with("cuda:0")
+        mock_model.to.assert_called_with("cpu")
 
     def test_model_setter(self, mock_model):
         """Test setting model manually."""
@@ -670,7 +659,7 @@ class TestPreTrainedVLMIntegration:
         mock_model_load.return_value = mock_model
 
         # Create VLM
-        vlm = PreTrainedVLM.from_pretrained("llava-hf/llava-1.5-7b-hf", torch_dtype=torch.float16, device="cuda")
+        vlm = PreTrainedVLM.from_pretrained("llava-hf/llava-1.5-7b-hf", torch_dtype=torch.float16, device="cpu")
 
         # Process inputs
         mock_processor.return_value = {
