@@ -38,7 +38,7 @@ main() {
     # Install dependencies
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y curl git libopenmpi-dev libpython3.12 python3-pip python3-venv
+    apt-get install -y curl git python3-pip python3-venv
 
     # Install uv
     UV_VERSION="0.7.2"
@@ -47,7 +47,6 @@ main() {
     export UV_PROJECT_ENVIRONMENT=/opt/venv
     export PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
     export UV_LINK_MODE=copy
-    export CXXFLAGS="-D_GLIBCXX_USE_CXX11_ABI=0"
 
     UV_ARGS=()
     if [[ "$BASE_IMAGE" == "pytorch" ]]; then
