@@ -606,8 +606,31 @@ class TestLoRAMegatronIntegration:
         except (NameError, AttributeError, RuntimeError):
             pass
 
+    def _create_lora_pre_wrap_hook(self, lora_config: LoRA):
+        """Create a pre-wrap hook that applies LoRA to the model.
+
+        Args:
+            lora_config: LoRA configuration instance
+
+        Returns:
+            A callable hook that can be registered with the model provider
+        """
+
+        def lora_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+            """Pre-wrap hook that applies LoRA transformation.
+
+            Args:
+                model: List of base model modules before distributed wrapping
+
+            Returns:
+                List of LoRA-transformed model modules
+            """
+            return lora_config(model, training=True)
+
+        return lora_pre_wrap_hook
+
     def test_lora_with_gpt_model(self):
-        """Test LoRA application to a real GPT model from get_base_model."""
+        """Test LoRA application to a real GPT model using pre-wrap hooks."""
 
         # Create a minimal GPT configuration
         model_provider = GPTModelProvider(
@@ -618,28 +641,24 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Verify we got a list of Megatron modules
-        assert isinstance(base_model, list)
-        assert len(base_model) > 0
-        assert all(isinstance(chunk, MegatronModule) for chunk in base_model)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
         # Create LoRA instance targeting linear layers
         lora = LoRA(
             target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"], dim=8, alpha=16, dropout=0.0
         )
 
-        # Apply LoRA to the model
-        adapted_model = lora(base_model, training=True)
+        # Register LoRA pre-wrap hook
+        lora_hook = self._create_lora_pre_wrap_hook(lora)
+        model_provider.register_pre_wrap_hook(lora_hook)
 
-        # Verify we still have a list of the same length
+        # Get the model with LoRA applied via hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+
+        # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
-        assert len(adapted_model) == len(base_model)
+        assert len(adapted_model) > 0
+        assert all(isinstance(chunk, MegatronModule) for chunk in adapted_model)
+
+        adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Verify that LoRA was applied to target modules
         found_lora_modules = []
@@ -666,7 +685,7 @@ class TestLoRAMegatronIntegration:
         assert efficiency_ratio < 0.3, f"LoRA should be parameter efficient, got ratio: {efficiency_ratio}"
 
     def test_lora_forward_pass_with_megatron_model(self):
-        """Test forward pass through LoRA-adapted Megatron model."""
+        """Test forward pass through LoRA-adapted Megatron model using pre-wrap hooks."""
 
         # Create minimal config for fast testing
         model_provider = GPTModelProvider(
@@ -677,15 +696,14 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        # Get and adapt model
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
+        # Create LoRA and register hook
         lora = LoRA(dim=4, alpha=8)
-        adapted_model = lora(base_model, training=True)
+        lora_hook = self._create_lora_pre_wrap_hook(lora)
+        model_provider.register_pre_wrap_hook(lora_hook)
+
+        # Get and adapt model using hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Test forward pass with proper Megatron input format
         batch_size, seq_len = 2, 8
@@ -727,7 +745,7 @@ class TestLoRAMegatronIntegration:
                 assert lora_count > 0, "Should have LoRA adaptations applied"
 
     def test_lora_merge_with_megatron_model(self):
-        """Test LoRA merge functionality with Megatron models."""
+        """Test LoRA merge functionality with Megatron models using pre-wrap hooks."""
 
         # Create minimal config
         model_provider = GPTModelProvider(
@@ -738,15 +756,14 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        # Get base model and apply LoRA
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Move model to CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
+        # Create LoRA and register hook
         lora = LoRA(dim=4, alpha=8)
-        adapted_model = lora(base_model, training=True)
+        lora_hook = self._create_lora_pre_wrap_hook(lora)
+        model_provider.register_pre_wrap_hook(lora_hook)
+
+        # Get LoRA-adapted model using hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Count LoRA modules before merge
         lora_modules_before = 0
@@ -791,14 +808,7 @@ class TestLoRAMegatronIntegration:
         assert weights_changed > 0, "LoRAMerge should change the underlying weights"
 
     def test_lora_different_targets(self):
-        """Test LoRA with different target module configurations."""
-        model_provider = GPTModelProvider(
-            num_layers=2,
-            hidden_size=64,
-            num_attention_heads=2,
-            vocab_size=100,
-            ffn_hidden_size=128,
-        )
+        """Test LoRA with different target module configurations using pre-wrap hooks."""
 
         # Test different target configurations
         target_configs = [
@@ -809,13 +819,23 @@ class TestLoRAMegatronIntegration:
         ]
 
         for targets in target_configs:
-            # Create fresh model for each configuration
-            base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-            if torch.cuda.is_available():
-                base_model = [chunk.cuda() for chunk in base_model]
+            # Create fresh model provider for each configuration
+            model_provider = GPTModelProvider(
+                num_layers=2,
+                hidden_size=64,
+                num_attention_heads=2,
+                vocab_size=100,
+                ffn_hidden_size=128,
+            )
 
+            # Create LoRA and register hook
             lora = LoRA(target_modules=targets, dim=4, alpha=8)
-            adapted_model = lora(base_model, training=True)
+            lora_hook = self._create_lora_pre_wrap_hook(lora)
+            model_provider.register_pre_wrap_hook(lora_hook)
+
+            # Get adapted model using hook
+            adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+            adapted_model = [chunk.cuda() for chunk in adapted_model]
 
             # Count LoRA modules
             lora_count = sum(
@@ -826,7 +846,7 @@ class TestLoRAMegatronIntegration:
             assert lora_count > 0
 
     def test_lora_transform_idempotent_megatron_model(self):
-        """Test that LoRA transform is idempotent when applied to real Megatron models."""
+        """Test that LoRA transform is idempotent when applied via pre-wrap hooks."""
         # Create a minimal GPT configuration
         model_provider = GPTModelProvider(
             num_layers=1,
@@ -836,17 +856,15 @@ class TestLoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
         # Create LoRA instance
         lora = LoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
 
-        # Apply LoRA first time
-        first_transform = lora(base_model, training=True)
+        # Register hook and apply LoRA first time
+        lora_hook = self._create_lora_pre_wrap_hook(lora)
+        model_provider.register_pre_wrap_hook(lora_hook)
+        first_transform = model_provider(ddp_config=None, wrap_with_ddp=False)
+
+        first_transform = [chunk.cuda() for chunk in first_transform]
 
         # Store references to the transformed model chunks
         first_chunks = [chunk for chunk in first_transform]
@@ -861,6 +879,8 @@ class TestLoRAMegatronIntegration:
         assert len(found_lora_modules_first) > 0, "Should have found LoRA modules in first transformation"
 
         # Apply LoRA second time to the already-transformed model
+        # Note: In the pre-wrap hook pattern, we need to apply LoRA directly since
+        # the model provider has already been called
         second_transform = lora(first_transform, training=True)
 
         # Verify idempotency: should return the same model chunks

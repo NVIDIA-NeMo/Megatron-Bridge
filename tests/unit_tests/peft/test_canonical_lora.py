@@ -690,8 +690,31 @@ class TestCanonicalLoRAMegatronIntegration:
         except (NameError, AttributeError, RuntimeError):
             pass
 
+    def _create_canonical_lora_pre_wrap_hook(self, lora_config: CanonicalLoRA):
+        """Create a pre-wrap hook that applies CanonicalLoRA to the model.
+
+        Args:
+            lora_config: CanonicalLoRA configuration instance
+
+        Returns:
+            A callable hook that can be registered with the model provider
+        """
+
+        def canonical_lora_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+            """Pre-wrap hook that applies CanonicalLoRA transformation.
+
+            Args:
+                model: List of base model modules before distributed wrapping
+
+            Returns:
+                List of CanonicalLoRA-transformed model modules
+            """
+            return lora_config(model, training=True)
+
+        return canonical_lora_pre_wrap_hook
+
     def test_canonical_lora_with_gpt_model(self):
-        """Test CanonicalLoRA application to a real GPT model from get_base_model."""
+        """Test CanonicalLoRA application to a real GPT model using pre-wrap hooks."""
 
         # Create a minimal GPT configuration
         model_provider = GPTModelProvider(
@@ -701,17 +724,6 @@ class TestCanonicalLoRAMegatronIntegration:
             vocab_size=1000,
             ffn_hidden_size=256,
         )
-
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Verify we got a list of Megatron modules
-        assert isinstance(base_model, list)
-        assert len(base_model) > 0
-        assert all(isinstance(chunk, MegatronModule) for chunk in base_model)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
 
         # Create CanonicalLoRA instance targeting linear layers
         lora = CanonicalLoRA(
@@ -729,12 +741,17 @@ class TestCanonicalLoRAMegatronIntegration:
             dropout=0.0,
         )
 
-        # Apply CanonicalLoRA to the model
-        adapted_model = lora(base_model, training=True)
+        # Register CanonicalLoRA pre-wrap hook
+        lora_hook = self._create_canonical_lora_pre_wrap_hook(lora)
+        model_provider.register_pre_wrap_hook(lora_hook)
 
-        # Verify we still have a list of the same length
+        # Get the model with CanonicalLoRA applied via hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+
+        # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
-        assert len(adapted_model) == len(base_model)
+        assert len(adapted_model) > 0
+        assert all(isinstance(chunk, MegatronModule) for chunk in adapted_model)
 
         # Verify that LoRA was applied to target modules
         found_lora_modules = []
@@ -761,10 +778,10 @@ class TestCanonicalLoRAMegatronIntegration:
         assert efficiency_ratio < 0.3, f"CanonicalLoRA should be parameter efficient, got ratio: {efficiency_ratio}"
 
     def test_canonical_lora_forward_pass_with_megatron_model(self):
-        """Test forward pass through CanonicalLoRA-adapted Megatron model."""
+        """Test forward pass through CanonicalLoRA-adapted Megatron model using pre-wrap hooks."""
 
         # Create minimal config for fast testing
-        config = GPTModelProvider(
+        model_provider = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -772,15 +789,13 @@ class TestCanonicalLoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        # Get and adapt model
-        base_model = config(ddp_config=None, wrap_with_ddp=False)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
+        # Create CanonicalLoRA and register hook
         lora = CanonicalLoRA(dim=4, alpha=8)
-        adapted_model = lora(base_model, training=True)
+        lora_hook = self._create_canonical_lora_pre_wrap_hook(lora)
+        model_provider.register_pre_wrap_hook(lora_hook)
+
+        # Get and adapt model using hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
 
         # Test forward pass with proper Megatron input format
         batch_size, seq_len = 2, 8
@@ -789,7 +804,7 @@ class TestCanonicalLoRAMegatronIntegration:
         model_device = next(adapted_model[0].parameters()).device
 
         # Create input tensors in the format expected by Megatron models
-        input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_len), device=model_device)
+        input_ids = torch.randint(0, model_provider.vocab_size, (batch_size, seq_len), device=model_device)
         position_ids = torch.arange(seq_len, dtype=torch.long, device=model_device).unsqueeze(0).expand(batch_size, -1)
 
         # Create 4D causal attention mask [batch_size, 1, seq_len, seq_len]
@@ -814,7 +829,7 @@ class TestCanonicalLoRAMegatronIntegration:
                 else:
                     logits = output
 
-                expected_shape = (batch_size, seq_len, config.vocab_size)
+                expected_shape = (batch_size, seq_len, model_provider.vocab_size)
                 assert logits.shape == expected_shape, f"Expected {expected_shape}, got {logits.shape}"
 
                 # Count LoRA adaptations

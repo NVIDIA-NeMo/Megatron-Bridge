@@ -521,8 +521,31 @@ class TestDoRAMegatronIntegration:
         except (NameError, AttributeError, RuntimeError):
             pass
 
+    def _create_dora_pre_wrap_hook(self, dora_config: DoRA):
+        """Create a pre-wrap hook that applies DoRA to the model.
+
+        Args:
+            dora_config: DoRA configuration instance
+
+        Returns:
+            A callable hook that can be registered with the model provider
+        """
+
+        def dora_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+            """Pre-wrap hook that applies DoRA transformation.
+
+            Args:
+                model: List of base model modules before distributed wrapping
+
+            Returns:
+                List of DoRA-transformed model modules
+            """
+            return dora_config(model, training=True)
+
+        return dora_pre_wrap_hook
+
     def test_dora_with_gpt_model(self):
-        """Test DoRA application to a real GPT model from get_base_model."""
+        """Test DoRA application to a real GPT model using pre-wrap hooks."""
         # Create a minimal GPT configuration
         model_provider = GPTModelProvider(
             num_layers=2,
@@ -532,28 +555,24 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Verify we got a list of Megatron modules
-        assert isinstance(base_model, list)
-        assert len(base_model) > 0
-        assert all(isinstance(chunk, MegatronModule) for chunk in base_model)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
         # Create DoRA instance targeting linear layers
         dora = DoRA(
             target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"], dim=8, alpha=16, dropout=0.0
         )
 
-        # Apply DoRA to the model
-        adapted_model = dora(base_model, training=True)
+        # Register DoRA pre-wrap hook
+        dora_hook = self._create_dora_pre_wrap_hook(dora)
+        model_provider.register_pre_wrap_hook(dora_hook)
 
-        # Verify we still have a list of the same length
+        # Get the model with DoRA applied via hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+
+        # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
-        assert len(adapted_model) == len(base_model)
+        assert len(adapted_model) > 0
+        assert all(isinstance(chunk, MegatronModule) for chunk in adapted_model)
+
+        adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Verify that DoRA was applied to target modules
         found_dora_modules = []
@@ -570,7 +589,7 @@ class TestDoRAMegatronIntegration:
             assert chunk.training
 
     def test_dora_parameter_counting(self):
-        """Test that DoRA adds the expected number of parameters."""
+        """Test that DoRA adds the expected number of parameters using pre-wrap hooks."""
         model_provider = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
@@ -579,16 +598,30 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
+        # Get base model first to count original parameters
         base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
+        base_model = [chunk.cuda() for chunk in base_model]
 
         # Count original parameters
         original_params = sum(p.numel() for chunk in base_model for p in chunk.parameters())
 
-        # Apply DoRA
+        # Create fresh model provider for DoRA application
+        model_provider = GPTModelProvider(
+            num_layers=1,
+            hidden_size=64,
+            num_attention_heads=2,
+            vocab_size=100,
+            ffn_hidden_size=128,
+        )
+
+        # Create DoRA and register hook
         dora = DoRA(target_modules=["linear_qkv"], dim=4, alpha=8)
-        adapted_model = dora(base_model, training=True)
+        dora_hook = self._create_dora_pre_wrap_hook(dora)
+        model_provider.register_pre_wrap_hook(dora_hook)
+
+        # Get DoRA-adapted model using hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Count parameters after DoRA
         adapted_params = sum(p.numel() for chunk in adapted_model for p in chunk.parameters())
@@ -597,7 +630,7 @@ class TestDoRAMegatronIntegration:
         assert adapted_params > original_params
 
     def test_dora_transform_idempotent_megatron_model(self):
-        """Test that DoRA transform is idempotent when applied to real Megatron models."""
+        """Test that DoRA transform is idempotent when applied via pre-wrap hooks."""
         # Create a minimal GPT configuration
         model_provider = GPTModelProvider(
             num_layers=1,
@@ -607,17 +640,15 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-
-        # Ensure model is on CUDA if available
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
         # Create DoRA instance
         dora = DoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
 
-        # Apply DoRA first time
-        first_transform = dora(base_model, training=True)
+        # Register hook and apply DoRA first time
+        dora_hook = self._create_dora_pre_wrap_hook(dora)
+        model_provider.register_pre_wrap_hook(dora_hook)
+        first_transform = model_provider(ddp_config=None, wrap_with_ddp=False)
+
+        first_transform = [chunk.cuda() for chunk in first_transform]
 
         # Store references to the transformed model chunks
         first_chunks = [chunk for chunk in first_transform]
@@ -632,6 +663,8 @@ class TestDoRAMegatronIntegration:
         assert len(found_dora_modules_first) > 0, "Should have found DoRA modules in first transformation"
 
         # Apply DoRA second time to the already-transformed model
+        # Note: In the pre-wrap hook pattern, we need to apply DoRA directly since
+        # the model provider has already been called
         second_transform = dora(first_transform, training=True)
 
         # Verify idempotency: should return the same model chunks
@@ -658,7 +691,7 @@ class TestDoRAMegatronIntegration:
             assert second_module is first_module, f"DoRA module {first_name} should be identical object"
 
     def test_dora_forward_pass(self):
-        """Test that DoRA adapted model can perform forward pass."""
+        """Test that DoRA adapted model can perform forward pass using pre-wrap hooks."""
         model_provider = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
@@ -667,13 +700,14 @@ class TestDoRAMegatronIntegration:
             ffn_hidden_size=128,
         )
 
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-        if torch.cuda.is_available():
-            base_model = [chunk.cuda() for chunk in base_model]
-
-        # Apply DoRA
+        # Create DoRA and register hook
         dora = DoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
-        adapted_model = dora(base_model, training=True)
+        dora_hook = self._create_dora_pre_wrap_hook(dora)
+        model_provider.register_pre_wrap_hook(dora_hook)
+
+        # Get DoRA-adapted model using hook
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Test forward pass with proper Megatron input format
         batch_size, seq_len = 2, 8
@@ -715,14 +749,7 @@ class TestDoRAMegatronIntegration:
                 assert dora_count > 0, "Should have DoRA adaptations applied"
 
     def test_dora_different_targets(self):
-        """Test DoRA with different target module configurations."""
-        model_provider = GPTModelProvider(
-            num_layers=2,
-            hidden_size=64,
-            num_attention_heads=2,
-            vocab_size=100,
-            ffn_hidden_size=128,
-        )
+        """Test DoRA with different target module configurations using pre-wrap hooks."""
 
         # Test different target configurations
         target_configs = [
@@ -733,13 +760,23 @@ class TestDoRAMegatronIntegration:
         ]
 
         for targets in target_configs:
-            # Create fresh model for each configuration
-            base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
-            if torch.cuda.is_available():
-                base_model = [chunk.cuda() for chunk in base_model]
+            # Create fresh model provider for each configuration
+            model_provider = GPTModelProvider(
+                num_layers=2,
+                hidden_size=64,
+                num_attention_heads=2,
+                vocab_size=100,
+                ffn_hidden_size=128,
+            )
 
+            # Create DoRA and register hook
             dora = DoRA(target_modules=targets, dim=4, alpha=8)
-            adapted_model = dora(base_model, training=True)
+            dora_hook = self._create_dora_pre_wrap_hook(dora)
+            model_provider.register_pre_wrap_hook(dora_hook)
+
+            # Get adapted model using hook
+            adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+            adapted_model = [chunk.cuda() for chunk in adapted_model]
 
             # Count DoRA modules
             dora_count = sum(
