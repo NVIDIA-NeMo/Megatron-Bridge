@@ -17,17 +17,16 @@ from typing import List, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
-    SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
 )
@@ -140,18 +139,15 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    opt_config = OptimizerConfig(
-        optimizer="adam",
-        lr=lr,
-        min_lr=min_lr,
-        weight_decay=0.1,
-        bf16=True,
-        fp16=False,
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=train_iters,
         adam_beta1=0.9,
         adam_beta2=0.95,
         adam_eps=1e-5,
-        use_distributed_optimizer=True,
-        clip_grad=1.0,
+        weight_decay=0.1,
+        max_lr=lr,
+        min_lr=min_lr,
     )
 
     # Config Container
@@ -165,16 +161,7 @@ def pretrain_config(
             micro_batch_size=micro_batch_size,
         ),
         optimizer=opt_config,
-        scheduler=SchedulerConfig(
-            start_weight_decay=0.033,
-            end_weight_decay=0.033,
-            weight_decay_incr_style="constant",
-            lr_decay_style="cosine",
-            lr_warmup_iters=2000,
-            lr_warmup_init=0.0,
-            lr_decay_iters=train_iters,
-            override_opt_param_scheduler=True,
-        ),
+        scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
