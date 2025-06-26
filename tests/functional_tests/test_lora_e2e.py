@@ -22,7 +22,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.utils import forward_step
+from megatron.hub.core.utils.common_utils import print_rank_0
 from megatron.hub.peft.lora import LoRA
 from megatron.hub.training.config import (
     ConfigContainer,
@@ -35,7 +35,7 @@ from megatron.hub.training.config import (
     TrainingConfig,
 )
 from megatron.hub.training.finetune import finetune
-from megatron.hub.utils.common_utils import print_rank_0
+from megatron.hub.training.gpt_step import forward_step
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -58,13 +58,11 @@ class TestLoRAE2E:
         """
         pretrained_checkpoint_path = "/lustre/fsw/coreai_dlalgo_genai/ansubramania/models/Meta-Llama3-8B/"
         checkpoint_dir = str(tmp_path / "checkpoints")
-        tensorboard_dir = str(tmp_path / "tensorboard")
 
         try:
             initial_cfg = self._create_lora_config(
                 pretrained_checkpoint_path,
                 checkpoint_dir,
-                tensorboard_dir,
                 train_iters=10,  # Train for 10 iterations initially
                 save_interval=10,  # Save checkpoint after 10 iterations
             )
@@ -86,7 +84,6 @@ class TestLoRAE2E:
             resume_cfg = self._create_lora_config(
                 pretrained_checkpoint_path,
                 checkpoint_dir,
-                tensorboard_dir,
                 train_iters=20,  # Total of 20 iterations (10 more)
                 save_interval=10,
                 load_checkpoint=initial_checkpoint_dir,  # Resume from initial checkpoint
@@ -120,19 +117,15 @@ class TestLoRAE2E:
                 if torch.distributed.get_rank() == 0:
                     if os.path.exists(checkpoint_dir):
                         shutil.rmtree(checkpoint_dir)
-                    if os.path.exists(tensorboard_dir):
-                        shutil.rmtree(tensorboard_dir)
                 torch.distributed.barrier()
-                torch.distributed.destroy_process_group()
 
     def _create_lora_config(
         self,
         pretrained_checkpoint_path: str,
         save_dir: str,
-        tensorboard_dir: str,
         train_iters: int = 20,
         save_interval: int = 10,
-        load_checkpoint: str = None,
+        load_checkpoint: str | None = None,
     ) -> ConfigContainer:
         """Create LoRA configuration for Llama3 8B end-to-end test.
 
@@ -152,6 +145,8 @@ class TestLoRAE2E:
 
         assert os.path.exists(config_yaml_path), f"Pretrained checkpoint not found at: {pretrained_checkpoint_path}"
         cfg = ConfigContainer.from_yaml(config_yaml_path)
+
+        seq_length = 512
 
         # LoRA configuration
         lora_config = LoRA(
@@ -186,7 +181,7 @@ class TestLoRAE2E:
         cfg.model.sequence_parallel = False
         cfg.model.use_cpu_initialization = True
         cfg.model.cross_entropy_loss_fusion = False
-        cfg.model.seq_length = 512
+        cfg.model.seq_length = seq_length
 
         # Distributed configuration
         cfg.dist = DistributedInitConfig()
@@ -195,7 +190,6 @@ class TestLoRAE2E:
         cfg.logger = LoggerConfig(
             log_interval=5,
             logging_level="INFO",
-            tensorboard_dir=tensorboard_dir,
         )
 
         # Optimizer configuration for LoRA fine-tuning
@@ -239,50 +233,21 @@ class TestLoRAE2E:
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=512,
+            sequence_length=seq_length,
             num_dataset_builder_threads=1,
             data_sharding=True,
             dataloader_type="single",
             num_workers=1,
         )
-        self._configure_tokenizer_for_checkpoint(cfg, pretrained_checkpoint_path)
-
+        tokenizer_path = os.path.join(pretrained_checkpoint_path, "hf_assets")
+        assert os.path.exists(tokenizer_path), "Tokenizer assets not found"
+        cfg.tokenizer = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=tokenizer_path,
+        )
         cfg.rng = RNGConfig(seed=1234, data_parallel_random_init=False)
 
         return cfg
-
-    def _configure_tokenizer_for_checkpoint(self, cfg: ConfigContainer, checkpoint_path: str) -> None:
-        """Configure the tokenizer appropriately based on the checkpoint structure."""
-        # Check for HuggingFace assets directory
-        hf_assets_path = os.path.join(checkpoint_path, "hf_assets")
-        tokenizer_json_path = os.path.join(checkpoint_path, "tokenizer.json")
-        tokenizer_model_path = os.path.join(checkpoint_path, "tokenizer.model")
-        hf_tokenizer_json = os.path.join(hf_assets_path, "tokenizer.json")
-
-        if os.path.exists(hf_assets_path) and os.path.exists(hf_tokenizer_json):
-            cfg.tokenizer = TokenizerConfig(
-                tokenizer_type="HuggingFaceTokenizer",
-                tokenizer_model=hf_assets_path,
-                vocab_size=128256,
-            )
-        elif os.path.exists(tokenizer_json_path):
-            cfg.tokenizer = TokenizerConfig(
-                tokenizer_type="HuggingFaceTokenizer",
-                tokenizer_model=checkpoint_path,
-                vocab_size=128256,
-            )
-        elif os.path.exists(tokenizer_model_path):
-            cfg.tokenizer = TokenizerConfig(
-                tokenizer_type="SentencePieceTokenizer",
-                tokenizer_model=tokenizer_model_path,
-                vocab_size=128256,
-            )
-        else:
-            cfg.tokenizer = TokenizerConfig(
-                tokenizer_type="HuggingFaceTokenizer",
-                tokenizer_model="meta-llama/Meta-Llama-3-8B",
-                vocab_size=128256,
-            )
 
     def _verify_checkpoint_size_reduction(
         self, pretrained_path: str, adapter_checkpoint_path: str, expected_reduction_factor: float = 0.1
