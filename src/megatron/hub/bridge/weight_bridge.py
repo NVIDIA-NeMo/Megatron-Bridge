@@ -18,8 +18,8 @@ This module defines a hierarchy of *weight bridges* that hide the messy details
 of translating weights between **Megatron-Core** internal sharding formats and
 regular (often Hugging-Face–style) tensors.
 
-Key responsibilities handled here
----------------------------------
+Key responsibilities handled here:
+
 1. Tensor-parallel (TP) sharding
     • scatter / gather helpers for column- and row-parallel layers.
 2. Pipeline-parallel (PP) ownership
