@@ -478,21 +478,21 @@ class ColumnParallelWeightBridge(MegatronWeightBridge[torch.Tensor]):
     The weight matrix is partitioned along dimension 0 (rows), so each TP rank
     holds a subset of output features while maintaining all input features.
 
-    Sharding pattern:
-        Original weight: [output_features, input_features]
-        Rank 0: [output_features/tp_size, input_features]
-        Rank 1: [output_features/tp_size, input_features]
-        ...
+    **Sharding pattern**
+    -   Original weight: `[output_features, input_features]`
+    -   Rank 0: `[output_features/tp_size, input_features]`
+    -   Rank 1: `[output_features/tp_size, input_features]`
+    -   ...
 
-    Forward path (HuggingFace → Megatron):
-        1. Validate divisibility: output dimension must be divisible by tp_size
-        2. Split: Chunk tensor along dim 0 into tp_size equal parts
-        3. Scatter: Distribute chunks to respective TP ranks
+    **Forward path (HuggingFace → Megatron)**
+    1.  Validate divisibility: output dimension must be divisible by tp_size
+    2.  Split: Chunk tensor along dim 0 into tp_size equal parts
+    3.  Scatter: Distribute chunks to respective TP ranks
 
-    Reverse path (Megatron → HuggingFace):
-        1. Broadcast: Ensure all PP ranks have the tensor
-        2. Gather: Collect chunks from all TP ranks
-        3. Concatenate: Reassemble along dim 0 on rank 0
+    **Reverse path (Megatron → HuggingFace)**
+    1.  Broadcast: Ensure all PP ranks have the tensor
+    2.  Gather: Collect chunks from all TP ranks
+    3.  Concatenate: Reassemble along dim 0 on rank 0
 
     Example:
         .. code-block:: python
@@ -602,14 +602,14 @@ class RowParallelWeightBridge(MegatronWeightBridge[torch.Tensor]):
     Megatron shards row-parallel tensors along **dimension 1** (the *input*
     dimension of a linear layer).
 
-    Forward path (external → Megatron):
+    **Forward path (external → Megatron)**
     1.  Rank 0 validates that the *second* dimension is divisible by `tp_size`.
     2.  Rank 0 splits the tensor with `torch.chunk(..., dim=1)` producing
         `tp_size` equally-sized shards.
     3.  The shards are **scattered** so that every TP rank receives exactly one
         shard matching the shape of its local Megatron parameter.
 
-    Reverse path (Megatron → external):
+    **Reverse path (Megatron → external)**
     1.  The local Megatron parameter (which may live on any PP rank) is
         broadcast to all PP ranks so that the gather step can be collective.
     2.  All TP ranks **gather** their shard.
@@ -725,7 +725,7 @@ class TPAwareWeightBridge(MegatronWeightBridge[torch.Tensor]):
     column-parallel, row-parallel, or replicated. It examines the Megatron
     module at runtime and delegates to the appropriate specialized bridge.
 
-    Detection strategy:
+    **Detection strategy**
     1. Check module class name against a registry of known types
     2. If unknown, examine module attributes (tensor_model_parallel, partition_dim)
     3. Delegate to appropriate bridge: ColumnParallel, RowParallel, or Replicated
@@ -734,10 +734,10 @@ class TPAwareWeightBridge(MegatronWeightBridge[torch.Tensor]):
     don't know the parallelism type ahead of time, or when working with models
     that mix different parallelism strategies.
 
-    Built-in module recognition:
-    - Column-parallel: ColumnParallelLinear, VocabParallelEmbedding, etc.
-    - Row-parallel: RowParallelLinear, TERowParallelLinear
-    - Replicated: LayerNorm, RMSNorm, and other normalization layers
+    **Built-in module recognition**
+    -   Column-parallel: `ColumnParallelLinear`, `VocabParallelEmbedding`, etc.
+    -   Row-parallel: `RowParallelLinear`, `TERowParallelLinear`
+    -   Replicated: `LayerNorm`, `RMSNorm`, and other normalization layers
 
     Example:
         .. code-block:: python
@@ -900,19 +900,19 @@ class QKVWeightBridge(MegatronWeightBridge[Dict[str, torch.Tensor]]):
     interleaving pattern groups queries with their corresponding key-value pairs
     to maximize GEMM efficiency during attention computation.
 
-    External format (HuggingFace):
-        - Separate tensors: q_proj, k_proj, v_proj
-        - Each of shape [hidden_size, hidden_size] or [hidden_size, head_dim * num_heads]
+    **External format (HuggingFace)**
+    -   Separate tensors: `q_proj`, `k_proj`, `v_proj`
+    -   Each of shape `[hidden_size, hidden_size]` or `[hidden_size, head_dim * num_heads]`
 
-    Megatron format:
-        - Single interleaved tensor following grouped query attention (GQA) pattern
-        - Interleaving order: [q1...qn, k1, v1, q1...qn, k2, v2, ...]
-        - Where n = num_attention_heads / num_query_groups
+    **Megatron format**
+    -   Single interleaved tensor following grouped query attention (GQA) pattern
+    -   Interleaving order: `[q1...qn, k1, v1, q1...qn, k2, v2, ...]`
+    -   Where `n = num_attention_heads / num_query_groups`
 
-    Key features:
-    1. Format conversion: Handles merging/splitting with proper interleaving
-    2. Grouped Query Attention: Supports different numbers of Q and KV heads
-    3. Tensor parallelism: Delegates to TPAwareWeightBridge for distribution
+    **Key features**
+    1.  Format conversion: Handles merging/splitting with proper interleaving
+    2.  Grouped Query Attention: Supports different numbers of Q and KV heads
+    3.  Tensor parallelism: Delegates to TPAwareWeightBridge for distribution
 
     Example:
         .. code-block:: python
@@ -1033,19 +1033,18 @@ class GatedMLPWeightBridge(MegatronWeightBridge[Dict[str, torch.Tensor]]):
 
     Checkpoint formats expose two independent matrices:
 
-        • **G** – gate projection
-        • **U** – up projection
+    -   **G** – gate projection
+    -   **U** – up projection
 
     Megatron concatenates them row-wise (`[G; U]`) so that a single GEMM can
     produce both activations.
 
-    Responsibilities handled by this bridge
-    ---------------------------------------
-    1. **Concatenate / split** – convert between `[G; U]` (Megatron) and the
-    separate \{G, U\} matrices (external).
-    2. **Tensor-parallel distribution** – delegated to an internal
-    :class:`TPAwareWeightBridge`, allowing the correct sharding scheme to be
-    selected dynamically.
+    **Responsibilities handled by this bridge**
+    1.  **Concatenate / split** – convert between `[G; U]` (Megatron) and the
+        separate `{G, U}` matrices (external).
+    2.  **Tensor-parallel distribution** – delegated to an internal
+        :class:`TPAwareWeightBridge`, allowing the correct sharding scheme to be
+        selected dynamically.
     """
 
     def __init__(self, megatron: str, gate: str, up: str):
@@ -1112,15 +1111,15 @@ class MOEWeightBridge(MegatronWeightBridge[torch.Tensor]):
     Each EP rank owns a subset of experts, and this bridge handles the
     EP distribution while delegating TP operations to TPAwareWeightBridge.
 
-    Key features handled by this bridge:
+    **Key features handled by this bridge**
     1.  **Expert parallel distribution** – different experts on different EP ranks
     2.  **Dynamic expert IDs** – weight names contain expert indices as wildcards
     3.  **Cross-EP communication** – broadcasting weights from owning EP rank
     4.  **TP delegation** – all tensor parallel ops handled by TPAwareWeightBridge
 
-    Weight naming convention:
-        Megatron: "mlp.experts.linear_fc1.weight*"  (where * is the expert ID)
-        External: "model.layers.*.mlp.experts.*.gate_proj.weight"
+    **Weight naming convention**
+    -   Megatron: `"mlp.experts.linear_fc1.weight*"`  (where `*` is the expert ID)
+    -   External: `"model.layers.*.mlp.experts.*.gate_proj.weight"`
 
     The expert ID wildcard is resolved based on EP rank and configuration.
     """
