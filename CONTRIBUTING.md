@@ -57,35 +57,49 @@
       this project or the open source license(s) involved.
   ```
 
-## Setting Up
+## Building a dev container
 
-### Development Container
+* We recommend to build a container that is close to GitHub's CI.
 
-1. **Build and run the Docker container**:
+* Run the following command to build your container:
 
 ```bash
 docker build -f docker/Dockerfile.ci -t megatron-hub .
 ```
 
+* Run the following command to start your container:
+
 ```bash
 docker run --rm -it --entrypoint bash --runtime nvidia --gpus all megatron-hub
 ```
 
-### Development Dependencies
+## Development Dependencies
 
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies.
 
 New required dependencies can be added by `uv add $DEPENDENCY`.
 
-New optional dependencies can be added by `uv add --optional --extra $EXTRA $DEPENDENCY`.
-
-`EXTRA` refers to the subgroup of extra-dependencies to which you're adding the new dependency.
-Example: For adding a TRT-LLM specific dependency, run `uv add --optional --extra trtllm $DEPENDENCY`.
-
 Adding a new dependency will update UV's lock-file. Please check this into your branch:
 
 ```bash
 git add uv.lock pyproject.toml
-git commit -m "build: Adding dependencies"
+git commit -s -m "build: Adding dependencies"
 git push
+```
+
+## Linting and Formatting
+
+We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting.
+
+Installation:
+
+```bash
+pip install ruff
+```
+
+Format:
+
+```bash
+ruff check --fix .
+ruff format .
 ```
