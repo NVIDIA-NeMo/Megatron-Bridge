@@ -15,9 +15,6 @@ name: "Test Template"
 description: "Template for running NeMo tests in a containerized environment"
 
 inputs:
-  runner:
-    description: "Runner to use for test"
-    required: true
   timeout:
     description: "Max runtime of test in minutes"
     required: false
@@ -178,18 +175,11 @@ runs:
         echo "$cmd" | tee "retry_job.sh"
         bash retry_job.sh
 
-    - name: Install yq
-      shell: bash
-      run: |
-        curl -LsSf https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o ./yq
-        chmod +x ./yq
-
     - name: Install dependencies
       shell: bash
       run: |
         docker exec -e PAT=${{ inputs.PAT }} nemo_container_${{ github.run_id }} \
-          bash docker/common/install.sh --base-image cuda --export-deploy-ref \
-          $(./yq -r '.vcs-dependencies.export-deploy.ref' docker/manifest.json)
+          bash docker/common/install.sh --base-image cuda
 
     - name: Create run-script
       id: create

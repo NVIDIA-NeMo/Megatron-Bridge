@@ -29,5 +29,3 @@ source ${UV_PROJECT_ENVIRONMENT}/bin/activate
 # They collide on nvidia-pytriton (export-deploy) and torchx (nemo-run)
 # via urllib3.
 uv pip install --no-cache-dir --upgrade nemo_run
-
-uv pip install --no-cache-dir --upgrade nemo-export-deploy[te,trtllm]@git+https://github.com/NVIDIA-NeMo/Export-Deploy.git@${EXPORT_DEPLOY_REF}

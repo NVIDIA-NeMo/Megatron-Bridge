@@ -116,17 +116,7 @@ jobs:
   cicd-functional-tests:
     needs: [cicd-unit-tests]
     runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
-    name: ${{ matrix.script }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - script: L2_Launch_training
-            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
-            timeout: 60
-          - script: L2_Launch_evaluation
-            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
-            timeout: 60
+    name: L2_Launch_training
     environment: nemo-ci
     steps:
       - name: Checkout
@@ -134,8 +124,7 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          runner: ${{ runner.name }}
-          script: ${{ matrix.script }}
+          script: L2_Launch_training
           timeout: 60
           is_unit_test: "false"
           image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
