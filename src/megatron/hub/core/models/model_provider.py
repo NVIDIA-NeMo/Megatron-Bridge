@@ -43,7 +43,7 @@ except ImportError:
 
 
 def get_model(
-    model_provider: Callable[[bool, bool], nn.Module],
+    model_provider: Callable[[bool, bool, int], nn.Module],
     ddp_config: DistributedDataParallelConfig,
     model_type=ModelType.encoder_or_decoder,
     overlap_param_gather_with_optimizer_step: bool = False,
@@ -66,8 +66,8 @@ def get_model(
     - Distributed Data Parallel (DDP) wrapping
 
     Args:
-        model_provider: Callable that creates the model. Should accept
-            (pre_process, post_process) boolean arguments for pipeline parallelism
+        model_provider: Callable that creates the model. Should accept optional
+            pre_process(bool), post_process(bool), vp_stage(int) arguments for pipeline parallelism
         ddp_config: Configuration for distributed data parallel training
         model_type: Type of model (encoder, decoder, or encoder_and_decoder)
         overlap_param_gather_with_optimizer_step: Whether to overlap parameter
@@ -158,13 +158,12 @@ def _create_model(
             )
             model = []
             for i in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
-                parallel_state.set_virtual_pipeline_model_parallel_rank(i)
-                # Set pre_process and post_process only after virtual rank is set.
-                pre_process = parallel_state.is_pipeline_first_stage()
-                post_process = parallel_state.is_pipeline_last_stage()
+                pre_process = parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=i)
+                post_process = parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=i)
                 this_model = model_provider(
                     pre_process=pre_process,
                     post_process=post_process,
+                    vp_stage=i,
                 )
                 this_model.model_type = model_type
                 model.append(this_model)

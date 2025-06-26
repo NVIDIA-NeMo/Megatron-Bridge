@@ -102,8 +102,13 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     vocab_size: Optional[int] = None
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
 
-    def provide(self, pre_process=None, post_process=None, tokenizer=None) -> MCoreT5Model:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""
+
+        assert self.virtual_pipeline_model_parallel_size is None and vp_stage is None, (
+            "Virtual pipeline model parallelism is temporarily unsupported in T5 "
+            "due to upstream MCore T5Model API dependency"
+        )
 
         vp_size = self.virtual_pipeline_model_parallel_size
         if vp_size:

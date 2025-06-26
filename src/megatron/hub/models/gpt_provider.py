@@ -158,12 +158,13 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 
-    def provide(self, pre_process=None, post_process=None, tokenizer=None) -> MCoreGPTModel:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 
         Args:
             pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
             post_process: Whether to include post-processing in the model, defaults to last pipeline stage
+            vp_stage: Virtual pipeline stage
             tokenizer: Tokenizer used with the model
 
         Returns:
@@ -227,9 +228,12 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 rotary_percent=self.rotary_percent,
                 rotary_base=self.rotary_base,
                 seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-                pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
-                post_process=post_process or parallel_state.is_pipeline_last_stage(),
+                pre_process=pre_process
+                or parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage),
+                post_process=post_process
+                or parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage),
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
+                vp_stage=vp_stage,
                 **kwargs,
             )
 

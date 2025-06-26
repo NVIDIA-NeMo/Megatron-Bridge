@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -105,7 +105,6 @@ class TestCreateModel:
         assert len(result) == 2
         assert all(model.model_type == ModelType.encoder_or_decoder for model in result)
         assert model_provider.call_count == 2
-        mock_parallel_state.set_virtual_pipeline_model_parallel_rank.assert_has_calls([call(0), call(1)])
 
     @patch("megatron.hub.core.models.model_provider.parallel_state")
     @patch("megatron.hub.core.models.model_provider.tensor_parallel")

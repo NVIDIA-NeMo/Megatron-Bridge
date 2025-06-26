@@ -466,8 +466,7 @@ def training_log(
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"
         if config.optimizer.decoupled_lr is not None and (
-            parallel_state.is_pipeline_first_stage(ignore_virtual=True)
-            or parallel_state.is_pipeline_last_stage(ignore_virtual=True)
+            parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
         ):
             assert decoupled_learning_rate is not None
             log_string += f" decoupled learning rate: {decoupled_learning_rate:.6E} |"

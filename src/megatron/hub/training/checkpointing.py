@@ -731,7 +731,7 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
         raise RuntimeError(f"Could not find a save_state for the train_iterator of type {type(train_iterator)}")
 
     # Save dataloader state for each data parallel rank only once.
-    first_rank = mpu.is_pipeline_first_stage(ignore_virtual=True) and mpu.get_tensor_model_parallel_rank() == 0
+    first_rank = mpu.is_pipeline_first_stage() and mpu.get_tensor_model_parallel_rank() == 0
     if not first_rank:
         return
 
@@ -790,7 +790,6 @@ def generate_state_dict(
         state_dict["model"] = model[0].sharded_state_dict()
     else:
         for i in range(len(model)):
-            mpu.set_virtual_pipeline_model_parallel_rank(i)
             state_dict["model%d" % i] = model[i].sharded_state_dict()
 
     # Optimizer stuff.
@@ -1009,7 +1008,6 @@ def load_checkpoint(
             model[0].load_state_dict(state_dict["model"], strict=strict)
         else:
             for i in range(len(model)):
-                mpu.set_virtual_pipeline_model_parallel_rank(i)
                 model[i].load_state_dict(state_dict["model%d" % i], strict=strict)
 
     # Fix up query/key/value matrix ordering if needed.

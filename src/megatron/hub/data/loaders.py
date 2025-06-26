@@ -353,7 +353,6 @@ def setup_data_iterators(
         valid_data_iterator = []
         test_data_iterator = []
         for i in range(model_length):
-            mpu.set_virtual_pipeline_model_parallel_rank(i)
             iterators = build_train_valid_test_data_iterators(
                 cfg=cfg,
                 train_state=train_state,

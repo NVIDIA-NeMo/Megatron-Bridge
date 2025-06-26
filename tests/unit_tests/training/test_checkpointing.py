@@ -515,7 +515,6 @@ class TestLoadCheckpoint:
         mock_mpu.get_pipeline_model_parallel_rank.return_value = 0
         mock_mpu.get_pipeline_model_parallel_world_size.return_value = 1
         mock_mpu.get_data_parallel_rank.return_value = 0
-        mock_mpu.set_virtual_pipeline_model_parallel_rank = Mock()
 
         # Mock rerun state machine
         mock_rerun_machine.return_value.load_state_dict = Mock()
