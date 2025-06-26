@@ -161,6 +161,13 @@ def setup(
 
     # Model, optimizer, and learning rate.
     timers("model-and-optimizer-setup", log_level=0).start(barrier=True)
+
+    # Register PEFT pre-wrap hook if PEFT is configured
+    if cfg.peft is not None:
+        peft_hook = _create_peft_pre_wrap_hook(cfg, state)
+        cfg.model.register_pre_wrap_hook(peft_hook)
+        print_rank_0("Registered PEFT pre-wrap hook")
+
     model = cfg.model(
         ddp_config=cfg.ddp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
@@ -179,7 +186,7 @@ def setup(
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
-    # For PEFT: pretrained_checkpoint is loaded earlier in setup_model, so only load if cfg.checkpoint.load is set
+    # For PEFT: pretrained_checkpoint is loaded in the pre-wrap hook, so only load if cfg.checkpoint.load is set
     # For non-PEFT: support both load and pretrained_checkpoint paths
     should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (cfg.checkpoint.pretrained_checkpoint is not None and cfg.peft is None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
 
@@ -266,3 +273,89 @@ def _update_model_config_funcs(
             model_config.param_sync_func = model_config.param_sync_func[0]
     model_config.finalize_model_grads_func = finalize_model_grads
     model_config.grad_scale_func = optimizer.scale_loss
+
+
+def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[MegatronModule]:
+    """Apply PEFT transformation to the base model.
+
+    Args:
+        peft: PEFT configuration/object
+        base_model: Base model before PEFT transformation
+
+    Returns:
+        Model with PEFT transformation applied
+    """
+    print_rank_0("Applying PEFT transformation...")
+    transformed_model = peft(base_model, training=True)
+    peft.set_params_to_save(transformed_model)
+
+    # Log PEFT statistics
+    model_to_analyze = transformed_model[0] if isinstance(transformed_model, list) else transformed_model
+    total_params = 0
+    trainable_params = 0
+    for param in model_to_analyze.parameters():
+        param_count = param.numel()
+        total_params += param_count
+        if param.requires_grad:
+            trainable_params += param_count
+
+    print_rank_0(f"PEFT Statistics:")
+    print_rank_0(f"  Total parameters: {total_params:,}")
+    print_rank_0(f"  Trainable parameters: {trainable_params:,}")
+    print_rank_0(f"  Trainable percentage: {100 * trainable_params / total_params:.2f}%")
+
+    return transformed_model
+
+
+def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
+    """Create a pre-wrap hook that handles PEFT logic.
+
+    This hook is executed before the model is wrapped with DDP/FSDP and handles:
+    1. Loading pretrained checkpoints for PEFT
+    2. Applying PEFT transformation to the model
+
+    Args:
+        cfg: Configuration container
+        state: Global state object containing timers and other state
+
+    Returns:
+        A callable hook that can be registered with the model provider
+    """
+    def peft_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+        """Pre-wrap hook that handles PEFT transformation.
+
+        Args:
+            model: List of base model modules before distributed wrapping
+
+        Returns:
+            List of potentially PEFT-transformed model modules
+        """
+        # Only apply PEFT logic if PEFT is configured
+        if cfg.peft is None:
+            return model
+
+        print_rank_0("Applying PEFT pre-wrap hook...")
+
+        # Load pretrained checkpoint if available
+        if cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint):
+            state.timers("load-pretrained-checkpoint", log_level=0).start(barrier=True)
+            print_rank_0(f"Loading base model weights from: {cfg.checkpoint.pretrained_checkpoint}")
+            load_checkpoint(
+                state,
+                model,
+                optimizer=None,  # Don't load optimizer - will be created after PEFT
+                opt_param_scheduler=None,  # Don't load scheduler - will be created after PEFT
+                checkpointing_context={},
+                skip_load_to_model_and_opt=False,
+            )
+            state.timers("load-pretrained-checkpoint").stop(barrier=True)
+            state.timers.log(["load-pretrained-checkpoint"])
+        else:
+            raise ValueError(f"Invalid pretrained checkpoint directory found: {cfg.checkpoint.pretrained_checkpoint}")
+
+        # Apply PEFT transformation
+        transformed_model = _apply_peft_transformation(cfg.peft, model)
+
+        return transformed_model
+
+    return peft_pre_wrap_hook

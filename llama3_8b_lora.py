@@ -22,8 +22,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.hub.data.builders.hf_dataset import HFDatasetConfig, ProcessExampleOutput
-from megatron.hub.models.llama import Llama3Config8B
-from megatron.hub.models.utils import forward_step
+from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.peft.lora import LoRA
 from megatron.hub.training.config import (
     CheckpointConfig,
@@ -35,6 +34,7 @@ from megatron.hub.training.config import (
     TrainingConfig,
 )
 from megatron.hub.training.finetune import finetune
+from megatron.hub.training.gpt_step import forward_step
 
 
 def squad_process_example_fn(example: dict[str, Any], tokenizer: Optional[Any] = None) -> ProcessExampleOutput:
@@ -57,7 +57,7 @@ def main():
     micro_batch_size = 1
     lr = 1e-4
 
-    model_cfg = Llama3Config8B(
+    model_cfg = Llama3ModelProvider8B(
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         context_parallel_size=1,
@@ -133,9 +133,9 @@ def main():
     logger_config = LoggerConfig(
         wandb_project="megatron-hub-custom-loop-peft",
         wandb_entity="nvidia",
-        wandb_exp_name=f"mhub_squad_llama3_8b_lora_gbs_{global_batch_size}_seq_length_{seq_length}_lr_{lr}",
+        wandb_exp_name=f"mhub_squad_llama3_8b_model_provider_lora_gbs_{global_batch_size}_seq_length_{seq_length}_lr_{lr}",
         wandb_save_dir=wandb_save_dir,
-        tensorboard_dir=wandb_save_dir,
+        tensorboard_dir=tensorboard_dir,
         log_timers_to_tensorboard=True,
         log_validation_ppl_to_tensorboard=True,
         tensorboard_log_interval=1,
