@@ -8,6 +8,10 @@ while [[ $# -gt 0 ]]; do
         BASE_IMAGE="$2"
         shift 2
         ;;
+    --export-deploy-ref)
+        EXPORT_DEPLOY_REF="$2"
+        shift 2
+        ;;
     *)
         echo "Unknown option: $1"
         echo "Usage: $0 --base-image {pytorch|cuda}"
@@ -17,9 +21,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate base image argument
-if [[ -z "${BASE_IMAGE:-}" ]]; then
-    echo "Error: --base-image argument is required"
-    echo "Usage: $0 --base-image {pytorch|cuda}"
+if [[ -z "${BASE_IMAGE:-}" || -z "${EXPORT_DEPLOY_REF:-}" ]]; then
+    echo "Error: --base-image and --export-deploy-ref arguments are required"
+    echo "Usage: $0 --base-image {pytorch|cuda} --export-deploy-ref EXPORT_DEPLOY_REF"
     exit 1
 fi
 
@@ -82,7 +86,7 @@ main() {
         --all-groups ${UV_ARGS[@]}
 
     # Run install overrides
-    bash docker/common/install_conflicting_deps.sh
+    bash docker/common/install_conflicting_deps.sh --export-deploy-ref $EXPORT_DEPLOY_REF
 
     # Install the package
     uv pip install --no-deps -e .

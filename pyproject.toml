@@ -127,6 +127,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
+build = []
 nemo-legacy = [
     "nemo-toolkit[automodel,common-only,nlp-only,eval,multimodal-only]",
 ]
