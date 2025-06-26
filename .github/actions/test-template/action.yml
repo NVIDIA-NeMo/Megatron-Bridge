@@ -181,15 +181,15 @@ runs:
     - name: Install yq
       shell: bash
       run: |
-        curl -LsSf https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/local/bin/yq
-        chmod +x /usr/local/bin/yq
+        curl -LsSf https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o ./yq
+        chmod +x ./yq
 
     - name: Install dependencies
       shell: bash
       run: |
         docker exec -e PAT=${{ inputs.PAT }} nemo_container_${{ github.run_id }} \
           bash docker/common/install.sh --base-image cuda --export-deploy-ref \
-          $(yq -r '.vcs-dependencies.export-deploy.ref' docker/manifest.json)
+          $(./yq -r '.vcs-dependencies.export-deploy.ref' docker/manifest.json)
 
     - name: Create run-script
       id: create
