@@ -25,6 +25,7 @@ from megatron.hub.training.config import (
 
 
 try:
+    import nemo_run as run
     from nemo_run import Partial, Plugin, Script, SlurmExecutor
 
     HAVE_NEMO_RUN = True
