@@ -2,6 +2,8 @@
 
 Megatron-Hub provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
 
+This guide makes references to several configuration settings. These settings will be referenced relative to the the config class that contains them, e.g. `OptimizerConfig.optimizer`. Please see <project:apidocs/index.rst> for more details on configuration settings.
+
 ## Low Precision Training
 
 1. Expected speedup of FP8 training compared to BF16 training
@@ -424,64 +426,62 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 ## Index - List of Tuning Knobs
 
-- `callback.tp_comm_overlap`
-- `callback.tp_comm_overlap_cfg`
+- `CommOverlapConfig.tp_comm_overlap`
+- `CommOverlapConfig.tp_comm_overlap_cfg`
 - `CUDA_DEVICE_MAX_CONNECTIONS`
-- `garbageCollectionCallback.gc_interval_train`
-- `garbageCollectionCallback.gc_interval_val`
-- `megatronMixedPrecision.fp8_params`
-- `MemoryProfilePlugin`
+- `TrainingConfig.manual_gc_interval`
+- `MixedPrecisionConfig.fp8_param`
+- `ProfilingConfig`
 - `NCCL_NET_GDR_C2C`
 - `NCCL_NET_GDR_LEVEL`
 - `NCCL_NVLS_ENABLE`
-- `NsysPlugin`
 - `NVTE_BWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
 - `NVTE_FLASH_ATT`
 - `NVTE_FUSED_ATT`
 - `NVTE_FWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
 - `PYTORCH_CUDA_ALLOC_CONF`
-- `recipe.data.micro_batch_size`
-- `recipe.data.packed_sequence_specs.packed_sequence_size`
-- `recipe.model.config.apply_rope_fusion`
-- `recipe.model.config.bias_activation_fusion`
-- `recipe.model.config.bias_dropout_fusion`
-- `recipe.model.config.cp_comm_type`
-- `recipe.model.config.cpu_offloading`
-- `recipe.model.config.cpu_offloading_num_layers`
-- `recipe.model.config.cpu_offloading_weights`
-- `recipe.model.config.cross_entropy_loss_fusion`
-- `recipe.model.config.enable_cuda_graph`
-- `recipe.model.config.fp8_param_gather`
-- `recipe.model.config.gradient_accumulation_fusion`
-- `recipe.model.config.masked_softmax_fusion`
-- `recipe.model.config.recompute_granuality`
-- `recipe.model.config.recompute_method`
-- `recipe.model.config.recompute_num_layers`
-- `recipe.model.config.use_precision_aware_optimizer`
-- `recipe.trainer.strategy.account_for_embedding_in_pipeline_split`
-- `recipe.trainer.strategy.account_for_loss_in_pipeline_split`
-- `recipe.trainer.strategy.context_parallel_size`
-- `recipe.trainer.strategy.context_parallel_size`
-- `recipe.trainer.strategy.ddp.align_param_gather`
-- `recipe.trainer.strategy.ddp.bucket_size`
-- `recipe.trainer.strategy.ddp.bucket_size`
-- `recipe.trainer.strategy.ddp.data_parallel_sharding_strategy`
-- `recipe.trainer.strategy.ddp.grad_reduce_in_fp32`
-- `recipe.trainer.strategy.ddp.num_distributed_optimizer_instances`
-- `recipe.trainer.strategy.ddp.overlap_grad_reduce`
-- `recipe.trainer.strategy.ddp.overlap_param_gather`
-- `recipe.trainer.strategy.encoder_pipeline_model_parallel_size`
-- `recipe.trainer.strategy.encoder_tensor_model_parallel_size`
-- `recipe.trainer.strategy.expert_model_parallel_size=<int>`
-- `recipe.trainer.strategy.expert_tensor_parallel_size=<int>`
-- `recipe.trainer.strategy.fsdp`
-- `recipe.trainer.strategy.num_distributed_optimizer_instances`
-- `recipe.trainer.strategy.pipeline_model_parallel_size`
-- `recipe.trainer.strategy.tensor_model_parallel_size`
-- `recipe.trainer.strategy.virtual_pipeline_model_parallel_size`
-- `recipe.trainer.use_distributed_optimizer`
+- `TrainingConfig.micro_batch_size`
+- `FinetuningDatasetConfig.packed_sequence_specs.packed_sequence_size`
+- `TransformerConfig.apply_rope_fusion`
+- `TransformerConfig.bias_activation_fusion`
+- `TransformerConfig.bias_dropout_fusion`
+- `TransformerConfig.cp_comm_type`
+- `TransformerConfig.cpu_offloading`
+- `TransformerConfig.cpu_offloading_num_layers`
+- `TransformerConfig.cpu_offloading_weights`
+- `GPTProvider.cross_entropy_loss_fusion`
+- `TransformerConfig.enable_cuda_graph`
+- `MixedPrecisionConfig.fp8_param_gather`
+- `GPTProvider.gradient_accumulation_fusion`
+- `TransformerConfig.masked_softmax_fusion`
+- `TransformerConfig.recompute_granuality`
+- `TransformerConfig.recompute_method`
+- `TransformerConfig.recompute_num_layers`
+- `OptimizerConfig.use_precision_aware_optimizer`
+- `GPTProvider.account_for_embedding_in_pipeline_split`
+- `GPTProvider.account_for_loss_in_pipeline_split`
+- `TransformerConfig.context_parallel_size`
+- `DistributedDataParallelConfig.align_param_gather`
+- `DistributedDataParallelConfig.bucket_size`
+- `DistributedDataParallelConfig.bucket_size`
+- `DistributedDataParallelConfig.data_parallel_sharding_strategy`
+- `DistributedDataParallelConfig.grad_reduce_in_fp32`
+- `DistributedDataParallelConfig.num_distributed_optimizer_instances`
+- `DistributedDataParallelConfig.overlap_grad_reduce`
+- `DistributedDataParallelConfig.overlap_param_gather`
+- `T5ModelProvider.encoder_pipeline_model_parallel_size`
+- `T5ModelProvider.encoder_tensor_model_parallel_size`
+- `TransformerConfig.expert_model_parallel_size=<int>`
+- `TransformerConfig.expert_tensor_parallel_size=<int>`
+- `DistributedInitConfig.use_torch_fsdp2`
+- `TransformerConfig.pipeline_model_parallel_size`
+- `TransformerConfig.tensor_model_parallel_size`
+- `TransformerConfig.virtual_pipeline_model_parallel_size`
+- `OptimizerConfig.use_distributed_optimizer`
 - `TORCH_NCCL_AVOID_RECORD_STREAMS`
-- `transformerLayerTPOverlapCfg.cga_size`
-- `transformerLayerTPOverlapCfg.fp8_buf`
-- `transformerLayerTPOverlapCfg.num_sm`
-- `transformerLayerTPOverlapCfg.num_split`
+- `TPOverlapCfg.cga_size`
+- `TPOverlapCfg.fp8_buf`
+- `TPOverlapCfg.num_sm`
+- `TPOverlapCfg.num_split`
+<!-- - `garbageCollectionCallback.gc_interval_val` -->
+<!-- - `NsysPlugin` -->
