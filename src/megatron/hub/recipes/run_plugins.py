@@ -17,11 +17,11 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from megatron.hub.core.utils.import_utils import MISSING_NEMO_RUN_MSG
 from megatron.hub.training.config import (
     FaultToleranceConfig,
     ProfilingConfig,
 )
-from megatron.hub.utils.import_utils import MISSING_NEMO_RUN_MSG
 
 
 try:
@@ -29,7 +29,7 @@ try:
 
     HAVE_NEMO_RUN = True
 except (ImportError, ModuleNotFoundError):
-    Plugin = object
+    Partial, Plugin, Script, SlurmExecutor = object, object, object, object
     HAVE_NEMO_RUN = False
 
 if TYPE_CHECKING:
