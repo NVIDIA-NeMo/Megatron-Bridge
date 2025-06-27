@@ -356,8 +356,8 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 2. NeMo offers different Flash Attention options, which can be chosen by environment
 
-   > 1. FlashAttention2 (default): `NVTE_FLASH_ATT=1`
-   > 2. cuDNN fused attention: `NVTE_FLASH_ATT=0, NVTE_FUSED_ATT=1`
+   > 1. FlashAttention2 (default): `NVTE_FLASH_ATTN=1`
+   > 2. cuDNN fused attention: `NVTE_FLASH_ATTN=0, NVTE_FUSED_ATTN=1`
 
 (long-sequence-train)=
 ## Long Sequence Training
