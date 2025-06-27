@@ -2,7 +2,7 @@
 
 Megatron-Hub provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
 
-This guide makes references to several configuration settings. These settings will be referenced relative to the the config class that contains them, e.g. `OptimizerConfig.optimizer`. Please see <project:apidocs/index.rst> for more details on configuration settings.
+This guide makes references to several configuration settings. These settings will be referenced relative to the the config class that contains them, e.g. `OptimizerConfig.lr`. Please see <project:apidocs/index.rst> for more details on configuration settings.
 
 ## Low Precision Training
 
@@ -25,13 +25,13 @@ This guide makes references to several configuration settings. These settings wi
    >
    > 2. Megatron-Hub uses the distributed optimizer as the default method for data-parallel training. It shards master parameters and optimizer states across data-parallel ranks, reducing model state memory usage without increasing communication overhead compared to traditional data-parallel training.
    >
-   >    > 1. `recipe.trainer.use_distributed_optimizer=true`
+   >    > 1. `OptimizerConfig.use_distributed_optimizer=true`
 
 2. Per-tensor Sharding (Tensor-parallel or Context-parallel mappings)
 
    > 1. Tensor parallelism (TP) is the primary recommendation when a model exceeds GPU memory capacity under data-parallel mapping. However, since it involves higher communication overhead, the tensor-parallel size should ideally be confined to the high-bandwidth intra-node network (NVLink domain).
    >
-   >    > 1. `recipe.trainer.strategy.tensor_model_parallel_size=<int>`
+   >    > 1. `TransformerConfig.tensor_model_parallel_size=<int>`
    >
    > 2. When the sequence length in a training run is significantly larger than the hidden size, activation memory can overflow. In such cases, context parallelism (CP) helps by sharding tensors along the sequence dimension, allowing the workload to fit within limited GPU memory and improving performance. Like tensor parallelism (TP), CP requires inter-GPU communication of activations. However, for the same tensor sizes, CP generally results in lower communication volume.
 
@@ -39,7 +39,7 @@ That said, CP’s effectiveness depends on the relative sizes of the sequence le
 
 Additionally, because CP shards activations, it also partitions optimizer states in distributed training. As a result, optimizer state partitioning spans both the data parallel (DP) and context parallel (CP) dimensions.
 
-> > 1. `recipe.trainer.strategy.context_parallel_size=<int>`
+> > 1. `TransformerConfig.context_parallel_size=<int>`
 >
 > 1. Performance tips:
 >
@@ -51,8 +51,8 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. Pipeline parallelism (PP) is necessary when a model cannot fit within GPU memory using tensor parallelism. Also, virtual pipeline parallelism (VPP) should be used in conjunction with pipeline parallelism to reduce the overhead caused by pipeline warm-up and flush bubbles.
    >
-   >    > 1. `recipe.trainer.strategy.pipeline_model_parallel_size=<int>`
-   >    > 2. `recipe.trainer.strategy.virtual_pipeline_model_parallel_size=<int>`
+   >    > 1. `TransformerConfig.pipeline_model_parallel_size=<int>`
+   >    > 2. `TransformerConfig.virtual_pipeline_model_parallel_size=<int>`
    >
    > 2. Performance tips in PP and VPP sizing:
    >
@@ -63,15 +63,15 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    >    > 1. An LLM with a large vocabulary size has computationally heavy embedding lookup and projection operations, leading to load imbalance across pipeline stages. To address this, Megatron-Hub provides an option to allocate one fewer Transformer layer in the first and last pipeline stages, which handle embedding lookup and projection, to better balance workloads.
    >    >
-   >    >    > 1. `recipe.trainer.strategy.account_for_embedding_in_pipeline_split=true`
-   >    >    > 2. `recipe.trainer.strategy.account_for_loss_in_pipeline_split=true`
+   >    >    > 1. `GPTProvider.account_for_embedding_in_pipeline_split=true`
+   >    >    > 2. `GPTProvider.account_for_loss_in_pipeline_split=true`
 
 2. Expert Parallelism
 
    > 1. Expert Parallelism (EP) is designed specifically for Mixture-of-Experts (MoE) models to efficiently distribute sparse MLP weights across multiple chips. It can be used in combination with other parallelism strategies such as Tensor Parallelism (TP), Context Parallelism (CP), Pipeline Parallelism (PP), Data Parallelism (DP), and Fully Sharded Data Parallel (FSDP). In the current design, the dense attention part and the sparse MLP part are fully decoupled in terms of their TP, CP, and DP parallelism configurations. Expert Tensor Parallelism (ETP) is introduced to specifically control the tensor parallelism for the sparse MLP part. ETP uses TP for dense layers for the ranks allocated for EP in sparse layers. On the other hand, the baseline is DEP, which folds DP in dense layers for EP in sparse layers.
    >
-   >    > 1. `recipe.trainer.strategy.expert_model_parallel_size=<int>`
-   >    > 2. `recipe.trainer.strategy.expert_tensor_parallel_size=<int>`
+   >    > 1. `TransformerConfig.expert_model_parallel_size=<int>`
+   >    > 2. `TransformerConfig.expert_tensor_parallel_size=<int>`
    >
    > 2. Performance tips in hybrid folding options and EP sizing:
    >
@@ -83,20 +83,15 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    >
    >    > 4. When multiple experts are placed on a single chip after applying Expert Parallelism, enabling grouped GEMM can significantly improve computation efficiency.
    >    >
-   >    >    > 1. `recipe.model.config.moe_grouped_gemm=True`
+   >    >    > 1. `TransformerConfig.moe_grouped_gemm=True`
 
 3. Fully Sharded Data Parallelism
 
-   > 1. Megatron-Hub supports two Fully Sharded Data Parallelism (FSDP) implementations: PyTorch-native FSDP and a custom Megatron FSDP built within Megatron Core. While both follow the same sharding principles, the custom implementation is further optimized for performance. The performance gain of the custom FSDP comes primarily from minimizing the data movement to the communication tensors and reusing communication buffers. Both FSDP methods can be used in combination with per-tensor sharding methods.
+   > 1. Megatron-Hub supports PyTorch-native FSDP. FSDP can be used in combination with per-tensor sharding methods.
    >
    >    > 1. To use PyTorch FSDP2:
    >    >
-   >    >    > 1. `recipe.trainer.strategy.fsdp="pytorch"`
-   >    >
-   >    > 2. To use Custom Megatron FSDP:
-   >    >
-   >    >    > 1. `recipe.trainer.strategy.fsdp="megatron"`
-   >    >    > 2. `recipe.trainer.strategy.ddp.data_parallel_sharding_strategy="optim_grads_params"`
+   >    >    > 1. `DistributedInitConfig.use_torch_fsdp2=True`
    >
    > 2. FSDP can be preferred over TP+PP+DP mappings in the following scenarios:
    >
@@ -104,11 +99,29 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Hub offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect.
    >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size.
 
+   <!-- TODO: support megatron custom fsdp -->
+   <!-- > 1. Megatron-Hub supports two Fully Sharded Data Parallelism (FSDP) implementations: PyTorch-native FSDP and a custom Megatron FSDP built within Megatron Core. While both follow the same sharding principles, the custom implementation is further optimized for performance. The performance gain of the custom FSDP comes primarily from minimizing the data movement to the communication tensors and reusing communication buffers. Both FSDP methods can be used in combination with per-tensor sharding methods. -->
+   <!-- > -->
+   <!-- >    > 1. To use PyTorch FSDP2: -->
+   <!-- >    > -->
+   <!-- >    >    > 1. `DistributedInitConfig.use_torch_fsdp2=True` -->
+   <!-- >    > -->
+   <!-- >    > 2. To use Custom Megatron FSDP: -->
+   <!-- >    > -->
+   <!-- >    >    > 1. `recipe.trainer.strategy.fsdp="megatron"` -->
+   <!-- >    >    > 2. `recipe.trainer.strategy.ddp.data_parallel_sharding_strategy="optim_grads_params"` -->
+   <!-- > -->
+   <!-- > 2. FSDP can be preferred over TP+PP+DP mappings in the following scenarios: -->
+   <!-- > -->
+   <!-- >    > 1. Small models with a large sequence, thus the parameter AllGather and gradient ReduceScatter can effectively be hidden under computation and the short communication overlap causes minor interference to the computation under overlap. -->
+   <!-- >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Hub offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect. -->
+   <!-- >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size. -->
+
 4. Heterogeneous Encoder Parallelism
 
    > 1. Encoder Pipeline Parallel
    >
-   >    > 1. Use `recipe.trainer.strategy.encoder_pipeline_model_parallel_size`.
+   >    > 1. Use `T5ModelProvider.encoder_pipeline_model_parallel_size`.
    >    > 2. In an Encoder-Decoder architecture like Multimodal models (VLMs like NeVA etc.), Encoder Pipeline Parallel can be used to add pipeline parallelism to the encoder.
    >    > 3. Pipeline parallelism controls the amount of pipelining in the decoder part.
    >    > 4. Encoder Pipeline Parallel is limited to 1 at the moment, i.e., the encoder can occupy a maximum of 1 PP stage.
@@ -117,7 +130,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    > 2. Encoder Tensor Parallel
    >
-   >    > 1. Use `recipe.trainer.strategy.encoder_tensor_model_parallel_size`.
+   >    > 1. Use `T5ModelProvider.encoder_tensor_model_parallel_size`.
    >    > 2. Since encoders tend to be much smaller than decoders, we also provide the ability to set a different amount of tensor parallelism to the encoder than the decoder.
    >    > 3. By default, encoder tensor parallel is set to 0, i.e., the amount of tensor parallelism in the encoder is equal to tensor parallelism in the decoder.
    >    > 4. To use this option, Encoder Pipeline Parallel must be greater than 0 as we need the encoder to be on its own pipeline stage.
@@ -140,22 +153,22 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. Distributed optimizer overlaps parameter AllGathers with the forward computation of the first micro-batch and gradient ReduceScatters with the backward computation of the last micro-batch.
    >
-   >    > 1. `recipe.trainer.strategy.ddp.overlap_param_gather=true`
-   >    > 2. `recipe.trainer.strategy.ddp.overlap_grad_reduce=true`
+   >    > 1. `DistributedDataParallelConfig.overlap_param_gather=true`
+   >    > 2. `DistributedDataParallelConfig.overlap_grad_reduce=true`
    >
    > 2. When using the distributed optimizer with pipeline parallelism (PP) + virtual pipeline parallelism (VPP), DP communications overlap with multiple micro-batches, increasing the opportunity for effective overlap. Also, Megatron-Hub aligns the execution timing of DP communications across pipeline-parallel ranks to synchronize the computing kernel slowdown from the overlap.
    >
-   >    > 1. `recipe.trainer.strategy.ddp.align_param_gather=true`
+   >    > 1. `DistributedDataParallelConfig.align_param_gather=true`
    >
    > 3. Slow DP communication at large scaling training:
    >
    >    > 1. Distributing optimizer states across a partial DP domain reduces communication costs over high-latency Ethernet networks. Model states remain replicated outside the distributed domain. During the final micro-batch backpropagation, gradient ReduceScatters occur within the distributed domain, followed by AllReduce in the non-distributed domain. Parameter AllGathers are performed only within the distributed domain.
    >    >
-   >    >    > 1. `recipe.trainer.strategy.ddp.num_distributed_optimizer_instances=<int>`
+   >    >    > 1. `DistributedDataParallelConfig.num_distributed_optimizer_instances= <int>`
    >    >
    >    > 2. A large message size for DP communication is recommended to maximize network bandwidth utilization. You can achieve this by increasing the communication bucket size.
    >    >
-   >    >    > 1. `recipe.trainer.strategy.ddp.bucket_size=<number_of_elements: int>`
+   >    >    > 1. `DistributedDataParallelConfig.bucket_size=<number_of_elements: int>`
    >
    > 4. A common reason for DP communication overlap failure:
    >
@@ -164,36 +177,36 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    >    > 1. `NVTE_FWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives = 16>`
    >    >    > 2. `NVTE_BWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives = 16>`
 
-2. Custom Megatron FSDP
+<!-- 2. Custom Megatron FSDP -->
 
-   > 1. Unless you specify the communication bucket size, MCORE FSDP uses fixed communication overlap that overlaps the parameter AllGather and gradient ReduceScatter of each Transformer layer with its associated forward and backward computations.
+<!--    > 1. Unless you specify the communication bucket size, MCORE FSDP uses fixed communication overlap that overlaps the parameter AllGather and gradient ReduceScatter of each Transformer layer with its associated forward and backward computations. -->
 
 3. Tensor-parallel (TP) communication (with sequence parallelism)
 
    > 1. Megatron-Hub currently uses the userbuffer backend in Transformer Engine for TP communication overlaps. This offers the pipelined overlap of the TP communication with dependent computation.
    >
-   >    > 1. `callback.tp_comm_overlap`
+   >    > 1. `CommOverlapConfig.tp_comm_overlap`
    >
    > 2. The overlap method, resource, and precision of the TP communication overlaps are configurable, and the most performant configurations are set in the Megatron-Hub training recipes by default. Also, you can set a custom TP communication overlap configuration via the below interface following the structure of TransformerLayerTPOverlapCfg class.
    >
-   >    > 1. `callback.tp_comm_overlap_cfg=<TransformerLayerTPOverlapCfg>`
+   >    > 1. `CommOverlapConfig.tp_comm_overlap_cfg=<TransformerLayerTPOverlapCfg>`
    >
    > 3. TP communication overlap setting tips
    >
    >    > 1. Balancing the number of SMs between communication and GEMM
    >    >
    >    >    > 1. For AllGather/ReduceScatter bulk and ReduceScatter pipelined overlap, you can adjust the number of SMs to balance communication and GEMM execution. Allocating too many SMs to communication may degrade GEMM performance, while too few may expose communication overhead. The default SM allocation for communication is 16, but you can fine-tune it based on profiling results.
-   >    >    > 2. `TransformerLayerTPOverlapCfg.num_sm=<int>`
+   >    >    > 2. `TPOverlapCfg.num_sm=<int>`
    >    >
    >    > 2. CGA sizing to improve SM utilization
    >    >
    >    >    > 1. The CGA size can be set between 1 and 4, but it should not exceed the number of SMs allocated for communication. We recommend using CGA ≤ 2 to prevent potential SM rasterization that could impact GEMM performance.
-   >    >    > 2. `TransformerLayerTPOverlapCfg.cga_size=<int≤4>`
+   >    >    > 2. `TPOverlapCfg.cga_size=<int≤4>`
    >    >
    >    > 3. Use 4× splits for ReduceScatter and GEMM overlap to optimize the balance between GEMM efficiency and communication exposure.
    >    >
    >    >    > 1. In GEMM-then-ReduceScatter pipeline overlap, a 1× ReduceScatter chunk remains exposed. A small split size increases communication exposure, while a large split size may degrade performance due to aggregated GEMM wave quantization. We find that num_splits = 4 generally provides the best performance.
-   >    >    > 2. `TransformerLayerTPOverlapCfg.num_split=<int>`
+   >    >    > 2. `TPOverlapCfg.num_split=<int>`
    >
    > 4. Common reason for TP comm overlap failure at Hopper
    >
@@ -220,19 +233,19 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. Megatron-Hub supports FP8 parameter AllGather for per-tensor FP8 scaling recipes. This operation is lossless, enhancing performance while reducing memory usage.
    >
-   >    > 1. `MegatronMixedPrecision.fp8_params=true`
+   >    > 1. `MixedPrecisionConfig.fp8_param=true`
 
 2. BF16 (instead of FP32) data-parallel reduction in Distributed Optimizer and FSDP
 
    > 1. We have validated that BF16 reduction is numerically safe across numerous model training runs. However, BF16 reduction with a large data-parallel size (e.g., DP ≥ 128), especially the Ring reduction algorithm—which accumulates copies sequentially—may impact numerical stability. When using SHARP with NVIDIA InfiniBand, BF16 reduction is more robust, as it performs binary additions with higher precision for intermediate partial reductions.
    >
-   >    > 1. `recipe.trainer.strategy.ddp.grad_reduce_in_fp32=false`
+   >    > 1. `DistributedDataParallelConfig.grad_reduce_in_fp32=false`
 
 3. FP8 tensor-parallel ReduceScatter
 
    > 1. When communication latency exceeds GEMM execution time, using FP8 input ReduceScatter can better hide communication overhead. This approach has low numerical impact, as the GEMM output must be cast to FP8 and then converted back to high precision during reduction.
    >
-   >    > 1. `TransformerLayerTPOverlapCfg.fp8_buf=true`
+   >    > 1. `TPOverlapCfg.fp8_buf=true`
 
 4. FP8 A2A Dispatch for expert parallel communication
 
@@ -248,11 +261,11 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    > 2. For non-pipeline-parallel training, the data-parallel communication bucket size can be adjusted using the knobs below. In pipeline-parallel training, however, the bucket size is fixed and determined by the number of parameters assigned to each virtual pipeline rank.
    >
-   >    > 1. `recipe.trainer.strategy.ddp.bucket_size=<int: bytes>`
+   >    > 1. `DistributedDataParallelConfig.bucket_size=<int: bytes>`
    >
    > 3. Setting the knob below splits the data-parallel domain of the distributed optimizer into a sharding domain and a replication domain. Gradient reduction then occurs in two stages—one within each domain—avoiding the use of a single large flat ring for collective operations that have high latency.
    >
-   >    > 1. `recipe.trainer.strategy.num_distributed_optimizer_instances=<int: ≤dp_size>`
+   >    > 1. `DistributedDataParallelConfig.num_distributed_optimizer_instances=<int: ≤dp_size>`
 
 3. Ideas to reduce the host-driven inter-GPU jitters are discussed in [Lowering Host Overhead and Jitters](#lowering-overhead-jitter).
 
@@ -274,14 +287,13 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. Megatron-Hub manually aligns the timing of garbage collection across GPUs that significantly mitigate the host overhead compared to the baseline automatic garbage collection.
    >
-   >    > 1. `GarbageCollectionCallback.gc_interval_train=<int>`
-   >    > 2. `GarbageCollectionCallback.gc_interval_val=<int>`
+   >    > 1. `TrainingConfig.manual_gc_interval=<int>`
 
 4. CUDA graph to eliminate repeated static host code execution
 
    > 1. Megatron-Hub supports graph capture, significantly reducing host overhead. CUDA Graph is applicable only to LLMs with a static tensor shape across training steps. For example, it supports fixed-size packed sequences but does not handle sequences with varying lengths at each step. Also, MoE models with token-dropless propagation have limited CUDA graph support, restricted to the dense modules only.
    > 2. CUDA graph requires additional memory for static buffer management, typically adding a few gigabytes for static buffers, while models with PP size > 1 may consume over 10GB. We are actively working to reduce this memory overhead.
-   > 3. `recipe.model.config.enable_cuda_graph=true`
+   > 3. `TransformerConfig.enable_cuda_graph=true`
 
 5. Bind CPU memory for GPU processes
 
@@ -298,9 +310,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    > 2. Megatron-Hub also supports recomputing the full intermediate activations of a Transformer block, significantly reducing activation memory usage at the cost of approximately 30% additional computation. The number of Transformer blocks to recompute can be adjusted using a configurable setting.
    >
-   >    > 1. `recipe.model.config.recompute_granuality=full`
-   >    > 2. `recipe.model.config.recompute_method=block`
-   >    > 3. `recipe.model.config.recompute_num_layers=<int:≤num_layers_in_the_model>`
+   >    > 1. `TransformerConfig.recompute_granuality=full`
+   >    > 2. `TransformerConfig.recompute_method=block`
+   >    > 3. `TransformerConfig.recompute_num_layers=<int:≤num_layers_in_the_model>`
 
 2. Activation offloading to host memory
 
@@ -308,9 +320,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    > 2. The following knobs should be configured to enable offloading and specify the number of Transformer layers to offload to host memory. The maximum number of layers that can be offloaded depends on host memory capacity, which may be lower when the CPU is shared among multiple GPUs.
    >
-   >    > 1. `recipe.model.config.cpu_offloading=True`
-   >    > 2. `recipe.model.config.cpu_offloading_weights=False`
-   >    > 3. `recipe.model.config.cpu_offloading_num_layers=<int:≤activation_offload_layers>`
+   >    > 1. `TransformerConfig.cpu_offloading=True`
+   >    > 2. `TransformerConfig.cpu_offloading_weights=False`
+   >    > 3. `TransformerConfig.cpu_offloading_num_layers= <int:≤activation_offload_layers>`
    >
    > 3. Environment variable settings to avoid resource conflict between CPU memory offloading and network communication
    >
@@ -325,7 +337,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. In BF16 training, Megatron-Hub optimizes memory usage by storing only the BF16 remainder of the master weight copies for the next optimizer update. This is possible because BF16 data can be represented using a subset of FP32 bits, allowing Megatron-Hub to avoid redundant storage of the FP32 portion used for BF16 representation. This is default enabled when using precision-aware optimizer in Megatron Core.
    >
-   >    > 1. `recipe.model.config.use_precision_aware_optimizer=True`
+   >    > 1. `OptimizerConfig.use_precision_aware_optimizer=True`
 
 4. Common memory usage hikes from environment variable setting
 
@@ -342,18 +354,18 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 1. In FP8 training, after optimizer step execution, we can keep the parameters in FP8. Compared to the baseline that keeps the intermediate weight values in BF16, FP8 parameters lower memory usage and improve communication performance. The below knob enables keeping the parameters in FP8.
    >
-   >    > 1. `recipe.model.config.fp8_param_gather=True`
+   >    > 1. `MixedPrecisionConfig.fp8_param_gather=True`
 
 ## Operator Fusion
 
 1. All operator fusions are enabled by default in NeMo-Run scripts. You can control specific fusion behaviors using the following configuration knobs:
 
-   > 1. `recipe.model.config.masked_softmax_fusion=true`
-   > 2. `recipe.model.config.cross_entropy_loss_fusion=true`
-   > 3. `recipe.model.config.gradient_accumulation_fusion=true`
-   > 4. `recipe.model.config.bias_activation_fusion=true`
-   > 5. `recipe.model.config.bias_dropout_fusion=true`
-   > 6. `recipe.model.config.apply_rope_fusion=true`
+   > 1. `TransformerConfig.masked_softmax_fusion=true`
+   > 2. `GPTProvider.cross_entropy_loss_fusion=true`
+   > 3. `GPTProvider.gradient_accumulation_fusion=true`
+   > 4. `TransformerConfig.bias_activation_fusion=true`
+   > 5. `TransformerConfig.bias_dropout_fusion=true`
+   > 6. `TransformerConfig.apply_rope_fusion=true`
 
 2. Megatron-Hub offers different Flash Attention options, which can be chosen by environment
 
@@ -369,11 +381,11 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 2. CP to shard activation (knob)
 
-   > 1. `recipe.trainer.strategy.context_parallel_size=<int>`
+   > 1. `TransformerConfig.context_parallel_size=<int>`
    >
    >    > 1. Both TP and CP can reduce activation memory overheads. It's not wise to be biased to either of them. Communications of TP and CP are overlapped by GEMM and Attention respectively. Blindly enlarging their sizes can make some communications hard to overlap. It's recommended to sweep a combination of TP+CP configs. The optimal config is expected to make full use of all related compute and do best overlapping, thereby achieving best end-to-end performance.
    >
-   > 2. `recipe.model.config.cp_comm_type=<str> or <list of str>`
+   > 2. `TransformerConfig.cp_comm_type=<str> or <list of str>`
    >
    >    > 1. Megatron-Core provides multiple implementation variants of CP and allows you to make choices based on your specific use cases by configuring "cp_comm_type". The configuration value can be `p2p`, `all_gather`, `a2a`, or `a2a+p2p`. These communication types are compatible with each other, so they can be flexibly interleaved between transformer layers. You only need to provide a list, where each element corresponds to a layer.
    >    > 2. `p2p`: exchanges KV sequence chunks in ring-topology. The P2P communications can be fully overlapped.
@@ -396,8 +408,8 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Enabled with:
 
-   > 1. `recipe.data.packed_sequence_specs.packed_sequence_size=<max sequence length>`
-   > 2. `recipe.data.micro_batch_size=1`
+   > 1. `FinetuningDatasetConfig.packed_sequence_specs.packed_sequence_size=<max sequence length>`
+   > 2. `TrainingConfig.micro_batch_size=1`
 
 4. Performance benefits also include:
 
@@ -416,13 +428,13 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 1. Nsight system profile
 
-   > 1. Megatron-Hub provides an interface to enable the NVIDIA Nsight Systems profiler, which displays the GPU execution trace of all CUDA streams. You can check whether communication kernels overlap with computation kernels and adjust resource allocation to balance communication and computation. The Nsight Systems profile can be enabled using NsysPlugin, as shown below.
-   > 2. `NsysPlugin(start_step=<int>, end_step=<int>, ranks=<[0,...]>, nsys_trace=<["nvtx", "cuda",...]>)`
+   > 1. Megatron-Hub provides an interface to enable the NVIDIA Nsight Systems profiler, which displays the GPU execution trace of all CUDA streams. You can check whether communication kernels overlap with computation kernels and adjust resource allocation to balance communication and computation. The Nsight Systems profile can be enabled using ProfilingConfig, as shown below.
+   > 2. `ProfilingConfig(use_nsys_profiler=True, profile_start_step=<int>, profile_end_step=<int>, profile_ranks=<[0,...]>)`
 
 2. Memory snapshot
 
-   > 1. Megatron-Hub provides an interface to extract the memory snapshot that shows the memory allocation bytes, the allocation lifespan, and the function call stack. Extracting the memory snapshot can be enabled by MemoryProfilePlugin as shown below.
-   > 2. `MemoryProfilePlugin(dir=</path/to/store/the/output/file, ranks=<[0,...]>)`
+   > 1. Megatron-Hub provides an interface to extract the memory snapshot that shows the memory allocation bytes, the allocation lifespan, and the function call stack. Extracting the memory snapshot can be enabled by ProfilingConfig as shown below.
+   > 2. `ProfilingConfig(record_memory_history=True, memory_snapshot_path=</path/to/store/the/output/file, profile_ranks=<[0,...]>)`
 
 ## Index - List of Tuning Knobs
 
@@ -473,6 +485,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 - `T5ModelProvider.encoder_tensor_model_parallel_size`
 - `TransformerConfig.expert_model_parallel_size=<int>`
 - `TransformerConfig.expert_tensor_parallel_size=<int>`
+- `TransformerConfig.moe_grouped_gemm`
 - `DistributedInitConfig.use_torch_fsdp2`
 - `TransformerConfig.pipeline_model_parallel_size`
 - `TransformerConfig.tensor_model_parallel_size`
