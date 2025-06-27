@@ -94,6 +94,10 @@ class UnavailableMeta(type):
         raise UnavailableError(cls._msg)
 
     def __getattr__(cls, name):
+        # Special handling for unittest.mock which tries to access __func_
+        # and other attributes during its operations
+        if name in ("__func__", "__wrapped__", "__name__", "__qualname__"):
+            raise AttributeError(f"'{cls.__name__}' has no attribute '{name}'")
         raise UnavailableError(cls._msg)
 
     def __eq__(cls, other):
