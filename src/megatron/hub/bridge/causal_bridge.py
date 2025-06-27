@@ -353,7 +353,9 @@ class CausalLMBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if torch.distributed.get_rank() == 0:
+        if not (torch.distributed.is_available() and torch.distributed.is_initialized()) or (
+            torch.distributed.get_rank() == 0
+        ):
             self.hf_pretrained.save_artifacts(path)
 
         self.save_weights(model, path, show_progress)
@@ -394,7 +396,8 @@ class CausalLMBridge(Generic[MegatronModelT]):
             - Automatically handles model sharding for large models
             - The saved weights can be loaded with HuggingFace's from_pretrained
         """
-        torch.distributed.barrier()
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.barrier()
         query = (self._get_causal_lm_architecture(), self._get_model_instance(model))
         generator = model_bridge.bridge_state_to_hf(
             query, model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
