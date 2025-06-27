@@ -101,7 +101,11 @@ class TestIsModelSection:
 
 
 class TestApplyPeftAdapterFilterToStateDict:
-    """Test suite for apply_peft_adapter_filter_to_state_dict functionality."""
+    """Test suite for apply_peft_adapter_filter_to_state_dict functionality.
+
+    Tests the PEFT adapter filtering that processes complete checkpoint state dictionaries
+    to retain only adapter parameters in model sections while preserving metadata.
+    """
 
     @pytest.fixture
     def mock_peft_config(self):
@@ -217,12 +221,29 @@ class TestApplyPeftAdapterFilterToStateDict:
                     filtered_dict[model_key][param_key], sample_multi_model_state_dict[model_key][param_key]
                 )
 
-    def test_apply_peft_adapter_filter_no_peft_config(self, sample_complete_state_dict):
-        """Test that original state dict is returned when PEFT config is None."""
-        filtered_dict = apply_peft_adapter_filter_to_state_dict(sample_complete_state_dict, None)
+    def test_apply_peft_adapter_filter_no_adapters_found(self, mock_peft_config):
+        """Test filtering when no adapter parameters match the filter."""
+        state_dict_no_adapters = {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "model": {
+                # Only base model parameters (no adapters)
+                "embedding.weight": torch.randn(1000, 512),
+                "layer1.linear.weight": torch.randn(512, 512),
+                "output.weight": torch.randn(512, 1000),
+            },
+            "optimizer": {"state": {}, "param_groups": []},
+        }
 
-        # Should return the original state dict unchanged
-        assert filtered_dict is sample_complete_state_dict
+        filtered_dict = apply_peft_adapter_filter_to_state_dict(state_dict_no_adapters, mock_peft_config)
+
+        # Model section should be empty since no adapters match
+        assert filtered_dict["model"] == {}
+
+        # Non-model sections should be preserved
+        assert filtered_dict["checkpoint_version"] == 3.0
+        assert filtered_dict["iteration"] == 1000
+        assert "optimizer" in filtered_dict
 
     def test_apply_peft_adapter_filter_no_model_states(self, mock_peft_config):
         """Test filtering when no model states are present."""
@@ -391,26 +412,38 @@ class TestPEFTCheckpointLoading:
     @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
     @patch("megatron.hub.training.checkpointing.checkpoint_exists")
     @patch("megatron.hub.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
-    def test_load_checkpoint_peft_resume_detection(self, mock_filter, mock_checkpoint_exists, mock_load_base):
+    @patch("megatron.hub.training.checkpointing.generate_state_dict")
+    def test_load_checkpoint_peft_resume_detection(
+        self, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
+    ):
         """Test that PEFT resume is properly detected and triggers filtering."""
         # Setup mocks
         mock_checkpoint_exists.return_value = True
 
-        mock_state_dict = {
+        # Create deterministic tensors to avoid random comparison issues
+        torch.manual_seed(42)
+        base_weight = torch.randn(512, 512)
+        adapter_weight = torch.randn(8, 512)
+
+        # This is what generate_state_dict would return (full state dict)
+        full_generated_state_dict = {
             "model": {
-                "layer1.linear.weight": torch.randn(512, 512),
-                "layer1.adapter.weight": torch.randn(8, 512),
+                "layer1.linear.weight": base_weight,
+                "layer1.adapter.weight": adapter_weight,
             },
             "checkpoint_version": 3.0,
         }
-        mock_load_base.return_value = (mock_state_dict, "/path/to/checkpoint", False, None)
 
-        # Mock filtered result - apply_peft_adapter_filter_to_state_dict returns complete state dict
-        mock_filtered_dict = {
-            "model": {"layer1.adapter.weight": torch.randn(8, 512)},
+        # This is what apply_peft_adapter_filter_to_state_dict should return (filtered)
+        filtered_sharded_state_dict = {
+            "model": {"layer1.adapter.weight": adapter_weight},
             "checkpoint_version": 3.0,
         }
-        mock_filter.return_value = mock_filtered_dict
+        mock_filter.return_value = filtered_sharded_state_dict
+
+        # _load_base_checkpoint should return only the parameters that were in the filtered sharded state dict
+        # Since the filtering happens BEFORE _load_base_checkpoint, it should only load adapter parameters
+        mock_load_base.return_value = (filtered_sharded_state_dict, "/path/to/checkpoint", False, None)
 
         # Create mock global state for PEFT resume scenario
         mock_state = Mock(spec=GlobalState)
@@ -464,6 +497,9 @@ class TestPEFTCheckpointLoading:
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
 
+            # Mock generate_state_dict to return the full state dict (before filtering)
+            mock_generate_state_dict.return_value = full_generated_state_dict
+
             # Mock run config for non-PEFT scenario
             mock_run_config = {
                 "model": {
@@ -484,11 +520,11 @@ class TestPEFTCheckpointLoading:
                 skip_load_to_model_and_opt=False,
             )
 
-            # Verify PEFT filtering was called
-            mock_filter.assert_called_once_with(mock_state_dict, mock_cfg.peft)
+            # Verify PEFT filtering was called on the generated sharded state dict
+            mock_filter.assert_called_once_with(full_generated_state_dict, mock_cfg.peft)
 
             # Verify model.load_state_dict was called with filtered dict and strict=False
-            mock_model[0].load_state_dict.assert_called_once_with(mock_filtered_dict["model"], strict=False)
+            mock_model[0].load_state_dict.assert_called_once_with(filtered_sharded_state_dict["model"], strict=False)
 
     @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
     @patch("megatron.hub.training.checkpointing.checkpoint_exists")
@@ -497,10 +533,14 @@ class TestPEFTCheckpointLoading:
         # Setup mocks
         mock_checkpoint_exists.return_value = True
 
+        torch.manual_seed(44)
+        linear_weight_1 = torch.randn(512, 512)
+        linear_weight_2 = torch.randn(512, 512)
+
         mock_state_dict = {
             "model": {
-                "layer1.linear.weight": torch.randn(512, 512),
-                "layer2.linear.weight": torch.randn(512, 512),
+                "layer1.linear.weight": linear_weight_1,
+                "layer2.linear.weight": linear_weight_2,
             },
             "checkpoint_version": 3.0,
         }
@@ -584,25 +624,43 @@ class TestPEFTCheckpointLoading:
     @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
     @patch("megatron.hub.training.checkpointing.checkpoint_exists")
     @patch("megatron.hub.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
-    def test_load_checkpoint_peft_resume_multi_model(self, mock_filter, mock_checkpoint_exists, mock_load_base):
+    @patch("megatron.hub.training.checkpointing.generate_state_dict")
+    def test_load_checkpoint_peft_resume_multi_model(
+        self, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
+    ):
         """Test PEFT resume with multiple model chunks (pipeline parallelism)."""
         # Setup mocks
         mock_checkpoint_exists.return_value = True
 
-        mock_state_dict = {
-            "model0": {"layer1.adapter.weight": torch.randn(8, 512)},
-            "model1": {"layer2.adapter.weight": torch.randn(8, 512)},
-            "checkpoint_version": 3.0,
-        }
-        mock_load_base.return_value = (mock_state_dict, "/path/to/checkpoint", False, None)
+        torch.manual_seed(43)
+        base_weight_0 = torch.randn(512, 512)
+        adapter_weight_0 = torch.randn(8, 512)
+        base_weight_1 = torch.randn(512, 512)
+        adapter_weight_1 = torch.randn(8, 512)
 
-        # Mock filtered results - apply_peft_adapter_filter_to_state_dict returns complete state dict
-        mock_filtered_dict = {
-            "model0": {"layer1.adapter.weight": torch.randn(8, 512)},
-            "model1": {"layer2.adapter.weight": torch.randn(8, 512)},
+        # This is what generate_state_dict would return (full state dict)
+        full_generated_state_dict = {
+            "model0": {
+                "layer1.linear.weight": base_weight_0,
+                "layer1.adapter.weight": adapter_weight_0,
+            },
+            "model1": {
+                "layer2.linear.weight": base_weight_1,
+                "layer2.adapter.weight": adapter_weight_1,
+            },
             "checkpoint_version": 3.0,
         }
-        mock_filter.return_value = mock_filtered_dict
+
+        # This is what apply_peft_adapter_filter_to_state_dict should return (filtered)
+        filtered_sharded_state_dict = {
+            "model0": {"layer1.adapter.weight": adapter_weight_0},
+            "model1": {"layer2.adapter.weight": adapter_weight_1},
+            "checkpoint_version": 3.0,
+        }
+        mock_filter.return_value = filtered_sharded_state_dict
+
+        # _load_base_checkpoint should return only the parameters that were in the filtered sharded state dict
+        mock_load_base.return_value = (filtered_sharded_state_dict, "/path/to/checkpoint", False, None)
 
         # Create mock global state for PEFT resume scenario
         mock_state = Mock(spec=GlobalState)
@@ -658,6 +716,9 @@ class TestPEFTCheckpointLoading:
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
 
+            # Mock generate_state_dict to return the full state dict (before filtering)
+            mock_generate_state_dict.return_value = full_generated_state_dict
+
             # Mock run config for multi-model PEFT scenario
             mock_run_config = {
                 "model": {
@@ -679,17 +740,11 @@ class TestPEFTCheckpointLoading:
             )
 
             # Verify filtering was called once with the complete state dict
-            mock_filter.assert_called_once_with(mock_state_dict, mock_cfg.peft)
+            mock_filter.assert_called_once_with(full_generated_state_dict, mock_cfg.peft)
 
-            # Verify both models had load_state_dict called with strict=False
-            mock_model[0].load_state_dict.assert_called_once()
-            mock_model[1].load_state_dict.assert_called_once()
-
-            # Verify strict=False was used for both calls
-            args0, kwargs0 = mock_model[0].load_state_dict.call_args
-            args1, kwargs1 = mock_model[1].load_state_dict.call_args
-            assert kwargs0.get("strict", True) == False
-            assert kwargs1.get("strict", True) == False
+            # Verify both models had load_state_dict called with filtered dicts and strict=False
+            mock_model[0].load_state_dict.assert_called_once_with(filtered_sharded_state_dict["model0"], strict=False)
+            mock_model[1].load_state_dict.assert_called_once_with(filtered_sharded_state_dict["model1"], strict=False)
 
 
 @pytest.mark.run_only_on("GPU")
