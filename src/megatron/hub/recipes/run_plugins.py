@@ -16,25 +16,25 @@ import logging
 import os
 import types
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from megatron.hub.core.utils.import_utils import MISSING_NEMO_RUN_MSG
 from megatron.hub.training.config import (
     FaultToleranceConfig,
     ProfilingConfig,
 )
+from megatron.hub.utils.import_utils import MISSING_NEMO_RUN_MSG
 
 
 try:
-    import nemo_run as run
+    from nemo_run import Partial, Plugin, Script, SlurmExecutor
 
     HAVE_NEMO_RUN = True
 except (ImportError, ModuleNotFoundError):
-    from unittest.mock import MagicMock
-
-    run = MagicMock()
-    run.Plugin = types.new_class("Plugin", ())
+    Plugin = object
     HAVE_NEMO_RUN = False
+
+if TYPE_CHECKING:
+    import nemo_run as run
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
-class PreemptionPlugin(run.Plugin):
+class PreemptionPlugin(Plugin):
     """
     A plugin for setting up preemption handling and signals.
 
@@ -62,12 +62,12 @@ class PreemptionPlugin(run.Plugin):
     enable_exit_handler: bool = True
     enable_exit_handler_for_data_loader: bool = False
 
-    def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
         """Set up the preemption plugin."""
-        if isinstance(task, run.Script):
+        if isinstance(task, Script):
             # For run.Script, append CLI overrides to the script arguments
             if self.enable_exit_handler:
                 task.args.append(f"train.exit_signal_handler={str(self.enable_exit_handler)}")
@@ -87,7 +87,7 @@ class PreemptionPlugin(run.Plugin):
                 task.config.train.exit_signal_handler_for_dataloader = self.enable_exit_handler_for_data_loader
 
         # Apply signal configuration for both task types when using SlurmExecutor
-        if isinstance(executor, run.SlurmExecutor):
+        if isinstance(executor, SlurmExecutor):
             # Sends a SIGTERM self.preempt_time seconds before hitting time limit
             logger.info(
                 f"{self.__class__.__name__} will send a SIGTERM {self.preempt_time} seconds before the job's time limit for your Slurm executor."
@@ -96,7 +96,7 @@ class PreemptionPlugin(run.Plugin):
 
 
 @dataclass(kw_only=True)
-class FaultTolerancePlugin(run.Plugin):
+class FaultTolerancePlugin(Plugin):
     """
     A plugin for setting up fault tolerance configuration.
     This plugin enables workload hang detection, automatic calculation of timeouts used for hang detection,
@@ -120,7 +120,7 @@ class FaultTolerancePlugin(run.Plugin):
     initial_rank_heartbeat_timeout: int = 1800
     rank_heartbeat_timeout: int = 300
 
-    def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
@@ -157,7 +157,7 @@ class FaultTolerancePlugin(run.Plugin):
 
 
 @dataclass(kw_only=True)
-class NsysPlugin(run.Plugin):
+class NsysPlugin(Plugin):
     """
     A plugin for nsys profiling configuration.
 
@@ -182,7 +182,7 @@ class NsysPlugin(run.Plugin):
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
 
-    def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
         """Set up the nsys profiling plugin."""
@@ -190,7 +190,7 @@ class NsysPlugin(run.Plugin):
         launcher.nsys_profile = True
         launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
 
-        if isinstance(executor, run.SlurmExecutor):
+        if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
             launcher.nsys_filename = "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"
 
@@ -203,7 +203,7 @@ class NsysPlugin(run.Plugin):
                 )
 
         # Configure profiling in task config
-        if isinstance(task, run.Script):
+        if isinstance(task, Script):
             # For run.Script, append CLI overrides to the script arguments
             cli_overrides = [
                 "profiling.use_nsys_profiler=true",
@@ -214,7 +214,7 @@ class NsysPlugin(run.Plugin):
             ]
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
-        elif isinstance(task, run.Partial):
+        elif isinstance(task, Partial):
             # For run.Partial, modify the task config directly
             if not hasattr(task.config, "profiling") or task.config.profiling is None:
                 task.config.profiling = ProfilingConfig()
@@ -227,7 +227,7 @@ class NsysPlugin(run.Plugin):
 
 
 @dataclass(kw_only=True)
-class PyTorchProfilerPlugin(run.Plugin):
+class PyTorchProfilerPlugin(Plugin):
     """
     A plugin for PyTorch profiler configuration.
 
@@ -251,12 +251,12 @@ class PyTorchProfilerPlugin(run.Plugin):
     memory_snapshot_path: str = "snapshot.pickle"
     record_shapes: bool = False
 
-    def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
         """Set up the PyTorch profiler plugin."""
-        if isinstance(task, run.Script):
+        if isinstance(task, Script):
             # For run.Script, append CLI overrides to the script arguments
             cli_overrides = [
                 "profiling.use_pytorch_profiler=true",
@@ -285,7 +285,7 @@ class PyTorchProfilerPlugin(run.Plugin):
 
 
 @dataclass(kw_only=True)
-class WandbPlugin(run.Plugin):
+class WandbPlugin(Plugin):
     """
     A plugin for setting up Weights & Biases configuration.
 
@@ -309,7 +309,7 @@ class WandbPlugin(run.Plugin):
     save_dir: str = "/nemo_run/wandb"
     log_task_config: bool = True
 
-    def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
@@ -317,7 +317,7 @@ class WandbPlugin(run.Plugin):
         if "WANDB_API_KEY" in os.environ:
             executor.env_vars["WANDB_API_KEY"] = os.environ["WANDB_API_KEY"]
 
-            if isinstance(task, run.Script):
+            if isinstance(task, Script):
                 # For run.Script, append CLI overrides to the script arguments
                 cli_overrides = [
                     f"logger.wandb_project={self.project}",
@@ -347,7 +347,7 @@ class WandbPlugin(run.Plugin):
 
 
 @dataclass(kw_only=True)
-class PerfEnvPlugin(run.Plugin):
+class PerfEnvPlugin(Plugin):
     """
     A plugin for setting up performance optimized environments.
 
@@ -394,7 +394,7 @@ class PerfEnvPlugin(run.Plugin):
 
         return vboost_cmd
 
-    def setup(self, task: run.Partial | run.Script, executor: run.Executor):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         """Enable the performance environment settings"""
 
         if not HAVE_NEMO_RUN:
@@ -423,7 +423,7 @@ class PerfEnvPlugin(run.Plugin):
 
         # Configure manual garbage collection
         if self.enable_manual_gc:
-            if isinstance(task, run.Script):
+            if isinstance(task, Script):
                 # For run.Script, append CLI overrides
                 cli_overrides = [
                     f"train.manual_gc={str(self.enable_manual_gc).lower()}",
@@ -437,7 +437,7 @@ class PerfEnvPlugin(run.Plugin):
                 task.config.train.manual_gc_interval = self.manual_gc_interval
 
         # Improve perf by steering power to tensor cores, may not work on all systems
-        if self.enable_vboost and isinstance(executor, run.SlurmExecutor):
+        if self.enable_vboost and isinstance(executor, SlurmExecutor):
             vboost_cmd = self.get_vboost_srun_cmd(executor.nodes, executor.tunnel.job_dir)
             executor.setup_lines = (
                 executor.setup_lines + vboost_cmd
