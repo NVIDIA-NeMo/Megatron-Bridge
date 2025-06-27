@@ -15,7 +15,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 from megatron.hub.core.utils.import_utils import MISSING_NEMO_RUN_MSG
 from megatron.hub.training.config import (
@@ -61,7 +61,7 @@ class PreemptionPlugin(Plugin):
     enable_exit_handler: bool = True
     enable_exit_handler_for_data_loader: bool = False
 
-    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
@@ -119,7 +119,7 @@ class FaultTolerancePlugin(Plugin):
     initial_rank_heartbeat_timeout: int = 1800
     rank_heartbeat_timeout: int = 300
 
-    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
@@ -181,7 +181,7 @@ class NsysPlugin(Plugin):
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
 
-    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
         """Set up the nsys profiling plugin."""
@@ -250,7 +250,7 @@ class PyTorchProfilerPlugin(Plugin):
     memory_snapshot_path: str = "snapshot.pickle"
     record_shapes: bool = False
 
-    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
@@ -308,7 +308,7 @@ class WandbPlugin(Plugin):
     save_dir: str = "/nemo_run/wandb"
     log_task_config: bool = True
 
-    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
@@ -393,7 +393,7 @@ class PerfEnvPlugin(Plugin):
 
         return vboost_cmd
 
-    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
 
         if not HAVE_NEMO_RUN:
