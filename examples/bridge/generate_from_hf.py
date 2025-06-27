@@ -21,12 +21,11 @@ from megatron.hub import CausalLMBridge
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 bridge = CausalLMBridge.from_pretrained(HF_MODEL_ID)
+tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_ID, trust_remote_code=True)
 
 
-def generate_sequence(prompt, model, hf_model_path, max_new_tokens=100):
+def generate_sequence(prompt, model, max_new_tokens=100):
     """Generate text sequence"""
-    tokenizer = AutoTokenizer.from_pretrained(hf_model_path, trust_remote_code=True)
-
     input_ids = tokenizer.encode(prompt, return_tensors="pt")
     input_ids = input_ids.cuda()
     position_ids = torch.arange(input_ids.shape[1], device=input_ids.device).unsqueeze(0)
@@ -79,7 +78,7 @@ def generate_sequence(prompt, model, hf_model_path, max_new_tokens=100):
 
 
 if __name__ == "__main__":
-    model = bridge.to_model(wrap_with_ddp=False)
+    megatron_model = bridge.to_model(wrap_with_ddp=False)
 
     prompt = "Hello, how are you?"
-    generate_sequence(prompt, model, HF_MODEL_ID)
+    generate_sequence(prompt, megatron_model, HF_MODEL_ID)

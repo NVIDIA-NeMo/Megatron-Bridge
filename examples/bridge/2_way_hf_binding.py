@@ -31,13 +31,13 @@ The process is as follows:
 import argparse
 import os
 
-import torch
 from rich.console import Console
-from rich.table import Table
 
 from megatron.hub import CausalLMBridge
+from megatron.hub.bridge.utils import weights_verification_table
 
 
+console = Console()
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
 
@@ -50,30 +50,9 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
         save_path = model_name
 
     bridge = CausalLMBridge.from_pretrained(hf_model_id)
-
-    # Formatting
-    console = Console()
-    table = Table(title="Hugging Face Weights Verification")
-    table.add_column("Weight Name", style="cyan")
-    table.add_column("Shape")
-    table.add_column("DType")
-    table.add_column("Device")
-    table.add_column("Matches Original", justify="center")
-
     megatron_model = bridge.to_model(wrap_with_ddp=False)
+    console.print(weights_verification_table(bridge, megatron_model))
 
-    # Check each weight against the original HF-model
-    for name, param in bridge(megatron_model, show_progress=True):
-        original_param = bridge.hf_pretrained.state[name]
-        table.add_row(
-            name,
-            str(tuple(param.shape)),
-            str(param.dtype).replace("torch.", ""),
-            str(param.device),
-            "✅" if torch.allclose(param, original_param.to(param.device), atol=1e-6) else "❌",
-        )
-
-    console.print(table)
     console.print(f"Saving HF-ckpt in {save_path}...")
     bridge.save_pretrained(megatron_model, save_path)
 

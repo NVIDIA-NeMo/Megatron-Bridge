@@ -79,7 +79,7 @@ class HFSaveTask(NamedTuple):
     """Task for saving HuggingFace model weights with pipeline parallel metadata."""
 
     pp_rank: int
-    vpp_rank: Optional[int]
+    vp_stage: Optional[int]
     megatron_name: str
     weight_bridge: MegatronWeightBridge
 
@@ -126,8 +126,8 @@ class _HFSaveTask(Generic[WeightBridgeT]):
 
     Attributes:
         pp_rank (int): Pipeline-parallel rank that **owns** the parameter.
-        vpp_rank (Optional[int]): Virtual-pipeline (intra-layer) rank if model
-            is built with VPP, otherwise ``None``.
+        vp_stage (Optional[int]): Virtual-pipeline (intra-layer) stage if model
+            is built with VP, otherwise ``None``.
         param_name (str): Fully-qualified, *unwrapped* Megatron parameter name
             to export.
         bridge (WeightBridgeT): :pyclass:`MegatronWeightBridge` instance which
@@ -137,7 +137,7 @@ class _HFSaveTask(Generic[WeightBridgeT]):
     """
 
     pp_rank: int
-    vpp_rank: Optional[int]
+    vp_stage: Optional[int]
     param_name: str
     bridge: WeightBridgeT
 
@@ -194,7 +194,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
     1. Build conversion plans that map each parameter to its appropriate bridge
     2. Execute plans with proper error handling and progress tracking
     3. Provide utilities for configuration translation
-    4. Handle virtual pipeline parallelism (VPP) complexities
+    4. Handle virtual pipeline parallelism (VP) complexities
 
     To implement a bridge for a new model architecture:
 
@@ -599,7 +599,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 weight = None
                 module = None
                 if task.pp_rank == mpu.get_pipeline_model_parallel_rank():
-                    module, weight = self._get_param_and_module_from_vpp(src, task.vpp_rank, task.param_name)
+                    module, weight = self._get_param_and_module_from_vp(src, task.vp_stage, task.param_name)
 
                 kv_pairs = task.from_megatron(weight, module)
 
@@ -822,25 +822,25 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 return weight_bridge.to_target(provider, **weights)
             return None
 
-    def _get_layer_offset(self, model: MegatronModule, vpp_idx: int) -> int:
-        """Get layer offset for VPP models."""
-        # TODO: Implement VPP layer offset calculation
+    def _get_layer_offset(self, model: MegatronModule, vp_idx: int) -> int:
+        """Get layer offset for VP models."""
+        # TODO: Implement VP layer offset calculation
         return 0
 
-    def _adjust_name_for_vpp(self, name: str, layer_offset: int) -> str:
-        """Adjust parameter name for VPP global view."""
-        # TODO: Implement VPP name adjustment
+    def _adjust_name_for_vp(self, name: str, layer_offset: int) -> str:
+        """Adjust parameter name for VP global view."""
+        # TODO: Implement VP name adjustment
         return name
 
     def _collect_all_params(self, models: List[MegatronModule]) -> List[Tuple[int, Optional[int], str]]:
-        """Collect all parameter names across PP/VPP ranks."""
+        """Collect all parameter names across PP/VP stages."""
         pp_rank = mpu.get_pipeline_model_parallel_rank()
 
         # Collect local names
         local_names = []
-        for vpp_rank, model in enumerate(models):
+        for vp_stage, model in enumerate(models):
             for name, _ in model.named_parameters():
-                local_names.append((pp_rank, vpp_rank if len(models) > 1 else None, name))
+                local_names.append((pp_rank, vp_stage if len(models) > 1 else None, name))
 
         # All-gather across PP ranks
         all_names = [None] * mpu.get_pipeline_model_parallel_world_size()
@@ -849,19 +849,19 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         # Flatten
         return sum(all_names, [])
 
-    def _get_param_and_module_from_vpp(
-        self, models: List[MegatronModule], vpp_rank: Optional[int], param_name: str
+    def _get_param_and_module_from_vp(
+        self, models: List[MegatronModule], vp_stage: Optional[int], param_name: str
     ) -> Optional[Tuple[torch.nn.Module, torch.Tensor]]:
         """
-        Get parameter from specific VPP rank, ensuring that parameter
+        Get parameter from specific VP stage, ensuring that parameter
         attributes are preserved.
         """
-        if vpp_rank is None:
+        if vp_stage is None:
             model = models[0]
         else:
-            if vpp_rank >= len(models):
+            if vp_stage >= len(models):
                 return None
-            model = models[vpp_rank]
+            model = models[vp_stage]
 
         # getattr traversal ensures that we get the Parameter object, not just the
         # tensor data. This preserves attributes like `tensor_model_parallel`.
@@ -880,7 +880,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
     def _adjust_layer_number_for_global(self, model: MegatronModule, param_name: str) -> str:
         """Adjust layer number from local to global numbering."""
-        # TODO: Implement global layer number adjustment for VPP
+        # TODO: Implement global layer number adjustment for VP
         return param_name
 
     def _build_plan_from_hf(self, hf_src: HFPreTrained, megatron_models: list[MegatronModel]) -> Iterable[_HFLoadTask]:
@@ -902,7 +902,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 if "_extra_state" in name:
                     continue
 
-                global_name = self._adjust_name_for_vpp(name, layer_offset)
+                global_name = self._adjust_name_for_vp(name, layer_offset)
                 unwrapped = self._unwrap_name(global_name)
                 bridge = state_bridge.query_megatron(unwrapped)
                 if not bridge:
@@ -939,7 +939,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         Args:
             megatron_models (list[MegatronModel]): List of local Megatron
                 *pipeline* replicas (length ≥ 1, length > 1 only when
-                virtual-pipeline-parallelism (VPP) is enabled).
+                virtual-pipeline-parallelism (VP) is enabled).
             hf_pretrained (HFPreTrained): HF model whose *state* object provides
                 ordering information when *order* is ``'hf'`` or
                 ``'safetensors'``.
@@ -955,11 +955,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         if order == "megatron":
             sb = self.state_bridge()
-            for pp_rank, vpp_rank, name in self._collect_all_params(megatron_models):
+            for pp_rank, vp_stage, name in self._collect_all_params(megatron_models):
                 unwrapped = self._unwrap_name(name)
                 bridge = sb.query_megatron(unwrapped)
                 if bridge:
-                    yield _HFSaveTask(pp_rank, vpp_rank, unwrapped, bridge)
+                    yield _HFSaveTask(pp_rank, vp_stage, unwrapped, bridge)
             return
 
         # --- Otherwise: follow HF / safetensors order --------------------------------
@@ -985,9 +985,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         emitted = set()
 
         param_locations = defaultdict(list)
-        for pp_rank, vpp_rank, param_name in self._collect_all_params(megatron_models):
+        for pp_rank, vp_stage, param_name in self._collect_all_params(megatron_models):
             unwrapped_name = self._unwrap_name(param_name)
-            param_locations[unwrapped_name].append((pp_rank, vpp_rank, param_name))
+            param_locations[unwrapped_name].append((pp_rank, vp_stage, param_name))
 
         for hf_key in hf_keys:
             bridge = sb.query_to(hf_key)
@@ -1004,8 +1004,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 continue
 
             emitted.add(src_name)
-            pp, vpp, _ = sorted(param_locations[src_name])[0]
-            yield _HFSaveTask(pp, vpp, src_name, bridge)
+            pp, vp, _ = sorted(param_locations[src_name])[0]
+            yield _HFSaveTask(pp, vp, src_name, bridge)
 
 
 def is_tensor_parallel(param) -> bool:

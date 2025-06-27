@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Any, List, Protocol, Type, Union
+from typing import Any, List, Protocol, Type, Union, runtime_checkable
 
 from transformers import AutoConfig
 
@@ -188,7 +188,10 @@ class AutoBridge:
         """
         try:
             config = AutoConfig.from_pretrained(path, trust_remote_code=trust_remote_code)
-            return any(hasattr(bridge_cls, "supports") and bridge_cls.supports(config) for bridge_cls in _BRIDGES)
+            return any(
+                isinstance(bridge_cls, type) and issubclass(bridge_cls, BridgeProtocol) and bridge_cls.supports(config)
+                for bridge_cls in _BRIDGES
+            )
         except Exception:
             return False
 
@@ -210,7 +213,7 @@ class AutoBridge:
         """
         # Try each bridge in order
         for bridge_cls in _BRIDGES:
-            if hasattr(bridge_cls, "supports") and bridge_cls.supports(config):
+            if isinstance(bridge_cls, type) and issubclass(bridge_cls, BridgeProtocol) and bridge_cls.supports(config):
                 # Found a supporting bridge - check if it has the required method
                 if hasattr(bridge_cls, method_name):
                     return bridge_cls
@@ -238,12 +241,13 @@ class AutoBridge:
         raise ValueError(error_msg)
 
 
+@runtime_checkable
 class BridgeProtocol(Protocol):
     """
     Protocol defining the interface for model bridges.
 
     All bridges that want to participate in automatic selection must implement
-    these methods. This is a typing-only protocol with no runtime checks.
+    these methods. This protocol is runtime-checkable for isinstance checks.
     """
 
     @classmethod

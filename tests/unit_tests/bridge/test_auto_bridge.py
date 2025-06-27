@@ -134,6 +134,10 @@ class TestAutoBridge:
             def from_pretrained(cls, path, **kwargs):
                 raise RuntimeError("Loading failed")
 
+            @classmethod
+            def from_config(cls, config):
+                raise RuntimeError("Not implemented")
+
         # Temporarily modify registry
         original_bridges = _BRIDGES.copy()
         _BRIDGES.clear()
