@@ -30,8 +30,8 @@ from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.base import PEFT
 from megatron.hub.peft.lora import LoRA
 from megatron.hub.training.checkpointing import (
+    _is_model_section,
     apply_peft_adapter_filter_to_state_dict,
-    filter_model_state_dict_for_adapters,
     load_checkpoint,
 )
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer
@@ -62,126 +62,42 @@ class MockPEFT(PEFT):
         return key in self.params_to_save or ".adapter." in key or key.endswith(".adapters") or "lora_" in key
 
 
-class TestPEFTCheckpointing:
-    """Test suite for PEFT checkpoint filtering functionality."""
+class TestIsModelSection:
+    """Test suite for _is_model_section helper function."""
 
-    @pytest.fixture
-    def mock_model(self):
-        """Create a mock model with both adapter and base parameters."""
-        model = Mock()
+    def test_is_model_section_single_model(self):
+        """Test detection of single model section."""
+        assert _is_model_section("model") == True
 
-        # Mock state dict with both adapter and base model parameters
-        state_dict = {
-            # Base model parameters (should be filtered out)
-            "embedding.weight": torch.randn(1000, 512),
-            "layer1.linear.weight": torch.randn(512, 512),
-            "layer1.linear.bias": torch.randn(512),
-            "layer2.attention.weight": torch.randn(512, 512),
-            # Adapter parameters (should be kept)
-            "layer1.adapter.weight": torch.randn(8, 512),
-            "layer2.adapter.bias": torch.randn(8),
-            "layer3.adapters.lora_A": torch.randn(8, 512),
-            "layer3.adapters.lora_B": torch.randn(512, 8),
-            "layer4.linear.adapter.weight": torch.randn(8, 512),
-            # Additional base parameters
-            "output.weight": torch.randn(512, 1000),
-            "output.bias": torch.randn(1000),
-        }
+    def test_is_model_section_pipeline_models(self):
+        """Test detection of pipeline model sections."""
+        assert _is_model_section("model0") == True
+        assert _is_model_section("model1") == True
+        assert _is_model_section("model42") == True
+        assert _is_model_section("model999") == True
 
-        model.sharded_state_dict.return_value = state_dict
+    def test_is_model_section_non_model_sections(self):
+        """Test that non-model sections are correctly identified."""
+        assert _is_model_section("optimizer") == False
+        assert _is_model_section("iteration") == False
+        assert _is_model_section("checkpoint_version") == False
+        assert _is_model_section("rng_state") == False
+        assert _is_model_section("opt_param_scheduler") == False
 
-        return model
+    def test_is_model_section_invalid_model_keys(self):
+        """Test that invalid model-like keys are correctly rejected."""
+        assert _is_model_section("model_not_digit") == False
+        assert _is_model_section("modelabc") == False
+        assert _is_model_section("model_") == False
+        assert _is_model_section("model10_extra") == False
+        assert _is_model_section("my_model") == False
+        assert _is_model_section("models") == False
 
-    @pytest.fixture
-    def mock_peft_config(self):
-        """Create a mock PEFT configuration."""
-        return MockPEFT()
-
-    def test_filter_model_state_dict_for_adapters_basic(self, mock_peft_config):
-        """Test basic filtering of model state dict for adapters."""
-        # Create a mock model state dict
-        model_state_dict = {
-            # Base model parameters (should be filtered out)
-            "embedding.weight": torch.randn(1000, 512),
-            "layer1.linear.weight": torch.randn(512, 512),
-            "layer1.linear.bias": torch.randn(512),
-            "layer2.attention.weight": torch.randn(512, 512),
-            # Adapter parameters (should be kept)
-            "layer1.adapter.weight": torch.randn(8, 512),
-            "layer2.adapter.bias": torch.randn(8),
-            "layer3.adapters.lora_A": torch.randn(8, 512),
-            "layer3.adapters.lora_B": torch.randn(512, 8),
-            "layer4.linear.adapter.weight": torch.randn(8, 512),
-            # Additional base parameters
-            "output.weight": torch.randn(512, 1000),
-            "output.bias": torch.randn(1000),
-        }
-
-        filtered_state = filter_model_state_dict_for_adapters(model_state_dict, mock_peft_config)
-
-        # Verify only adapter parameters are kept
-        expected_keys = {
-            "layer1.adapter.weight",
-            "layer2.adapter.bias",
-            "layer3.adapters.lora_A",
-            "layer3.adapters.lora_B",
-            "layer4.linear.adapter.weight",
-        }
-
-        assert set(filtered_state.keys()) == expected_keys
-        assert len(filtered_state) == 5
-
-        # Verify values are preserved correctly
-        for key in expected_keys:
-            assert torch.equal(filtered_state[key], model_state_dict[key])
-
-    def test_filter_model_state_dict_for_adapters_empty_input(self, mock_peft_config):
-        """Test filtering with empty model state dict."""
-        model_state_dict = {}
-        filtered_state = filter_model_state_dict_for_adapters(model_state_dict, mock_peft_config)
-        assert filtered_state == {}
-
-    def test_filter_model_state_dict_for_adapters_no_adapters(self, mock_peft_config):
-        """Test filtering when no adapter parameters are present."""
-        model_state_dict = {
-            "embedding.weight": torch.randn(1000, 512),
-            "layer1.linear.weight": torch.randn(512, 512),
-            "output.weight": torch.randn(512, 1000),
-        }
-
-        filtered_state = filter_model_state_dict_for_adapters(model_state_dict, mock_peft_config)
-
-        # Should be empty since no adapter parameters match the filter
-        assert filtered_state == {}
-
-    def test_filter_model_state_dict_for_adapters_all_adapters(self, mock_peft_config):
-        """Test filtering when all parameters are adapters."""
-        model_state_dict = {
-            "layer1.adapter.weight": torch.randn(8, 512),
-            "layer2.adapter.bias": torch.randn(8),
-            "layer3.adapters.lora_A": torch.randn(8, 512),
-        }
-
-        filtered_state = filter_model_state_dict_for_adapters(model_state_dict, mock_peft_config)
-
-        # All parameters should be kept
-        assert set(filtered_state.keys()) == set(model_state_dict.keys())
-        assert len(filtered_state) == 3
-
-        # Verify values are preserved correctly
-        for key in model_state_dict.keys():
-            assert torch.equal(filtered_state[key], model_state_dict[key])
-
-    def test_filter_model_state_dict_for_adapters_none_peft_config(self):
-        """Test filter_model_state_dict_for_adapters with None PEFT config raises appropriate error."""
-        model_state_dict = {
-            "layer1.adapter.weight": torch.randn(8, 512),
-            "layer2.linear.weight": torch.randn(512, 512),
-        }
-
-        # This should raise an error since we try to call adapter_key_filter on None
-        with pytest.raises((AttributeError, TypeError)):
-            filter_model_state_dict_for_adapters(model_state_dict, None)
+    def test_is_model_section_edge_cases(self):
+        """Test edge cases for model section detection."""
+        assert _is_model_section("") == False
+        assert _is_model_section("model00") == True  # Leading zeros are valid digits
+        assert _is_model_section("model01") == True
 
 
 class TestApplyPeftAdapterFilterToStateDict:
@@ -420,21 +336,26 @@ class TestPEFTCheckpointLoading:
             "output.weight": torch.randn(512, 1000),
         }
 
-    def test_filter_model_state_dict_for_adapters_uses_adapter_key_filter(self):
-        """Test that filter_model_state_dict_for_adapters correctly uses PEFT's adapter_key_filter method."""
-        # Create sample state dict with mixed parameters
-        sample_state_dict = {
-            # Base model parameters
-            "embedding.weight": torch.randn(1000, 512),
-            "layer1.linear.weight": torch.randn(512, 512),
-            "layer2.attention.weight": torch.randn(512, 512),
-            # Adapter parameters
-            "layer1.adapter.weight": torch.randn(8, 512),
-            "layer2.adapter.bias": torch.randn(8),
-            "layer3.adapters.lora_A": torch.randn(8, 512),
-            "layer3.adapters.lora_B": torch.randn(512, 8),
-            # Base model output
-            "output.weight": torch.randn(512, 1000),
+    def test_apply_peft_adapter_filter_uses_adapter_key_filter(self):
+        """Test that apply_peft_adapter_filter_to_state_dict correctly uses PEFT's adapter_key_filter method."""
+        # Create sample complete state dict with mixed parameters
+        sample_complete_state_dict = {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "model": {
+                # Base model parameters
+                "embedding.weight": torch.randn(1000, 512),
+                "layer1.linear.weight": torch.randn(512, 512),
+                "layer2.attention.weight": torch.randn(512, 512),
+                # Adapter parameters
+                "layer1.adapter.weight": torch.randn(8, 512),
+                "layer2.adapter.bias": torch.randn(8),
+                "layer3.adapters.lora_A": torch.randn(8, 512),
+                "layer3.adapters.lora_B": torch.randn(512, 8),
+                # Base model output
+                "output.weight": torch.randn(512, 1000),
+            },
+            "optimizer": {"state": {}, "param_groups": []},
         }
 
         # Create a custom PEFT config with specific filtering logic
@@ -451,16 +372,21 @@ class TestPEFTCheckpointLoading:
 
         custom_peft = CustomPEFT()
 
-        filtered_dict = filter_model_state_dict_for_adapters(sample_state_dict, custom_peft)
+        filtered_dict = apply_peft_adapter_filter_to_state_dict(sample_complete_state_dict, custom_peft)
 
-        # Should only contain the keys that the custom filter allows
-        expected_keys = {"layer1.adapter.weight", "layer3.adapters.lora_A"}
-        assert set(filtered_dict.keys()) == expected_keys
-        assert len(filtered_dict) == 2
+        # Should only contain the keys that the custom filter allows in the model section
+        expected_model_keys = {"layer1.adapter.weight", "layer3.adapters.lora_A"}
+        assert set(filtered_dict["model"].keys()) == expected_model_keys
+        assert len(filtered_dict["model"]) == 2
 
         # Verify values are preserved correctly
-        for key in expected_keys:
-            assert torch.equal(filtered_dict[key], sample_state_dict[key])
+        for key in expected_model_keys:
+            assert torch.equal(filtered_dict["model"][key], sample_complete_state_dict["model"][key])
+
+        # Verify non-model sections are preserved
+        assert filtered_dict["checkpoint_version"] == 3.0
+        assert filtered_dict["iteration"] == 1000
+        assert "optimizer" in filtered_dict
 
     @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
     @patch("megatron.hub.training.checkpointing.checkpoint_exists")
@@ -875,8 +801,8 @@ class TestPEFTCheckpointingIntegration:
 
         return lora_pre_wrap_hook
 
-    def test_filter_model_state_dict_for_adapters_integration_with_peft(self, gpt_model_and_config):
-        """Test filter_model_state_dict_for_adapters with real GPT model and LoRA PEFT."""
+    def test_apply_peft_adapter_filter_integration_with_peft(self, gpt_model_and_config):
+        """Test apply_peft_adapter_filter_to_state_dict with real GPT model and LoRA PEFT."""
         model_provider, lora_config = gpt_model_and_config
 
         # Register LoRA pre-wrap hook and get model with PEFT applied
@@ -895,32 +821,44 @@ class TestPEFTCheckpointingIntegration:
         # Set up params_to_save for the PEFT config
         lora_config.set_params_to_save(peft_model)
 
-        # Get the model's actual state dict
-        full_model_state_dict = peft_model[0].sharded_state_dict()
+        # Create a complete state dict as it would appear in checkpointing
+        complete_state_dict = {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "model": peft_model[0].sharded_state_dict(),
+            "optimizer": {"state": {}, "param_groups": []},
+            "rng_state": [{"random_rng_state": "mock_state"}],
+        }
 
-        # Filter for adapter parameters only
-        filtered_state_dict = filter_model_state_dict_for_adapters(full_model_state_dict, lora_config)
+        # Filter for adapter parameters only using the main function
+        filtered_state_dict = apply_peft_adapter_filter_to_state_dict(complete_state_dict, lora_config)
 
-        # Verify filtering worked
-        assert len(filtered_state_dict) < len(full_model_state_dict), (
-            f"Filtered state dict ({len(filtered_state_dict)}) should be smaller than "
-            f"full state dict ({len(full_model_state_dict)})"
+        # Verify filtering worked on the model section
+        assert len(filtered_state_dict["model"]) < len(complete_state_dict["model"]), (
+            f"Filtered model state dict ({len(filtered_state_dict['model'])}) should be smaller than "
+            f"full model state dict ({len(complete_state_dict['model'])})"
         )
 
-        # Verify only adapter parameters are in filtered state dict
-        for param_name in filtered_state_dict.keys():
+        # Verify only adapter parameters are in filtered model state dict
+        for param_name in filtered_state_dict["model"].keys():
             assert lora_config.adapter_key_filter(param_name), (
                 f"Parameter '{param_name}' should not be in filtered state dict"
             )
 
         # Verify some adapter parameters were found
-        assert len(filtered_state_dict) > 0, "No adapter parameters found in filtered state dict"
+        assert len(filtered_state_dict["model"]) > 0, "No adapter parameters found in filtered state dict"
 
         # Check that adapter parameters have expected naming patterns
-        adapter_param_names = list(filtered_state_dict.keys())
+        adapter_param_names = list(filtered_state_dict["model"].keys())
         has_lora_params = any("lora" in name.lower() or "adapter" in name.lower() for name in adapter_param_names)
 
         assert has_lora_params, f"Expected LoRA or adapter parameters in {adapter_param_names}"
+
+        # Verify non-model sections are preserved
+        assert filtered_state_dict["checkpoint_version"] == 3.0
+        assert filtered_state_dict["iteration"] == 1000
+        assert "optimizer" in filtered_state_dict
+        assert "rng_state" in filtered_state_dict
 
     def test_apply_peft_adapter_filter_integration(self, gpt_model_and_config):
         """Test apply_peft_adapter_filter_to_state_dict with real model state dict."""
@@ -991,47 +929,41 @@ class TestPEFTCheckpointingIntegration:
         # Verify the model is wrapped with DDP
         assert len(distributed_model) > 0
 
-        # Get state dict from the distributed model (should be able to get through DDP wrapper)
-        distributed_model_state_dict = distributed_model[0].sharded_state_dict()
+        # Create a complete state dict from the distributed model
+        complete_distributed_state_dict = {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "model": distributed_model[0].sharded_state_dict(),
+            "optimizer": {"state": {}, "param_groups": []},
+            "rng_state": [{"random_rng_state": "mock_state"}],
+        }
 
-        # Test filter_model_state_dict_for_adapters with distributed model
-        filtered_state_dict = filter_model_state_dict_for_adapters(distributed_model_state_dict, lora_config)
+        # Test apply_peft_adapter_filter_to_state_dict with distributed model
+        filtered_state_dict = apply_peft_adapter_filter_to_state_dict(complete_distributed_state_dict, lora_config)
 
         # Verify filtering worked
-        assert len(filtered_state_dict) > 0, "Should find adapter parameters in distributed model"
+        assert len(filtered_state_dict["model"]) > 0, "Should find adapter parameters in distributed model"
 
         # Verify only adapter parameters are in filtered state dict
-        for param_name in filtered_state_dict.keys():
+        for param_name in filtered_state_dict["model"].keys():
             assert lora_config.adapter_key_filter(param_name), (
                 f"Parameter '{param_name}' should be an adapter parameter"
             )
 
         # Check that adapter parameters have expected naming patterns
-        adapter_param_names = list(filtered_state_dict.keys())
+        adapter_param_names = list(filtered_state_dict["model"].keys())
         has_lora_params = any("lora" in name.lower() or "adapter" in name.lower() for name in adapter_param_names)
         assert has_lora_params, f"Expected LoRA or adapter parameters in {adapter_param_names}"
 
-        # Test apply_peft_adapter_filter_to_state_dict with distributed model
-        complete_state_dict = {
-            "checkpoint_version": 3.0,
-            "iteration": 1000,
-            "model": distributed_model_state_dict,
-            "optimizer": {"state": {}, "param_groups": []},
-            "rng_state": [{"random_rng_state": "mock_state"}],
-        }
-
-        # Apply PEFT filtering to complete state dict
-        filtered_complete_dict = apply_peft_adapter_filter_to_state_dict(complete_state_dict, lora_config)
-
-        # Verify metadata is preserved
-        assert filtered_complete_dict["checkpoint_version"] == 3.0
-        assert filtered_complete_dict["iteration"] == 1000
-        assert "optimizer" in filtered_complete_dict
-        assert "rng_state" in filtered_complete_dict
+        # Verify metadata is preserved in the filtered result
+        assert filtered_state_dict["checkpoint_version"] == 3.0
+        assert filtered_state_dict["iteration"] == 1000
+        assert "optimizer" in filtered_state_dict
+        assert "rng_state" in filtered_state_dict
 
         # Verify model state is filtered correctly
-        original_model_param_count = len(complete_state_dict["model"])
-        filtered_model_param_count = len(filtered_complete_dict["model"])
+        original_model_param_count = len(complete_distributed_state_dict["model"])
+        filtered_model_param_count = len(filtered_state_dict["model"])
 
         assert filtered_model_param_count < original_model_param_count, (
             f"Expected filtering to reduce parameters from {original_model_param_count} "
@@ -1039,7 +971,7 @@ class TestPEFTCheckpointingIntegration:
         )
 
         # Verify only adapter parameters remain in model state
-        for param_name in filtered_complete_dict["model"].keys():
+        for param_name in filtered_state_dict["model"].keys():
             assert lora_config.adapter_key_filter(param_name), (
                 f"Parameter '{param_name}' should be an adapter parameter in filtered distributed model state dict"
             )
