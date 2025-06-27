@@ -18,11 +18,11 @@ import types
 from dataclasses import dataclass
 from typing import Optional
 
+from megatron.hub.core.utils.import_utils import MISSING_NEMO_RUN_MSG
 from megatron.hub.training.config import (
     FaultToleranceConfig,
     ProfilingConfig,
 )
-from megatron.hub.utils.import_utils import MISSING_NEMO_RUN_MSG
 
 
 try:

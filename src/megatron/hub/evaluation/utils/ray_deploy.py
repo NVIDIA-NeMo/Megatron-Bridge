@@ -18,7 +18,7 @@ import signal
 import sys
 from typing import Optional
 
-from megatron.hub.utils.import_utils import MISSING_NEMO_EXPORT_DEPLOY_MSG
+from megatron.hub.core.utils.import_utils import MISSING_NEMO_EXPORT_DEPLOY_MSG
 
 
 try:
