@@ -19,8 +19,7 @@ from typing import Optional
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models import GPTModelProvider, T5ModelProvider
 
 
 try:
@@ -409,7 +408,7 @@ class CommOverlapConfig:
 
     def _get_model_comm_overlap_cfgs(
         self,
-        model_cfg: GPTConfig | T5Config,
+        model_cfg: GPTModelProvider | T5ModelProvider,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
 
@@ -451,7 +450,7 @@ class CommOverlapConfig:
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
 
-    def _get_optimizer_overlap_cfgs(self, model_cfg: GPTConfig | T5Config) -> _CommOverlapConfig:
+    def _get_optimizer_overlap_cfgs(self, model_cfg: GPTModelProvider | T5ModelProvider) -> _CommOverlapConfig:
         vp_size = model_cfg.virtual_pipeline_model_parallel_size
         if vp_size is None:
             vp_size = 1
@@ -491,7 +490,7 @@ class CommOverlapConfig:
 
         return comm_overlap_cfg
 
-    def _set_num_cuda_device_max_connections(self, model_cfg: GPTConfig | T5Config):
+    def _set_num_cuda_device_max_connections(self, model_cfg: GPTModelProvider | T5ModelProvider):
         import os
 
         import torch
@@ -533,7 +532,7 @@ class CommOverlapConfig:
 
     def setup(
         self,
-        model_config: GPTConfig | T5Config,
+        model_config: GPTModelProvider | T5ModelProvider,
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:

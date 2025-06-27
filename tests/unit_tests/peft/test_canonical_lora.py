@@ -23,8 +23,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models import get_base_model
-from megatron.hub.models.gpt import GPTConfig
+from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear
 
@@ -695,7 +694,7 @@ class TestCanonicalLoRAMegatronIntegration:
         """Test CanonicalLoRA application to a real GPT model from get_base_model."""
 
         # Create a minimal GPT configuration
-        config = GPTConfig(
+        model_provider = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=2,
@@ -703,7 +702,7 @@ class TestCanonicalLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
-        base_model = get_base_model(config)
+        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
         assert isinstance(base_model, list)
@@ -765,7 +764,7 @@ class TestCanonicalLoRAMegatronIntegration:
         """Test forward pass through CanonicalLoRA-adapted Megatron model."""
 
         # Create minimal config for fast testing
-        config = GPTConfig(
+        config = GPTModelProvider(
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
@@ -774,7 +773,7 @@ class TestCanonicalLoRAMegatronIntegration:
         )
 
         # Get and adapt model
-        base_model = get_base_model(config)
+        base_model = config(ddp_config=None, wrap_with_ddp=False)
 
         # Ensure model is on CUDA if available
         if torch.cuda.is_available():

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.hub.models.t5_provider import T5ModelProvider
 from megatron.hub.training.mixed_precision import (
     MixedPrecisionConfig,
     bf16_mixed,
@@ -73,7 +73,7 @@ class TestMegatronMixedPrecisionConfig:
         )
 
         # Create mock GPTConfig with necessary attributes
-        gpt_config = MagicMock(spec=GPTConfig)
+        gpt_config = MagicMock(spec=GPTModelProvider)
         gpt_config.fp16 = False
         gpt_config.bf16 = True
         gpt_config.params_dtype = torch.float32
@@ -102,7 +102,7 @@ class TestMegatronMixedPrecisionConfig:
         )
 
         # Create mock T5Config
-        t5_config = MagicMock(spec=T5Config)
+        t5_config = MagicMock(spec=T5ModelProvider)
         t5_config.bf16 = False
         t5_config.params_dtype = torch.float32
         t5_config.autocast_enabled = False
@@ -124,7 +124,7 @@ class TestMegatronMixedPrecisionConfig:
         )
 
         # Create mock configs
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         optimizer_config = MagicMock(spec=OptimizerConfig)
         optimizer_config.grad_reduce_in_fp32 = True
         optimizer_config.loss_scale = None
@@ -143,7 +143,7 @@ class TestMegatronMixedPrecisionConfig:
         mixed_precision_config = MixedPrecisionConfig(grad_reduce_in_fp32=False, fp16=True)
 
         # Create mock configs
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         ddp_config = MagicMock(spec=DistributedDataParallelConfig)
         ddp_config.grad_reduce_in_fp32 = True
         ddp_config.fp16 = False
@@ -161,7 +161,7 @@ class TestMegatronMixedPrecisionConfig:
         )
 
         # Create mock configs
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         model_config.bf16 = False
         model_config.params_dtype = torch.float32
 
@@ -292,7 +292,7 @@ class TestIntegration:
         )
 
         # Create configs
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         for field in fields(mixed_precision_config):
             setattr(model_config, field.name, None)
 
@@ -327,7 +327,7 @@ class TestIntegration:
         )
 
         # Create model config
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         for field in fields(mixed_precision_config):
             setattr(model_config, field.name, None)
 
@@ -358,7 +358,7 @@ class TestIntegration:
         )
 
         # Create model config
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         for field in fields(mixed_precision_config):
             setattr(model_config, field.name, None)
 
@@ -541,7 +541,7 @@ class TestMixedPrecisionRecipes:
         config = bf16_with_fp8_mixed()
 
         # Create mock model config
-        model_config = MagicMock(spec=GPTConfig)
+        model_config = MagicMock(spec=GPTModelProvider)
         for field in fields(config):
             setattr(model_config, field.name, None)
 

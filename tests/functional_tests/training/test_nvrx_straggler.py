@@ -30,8 +30,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.llama import Llama32Config1B
-from megatron.hub.models.utils import forward_step
+from megatron.hub.core.utils.common_utils import get_rank_safe, print_rank_0
+from megatron.hub.models.llama import Llama32ModelProvider1B
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -44,9 +44,9 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.hub.training.gpt_step import forward_step
 from megatron.hub.training.pretrain import pretrain
 from megatron.hub.training.state import GlobalState
-from megatron.hub.utils.common_utils import get_rank_safe, print_rank_0
 
 
 def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
@@ -61,7 +61,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         eval_iters=0,
     )
 
-    model_config = Llama32Config1B(
+    model_config = Llama32ModelProvider1B(
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         context_parallel_size=1,

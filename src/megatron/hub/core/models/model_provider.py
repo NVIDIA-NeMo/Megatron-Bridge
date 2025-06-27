@@ -54,6 +54,7 @@ def get_model(
     data_parallel_random_init: bool = True,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
+    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -78,12 +79,21 @@ def get_model(
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
         use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
+        init_model_with_meta_device: Whether to initialize the model on the meta device
+        pre_wrap_hook: A callable that takes a list of `MegatronModule` and returns a
+            modified list, or `None` to clear the hook.
 
     Returns:
         list[MegatronModule]: List of model modules. Contains multiple modules
             when using virtual pipeline parallelism, otherwise a single module
     """
     model = _create_model(model_provider, model_type, init_model_with_meta_device=init_model_with_meta_device)
+
+    if pre_wrap_hook:
+        _model = pre_wrap_hook(model)
+        if _model is not None:
+            model = _model
+
     _print_num_params(model)
 
     model_config = get_model_config(model[0])
@@ -105,7 +115,7 @@ def get_model(
         model = [Float16Module(model_config, model_module) for model_module in model]
 
     if correct_amax_history_if_needed is not None:
-        model = correct_amax_history_if_needed(model)
+        correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
         model = _ddp_wrap(

@@ -29,7 +29,6 @@ from megatron.hub.core.utils.common_utils import (
     print_rank_0,
     print_rank_last,
     unwrap_model,
-    use_dist_ckpt,
 )
 
 
@@ -421,36 +420,6 @@ class TestUnwrapModel:
 
         result = unwrap_model(nested_model, module_instances=(WrapperType,))
         assert result is base_model
-
-
-class TestUseDistCkpt:
-    """Test use_dist_ckpt function."""
-
-    def test_torch_format_returns_false(self):
-        """Test use_dist_ckpt returns False for 'torch' format."""
-        result = use_dist_ckpt("torch")
-        assert result is False
-
-    def test_torch_dist_format_returns_true(self):
-        """Test use_dist_ckpt returns True for 'torch_dist' format."""
-        result = use_dist_ckpt("torch_dist")
-        assert result is True
-
-    def test_other_formats_return_true(self):
-        """Test use_dist_ckpt returns True for other formats."""
-        test_formats = ["zarr", "msgpack", "custom_format", ""]
-
-        for fmt in test_formats:
-            result = use_dist_ckpt(fmt)
-            assert result is True, f"Failed for format: {fmt}"
-
-    def test_case_sensitivity(self):
-        """Test use_dist_ckpt is case sensitive."""
-        result = use_dist_ckpt("TORCH")
-        assert result is True
-
-        result = use_dist_ckpt("Torch")
-        assert result is True
 
 
 class TestIntegration:

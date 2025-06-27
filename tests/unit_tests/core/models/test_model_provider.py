@@ -340,7 +340,6 @@ class TestGetModel:
             model_provider, ModelType.encoder_or_decoder, init_model_with_meta_device=None
         )
         mock_print_params.assert_called_once()
-        # mock_fix_float8.assert_called_once()  # Commented out since _fix_float_8 is not called in the implementation
         mock_ddp_wrap.assert_called_once()
 
     @patch("megatron.hub.core.models.model_provider._create_model")
@@ -423,10 +422,12 @@ class TestGetModel:
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
     @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.hub.core.models.model_provider._ddp_wrap")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
     def test_get_model_no_ddp_wrap(
         self,
         mock_get_model_config,
+        mock_ddp_wrap,
         mock_fix_float8,
         mock_print_params,
         mock_create_model,
@@ -494,6 +495,51 @@ class TestGetModel:
         # Should not call cuda when FSDP2 with CPU init
         model.cuda.assert_not_called()
 
+    @patch("megatron.hub.core.models.model_provider._create_model")
+    @patch("megatron.hub.core.models.model_provider._print_num_params")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.hub.core.models.model_provider._ddp_wrap")
+    @patch("megatron.hub.core.models.model_provider.get_model_config")
+    def test_get_model_pre_wrap_hook(
+        self,
+        mock_get_model_config,
+        mock_ddp_wrap,
+        mock_correct_amax,
+        mock_print_params,
+        mock_create_model,
+    ):
+        """Test get_model with a pre_wrap_hook."""
+        # Setup mocks
+        config = create_test_config()
+        config.use_cpu_initialization = False
+        config.init_model_with_meta_device = False
+        config.fp16 = False
+        config.bf16 = False
+
+        mock_get_model_config.return_value = config
+        model = MockMegatronModule(config)
+        mock_create_model.return_value = [model]
+
+        # The hook might modify the model, so we mock that
+        hooked_model = MockMegatronModule(config)
+        pre_wrap_hook = Mock(return_value=[hooked_model])
+
+        mock_correct_amax.return_value = [hooked_model]
+        mock_ddp_wrap.return_value = [hooked_model]
+
+        model_provider = Mock()
+        ddp_config = DistributedDataParallelConfig()
+
+        result = get_model(model_provider, ddp_config, pre_wrap_hook=pre_wrap_hook, use_cpu_initialization=True)
+
+        # Assertions
+        assert result == [hooked_model]
+        mock_create_model.assert_called_once()
+        pre_wrap_hook.assert_called_once_with([model])
+        mock_ddp_wrap.assert_called_once()
+        # Ensure the wrapped model is the one returned from the hook
+        assert mock_ddp_wrap.call_args[0][0] == [hooked_model]
+
 
 class TestModelProviderProtocol:
     """Test cases for ModelProviderProtocol."""
@@ -545,8 +591,11 @@ class TestEdgeCases:
 
     @patch("megatron.hub.core.models.model_provider._create_model")
     @patch("megatron.hub.core.models.model_provider._print_num_params")
+    @patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed")
     @patch("megatron.hub.core.models.model_provider.get_model_config")
-    def test_get_model_with_meta_device(self, mock_get_model_config, mock_print_params, mock_create_model):
+    def test_get_model_with_meta_device(
+        self, mock_get_model_config, mock_correct_amax, mock_print_params, mock_create_model
+    ):
         """Test get_model with meta device initialization (skip GPU allocation)."""
         # Setup mocks
         config = create_test_config()
@@ -563,15 +612,14 @@ class TestEdgeCases:
         model_provider = Mock()
         ddp_config = DistributedDataParallelConfig()
 
-        with patch("megatron.hub.core.models.model_provider.correct_amax_history_if_needed") as mock_fix:
-            with patch("megatron.hub.core.models.model_provider._ddp_wrap") as mock_wrap:
-                mock_fix.return_value = [model]
-                mock_wrap.return_value = [model]
+        with patch("megatron.hub.core.models.model_provider._ddp_wrap") as mock_wrap:
+            mock_correct_amax.return_value = [model]
+            mock_wrap.return_value = [model]
 
-                get_model(model_provider, ddp_config)
+            get_model(model_provider, ddp_config, init_model_with_meta_device=True)
 
-                # Should not call cuda when meta device is used
-                model.cuda.assert_not_called()
+            # Should not call cuda when meta device is used
+            model.cuda.assert_not_called()
 
     @patch("megatron.hub.core.models.model_provider.parallel_state")
     def test_create_model_virtual_pipeline_with_encoder_decoder_raises(self, mock_parallel_state):

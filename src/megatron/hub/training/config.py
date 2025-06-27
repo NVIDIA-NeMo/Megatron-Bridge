@@ -15,7 +15,7 @@
 import logging
 import os
 import signal
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
@@ -23,12 +23,11 @@ from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatas
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
+from megatron.hub.core.utils.common_utils import get_world_size_safe
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
-from megatron.hub.tokenizers.config import TokenizerConfig
-from megatron.hub.utils.common_utils import get_world_size_safe
-from megatron.hub.utils.config_utils import ConfigContainer as Container
+from megatron.hub.models import GPTModelProvider, T5ModelProvider
+from megatron.hub.training.tokenizers.config import TokenizerConfig
+from megatron.hub.training.utils.config_utils import ConfigContainer as Container
 
 
 @dataclass(kw_only=True)
@@ -136,9 +135,9 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         """Post-initialization checks for GPT dataset config."""
         super(MCoreGPTDatasetConfig, self).__post_init__()
 
-        assert self.reset_position_ids is not None
-        assert self.reset_attention_mask is not None
-        assert self.eod_mask_loss is not None
+        assert self.reset_position_ids is not None, "reset_position_ids must be defined."
+        assert self.reset_attention_mask is not None, "reset_attention_mask must be defined."
+        assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
 
 
 @dataclass
@@ -219,7 +218,7 @@ class SchedulerConfig:
     def __post_init__(self):
         """Post-initialization checks for scheduler config."""
         if self.start_weight_decay is not None:
-            assert self.start_weight_decay >= 0.0
+            assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
             assert self.end_weight_decay >= self.start_weight_decay
 
         if self.override_opt_param_scheduler:
@@ -668,7 +667,7 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTConfig | T5Config
+    model: GPTModelProvider | T5ModelProvider
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
@@ -688,6 +687,12 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        # Re-run post-inits of sub-configs
+        for f in fields(self):
+            sub_cfg = getattr(self, f.name)
+            if hasattr(sub_cfg, "__post_init__"):
+                sub_cfg.__post_init__()
+
         # Run validations
 
         # Distributed

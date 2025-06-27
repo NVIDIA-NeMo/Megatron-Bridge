@@ -19,11 +19,11 @@ from typing import List, Literal, Optional
 import torch
 import torch.nn as nn
 
+from megatron.hub.core.utils.import_utils import safe_import
 from megatron.hub.peft.base import PEFT
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
 from megatron.hub.peft.module_matcher import ModuleMatcher
 from megatron.hub.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
-from megatron.hub.utils.import_utils import safe_import
 
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ class LoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(module, name, prefix)) is not None:
             (match, full_name) = ans
-            if isinstance(module, nn.Linear) or module.__class__ == te.Linear:
+            if isinstance(module, nn.Linear) or (HAVE_TE and module.__class__ == te.Linear):
                 # Will use the `patch_linear_module` function if:
                 # - is FSDP v1
                 # - is DTensor (has _local_tensor attribute)

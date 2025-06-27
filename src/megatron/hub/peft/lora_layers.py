@@ -18,8 +18,8 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+from megatron.hub.core.utils.import_utils import safe_import
 from megatron.hub.peft.adapter_wrapper import AdapterWrapper
-from megatron.hub.utils.import_utils import safe_import
 
 
 if torch.cuda.is_available():

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for configuration validation in megatron.hub.training.config."""
-
 from typing import Any, Optional, Union
 
 import pytest
@@ -21,8 +19,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt import GPTConfig
-from megatron.hub.models.t5 import T5Config
+from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.hub.models.t5_provider import T5ModelProvider
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -31,6 +29,7 @@ from megatron.hub.training.config import (
     GPTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
+    NVRxStragglerDetectionConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
     RNGConfig,
@@ -57,7 +56,7 @@ def mock_get_world_size_safe(world_size_to_return: int):
     return _mock
 
 
-def create_test_gpt_config(**kwargs: Any) -> GPTConfig:
+def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     """Creates an instance of GPTConfig for testing."""
     defaults = {
         "num_layers": 1,
@@ -67,10 +66,10 @@ def create_test_gpt_config(**kwargs: Any) -> GPTConfig:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return GPTConfig(**defaults)
+    return GPTModelProvider(**defaults)
 
 
-def create_test_t5_config(**kwargs: Any) -> T5Config:
+def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
     """Creates an instance of T5Config with sensible defaults for testing."""
     defaults = {
         "num_layers": 1,
@@ -80,7 +79,7 @@ def create_test_t5_config(**kwargs: Any) -> T5Config:
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
-    return T5Config(**defaults)
+    return T5ModelProvider(**defaults)
 
 
 def create_test_training_config(**kwargs: Any) -> TrainingConfig:
@@ -168,9 +167,19 @@ def create_test_profiling_config(**kwargs: Any) -> ProfilingConfig:
     return ProfilingConfig(**defaults)
 
 
+def create_test_nvrx_straggler_config(**kwargs: Any) -> NVRxStragglerDetectionConfig:
+    """Creates an instance of NVRxStragglerDetectionConfig with defaults for testing."""
+    defaults = {
+        "calc_relative_gpu_perf": True,
+        "calc_individual_gpu_perf": True,
+    }
+    defaults.update(kwargs)
+    return NVRxStragglerDetectionConfig(**defaults)
+
+
 def create_test_config_container(
     world_size_override: int,
-    model_config: Union[GPTConfig, T5Config],
+    model_config: Union[GPTModelProvider, T5ModelProvider],
     train_config: Optional[TrainingConfig] = None,
     optimizer_config: Optional[OptimizerConfig] = None,
     scheduler_config: Optional[SchedulerConfig] = None,
@@ -207,7 +216,7 @@ def create_test_config_container(
     final_dataset_config: Union[GPTDatasetConfig, FinetuningDatasetConfig]
     if dataset_config_override:
         final_dataset_config = dataset_config_override
-    elif isinstance(model_config, (GPTConfig, T5Config)):  # T5 also uses GPTDataset for these tests
+    elif isinstance(model_config, (GPTModelProvider, T5ModelProvider)):  # T5 also uses GPTDataset for these tests
         final_dataset_config = create_test_gpt_dataset_config(sequence_length=model_config.seq_length)
     else:
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
@@ -612,3 +621,113 @@ class TestConfigContainerValidation:
                 container.validate()
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestRerunConfigValidation:
+    """
+    Test that any assertions or modifications done by __post_init__() functions
+    are idempotent when the config is unchanged. Tests the same for ConfigContainer.validate().
+    """
+
+    def _check_post_init_idempotency(self, cfg_init_fn):
+        import copy
+
+        cfg = cfg_init_fn()
+        cfg_copy = copy.deepcopy(cfg)
+        assert cfg == cfg_copy
+
+        # rerun post-init
+        cfg.__post_init__()
+        assert cfg == cfg_copy
+
+    def test_scheduler_config(self):
+        self._check_post_init_idempotency(create_test_scheduler_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_scheduler_config(lr_decay_iters=10)
+        cfg.lr_decay_iters = 20
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="start_weight_decay"):
+            cfg.start_weight_decay = -5.2
+            cfg.__post_init__()
+
+    def test_gptdataset_config(self):
+        def gpt_dataset_seqlen_1024():
+            return create_test_gpt_dataset_config(1024)
+
+        self._check_post_init_idempotency(gpt_dataset_seqlen_1024)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = gpt_dataset_seqlen_1024()
+        cfg.random_seed = 2468
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="reset_position_ids"):
+            cfg.reset_position_ids = None
+            cfg.__post_init__()
+
+    def test_profiling_config(self):
+        self._check_post_init_idempotency(create_test_profiling_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_profiling_config()
+        cfg.profile_step_end = 1000
+        cfg.__post_init__()
+
+        with pytest.raises(AssertionError, match="one of pytorch or nsys profiler should be enabled"):
+            cfg.use_nsys_profiler = True
+            cfg.use_pytorch_profiler = True
+            cfg.__post_init__()
+
+    def test_nvrx_straggler_config(self):
+        self._check_post_init_idempotency(create_test_nvrx_straggler_config)
+
+        # Test rerun of post-init with valid and invalid changes
+        cfg = create_test_nvrx_straggler_config(enabled=True)
+        cfg.num_gpu_perf_scores_to_print = 2
+        cfg.__post_init__()
+
+        with pytest.raises(ValueError, match="report_time_interval must be positive"):
+            cfg.report_time_interval = -100.0
+            cfg.__post_init__()
+
+    def test_rerun_validate_config_container(self):
+        import copy
+        from dataclasses import fields
+
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_cfg)
+
+        def check_container_state_matches(cfg1, cfg2):
+            for f1 in fields(cfg1):
+                sub_cfg1 = getattr(cfg1, f1.name)
+                assert hasattr(cfg2, f1.name)
+                sub_cfg2 = getattr(cfg2, f1.name)
+                assert sub_cfg1 == sub_cfg2
+            for f2 in fields(cfg2):
+                sub_cfg2 = getattr(cfg2, f2.name)
+                assert hasattr(cfg1, f2.name)
+                sub_cfg1 = getattr(cfg2, f2.name)
+                assert sub_cfg1 == sub_cfg2
+
+        try:
+            # idempotency
+            full_cfg.validate()
+            full_cfg_copy = copy.deepcopy(full_cfg)
+            check_container_state_matches(full_cfg, full_cfg_copy)
+            full_cfg.validate()
+            check_container_state_matches(full_cfg, full_cfg_copy)
+
+            # test rerun of validate with valid and invalid changes
+            full_cfg.scheduler.lr_decay_iters = 20
+            full_cfg.validate()
+
+            with pytest.raises(AssertionError, match="start_weight_decay"):
+                full_cfg.scheduler.start_weight_decay = -5.2
+                full_cfg.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
