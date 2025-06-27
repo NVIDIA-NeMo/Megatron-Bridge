@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer import ModuleSpec
 
+from megatron.hub.core.utils import fusions
 from megatron.hub.models.gpt_provider import GPTModelProvider
 from megatron.hub.models.llama.llama4_utils import get_llama4_layer_spec
 
@@ -50,10 +51,10 @@ class LlamaModelProvider(GPTModelProvider):
     share_embeddings_and_output_weights: bool = False
     # Fusions
     bias_activation_fusion: bool = True
-    masked_softmax_fusion: bool = True
+    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
     persist_layer_norm: bool = True
-    bias_dropout_fusion: bool = True
-    apply_rope_fusion: bool = True
+    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
+    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
     use_transformer_engine_op_fuser: Optional[bool] = None
 
 
@@ -122,10 +123,10 @@ class Llama3ModelProvider(LlamaModelProvider):
     gated_linear_unit: bool = True
     # Fusions
     bias_activation_fusion: bool = True
-    masked_softmax_fusion: bool = True
+    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
     persist_layer_norm: bool = True
-    bias_dropout_fusion: bool = True
-    apply_rope_fusion: bool = True
+    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
+    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
     share_embeddings_and_output_weights: bool = False
     position_embedding_type: str = "rope"
     rotary_percent: float = 1.0
