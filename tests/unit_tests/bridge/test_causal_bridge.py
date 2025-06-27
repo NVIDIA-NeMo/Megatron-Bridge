@@ -425,8 +425,10 @@ class TestCausalLMBridgeEdgeCases:
                 mock_save_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True)
 
     @patch("torch.distributed.get_rank", return_value=1)
+    @patch("torch.distributed.is_initialized", return_value=True)
+    @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.barrier")
-    def test_save_pretrained_non_zero_rank(self, mock_barrier, mock_get_rank):
+    def test_save_pretrained_non_zero_rank(self, mock_barrier, mock_is_available, mock_is_initialized, mock_get_rank):
         """Test save_pretrained on non-zero rank (should not save artifacts)."""
         mock_hf_model = Mock(spec=MockPreTrainedCausalLM)
         mock_hf_model.save_artifacts = Mock()

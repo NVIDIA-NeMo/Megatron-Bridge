@@ -353,9 +353,12 @@ class CausalLMBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if not (torch.distributed.is_available() and torch.distributed.is_initialized()) or (
-            torch.distributed.get_rank() == 0
-        ):
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            # Distributed training, only rank 0 saves artifacts
+            if torch.distributed.get_rank() == 0:
+                self.hf_pretrained.save_artifacts(path)
+        else:
+            # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path)
 
         self.save_weights(model, path, show_progress)
