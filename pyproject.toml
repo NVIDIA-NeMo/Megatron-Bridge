@@ -62,7 +62,7 @@ dependencies = [
     "omegaconf>=2.3.0",
     "packaging",
     "tensorboard>=2.19.0",
-    "torch>=2.7.0",
+    "torch==2.7.0",
     "transformers>=4.51.3",
     "wandb>=0.19.10",
     "megatron-core",
@@ -85,9 +85,6 @@ version = { attr = "megatron.hub.package_info.__version__" }
 # Currently, TE must be built with no build-isolation b/c it requires torch
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
 override-dependencies = [
-    "torch; sys_platform == 'never'",
-    "torchvision; sys_platform == 'never'",
-    "triton; sys_platform == 'never'",
     "tiktoken>=0.9.0",                      # because nemo-toolkit and megatron-hub disagree on tiktoken, we need to pin it here
 ]
 
@@ -100,10 +97,8 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
-eval = [
-    "nvidia-lm-eval",
-    "uvicorn",
-    "pytest-httpserver"
+te = [
+    "transformer-engine[pytorch]==2.4.0"
 ]
 recipes = [
     "nemo-run",
@@ -131,6 +126,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0"]
 nemo-legacy = [
     "nemo-toolkit[automodel,common-only,nlp-only,eval,multimodal-only]",
 ]
