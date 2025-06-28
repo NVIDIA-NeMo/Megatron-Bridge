@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional, Union
 import packaging
 import torch
 
-from megatron.hub.utils.import_utils import safe_import_from
+from megatron.hub.core.utils.import_utils import safe_import_from
 
 
 class ApexGuardDefaults(object):
