@@ -131,7 +131,7 @@ runs:
     - name: Checkout repository
       uses: actions/checkout@v2
       with:
-        path: NeMo-LM
+        path: Megatron-Hub
 
     - name: Build container
       shell: bash
