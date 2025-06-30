@@ -11,10 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["megatron.hub", "megatron.hub.*"]
 
 [project]
 name = "megatron-hub"
-description = "NeMo - a toolkit for Conversational AI"
+description = "Megatron Hub: Training Recipes for Megatron-based LLM and VLM models"
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
@@ -27,7 +33,6 @@ keywords = [
     "deep",
     "gpu",
     "language",
-    "learning",
     "learning",
     "machine",
     "nvidia",
@@ -73,8 +78,8 @@ dependencies = [
     "sentencepiece>=0.2.0",
     "tiktoken>=0.9.0",
     "tqdm>=4.67.1",
-    "nvidia-modelopt[torch]>=0.25.0,<=0.29.0 ; sys_platform != 'darwin'",
-    "nvidia-resiliency-ext>=0.3.0,<1.0.0 ; sys_platform != 'darwin'",
+    "nvidia-modelopt[torch]; sys_platform != 'darwin'",
+    "nvidia-resiliency-ext; sys_platform != 'darwin'",
     "hydra-core>1.3,<=1.3.2",
 ]
 
@@ -86,6 +91,7 @@ version = { attr = "megatron.hub.package_info.__version__" }
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
 override-dependencies = [
     "tiktoken>=0.9.0",                      # because nemo-toolkit and megatron-hub disagree on tiktoken, we need to pin it here
+    "megatron-core[dev]",
 ]
 
 [tool.uv.sources]
@@ -135,8 +141,8 @@ nemo-legacy = [
 lm = "megatron.hub"
 
 [project.urls]
-Download = "https://github.com/NVIDIA/NeMo-LM/releases"
-Homepage = "https://github.com/nvidia/nemo"
+Download = "https://github.com/NVIDIA-NeMo/Megatron-Hub/releases"
+Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Hub"
 
 [tool.pytest.ini_options]
 # durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.
@@ -171,12 +177,6 @@ markers = [
     "skipduringci: marks tests that are skipped ci as they are addressed by Jenkins jobs but should be run to test user setups",
     "pleasefixme: marks tests that are broken and need fixing",
 ]
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [tool.coverage.run]
 concurrency = ["thread", "multiprocessing"]
