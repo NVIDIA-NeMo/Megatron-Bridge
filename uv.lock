@@ -2678,6 +2678,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "regex" },
+    { name = "rich" },
     { name = "sentencepiece" },
     { name = "six" },
     { name = "tensorboard" },
@@ -2685,6 +2686,7 @@ dependencies = [
     { name = "torch" },
     { name = "tqdm" },
     { name = "transformers" },
+    { name = "typing-extensions" },
     { name = "wandb" },
 ]
 
@@ -2744,6 +2746,7 @@ requires-dist = [
     { name = "packaging" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "regex", specifier = ">=2024.11.6" },
+    { name = "rich" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "six", specifier = ">=1.17.0" },
     { name = "tensorboard", specifier = ">=2.19.0" },
@@ -2752,6 +2755,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformer-engine", extras = ["pytorch"], marker = "extra == 'te'", specifier = "==2.4.0" },
     { name = "transformers", specifier = ">=4.51.3" },
+    { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.19.10" },
 ]
 provides-extras = ["te", "recipes"]
