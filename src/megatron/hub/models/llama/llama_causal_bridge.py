@@ -30,7 +30,7 @@ from megatron.hub.models.llama.llama_provider import Llama31ModelProvider, Llama
 
 
 @MegatronModelBridge.impl(source=LlamaForCausalLM, target=GPTModel)
-class MegatronCausalLlamaBridge(MegatronModelBridge):
+class LlamaCausalBridge(MegatronModelBridge):
     """
     Megatron Hub Bridge for Llama Causal LM.
     """

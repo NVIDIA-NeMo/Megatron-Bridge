@@ -23,7 +23,7 @@ from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 from megatron.hub.bridge.causal_bridge import CausalLMBridge
 from megatron.hub.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.hub.bridge.model_bridge import MegatronModelBridge
-from megatron.hub.models.llama.llama_causal_bridge import MegatronCausalLlamaBridge
+from megatron.hub.models.llama.llama_causal_bridge import LlamaCausalBridge
 from megatron.hub.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
 
 
@@ -94,11 +94,11 @@ class TestMegatronCausalLlamaBridge:
         """Test that MegatronCausalLlamaBridge is properly registered."""
         # The @MegatronModelBridge.impl decorator should register the bridge
         # Check that the class exists and has the expected base class
-        assert issubclass(MegatronCausalLlamaBridge, MegatronModelBridge)
+        assert issubclass(LlamaCausalBridge, MegatronModelBridge)
 
     def test_provider_bridge_basic(self, mock_pretrained_llama, llama_config):
         """Test basic provider_bridge functionality."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_llama)
@@ -115,7 +115,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_llama, llama_config):
         """Test vocabulary size mapping."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -125,7 +125,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_attention_config(self, mock_pretrained_llama, llama_config):
         """Test attention configuration mapping."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -135,7 +135,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_llama, llama_config):
         """Test MLP configuration mapping."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -145,7 +145,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_normalization(self, mock_pretrained_llama, llama_config):
         """Test normalization configuration."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -154,7 +154,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_position_embedding(self, mock_pretrained_llama, llama_config):
         """Test position embedding configuration."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -163,7 +163,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_rope_scaling(self, mock_pretrained_llama, llama_config):
         """Test RoPE scaling configuration."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -181,7 +181,7 @@ class TestMegatronCausalLlamaBridge:
         mock_pretrained.model.dtype = torch.bfloat16
         mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         # The provider should respect the model's dtype
@@ -191,7 +191,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_with_custom_kwargs(self, mock_pretrained_llama):
         """Test provider_bridge with custom keyword arguments."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         # Pass model only
         result = bridge.provider_bridge(mock_pretrained_llama)
@@ -224,7 +224,7 @@ class TestMegatronCausalLlamaBridge:
         mock_pretrained.model.dtype = torch.float32
         mock_pretrained.generation_config = None
 
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         # Should use LlamaModelProvider (not Llama31) when rope_scaling is not present
@@ -233,7 +233,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_state_bridge_implementation(self, mock_pretrained_llama):
         """Test that state_bridge returns a proper MegatronStateBridge."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         # Get the state bridge
         state_bridge = bridge.state_bridge()
@@ -246,7 +246,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_fixed_settings(self, mock_pretrained_llama):
         """Test fixed settings that should always be set regardless of config."""
-        bridge = MegatronCausalLlamaBridge()
+        bridge = LlamaCausalBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
