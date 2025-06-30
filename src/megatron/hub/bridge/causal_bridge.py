@@ -15,7 +15,7 @@
 import dataclasses
 from functools import partial
 from pathlib import Path
-from typing import Any, Generic, Iterable, Literal, Type, TypeVar, Union, Unpack, overload
+from typing import Any, Generic, Iterable, Literal, Type, TypeVar, Union, overload
 
 import torch.distributed
 import transformers
@@ -23,6 +23,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
+from typing_extensions import Unpack
 
 from megatron.hub.bridge import model_bridge
 from megatron.hub.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
