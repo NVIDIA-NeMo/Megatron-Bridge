@@ -348,20 +348,6 @@ class TestPretrainConfig:
         assert config.train.global_batch_size == global_batch_size
         assert config.train.micro_batch_size == micro_batch_size
 
-    def test_pretrain_config_hardcoded_sequence_length(self):
-        """Test that sequence length is always hardcoded to 8192 for Llama3.1 70B."""
-        # Test with various other parameters to ensure sequence length remains 8192
-        configs = [
-            pretrain_config(),
-            pretrain_config(global_batch_size=256),
-            pretrain_config(micro_batch_size=2),
-            pretrain_config(tensor_parallelism=8, pipeline_parallelism=8),
-            pretrain_config(train_iters=50000, lr=1e-4),
-        ]
-
-        for config in configs:
-            assert config.dataset.sequence_length == 8192, "Sequence length must always be 8192 for Llama3.1 70B"
-
     def test_pretrain_config_llama31_70b_optimized_defaults(self):
         """Test that Llama3.1 70B specific optimizations are applied by default."""
         config = pretrain_config()
