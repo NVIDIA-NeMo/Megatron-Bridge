@@ -341,7 +341,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 4. Common memory usage hikes from environment variable setting
 
-   > 1. NeMo-Run scripts set the below environment variables that (1) do not preserve the buffers for NCCL communication and (2) disable NVLSharp when not used. Both these options lower the GPU memory usage.
+   > 1. The below environment variables will (1) avoid preserving the buffers for NCCL communication and (2) disable NVLSharp when not used. Both these options lower the GPU memory usage.
    >
    >    > 1. `TORCH_NCCL_AVOID_RECORD_STREAMS=1`
    >    > 2. `NCCL_NVLS_ENABLE=0`
@@ -358,7 +358,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 ## Operator Fusion
 
-1. All operator fusions are enabled by default in NeMo-Run scripts. You can control specific fusion behaviors using the following configuration knobs:
+1. You can control specific fusion behaviors using the following configuration knobs:
 
    > 1. `TransformerConfig.masked_softmax_fusion=true`
    > 2. `GPTProvider.cross_entropy_loss_fusion=true`
@@ -421,7 +421,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 1. Increase the clock ratio of GPU core over off-chip memory system
 
-   > 1. NVIDIA GPUs support a CPU core clock boost mode, which increases the core clock rate by reducing the off-chip memory clock rate. This is particularly beneficial for LLMs, which are typically compute throughput-bound. NeMo-Run scripts enable this core clock boost mode by default.
+   > 1. NVIDIA GPUs support a CPU core clock boost mode, which increases the core clock rate by reducing the off-chip memory clock rate. This is particularly beneficial for LLMs, which are typically compute throughput-bound.
    >
    >    > 1. `sudo nvidia-smi boost-slider --vboost 1 <run commandline>`
 
