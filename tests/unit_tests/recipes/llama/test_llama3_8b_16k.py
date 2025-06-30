@@ -138,7 +138,6 @@ class TestPretrainConfig:
             train_iters=10000,
             global_batch_size=256,
             micro_batch_size=2,
-            seq_length=32768,
             lr=1e-4,
             min_lr=1e-5,
             lr_warmup_iters=1000,
@@ -147,7 +146,6 @@ class TestPretrainConfig:
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2
-        assert config.dataset.sequence_length == 32768
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
         assert config.scheduler.lr_warmup_iters == 1000  # Note: fixed in scheduler config
@@ -346,13 +344,6 @@ class TestPretrainConfig:
 
         assert config.train.global_batch_size == global_batch_size
         assert config.train.micro_batch_size == micro_batch_size
-
-    @pytest.mark.parametrize("seq_length", [8192, 16384, 32768, 65536])
-    def test_pretrain_config_sequence_lengths(self, seq_length):
-        """Test various sequence lengths, including extended sequences."""
-        config = pretrain_config(seq_length=seq_length)
-
-        assert config.dataset.sequence_length == seq_length
 
     def test_pretrain_config_16k_optimized_defaults(self):
         """Test that 16k specific optimizations are applied by default."""
