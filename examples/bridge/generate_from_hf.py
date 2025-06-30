@@ -81,4 +81,4 @@ if __name__ == "__main__":
     megatron_model = bridge.to_model(wrap_with_ddp=False)
 
     prompt = "Hello, how are you?"
-    generate_sequence(prompt, megatron_model, HF_MODEL_ID)
+    generate_sequence(prompt, megatron_model)
