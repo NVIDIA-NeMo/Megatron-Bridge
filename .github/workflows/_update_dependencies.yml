@@ -146,7 +146,7 @@ jobs:
           path: uv.lock
 
   create-pr:
-    needs: [update-lockfile, update-branch]
+    needs: [update-lockfile, pre-flight]
     runs-on: ubuntu-latest
     environment: main
     steps:
