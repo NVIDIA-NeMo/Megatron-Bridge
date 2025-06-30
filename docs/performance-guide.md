@@ -367,10 +367,11 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 5. `TransformerConfig.bias_dropout_fusion=true`
    > 6. `TransformerConfig.apply_rope_fusion=true`
 
-2. Megatron-Hub offers different Flash Attention options, which can be chosen by environment
+2. Megatron-Hub offers different Flash Attention options, which can be chosen through the model config:
 
-   > 1. FlashAttention2 (default): `NVTE_FLASH_ATTN=1`
-   > 2. cuDNN fused attention: `NVTE_FLASH_ATTN=0, NVTE_FUSED_ATTN=1`
+   > 1. Let Transformer Engine decide (default): `TransformerConfig.attention_backend=AttnBackend.auto`
+   > 2. FlashAttention2: `TransformerConfig.attention_backend=AttnBackend.flash`
+   > 3. cuDNN fused attention: `TransformerConfig.attention_backend=AttnBackend.fused`
 
 (long-sequence-train)=
 ## Long Sequence Training
@@ -448,8 +449,8 @@ Additionally, because CP shards activations, it also partitions optimizer states
 - `NCCL_NET_GDR_LEVEL`
 - `NCCL_NVLS_ENABLE`
 - `NVTE_BWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
-- `NVTE_FLASH_ATT`
-- `NVTE_FUSED_ATT`
+- `TransformerConfig.attention_backend`
+- `AttnBackend`
 - `NVTE_FWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
 - `PYTORCH_CUDA_ALLOC_CONF`
 - `TrainingConfig.micro_batch_size`
