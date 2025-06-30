@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from megatron.hub.core.utils.instantiate_utils import InstantiationMode
-from megatron.hub.training.utils.config_utils import ConfigContainer
+from megatron.hub.training.utils.config_utils import _ConfigContainerBase
 
 
 # Test functions for callable testing
@@ -68,7 +68,7 @@ class CallableDataclass:
 
 
 @dataclass
-class TestConfigContainer(ConfigContainer):
+class TestConfigContainer(_ConfigContainerBase):
     """Test configuration container."""
 
     name: str = "test_config"
@@ -77,7 +77,7 @@ class TestConfigContainer(ConfigContainer):
 
 
 @dataclass
-class ComplexConfigContainer(ConfigContainer):
+class ComplexConfigContainer(_ConfigContainerBase):
     """Complex configuration container for testing."""
 
     simple_config: TestConfigContainer
@@ -87,7 +87,7 @@ class ComplexConfigContainer(ConfigContainer):
 
 
 @dataclass
-class CallableConfigContainer(ConfigContainer):
+class CallableConfigContainer(_ConfigContainerBase):
     """Configuration container with callable fields for testing."""
 
     name: str = "callable_config"
@@ -602,7 +602,7 @@ class TestConfigContainer_EdgeCases:
         """Test ConfigContainer with minimal fields."""
 
         @dataclass
-        class MinimalConfig(ConfigContainer):
+        class MinimalConfig(_ConfigContainerBase):
             pass
 
         config = MinimalConfig()
@@ -616,7 +616,7 @@ class TestConfigContainer_EdgeCases:
         """Test ConfigContainer with None values."""
 
         @dataclass
-        class ConfigWithNone(ConfigContainer):
+        class ConfigWithNone(_ConfigContainerBase):
             optional_field: str = None
             required_field: str = "required"
 
@@ -630,7 +630,7 @@ class TestConfigContainer_EdgeCases:
         """Test ConfigContainer with complex nested types."""
 
         @dataclass
-        class ComplexConfig(ConfigContainer):
+        class ComplexConfig(_ConfigContainerBase):
             nested_list: list[dict[str, SimpleDataclass]]
             nested_dict: dict[str, list[SimpleDataclass]]
 
@@ -761,7 +761,7 @@ class TestConfigContainer_CallablesAndPartials:
         """Test container mixing callable and regular data."""
 
         @dataclass
-        class MixedConfig(ConfigContainer):
+        class MixedConfig(_ConfigContainerBase):
             name: str = "mixed"
             regular_list: list[str] = None
             callable_func: callable = activation_function

@@ -25,11 +25,11 @@ from megatron.hub.core.utils.instantiate_utils import InstantiationMode, instant
 from megatron.hub.core.utils.yaml_utils import safe_yaml_representers
 
 
-T = TypeVar("T", bound="ConfigContainer")
+T = TypeVar("T", bound="_ConfigContainerBase")
 
 
 @dataclass(kw_only=True)
-class ConfigContainer:
+class _ConfigContainerBase:
     """
     Base configuration container for Megatron Hub configurations.
 
@@ -144,7 +144,7 @@ class ConfigContainer:
         Returns:
             The converted value
         """
-        if isinstance(value, ConfigContainer):
+        if isinstance(value, _ConfigContainerBase):
             return value.to_dict()
         elif is_dataclass(value) and not isinstance(value, type):
             # Handle regular dataclasses
