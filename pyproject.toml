@@ -96,7 +96,7 @@ override-dependencies = [
 
 [tool.uv.sources]
 nemo-toolkit = { git = "https://github.com/NVIDIA/NeMo.git", rev = "5e63ca3c1631bb156187705f9c4cf643a67f9c05" }
-megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "c40f31f307221a8458c0775658d19da89303c26b" }
+megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "03f7793114aa49af8ad7ac5eb70affe56f5f28ea" }
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
