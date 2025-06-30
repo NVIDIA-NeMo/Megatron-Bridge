@@ -16,10 +16,18 @@ import logging
 import time
 from typing import Callable, Optional
 
-import nvidia_resiliency_ext.straggler as straggler
 import torch
 
+from megatron.hub.core.utils.import_utils import MISSING_NVRX_MSG
 from megatron.hub.training.config import NVRxStragglerDetectionConfig
+
+
+try:
+    import nvidia_resiliency_ext.straggler as straggler
+
+    HAVE_NVRX = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_NVRX = False
 
 
 class NVRxStragglerDetectionManager:
@@ -54,6 +62,9 @@ class NVRxStragglerDetectionManager:
         Raises:
             RuntimeError: If already initialized.
         """
+        if not HAVE_NVRX:
+            raise ImportError(MISSING_NVRX_MSG)
+
         if self.initialized:
             raise RuntimeError("NVRxStragglerDetectionManager is already initialized.")
 
@@ -83,6 +94,7 @@ class NVRxStragglerDetectionManager:
         Returns:
             The wrapped training step function.
         """
+
         if not self.initialized or not self.config.enabled:
             return train_step_func
 
@@ -127,6 +139,7 @@ class NVRxStragglerDetectionManager:
         Returns:
             True if stragglers were detected and stop_if_detected is True, False otherwise.
         """
+
         if not self.initialized or not self.config.enabled:
             return False
 

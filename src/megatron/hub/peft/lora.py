@@ -28,11 +28,16 @@ from megatron.hub.peft.utils import ParallelLinearAdapter, get_adapter_attribute
 
 logger = logging.getLogger(__name__)
 
-te, HAVE_TE = safe_import("transformer_engine.pytorch")
-if HAVE_TE:
+try:
+    import transformer_engine.pytorch as te
+
     from megatron.hub.peft.lora_layers import TELinearAdapter
-else:
+
+    HAVE_TE = True
+except ImportError:
+    te = None
     TELinearAdapter = None
+    HAVE_TE = False
 
 if torch.cuda.is_available():
     bitsandbytes, HAVE_BNB = safe_import("bitsandbytes")

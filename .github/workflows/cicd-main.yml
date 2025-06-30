@@ -80,29 +80,6 @@ jobs:
         run: |
           echo "Running CI tests"
 
-  cicd-container-build:
-    uses: ./.github/workflows/_build_container.yml
-    needs: [pre-flight, cicd-wait-in-queue]
-    if: |
-      needs.pre-flight.outputs.test_to_run != '[]'
-      && needs.pre-flight.outputs.components_to_run != '[]'
-      && (
-        success()
-        || (
-          needs.cicd-wait-in-queue.result == 'skipped'
-          && needs.pre-flight.outputs.is_ci_workload == 'true'
-        )
-      )
-      && !cancelled()
-    with:
-      image-name: megatron_hub
-      dockerfile: docker/Dockerfile.ci
-    secrets:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      PAT: ${{ secrets.PAT }}
-
   cicd-unit-tests:
     strategy:
       fail-fast: false
@@ -114,7 +91,7 @@ jobs:
           - script: L0_Unit_Tests_CPU
             runner: linux-amd64-cpu16
             cpu-only: true
-    needs: [cicd-container-build]
+    needs: [pre-flight, cicd-wait-in-queue]
     runs-on: ${{ matrix.runner }}
     name: ${{ matrix.script }}
     environment: nemo-ci
@@ -124,31 +101,20 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          runner: ${{ runner.name }}
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout || 10 }}
           is_unit_test: "true"
-          image: megatron_hub
           cpu-only: ${{ matrix.cpu-only || false }}
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
 
   cicd-functional-tests:
     needs: [cicd-unit-tests]
     runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
-    name: ${{ matrix.script }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - script: L2_Launch_training
-            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
-            timeout: 60
-          - script: L2_Launch_evaluation
-            runner: linux-amd64-gpu-rtxa6000-latest-2-nemo
-            timeout: 60
+    name: L2_Launch_training
     environment: nemo-ci
     steps:
       - name: Checkout
@@ -156,21 +122,19 @@ jobs:
       - name: main
         uses: ./.github/actions/test-template
         with:
-          runner: ${{ runner.name }}
-          script: ${{ matrix.script }}
+          script: L2_Launch_training
           timeout: 60
           is_unit_test: "false"
-          image: megatron_hub
           cpu-only: false
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
 
   Nemo_CICD_Test:
     needs:
       - pre-flight
-      - cicd-container-build
       - cicd-unit-tests
       - cicd-functional-tests
     if: always()

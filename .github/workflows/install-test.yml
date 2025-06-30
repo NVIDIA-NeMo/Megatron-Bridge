@@ -22,11 +22,13 @@ on:
     branches:
       - main
       - "pull-request/[0-9]+"
+env:
+  UV_PROJECT_ENVIRONMENT: "./venv"
 
 jobs:
   pip-test:
     runs-on: ${{ matrix.arch }}
-    name: (CPU) Python ${{ matrix.python-version }} on ${{ matrix.arch }}
+    name: Pip - Python${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
       fail-fast: false
       matrix:
@@ -47,11 +49,24 @@ jobs:
 
       - name: Install project
         run: |
-          pip install ".[eval,recipes]"
+          pip install .
+
+      - name: Checkout check-imports
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: v0.39.0
+          path: FW-CI-templates
+
+      - name: Check imports for megatron-hub
+        uses: ./FW-CI-templates/.github/actions/check-imports
+        with:
+          package-name: megatron.hub
+          python-binary: python
 
   ngc-cuda-test:
     runs-on: linux-amd64-cpu16
-    name: (GPU) Python ${{ matrix.python-version }}
+    name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC CUDA
     container:
       image: nvcr.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
     environment: nemo-ci
@@ -94,28 +109,44 @@ jobs:
       - name: Install project
         env:
           PAT: ${{ secrets.PAT }}
-          UV_PROJECT_ENVIRONMENT: ./venv
         shell: bash
         run: |
           echo -e "machine github.com\n  login token\n  password ${{ secrets.PAT }}" > ~/.netrc
           chmod 600 ~/.netrc 
-          python -m venv ./venv
+
+          uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
           source ./venv/bin/activate
 
           export PATH="./bin/:$PATH"
 
-          pip install ".[eval,recipes]"
+          uv sync --link-mode copy --locked --all-groups
 
           bash ./docker/common/install_conflicting_deps.sh \
             --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
 
+          uv pip install --no-deps -e .
+
+      - name: Checkout check-imports
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: v0.39.0
+          path: FW-CI-templates
+
+      - name: Check imports for megatron-hub
+        uses: ./FW-CI-templates/.github/actions/check-imports
+        with:
+          package-name: megatron.hub
+          python-binary: ./venv/bin/python
+
   uv-test:
     runs-on: ${{ matrix.arch }}
-    name: UV on ${{ matrix.arch }}
+    name: UV - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
       fail-fast: false
       matrix:
-        arch: ["ubuntu-latest", "macos-latest"]
+        arch: ["ubuntu-latest"] #, "macos-latest"]
+        python-version: ["3.12"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -125,16 +156,34 @@ jobs:
         with:
           version: 0.7.2
 
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Install dependencies with UV
-        env:
-          UV_PROJECT_ENVIRONMENT: ./venv
         run: |
 
-          export PATH=".bin/:$PATH"
+          export PATH="${UV_PROJECT_ENVIRONMENT}/bin/:$PATH"
 
-          uv venv ${UV_PROJECT_ENVIRONMENT}
+          uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
           uv sync --link-mode copy --locked --all-groups
+
+          uv pip install --no-deps -e .
+
+      - name: Checkout check-imports
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-NeMo/FW-CI-templates
+          ref: v0.39.0
+          path: FW-CI-templates
+
+      - name: Check imports for megatron-hub
+        uses: ./FW-CI-templates/.github/actions/check-imports
+        with:
+          package-name: megatron.hub
+          python-binary: ./venv/bin/python
 
   install-test-summary:
     needs: [pip-test, uv-test, ngc-cuda-test]

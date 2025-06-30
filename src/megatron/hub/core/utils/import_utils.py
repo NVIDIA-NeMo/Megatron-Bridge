@@ -35,6 +35,13 @@ GPU_INSTALL_STRING = (
     """https://pypi.nvidia.com nemo-curator[cuda12x]`
 or use `pip install --extra-index-url https://pypi.nvidia.com ".[cuda12x]"` if installing from source"""
 )
+MISSING_NEMO_EXPORT_DEPLOY_MSG = (
+    "nemo-export-deploy is not available. Please install it with `pip install nemo-export-deploy`."
+)
+MISSING_NVRX_MSG = (
+    "nvidia-resiliency-ext is not available. Please install it with `pip install nvidia-resiliency-ext`."
+)
+MISSING_NEMO_RUN_MSG = "nemo-run is not available. Please install it with `pip install nemo-run`."
 
 
 class UnavailableError(Exception):
@@ -87,6 +94,10 @@ class UnavailableMeta(type):
         raise UnavailableError(cls._msg)
 
     def __getattr__(cls, name):
+        # Special handling for unittest.mock which tries to access __func_
+        # and other attributes during its operations
+        if name in ("__func__", "__wrapped__", "__name__", "__qualname__"):
+            raise AttributeError(f"'{cls.__name__}' has no attribute '{name}'")
         raise UnavailableError(cls._msg)
 
     def __eq__(cls, other):

@@ -15,7 +15,19 @@
 import abc
 import os
 from pathlib import Path
-from typing import Callable, Generic, TypedDict, TypeVar, Unpack
+from typing import Callable, Generic, TypedDict, TypeVar
+
+
+try:
+    from typing import Unpack
+except ImportError:
+    try:
+        from typing_extensions import Unpack
+    except ImportError:
+        from unittest.mock import MagicMock
+
+        Unpack = MagicMock()
+
 
 import torch
 from megatron.core import parallel_state

@@ -1,0 +1,151 @@
+name: ~Update dependencies template
+on:
+  workflow_call:
+    inputs:
+      target-branch:
+        required: true
+        type: string
+        description: "The target branch to bump"
+      mcore-target-branch:
+        required: true
+        type: string
+        description: "The target branch to bump"
+    secrets:
+      PAT:
+        required: true
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+      SSH_KEY:
+        required: true
+      SSH_PWD:
+        required: true
+
+jobs:
+  pre-flight:
+    runs-on: ubuntu-latest
+    outputs:
+      bump-branch: bump-ci-container-${{ steps.ref.outputs.date }}-${{ inputs.target-branch }}
+      date: ${{ steps.ref.outputs.date }}
+    steps:
+      - name: Get date
+        id: ref
+        run: echo "date=$(date +%F)" | tee -a "$GITHUB_OUTPUT"
+
+  mcore:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_bump_tomlfile.yml@v0.40.0
+    needs: [pre-flight]
+    name: Bump Megatron-LM
+    with:
+      source-repository: NVIDIA/Megatron-LM
+      source-ref: ${{ inputs.mcore-target-branch }}
+      toml-path: tool.uv.sources.megatron-core.rev
+      file: pyproject.toml
+      base-branch: ${{ inputs.target-branch }}
+      pr-branch: ${{ needs.pre-flight.outputs.bump-branch }}
+      pr-title: "chore(🤖): Bump dependencies (${{ needs.pre-flight.outputs.date }})"
+      use-gpgkey: true
+    secrets:
+      PAT: ${{ secrets.PAT }}
+      GPG_KEY: ${{ secrets.SSH_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.SSH_PWD }}
+
+  update-lockfile:
+    environment: nemo-ci
+    runs-on: linux-amd64-cpu16
+    needs: [mcore, update-branch]
+    env:
+      SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
+      TARGET_BRANCH: ${{ inputs.target-branch }}
+    steps:
+      - name: Install Azure CLI
+        run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure ACR Login
+        run: az acr login --name nemoci
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+
+      - name: Build container
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-hub .
+
+      - name: Create bump branch if not exists
+        run: |
+          if ! git ls-remote --exit-code origin $SOURCE_BRANCH; then
+            git checkout -b $SOURCE_BRANCH $TARGET_BRANCH
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_BRANCH }}
+
+      - name: Upgrade lock file
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          docker run \
+          --rm \
+          -v $(pwd):/workspace \
+          -w /workspace \
+          -e GH_TOKEN=${{ secrets.PAT }} \
+          megatron-hub \
+          bash -c 'source /opt/venv/env.sh && uv lock --upgrade'
+
+      - name: Upload lock file
+        uses: actions/upload-artifact@v4
+        with:
+          name: lock-file-${{ env.SOURCE_BRANCH }}
+          path: uv.lock
+
+  create-pr:
+    needs: [update-lockfile, update-branch]
+    runs-on: ubuntu-latest
+    environment: main
+    env:
+      SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
+      TARGET_BRANCH: ${{ inputs.target-branch }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+          ref: ${{ env.SOURCE_BRANCH }}
+
+      - name: Install GPG
+        run: sudo apt-get install -y gnupg2
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec
+        with:
+          gpg_private_key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PWD }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+
+      - name: Download lock file
+        uses: actions/download-artifact@v4
+        with:
+          name: lock-file-${{ env.SOURCE_BRANCH }}
+
+      - name: Commit changes
+        run: |
+          git add uv.lock
+          git commit -S -m "build: uv.lock"
+          git push
