@@ -2,7 +2,13 @@
 
 Megatron-Hub provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
 
+```{Note}
 This guide makes references to several configuration settings. These settings will be referenced relative to the the config class that contains them, e.g. `OptimizerConfig.lr`. Please see <project:apidocs/index.rst> for more details on configuration settings.
+```
+
+```{Note}
+This guide references several configuration settings from `TransformerConfig`. Please apply these to the appropriate ModelProvider for your model, e.g. `GPTModelProvider`, as the `ConfigContainer` does not accept a raw `TransformerConfig`.
+```
 
 ## Low Precision Training
 
