@@ -19,20 +19,5 @@ on:
   workflow_call:
 
 jobs:
-  docs-build:
-    name: Build docs
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Sphinx build
-        run: |
-          cd docs
-          uv run --only-group docs sphinx-build --fail-on-warning --builder html . _build/html
+  build-docs:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_docs.yml@ko3n1g/feat/docs-build
