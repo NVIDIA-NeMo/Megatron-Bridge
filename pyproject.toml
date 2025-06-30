@@ -69,6 +69,8 @@ dependencies = [
     "tensorboard>=2.19.0",
     "torch",
     "transformers>=4.51.3",
+    "typing-extensions",
+    "rich",
     "wandb>=0.19.10",
     "megatron-core",
     "six>=1.17.0",
