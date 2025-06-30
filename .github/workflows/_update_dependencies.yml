@@ -56,7 +56,7 @@ jobs:
   update-lockfile:
     environment: nemo-ci
     runs-on: linux-amd64-cpu16
-    needs: [mcore, update-branch]
+    needs: [mcore, pre-flight]
     env:
       SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
       TARGET_BRANCH: ${{ inputs.target-branch }}
