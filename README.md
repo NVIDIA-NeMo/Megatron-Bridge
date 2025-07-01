@@ -1,4 +1,18 @@
-# Megatron Hub: Training Recipes for Megatron-based LLM and VLM models
+# Megatron-Hub
+
+## Overview
+
+Megatron-Hub is a comprehensive training framework built on top of NVIDIA's Megatron-Core library for pretraining and finetuning Megatron-based large language models (LLMs) and vision-language models (VLMs). It provides a highly scalable and configurable training loop, optimized production-ready training recipes, and bidirectional conversion between HuggingFace and Megatron formats.
+
+Megatron-Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
+
+## Key Features
+
+- **Training Infrastructure**: Complete training loop that handles data loading, distributed training, checkpointing, and logging
+- **Parameter-Efficient Finetuning**: In-house PEFT implementation that supports LoRA, DoRA, or custom PEFT methods
+- **Training Recipes**: Pre-configured training recipes for popular models like Llama3, with optimized hyperparameters and distributed training configuration
+- **Model Conversion**: Seamless conversion between Hugging Face and Megatron formats for interoperability
+- **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
 
 ## Installation 
 
