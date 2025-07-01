@@ -17,7 +17,6 @@ provider = bridge.to_megatron()
 provider.tensor_model_parallel_size = 8
 provider.pipeline_model_parallel_size = 2
 
-# Create the distributed model
 model = provider(wrap_with_ddp=False)
 ```
 
