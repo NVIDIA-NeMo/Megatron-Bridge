@@ -14,6 +14,30 @@ Megatron-Hub is designed for researchers and engineers who need to train large-s
 - **Model Conversion**: Seamless conversion between Hugging Face and Megatron formats for interoperability
 - **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
 
+## Supported Models
+
+Megatron-Hub provides out-of-the-box configuration recipes for a wide range of models, built on top of base model architectures from Megatron-Core:
+
+### Large Language Models
+
+| Model                  | Style     | Sizes     | Pretrain     | Finetune     |
+|------------------------|-----------|-----------|--------------|--------------|
+| Llama 3                | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | [8b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama3_8b.py), [70b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama3_70b.py)   | ✅ | ❌ |
+| Llama 3.1              | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | 8b, 70b, 405b    | ❌ | ❌ |
+| Llama 3.2              | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | 1b, 3b           | ❌ | ❌ |
+
+All recipes are ready to train out of the box, using mock data by default. For an example of how to override the default configuration through YAML or Hydra-style CLI overrides, please have a look at this [script](https://github.com/NVIDIA-NeMo/Megatron-Hub/examples/recipes/llama3_8b/pretrain_llama3_8b.py). When your script is ready to be launched, see the following examples using NeMo-Run:
+
+- [Launch Llama3 8b Pretraining with NeMo-Run's `run.Script`](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_script.py)
+- [Launch Llama3 8b Pretraining with NeMo-Run's `run.Partial`](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_partial.py)
+
+<!-- ### Vision-Language Models -->
+
+
+## Performance Benchmarks
+
+Coming soon ...
+
 ## Installation 
 
 ### Pip Installation
