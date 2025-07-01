@@ -30,7 +30,7 @@ from megatron.hub.training.state import GlobalState
 logger = logging.getLogger(__name__)
 
 
-def get_packed_seq_params(batch):
+def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     """Extract packed sequence parameters from the batch.
 
     Creates and returns a PackedSeqParams object with appropriate parameters
