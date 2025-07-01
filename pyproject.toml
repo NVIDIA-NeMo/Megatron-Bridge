@@ -67,7 +67,7 @@ dependencies = [
     "omegaconf>=2.3.0",
     "packaging",
     "tensorboard>=2.19.0",
-    "torch==2.7.0",
+    "torch",
     "transformers>=4.51.3",
     "wandb>=0.19.10",
     "megatron-core",
@@ -96,7 +96,7 @@ override-dependencies = [
 
 [tool.uv.sources]
 nemo-toolkit = { git = "https://github.com/NVIDIA/NeMo.git", rev = "5e63ca3c1631bb156187705f9c4cf643a67f9c05" }
-megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "c40f31f307221a8458c0775658d19da89303c26b" }
+megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "6b708890cb385ea6515706d7d474f77d433890a6" }
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
