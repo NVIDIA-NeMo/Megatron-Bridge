@@ -524,6 +524,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         causal_lm_arch = None
         for architecture_name in architectures:
+            # TODO: Can we improve this?
             if architecture_name.endswith("ForCausalLM"):
                 causal_lm_arch = architecture_name
                 break
