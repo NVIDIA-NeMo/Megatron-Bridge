@@ -209,7 +209,7 @@ class Llama3ModelProvider70B(Llama3ModelProvider):
 
 
 @dataclass
-class Llama31ModelProvider8B(LlamaModelProvider):
+class Llama31ModelProvider8B(Llama31ModelProvider):
     """Configuration for an 8B parameter Llama 3.1 model.
 
     Specific configuration for the 8B Llama 3.1 model with 32 layers,

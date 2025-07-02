@@ -16,8 +16,18 @@ import torch.nn.functional as F
 
 from megatron.hub.models.llama import (
     Llama2ModelProvider7B,
+    Llama3ModelProvider,
     Llama3ModelProvider8B,
+    Llama3ModelProvider70B,
+    Llama4Experts16ModelProvider,
+    Llama4Experts128ModelProvider,
+    Llama4ModelProvider,
+    Llama31ModelProvider,
+    Llama31ModelProvider8B,
     Llama31ModelProvider70B,
+    Llama31ModelProvider405B,
+    Llama32ModelProvider1B,
+    Llama32ModelProvider3B,
     LlamaModelProvider,
 )
 
@@ -191,6 +201,70 @@ class TestLlama31ModelProvider70B:
             assert provider.rope_scaling_type is not None
         if hasattr(provider, "rope_scaling_factor"):
             assert provider.rope_scaling_factor > 1.0
+
+
+class TestLlama3QueryGroupsInheritance:
+    """Test cases to verify that all configs extending from Llama3 have num_query_groups=8."""
+
+    def test_llama3_base_provider_has_correct_num_query_groups(self):
+        """Test that Llama3ModelProvider has num_query_groups=8."""
+        provider = Llama3ModelProvider()
+        assert provider.num_query_groups == 8
+
+    def test_llama31_provider_inherits_num_query_groups(self):
+        """Test that Llama31ModelProvider inherits num_query_groups=8 from Llama3ModelProvider."""
+        provider = Llama31ModelProvider()
+        assert provider.num_query_groups == 8
+
+    def test_llama3_8b_provider_inherits_num_query_groups(self):
+        """Test that Llama3ModelProvider8B inherits num_query_groups=8."""
+        provider = Llama3ModelProvider8B()
+        assert provider.num_query_groups == 8
+
+    def test_llama3_70b_provider_inherits_num_query_groups(self):
+        """Test that Llama3ModelProvider70B inherits num_query_groups=8."""
+        provider = Llama3ModelProvider70B()
+        assert provider.num_query_groups == 8
+
+    def test_llama31_8b_provider_inherits_num_query_groups(self):
+        """Test that Llama31ModelProvider8B inherits num_query_groups=8."""
+        provider = Llama31ModelProvider8B()
+        assert provider.num_query_groups == 8
+
+    def test_llama31_70b_provider_inherits_num_query_groups(self):
+        """Test that Llama31ModelProvider70B inherits num_query_groups=8."""
+        provider = Llama31ModelProvider70B()
+        assert provider.num_query_groups == 8
+
+    def test_llama31_405b_provider_inherits_num_query_groups(self):
+        """Test that Llama31ModelProvider405B inherits num_query_groups=8."""
+        provider = Llama31ModelProvider405B()
+        assert provider.num_query_groups == 8
+
+    def test_llama32_1b_provider_has_correct_num_query_groups(self):
+        """Test that Llama32ModelProvider1B has num_query_groups=8."""
+        provider = Llama32ModelProvider1B()
+        assert provider.num_query_groups == 8
+
+    def test_llama32_3b_provider_has_correct_num_query_groups(self):
+        """Test that Llama32ModelProvider3B has num_query_groups=8."""
+        provider = Llama32ModelProvider3B()
+        assert provider.num_query_groups == 8
+
+    def test_llama4_provider_inherits_num_query_groups(self):
+        """Test that Llama4ModelProvider inherits num_query_groups=8 from Llama3ModelProvider."""
+        provider = Llama4ModelProvider()
+        assert provider.num_query_groups == 8
+
+    def test_llama4_experts16_provider_inherits_num_query_groups(self):
+        """Test that Llama4Experts16ModelProvider inherits num_query_groups=8."""
+        provider = Llama4Experts16ModelProvider()
+        assert provider.num_query_groups == 8
+
+    def test_llama4_experts128_provider_inherits_num_query_groups(self):
+        """Test that Llama4Experts128ModelProvider inherits num_query_groups=8."""
+        provider = Llama4Experts128ModelProvider()
+        assert provider.num_query_groups == 8
 
 
 class TestLlamaProviderInheritance:
