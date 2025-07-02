@@ -82,3 +82,7 @@ uv sync --group dev --group test # for running linters and tests
 ```
 
 If you do not have `uv` installed, please refer to the installation [docs](https://docs.astral.sh/uv/getting-started/installation/).
+
+## Contributing
+
+We welcome community contributions! Please see our [Contributor Guidelines](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/CONTRIBUTING.md) for more information on how to get involved.
