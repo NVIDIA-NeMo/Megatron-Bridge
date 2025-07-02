@@ -622,6 +622,97 @@ class TestConfigContainerValidation:
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_packed_sequence_micro_batch_size_validation_error(self, monkeypatch):
+        """Test validation error when micro_batch_size > 1 with packed sequences."""
+        from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
+
+        # Create config with micro_batch_size > 1 and packed sequences
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
+
+        # Create packed sequence specs with packed_sequence_size > 0
+        packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.packed_sequence_specs = packed_specs
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Micro batch size should be 1 when training with packed sequence"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_packed_sequence_micro_batch_size_validation_passes(self, monkeypatch):
+        """Test validation passes when micro_batch_size = 1 with packed sequences."""
+        from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
+
+        # Create config with micro_batch_size = 1 and packed sequences
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+
+        # Create packed sequence specs with packed_sequence_size > 0
+        packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.packed_sequence_specs = packed_specs
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_packed_sequence_validation_skipped_when_specs_none(self, monkeypatch):
+        """Test validation skipped when packed_sequence_specs is None."""
+        # Create config with micro_batch_size > 1 but no packed sequences
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        # packed_sequence_specs defaults to None
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_packed_sequence_validation_skipped_for_gpt_dataset(self, monkeypatch):
+        """Test validation skipped when using GPTDatasetConfig instead of FinetuningDatasetConfig."""
+        # Create config with micro_batch_size > 1 and GPTDatasetConfig
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)
+        # GPTDatasetConfig doesn't have packed_sequence_specs
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """
