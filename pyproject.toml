@@ -94,6 +94,7 @@ no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
 override-dependencies = [
     "tiktoken>=0.9.0",                      # because nemo-toolkit and megatron-hub disagree on tiktoken, we need to pin it here
     "megatron-core[dev]",
+    "nvidia-modelopt[torch]; sys_platform != 'darwin'"
 ]
 
 [tool.uv.sources]
@@ -106,7 +107,7 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 te = [
-    "transformer-engine[pytorch]==2.4.0"
+    "transformer-engine[pytorch]==2.4.0; sys_platform != 'darwin'"
 ]
 recipes = [
     "nemo-run",
