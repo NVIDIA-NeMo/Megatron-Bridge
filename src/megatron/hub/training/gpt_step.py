@@ -74,7 +74,6 @@ def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
-    print(batch)
 
     required_device_keys = set()
     required_host_keys = set()
@@ -99,7 +98,6 @@ def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
         else:
             _batch_required_keys[key] = None
 
-    print(_batch_required_keys)
     return _batch_required_keys
 
 
@@ -307,15 +305,13 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -
 
     # Add packed sequence support
     if cu_seqlens is not None:
-        batch_dict = {
+        packed_seq_params = {
             "cu_seqlens": cu_seqlens,
             "cu_seqlens_argmin": cu_seqlens_argmin,
             "max_seqlen": max_seqlen,
         }
-        print("making packed seq params")
-        forward_args["packed_seq_params"] = get_packed_seq_params(batch_dict)
+        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
-    print(forward_args)
     with straggler_timer:
         output_tensor = model(**forward_args)
 

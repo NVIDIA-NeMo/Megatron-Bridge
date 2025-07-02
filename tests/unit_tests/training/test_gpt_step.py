@@ -105,9 +105,9 @@ class TestGetPackedSeqParams:
         # Verify the result is a PackedSeqParams object
         assert isinstance(result, PackedSeqParams)
 
-        # When there's no -1 padding, argmin will return 0, so we get only the first element
-        # This is actually a edge case - the function expects -1 padding or cu_seqlens_argmin
-        expected_cu_seqlens = torch.tensor([0], dtype=torch.int32)
+        # When there's no -1 padding, argmin returns 0 (index of min value)
+        # So cu_seqlens[:0] returns empty tensor
+        expected_cu_seqlens = torch.empty(0, dtype=torch.int32)  # Empty tensor
         assert torch.equal(result.cu_seqlens_q, expected_cu_seqlens)
         assert torch.equal(result.cu_seqlens_kv, expected_cu_seqlens)
 

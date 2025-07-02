@@ -606,7 +606,7 @@ def lightning_prepare_data():
 
     return any(
         [
-            frame.function == "prepare_data" and "prepare_packed_sequence_data" in frame.code_context[0]
+            frame.function == "prepare_data" and "prepare_packed_data" in frame.code_context[0]
             for frame in inspect.stack()
         ]
     )
