@@ -33,6 +33,13 @@ from megatron.hub.models.llama.llama_provider import Llama31ModelProvider, Llama
 class LlamaCausalBridge(MegatronModelBridge):
     """
     Megatron Hub Bridge for Llama Causal LM.
+
+    As a user you would not use this bridge directly, but through `CausalBridge` or `AutoBridge`.
+
+    Example:
+        >>> from megatron.hub import AutoBridge
+        >>> bridge = AutoBridge.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+        >>> provider = bridge.to_provider()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaModelProvider:
