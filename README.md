@@ -102,6 +102,31 @@ uv sync --group dev --group test # for running linters and tests
 
 If you do not have `uv` installed, please refer to the installation [docs](https://docs.astral.sh/uv/getting-started/installation/).
 
+## Project Structure
+
+```
+Megatron-Hub/
+├── examples/
+│   └── recipes/                 # Training examples
+├── src/megatron/hub/
+│   ├── common/                  # Shared utilities and mixins
+│   ├── core/
+│   │   ├── models/              # Wrapped MCore model builders
+│   │   │   └── model_provider.py
+│   │   └── utils/               # Utilities intended for mcore
+│   ├── data/                    # Dataloaders and iterators
+│   ├── models/                  # Model-specific implementations
+│   │   ├── llama/               # Llama model providers
+│   │   └── .../                 # Other models (gpt, t5, etc.)
+│   ├── peft/                    # PEFT transformations and wrappers
+│   ├── recipes/                 # Complete training recipes
+│   └── training/                # Training loop components
+│       ├── converters/          # Model converters for HuggingFace
+│       ├── tokenizers/          # Tokenizer library
+│       └── utils/               # Training-specific utilities
+└── tests/                       # Comprehensive test suite
+```
+
 ## Contributing
 
 We welcome community contributions! Please see our [Contributor Guidelines](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/CONTRIBUTING.md) for more information on how to get involved.
