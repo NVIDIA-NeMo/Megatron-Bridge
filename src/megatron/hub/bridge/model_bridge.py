@@ -81,7 +81,7 @@ class HFSaveTask(NamedTuple):
     pp_rank: int
     vp_stage: Optional[int]
     megatron_name: str
-    weight_bridge: MegatronParamMapping
+    param_mapping: MegatronParamMapping
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,7 @@ class _HFLoadTask(Generic[MappingT]):
             (no ``module.`` prefixes).
         megatron_module (torch.nn.Module): Reference to the Megatron model (or
             sub-module) that **owns** the parameter. Needed by the
-            :pyclass:`~megatron.hub.bridge.weight_bridge.MegatronParamMapping` for
+            :pyclass:`~megatron.hub.bridge.param_mapping.MegatronParamMapping` for
             configuration information (e.g. hidden size, number of heads).
         megatron_param (torch.Tensor): The actual :pyclass:`torch.nn.Parameter`
             object which will receive the shard on *this* process after the
@@ -752,7 +752,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         self,
         param: torch.Tensor,
         hf_state: Mapping[str, torch.Tensor],
-        weight_bridge: MegatronParamMapping,
+        param_mapping: MegatronParamMapping,
         provider: ModelProviderTarget,
     ) -> Optional[torch.Tensor]:
         """
@@ -763,7 +763,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         # Load on rank 0
         if tp_rank == 0:
-            weight = self._load_from_hf(hf_state, weight_bridge, provider)
+            weight = self._load_from_hf(hf_state, param_mapping, provider)
             if weight is not None:
                 weight = weight.to(torch.cuda.current_device())
         else:
@@ -783,8 +783,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             is_tp = is_tensor_parallel(param)
 
             # If it's a tensor-parallel parameter with a specific split strategy, create shards.
-            if is_tp and weight_bridge.tp_split_strategy:
-                shards = weight_bridge.tp_split_strategy(provider, weight)
+            if is_tp and param_mapping.tp_split_strategy:
+                shards = param_mapping.tp_split_strategy(provider, weight)
             else:
                 # Otherwise, this is a replicated parameter (either non-TP, or TP without a split strategy).
                 shards = [weight] * tp_world_size
@@ -797,29 +797,29 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return output_weight
 
     def _load_from_hf(
-        self, hf_state: Mapping[str, torch.Tensor], weight_bridge: MegatronParamMapping, provider: ModelProviderTarget
+        self, hf_state: Mapping[str, torch.Tensor], param_mapping: MegatronParamMapping, provider: ModelProviderTarget
     ) -> Optional[torch.Tensor]:
         """Load weight from HF using mapping."""
-        if isinstance(weight_bridge.dst, str):
+        if isinstance(param_mapping.dst, str):
             # Simple mapping
-            if weight_bridge.dst not in hf_state:
+            if param_mapping.dst not in hf_state:
                 return None
-            weight = hf_state[weight_bridge.dst]
+            weight = hf_state[param_mapping.dst]
             # Apply to_target transformation if defined
-            if weight_bridge.to_target:
-                weight = weight_bridge.to_target(provider, weight)
+            if param_mapping.to_target:
+                weight = param_mapping.to_target(provider, weight)
             return weight
         else:
             # Complex mapping with transformation
             weights = {}
-            for key, hf_name in weight_bridge.dst.items():
+            for key, hf_name in param_mapping.dst.items():
                 if hf_name not in hf_state:
                     return None
                 weights[key] = hf_state[hf_name]
 
             # Apply transformation
-            if weight_bridge.to_target:
-                return weight_bridge.to_target(provider, **weights)
+            if param_mapping.to_target:
+                return param_mapping.to_target(provider, **weights)
             return None
 
     def _get_layer_offset(self, model: MegatronModule, vp_idx: int) -> int:
