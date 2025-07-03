@@ -166,8 +166,6 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    config.dataset.sequence_length = SEQUENCE_LENGTH_16K
-
     # Apply precision configuration again after overriding model
     if isinstance(precision_config, str):
         precision_config = get_mixed_precision_config(precision_config)
