@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -107,9 +107,20 @@ def update_config_with_precision_overrides(mixed_precision_config: MixedPrecisio
     return config
 
 
+# ----------------------------------------------------------------------------
 # Recipe functions for common mixed precision configurations
+# ----------------------------------------------------------------------------
+
+MIXED_PRECISION_RECIPES: dict[str, Callable[[], "MixedPrecisionConfig"]] = {}
 
 
+def register(func: Callable[[], "MixedPrecisionConfig"]):
+    """Decorator that registers a mixed-precision recipe factory by its function name."""
+    MIXED_PRECISION_RECIPES[func.__name__] = func
+    return func
+
+
+@register
 def bf16_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16.
 
@@ -125,6 +136,7 @@ def bf16_mixed() -> MixedPrecisionConfig:
     )
 
 
+@register
 def fp16_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16.
 
@@ -140,6 +152,7 @@ def fp16_mixed() -> MixedPrecisionConfig:
     )
 
 
+@register
 def bf16_with_fp8_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8.
 
@@ -158,6 +171,7 @@ def bf16_with_fp8_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def fp16_with_fp8_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16 with FP8.
 
@@ -176,6 +190,7 @@ def fp16_with_fp8_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def bf16_with_mxfp8_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with MXFP8.
 
@@ -189,6 +204,7 @@ def bf16_with_mxfp8_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def fp16_with_mxfp8_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16 with MXFP8.
 
@@ -202,6 +218,7 @@ def fp16_with_mxfp8_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def bf16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8
     per-tensor current scaling.
@@ -223,6 +240,7 @@ def bf16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def nemotron_h_bf16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8
     per-tensor current scaling.
@@ -244,6 +262,7 @@ def nemotron_h_bf16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def fp16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16 with FP8
     per-tensor current scaling.
@@ -265,6 +284,7 @@ def fp16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def bf16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8
     NV Subchannel scaling. This recipe uses 128x128 blockwise quantization for weight and 1x128 blockwise
@@ -280,6 +300,7 @@ def bf16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
+@register
 def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16 with FP8
     NV Subchannel scaling. This recipe uses 128x128 blockwise quantization for weight and 1x128 blockwise
@@ -293,3 +314,19 @@ def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     cfg.fp8_recipe = "blockwise"
     cfg.fp8_param_gather = False
     return cfg
+
+
+def get_mixed_precision_config(name: str) -> MixedPrecisionConfig:
+    """Return a :class:`MixedPrecisionConfig` for *name*.
+
+    Args:
+        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES`.
+
+    Raises:
+        ValueError: If *name* is not a known recipe.
+    """
+    try:
+        return MIXED_PRECISION_RECIPES[name]()
+    except KeyError as err:
+        valid = ", ".join(sorted(MIXED_PRECISION_RECIPES.keys()))
+        raise ValueError(f"Unknown mixed-precision recipe '{name}'. Available recipes: {valid}.") from err

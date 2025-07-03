@@ -31,6 +31,7 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 
 
 def model_config(
@@ -91,6 +92,8 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    # Precision recipe
+    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
     # Performance optimizations
     performance_mode: bool = False,
 ) -> ConfigContainer:
@@ -202,6 +205,10 @@ def pretrain_config(
         ),
         rng=RNGConfig(seed=1234),
     )
+
+    if isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     if performance_mode:
         cfg = pretrain_performance_optimizations(cfg)
