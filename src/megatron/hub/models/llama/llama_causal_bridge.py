@@ -80,56 +80,53 @@ class LlamaCausalBridge(MegatronModelBridge):
         return provider
 
     def state_bridge(self) -> MegatronStateBridge:
-        return MegatronStateBridge(
-            # ------------------------------------------------------------------
-            # Embedding & output projection – column-parallel
-            # ------------------------------------------------------------------
-            TPAwareMapping(
-                megatron_param="embedding.word_embeddings.weight",
-                hf_param="model.embed_tokens.weight",
+        # Dictionary-based mapping:
+        # - Key: Megatron parameter name
+        # - Value:
+        #   - A string for simple 1:1 **TPAwareMapping**
+        #   - A tuple of (MappingClass, {params}) for complex mappings
+        param_mappings = {
+            # Embeddings
+            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+            "output_layer.weight": "lm_head.weight",
+            # LayerNorms
+            "decoder.final_layernorm.weight": "model.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+            # Attention
+            "decoder.layers.*.self_attention.linear_qkv.weight": (
+                QKVMapping,
+                {
+                    "q": "model.layers.*.self_attn.q_proj.weight",
+                    "k": "model.layers.*.self_attn.k_proj.weight",
+                    "v": "model.layers.*.self_attn.v_proj.weight",
+                },
             ),
-            TPAwareMapping(
-                megatron_param="output_layer.weight",
-                hf_param="lm_head.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
+            # MLP
+            "decoder.layers.*.mlp.linear_fc1.weight": (
+                GatedMLPMapping,
+                {
+                    "gate": "model.layers.*.mlp.gate_proj.weight",
+                    "up": "model.layers.*.mlp.up_proj.weight",
+                },
             ),
-            # ------------------------------------------------------------------
-            # LayerNorm (replicated across TP ranks)
-            # ------------------------------------------------------------------
-            TPAwareMapping(
-                megatron_param="decoder.final_layernorm.weight",
-                hf_param="model.norm.weight",
-            ),
-            TPAwareMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.layer_norm_weight",
-                hf_param="model.layers.*.input_layernorm.weight",
-            ),
-            TPAwareMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc1.layer_norm_weight",
-                hf_param="model.layers.*.post_attention_layernorm.weight",
-            ),
-            # ------------------------------------------------------------------
-            # Attention – fused QKV & output projection
-            # ------------------------------------------------------------------
-            QKVMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.layers.*.self_attn.q_proj.weight",
-                k="model.layers.*.self_attn.k_proj.weight",
-                v="model.layers.*.self_attn.v_proj.weight",
-            ),
-            TPAwareMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_proj.weight",
-                hf_param="model.layers.*.self_attn.o_proj.weight",
-            ),
-            # ------------------------------------------------------------------
-            # MLP – gated projection & output projection
-            # ------------------------------------------------------------------
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-            TPAwareMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc2.weight",
-                hf_param="model.layers.*.mlp.down_proj.weight",
-            ),
-        )
+            "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
+        }
+
+        mappings = []
+        for megatron_param, hf_param in param_mappings.items():
+            if isinstance(hf_param, str):
+                mappings.append(TPAwareMapping(megatron_param=megatron_param, hf_param=hf_param))
+            elif isinstance(hf_param, tuple):
+                mapping_class, hf_params = hf_param
+                if isinstance(hf_param, str):
+                    mappings.append(mapping_class(megatron_param=megatron_param, hf_param=hf_param))
+                elif isinstance(hf_param, dict):
+                    mappings.append(mapping_class(megatron_param=megatron_param, **hf_params))
+                else:
+                    raise TypeError(f"Unsupported hf_param type for {megatron_param}: {type(hf_param)}")
+            else:
+                raise TypeError(f"Unsupported hf_param type for {megatron_param}: {type(hf_param)}")
+
+        return MegatronStateBridge(*mappings)
