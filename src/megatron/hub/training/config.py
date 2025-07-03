@@ -746,12 +746,12 @@ class ConfigContainer(Container):
             packed_sequence_size = self.dataset.packed_sequence_specs.packed_sequence_size
             raise ValueError(
                 "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
-                f"is {self.micro_batch_size}. \nThe following config is equivalent to your current setting for "
+                f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting for "
                 f"a packed dataset. Please update your config to the following: \n"
                 f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
-                f"Set global batch size to {self.global_batch_size // self.micro_batch_size} "
-                f"(currently {self.global_batch_size}) \n"
-                f"Set packed sequence length to {packed_sequence_size * self.micro_batch_size} "
+                f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
+                f"(currently {self.train.global_batch_size}) \n"
+                f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
                 f"(currently {packed_sequence_size}) \n"
                 f"For details please visit "
                 f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"

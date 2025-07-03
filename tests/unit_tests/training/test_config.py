@@ -125,7 +125,7 @@ def create_test_gpt_dataset_config(sequence_length: int) -> GPTDatasetConfig:
 
 def create_test_finetuning_dataset_config(sequence_length: int) -> FinetuningDatasetConfig:
     """Creates an instance of FinetuningDatasetConfig with defaults for testing."""
-    return FinetuningDatasetConfig(sequence_length=sequence_length)
+    return FinetuningDatasetConfig(seq_length=sequence_length)
 
 
 def create_test_logger_config(**kwargs: Any) -> LoggerConfig:
