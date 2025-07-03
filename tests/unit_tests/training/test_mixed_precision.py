@@ -17,6 +17,7 @@
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
@@ -35,6 +36,7 @@ from megatron.hub.training.mixed_precision import (
     fp16_with_fp8_mixed,
     fp16_with_fp8_subchannel_scaling_mixed,
     fp16_with_mxfp8_mixed,
+    get_mixed_precision_config,
     nemotron_h_bf16_with_fp8_current_scaling_mixed,
     update_config_with_precision_overrides,
 )
@@ -577,3 +579,43 @@ class TestMixedPrecisionRecipes:
         # Verify DDP config settings were applied
         assert ddp_config.grad_reduce_in_fp32 is True
         assert ddp_config.bf16 is True
+
+
+class TestRegisterAndGetMixedPrecisionConfig:
+    """Tests for the `register` decorator and `get_mixed_precision_config` helper."""
+
+    def test_register_decorator_adds_recipe(self):
+        """Ensure that the `register` decorator adds the factory function to the global registry
+        and that each invocation returns a fresh `MixedPrecisionConfig` instance.
+        """
+        # Local import to avoid polluting global namespace before test discovery.
+        from megatron.hub.training.mixed_precision import (
+            MIXED_PRECISION_RECIPES,
+            MixedPrecisionConfig,
+            get_mixed_precision_config,
+            register,
+        )
+
+        @register  # noqa: WPS430 – intentional decorator usage inside test
+        def custom_fp32_config() -> MixedPrecisionConfig:  # pylint: disable=missing-docstring
+            return MixedPrecisionConfig(fp32=True)
+
+        # The recipe should now be registered under its function name.
+        assert "custom_fp32_config" in MIXED_PRECISION_RECIPES
+
+        # Fetch two separate instances via different access paths.
+        cfg_from_dict = MIXED_PRECISION_RECIPES["custom_fp32_config"]()
+        cfg_from_helper = get_mixed_precision_config("custom_fp32_config")
+
+        # They should both be `MixedPrecisionConfig` instances and distinct objects.
+        assert isinstance(cfg_from_dict, MixedPrecisionConfig)
+        assert isinstance(cfg_from_helper, MixedPrecisionConfig)
+        assert cfg_from_dict is not cfg_from_helper
+        assert cfg_from_helper.fp32 is True
+
+    def test_get_mixed_precision_config_invalid_name(self):
+        """Verify that an unknown recipe name raises a clear `ValueError`."""
+        with pytest.raises(ValueError) as exc_info:
+            get_mixed_precision_config("does_not_exist")
+
+        assert "Unknown mixed-precision recipe" in str(exc_info.value)

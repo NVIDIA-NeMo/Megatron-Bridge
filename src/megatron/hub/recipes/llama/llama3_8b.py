@@ -21,7 +21,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -94,8 +93,6 @@ def pretrain_config(
     lr_warmup_iters: int = 2000,
     # Precision recipe
     precision_config: str | MixedPrecisionConfig = "bf16_mixed",
-    # Performance optimizations
-    performance_mode: bool = False,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 8B model.
@@ -209,43 +206,5 @@ def pretrain_config(
     if isinstance(precision_config, str):
         precision_config = get_mixed_precision_config(precision_config)
     precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    if performance_mode:
-        cfg = pretrain_performance_optimizations(cfg)
-
-    return cfg
-
-
-def pretrain_performance_optimizations(cfg: ConfigContainer) -> ConfigContainer:
-    """
-    Create a performance-optimized pre-training recipe for Llama3 8B model.
-
-    This method enables performance optimizations that may not be suitable for all use cases.
-    It builds upon the standard pre-training recipe and adds additional performance enhancements.
-
-    Args:
-        recipe (ConfigContainer): Base pre-train recipe to which performance optimizations will be added
-
-    Returns:
-        ConfigContainer: Configuration for performance-optimized pre-training.
-
-    Note:
-        Use this method with caution and only when you need maximum performance.
-        It may not be suitable for all hardware configurations or use cases.
-    """
-    # Garbage Collection
-    cfg.train.manual_gc = True
-    cfg.train.manual_gc_interval = 100
-    cfg.train.manual_gc_eval = 100
-
-    # Communication Overlap
-    mcomm_overlap = CommOverlapConfig(
-        tp_comm_overlap=False,
-    )
-    mcomm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Precision
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.optimizer.use_precision_aware_optimizer = False
 
     return cfg
