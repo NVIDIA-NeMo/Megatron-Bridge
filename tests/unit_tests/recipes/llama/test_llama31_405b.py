@@ -44,9 +44,9 @@ class TestModelConfig:
 
     def test_model_config_custom_tensor_parallelism(self):
         """Test model_config with custom tensor parallelism."""
-        config = model_config(tensor_parallelism=16)
+        config = model_config(tensor_parallelism=8)
 
-        assert config.tensor_model_parallel_size == 16
+        assert config.tensor_model_parallel_size == 8
         assert config.pipeline_model_parallel_size == 8  # default
         assert config.context_parallel_size == 4  # default
 
@@ -96,7 +96,7 @@ class TestModelConfig:
     def test_model_config_all_custom_parameters(self):
         """Test model_config with all parameters customized."""
         config = model_config(
-            tensor_parallelism=16,
+            tensor_parallelism=8,
             pipeline_parallelism=16,
             pipeline_parallelism_dtype=torch.float32,
             virtual_pipeline_parallelism=4,
@@ -106,7 +106,7 @@ class TestModelConfig:
             account_for_loss_in_pipeline_split=False,
         )
 
-        assert config.tensor_model_parallel_size == 16
+        assert config.tensor_model_parallel_size == 8
         assert config.pipeline_model_parallel_size == 16
         assert config.pipeline_dtype == torch.float32
         assert config.virtual_pipeline_model_parallel_size == 4
@@ -171,7 +171,7 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
-            tensor_parallelism=16,
+            tensor_parallelism=8,
             pipeline_parallelism=16,
             context_parallelism=8,
             sequence_parallelism=False,
@@ -181,7 +181,7 @@ class TestPretrainConfig:
             account_for_loss_in_pipeline_split=False,
         )
 
-        assert config.model.tensor_model_parallel_size == 16
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 16
         assert config.model.context_parallel_size == 8
         assert config.model.sequence_parallel is False
@@ -332,9 +332,9 @@ class TestPretrainConfig:
         [
             (4, 4, 2),
             (8, 8, 4),
-            (16, 8, 8),
+            (8, 8, 8),
             (8, 16, 4),
-            (16, 16, 8),
+            (8, 16, 8),
         ],
     )
     def test_pretrain_config_parallelism_combinations(
