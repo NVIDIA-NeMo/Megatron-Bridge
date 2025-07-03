@@ -51,15 +51,15 @@ class MegatronStateBridge:
 
         >>> # Query for a specific layer (wildcards are resolved)
         >>> mapping = weight_map.query_megatron("decoder.layers.0.self_attention.linear_qkv.weight")
-        >>> print(mapping.to)  # Will show resolved HF names for layer 0
+        >>> print(mapping.hf_param)  # Will show resolved HF names for layer 0
 
         >>> # Reverse lookup from HF name
         >>> mapping = weight_map.query_to("model.layers.5.self_attn.q_proj.weight")
-        >>> print(mapping.megatron)  # Shows corresponding Megatron name
+        >>> print(mapping.megatron_param)  # Shows corresponding Megatron name
 
         >>> # Build from a list
-        >>> mappings_list = [bridge1, bridge2, bridge3]
-        >>> weight_map = MegatronStateBridge(*mappings_list)
+        >>> mappings = [bridge1, bridge2, bridge3]
+        >>> weight_map = MegatronStateBridge(*mappings)
 
     Note:
         Wildcard patterns use '*' which matches any sequence of digits (0-9).
