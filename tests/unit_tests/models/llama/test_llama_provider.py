@@ -208,12 +208,20 @@ class TestLlama3QueryGroupsInheritance:
 
     def test_llama3_base_provider_has_correct_num_query_groups(self):
         """Test that Llama3ModelProvider has num_query_groups=8."""
-        provider = Llama3ModelProvider()
+        provider = Llama3ModelProvider(
+            num_layers=32,
+            hidden_size=4096,
+            num_attention_heads=32,
+        )
         assert provider.num_query_groups == 8
 
     def test_llama31_provider_inherits_num_query_groups(self):
         """Test that Llama31ModelProvider inherits num_query_groups=8 from Llama3ModelProvider."""
-        provider = Llama31ModelProvider()
+        provider = Llama31ModelProvider(
+            num_layers=32,
+            hidden_size=4096,
+            num_attention_heads=32,
+        )
         assert provider.num_query_groups == 8
 
     def test_llama3_8b_provider_inherits_num_query_groups(self):
@@ -253,7 +261,7 @@ class TestLlama3QueryGroupsInheritance:
 
     def test_llama4_provider_inherits_num_query_groups(self):
         """Test that Llama4ModelProvider inherits num_query_groups=8 from Llama3ModelProvider."""
-        provider = Llama4ModelProvider()
+        provider = Llama4ModelProvider(num_moe_experts=16)
         assert provider.num_query_groups == 8
 
     def test_llama4_experts16_provider_inherits_num_query_groups(self):
