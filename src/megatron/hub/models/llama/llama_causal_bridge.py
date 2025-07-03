@@ -83,8 +83,8 @@ class LlamaCausalBridge(MegatronModelBridge):
         # Dictionary-based mapping:
         # - Key: Megatron parameter name
         # - Value:
-        #   - A string for simple 1:1 **TPAwareMapping**
-        #   - A tuple of (MappingClass, {params}) for complex mappings
+        #   - A hf_params string for simple 1:1 **TPAwareMapping**
+        #   - A tuple of (MappingClass, {hf_params}) for complex mappings
         param_mappings = {
             # Embeddings
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
