@@ -144,7 +144,7 @@ class _TextMemMapDataset(Dataset):
                 index_mapping_dir=index_mapping_dir,
             )
 
-        if is_distributed and not lightning_prepare_data():
+        if is_distributed and not rank_0_prepare_data():
             torch.distributed.barrier()
 
         if is_distributed and get_rank_safe() == 0:
@@ -169,7 +169,7 @@ class _TextMemMapDataset(Dataset):
                 index_mapping_dir=index_mapping_dir,
             )
 
-        if is_distributed and not lightning_prepare_data():
+        if is_distributed and not rank_0_prepare_data():
             torch.distributed.barrier()
 
         logger.info("Loading data files")
@@ -596,10 +596,10 @@ def handle_index(dataset, idx):
     return idx
 
 
-def lightning_prepare_data():
+def rank_0_prepare_data() -> bool:
     """
-    This function checks whether it is invoked in lightning's hook "prepare_data", which is run only on rank 0.
-    TextMemMapDataset contains a torch.distributed.barrier operation, so when run inside the single-process hook
+    This function checks whether it is invoked in the builder method "prepare_data", which is run only on rank 0.
+    TextMemMapDataset contains a torch.distributed.barrier operation, so when run inside the single-process method
     prepare_data, the barrier operation would hang forever.
     """
     import inspect
