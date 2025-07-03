@@ -353,10 +353,26 @@ class TestPretrainConfig:
         # Check model defaults for Llama3.2 3B (mid-size model)
         assert config.model.tensor_model_parallel_size == 1  # Default for 3B
         assert config.model.pipeline_model_parallel_size == 1  # Default for 3B
-        assert config.model.pipeline_dtype is None  # Default for mid-size model
+        assert config.model.pipeline_dtype == torch.bfloat16  # Default for mid-size model
         assert config.model.sequence_parallel is False  # Default for 3B
         assert config.model.context_parallel_size == 1  # Default for 3B
         assert config.model.virtual_pipeline_model_parallel_size is None  # Default
 
         # Check dataset defaults
         assert config.dataset.sequence_length == 8192  # Hardcoded sequence length
+
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    def test_precision_recipes(self, precision):
+        cfg = pretrain_config(precision_config=precision)
+        if precision == "fp16_mixed":
+            assert cfg.model.fp16 is True
+            assert getattr(cfg.model, "bf16", False) is False
+            assert cfg.optimizer.fp16 is True
+            assert cfg.optimizer.bf16 is False
+            assert cfg.ddp.grad_reduce_in_fp32 is False
+        else:
+            assert cfg.model.bf16 is True
+            assert cfg.model.fp8 == "hybrid"
+            assert cfg.optimizer.bf16 is True
+            assert cfg.optimizer.fp16 is False
+            assert cfg.ddp.grad_reduce_in_fp32 is True

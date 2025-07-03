@@ -120,6 +120,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int) Number of warmup iterations for the learning rate.
+        precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.

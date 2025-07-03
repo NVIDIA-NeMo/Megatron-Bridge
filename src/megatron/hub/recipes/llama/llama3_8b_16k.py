@@ -19,6 +19,7 @@ import torch
 from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.recipes.llama import llama3_8b
 from megatron.hub.training.config import ConfigContainer
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 
 
 SEQ_LENGTH: int = 16384
@@ -83,6 +84,8 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    # Precision recipe
+    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 8B model with 16k sequence length.
@@ -112,6 +115,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int) Number of warmup iterations for the learning rate.
+        precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training with 16k sequence length.
@@ -140,6 +144,7 @@ def pretrain_config(
         lr=lr,
         min_lr=min_lr,
         lr_warmup_iters=lr_warmup_iters,
+        precision_config=precision_config,
     )
 
     # Override model configuration with 16k-optimized defaults
@@ -154,5 +159,10 @@ def pretrain_config(
 
     # Ensure dataset sequence length is set to 16k
     cfg.dataset.sequence_length = SEQ_LENGTH
+
+    # Apply precision configuration again after overriding the model
+    if isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     return cfg

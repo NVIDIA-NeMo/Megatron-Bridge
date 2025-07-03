@@ -19,6 +19,7 @@ import torch
 from megatron.hub.models.llama import Llama3ModelProvider70B
 from megatron.hub.recipes.llama import llama3_70b
 from megatron.hub.training.config import ConfigContainer
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 
 
 # 64k sequence length constant
@@ -88,6 +89,8 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    # Precision recipe
+    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 70B model with 64k sequence length.
@@ -117,6 +120,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int) Number of warmup iterations for the learning rate.
+        precision_config (str | MixedPrecisionConfig): Precision recipe for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -126,7 +130,7 @@ def pretrain_config(
         Default parallelism settings are optimized for 70B model with 64k sequences efficiently.
     """
     # Get base configuration from llama3_70b with 64k sequence length
-    config = llama3_70b.pretrain_config(
+    cfg = llama3_70b.pretrain_config(
         dir=dir,
         name=name,
         data_paths=data_paths,
@@ -149,10 +153,11 @@ def pretrain_config(
         lr=lr,
         min_lr=min_lr,
         lr_warmup_iters=lr_warmup_iters,
+        precision_config=precision_config,
     )
 
     # Override the model configuration to use 64k sequence length
-    config.model = model_config(
+    cfg.model = model_config(
         tensor_parallelism=tensor_parallelism,
         pipeline_parallelism=pipeline_parallelism,
         pipeline_parallelism_dtype=pipeline_parallelism_dtype,
@@ -161,4 +166,9 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    return config
+    # Re-apply precision configuration after updating model
+    if isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    return cfg

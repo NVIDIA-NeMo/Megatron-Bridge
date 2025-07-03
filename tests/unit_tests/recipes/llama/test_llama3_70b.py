@@ -168,7 +168,7 @@ class TestPretrainConfig:
         assert config.model.pipeline_model_parallel_size == 8
         assert config.model.context_parallel_size == 4
         assert config.model.sequence_parallel is False
-        assert config.model.pipeline_dtype == torch.float32
+        assert config.model.pipeline_dtype == torch.bfloat16
         assert config.model.virtual_pipeline_model_parallel_size == 10
 
     def test_pretrain_config_with_custom_directory(self):
@@ -377,3 +377,21 @@ class TestPretrainConfig:
         config = pretrain_config(virtual_pipeline_parallelism=virtual_pipeline_parallelism)
 
         assert config.model.virtual_pipeline_model_parallel_size == virtual_pipeline_parallelism
+
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    def test_precision_recipes(self, precision):
+        """Ensure precision recipes properly affect model/optimizer/ddp settings."""
+        cfg = pretrain_config(precision_config=precision)
+
+        if precision == "fp16_mixed":
+            assert cfg.model.fp16 is True
+            assert getattr(cfg.model, "bf16", False) is False
+            assert cfg.optimizer.fp16 is True
+            assert cfg.optimizer.bf16 is False
+            assert cfg.ddp.grad_reduce_in_fp32 is False
+        elif precision == "bf16_with_fp8_mixed":
+            assert cfg.model.bf16 is True
+            assert cfg.model.fp8 == "hybrid"
+            assert cfg.optimizer.bf16 is True
+            assert cfg.optimizer.fp16 is False
+            assert cfg.ddp.grad_reduce_in_fp32 is True

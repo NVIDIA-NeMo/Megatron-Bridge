@@ -30,6 +30,7 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 
 
 def model_config(
@@ -90,6 +91,8 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    # Precision recipe
+    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama2 7B model.
@@ -116,7 +119,8 @@ def pretrain_config(
         seq_length (int): Sequence length for training data.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int) Number of warmup iterations for the learning rate.
+        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -199,5 +203,10 @@ def pretrain_config(
         ),
         rng=RNGConfig(seed=1234),
     )
+
+    # Apply precision configuration
+    if isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     return cfg
