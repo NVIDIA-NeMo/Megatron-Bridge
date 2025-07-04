@@ -1,6 +1,6 @@
 <div align="center">
 
-# Megatron-Hub
+# Megatron Hub
 
 <!-- [![codecov](https://codecov.io/github/NVIDIA-NeMo/Megatron-Hub/graph/badge.svg?token=4NMKZVOW2Z)](https://codecov.io/github/NVIDIA-NeMo/Megatron-Hub) -->
 [![CICD NeMo](https://github.com/NVIDIA-NeMo/Megatron-Hub/actions/workflows/cicd-main.yml/badge.svg)](https://github.com/NVIDIA-NeMo/Megatron-Hub/actions/workflows/cicd-main.yml)
@@ -12,9 +12,9 @@
 
 ## Overview
 
-Megatron-Hub is an extension of NVIDIA's Megatron-Core library that enables pretraining and finetuning HuggingFace models using a Megatron-style training loop, with features like model parallelisms and FP8 precision.
+Megatron Hub is an extension of NVIDIA's Megatron Core library that enables pretraining and finetuning HuggingFace models using a Megatron-style training loop, with features like model parallelisms and FP8 precision.
 
-Megatron-Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
+Megatron Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
 ## Key Features
 
@@ -26,7 +26,7 @@ Megatron-Hub is designed for researchers and engineers who need to train large-s
 
 ## Supported Models
 
-Megatron-Hub provides out-of-the-box configuration recipes for a wide range of models, built on top of base model architectures from Megatron-Core:
+Megatron Hub provides out-of-the-box configuration recipes for a wide range of models, built on top of base model architectures from Megatron Core:
 
 ### Large Language Models
 
@@ -77,12 +77,12 @@ pip install git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 
 
 ### uv Installation
-To install Megatron-Hub to an active virtual environment or project environment, use the command:
+To install Megatron Hub to an active virtual environment or project environment, use the command:
 ```
 uv pip install git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 ```
 
-To add Megatron-Hub as a dependency for your project, use the following command:
+To add Megatron Hub as a dependency for your project, use the following command:
 ```
 uv add git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 ```
