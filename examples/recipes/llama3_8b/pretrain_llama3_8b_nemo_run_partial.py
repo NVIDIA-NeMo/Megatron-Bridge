@@ -20,7 +20,7 @@ import nemo_run as run
 
 from megatron.hub.recipes.llama.llama3_8b import pretrain_config
 from megatron.hub.recipes.utils.nemo_run_utils import get_partial_fn
-from megatron.hub.training.config import ConfigContainer, ProfilingConfig
+from megatron.hub.training.config import ConfigContainer, ProfilingConfig, TokenizerConfig
 from megatron.hub.training.gpt_step import forward_step
 from megatron.hub.training.pretrain import pretrain
 
@@ -37,10 +37,23 @@ def main(args: argparse.Namespace) -> None:
 
     # Get the base ConfigContainer from the recipe
     cfg: ConfigContainer = pretrain_config()
-
+    cfg.dataset.sequence_length = 2048
+    cfg.dataset.num_workers = 0
+    cfg.model.context_parallel_size = 1
+    cfg.model.num_layers = 4
+    cfg.model.num_attention_heads = 8
+    cfg.model.num_query_groups = 8
+    cfg.model.hidden_size = 768
+    cfg.model.ffn_hidden_size = 2048
+    cfg.tokenizer = TokenizerConfig(tokenizer_type="SentencePieceTokenizer", tokenizer_model="/home/data/llama/tokenizer.model")
     # Example of applying programmatic overrides
-    cfg.train.train_iters = 10
-    cfg.logger.log_interval = 50
+    cfg.train.global_batch_size = 16
+    cfg.train.train_iters = 1000
+    cfg.train.eval_iters = 4
+    cfg.logger.log_interval = 1
+    # Example of applying programmatic overrides
+    #cfg.train.train_iters = 10
+    #cfg.logger.log_interval = 50
     if cfg.profiling is None:
         cfg.profiling = ProfilingConfig()
     cfg.profiling.use_nsys_profiler = False
