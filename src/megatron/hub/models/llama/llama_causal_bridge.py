@@ -80,7 +80,7 @@ class LlamaCausalBridge(MegatronModelBridge):
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Expected to return MegatronStateBridge(TPAwareMapping(megatron_param, hf_param), ...)
+        # Expected to return MegatronMappingRegistry(TPAwareMapping(megatron_param, hf_param), ...)
         # We can also use a dictionary-based mapping for clarity
         # Dictionary-based mapping:
         # - Key: Megatron parameter name
