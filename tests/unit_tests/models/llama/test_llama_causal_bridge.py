@@ -92,7 +92,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_bridge_registration(self):
         """Test that MegatronCausalLlamaBridge is properly registered."""
-        # The @MegatronModelBridge.impl decorator should register the bridge
+        # The @MegatronModelBridge.register_bridge decorator should register the bridge
         # Check that the class exists and has the expected base class
         assert issubclass(LlamaCausalBridge, MegatronModelBridge)
 
@@ -231,17 +231,17 @@ class TestMegatronCausalLlamaBridge:
         assert isinstance(result, LlamaModelProvider)
         assert not isinstance(result, Llama31ModelProvider)
 
-    def test_state_bridge_implementation(self, mock_pretrained_llama):
-        """Test that state_bridge returns a proper MegatronStateBridge."""
+    def test_mapping_registry_implementation(self, mock_pretrained_llama):
+        """Test that mapping_registry returns a proper MegatronStateBridge."""
         bridge = LlamaCausalBridge()
 
-        # Get the state bridge
-        state_bridge = bridge.state_bridge()
+        # Get the mapping registry
+        mapping_registry = bridge.mapping_registry()
 
         # Check it's not None
-        assert state_bridge is not None
-        # Check it has weight bridges (they are passed as args to __init__)
-        # The state bridge should have embedding, layer norm, attention, and MLP mappings
+        assert mapping_registry is not None
+        # Check it has param mappings (they are passed as args to __init__)
+        # The mapping registry should have embedding, layer norm, attention, and MLP mappings
         # We can't directly access _param_mappings, but we know it was created with them
 
     def test_provider_bridge_fixed_settings(self, mock_pretrained_llama):

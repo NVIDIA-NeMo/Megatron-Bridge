@@ -30,9 +30,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     """
     Abstract base class for weight conversion between Megatron and external formats.
 
-    This class provides the foundation for all weight bridges, handling the complex
+    This class provides the foundation for all weight mappings, handling the complex
     conversions between Megatron-Core's distributed tensor formats and standard
-    (typically HuggingFace) formats. Each concrete bridge implements specific
+    (typically HuggingFace) formats. Each concrete mapping implements specific
     transformation logic while inheriting common parallel communication patterns.
 
     Key responsibilities:
@@ -41,9 +41,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     - Pipeline parallel (PP) broadcasting between pipeline stages
     - Wildcard pattern resolution for layer-wise mappings
 
-    The bridge abstraction ensures that higher-level code doesn't need to know
+    The mapping abstraction ensures that higher-level code doesn't need to know
     about the parallel topology or format differences - it just requests a
-    conversion and the bridge handles all the complexity.
+    conversion and the mapping handles all the complexity.
 
     Public helper methods for subclasses:
     - broadcast_from_pp_rank: Broadcast tensors across pipeline stages
@@ -55,7 +55,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     Example:
         .. code-block:: python
 
-            class MyCustomBridge(MegatronParamMapping[torch.Tensor]):
+            class MyCustomMapping(MegatronParamMapping[torch.Tensor]):
                 def to_megatron(self, weights, megatron_module):
                     # Custom transformation logic
                     transformed = weights.t()  # Example: transpose
@@ -71,7 +71,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     """
 
     def __init__(self, megatron_param: str, hf_param: Union[str, Dict[str, str]]):
-        """Initialize the weight bridge.
+        """Initialize the weight mapping.
 
         Args:
             megatron_param (str): Megatron parameter name pattern (supports *
@@ -102,16 +102,16 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return resolved_megatron_param, resolved_hf_param
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
-        """Create a new bridge with resolved wildcards.
+        """Create a new mapping with resolved wildcards.
 
-        This default implementation works for bridges with a
+        This default implementation works for mappings with a
         (megatron_param, hf_param) constructor.
 
         Args:
             captures (Tuple[str, ...]): Captured wildcard values.
 
         Returns:
-            MegatronParamMapping: A new bridge instance with resolved names.
+            MegatronParamMapping: A new mapping instance with resolved names.
         """
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
         return type(self)(resolved_megatron_param, resolved_hf_param)
@@ -167,7 +167,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """Broadcast a tensor from the pipeline-parallel rank that owns it.
 
         Broadcasts to **all** PP ranks. This mirrors the behaviour of
-        `broadcast_from_megatron_pp` in the original MBridge implementation and
+        `broadcast_from_megatron_pp` in the original MMapping implementation and
         additionally keeps the tensor-parallel metadata (`tensor_model_parallel`,
         `partition_dim`) consistent on every rank.
 
@@ -467,7 +467,7 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
 
 class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
     """
-    Bridge for column-parallel linear and embedding weights.
+    Mapping for column-parallel linear and embedding weights.
 
     Column-parallel layers in Megatron split the output dimension across tensor
     parallel ranks. This is used for layers where each rank computes a portion
@@ -499,12 +499,12 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
 
             # For a weight of shape [4096, 1024] with tp_size=4:
             # Each rank gets [1024, 1024] after column-parallel split
-            bridge = ColumnParallelMapping("linear.weight", "transformer.linear.weight")
-            megatron_weight = bridge.to_megatron(hf_weight, megatron_module)
+            mapping = ColumnParallelMapping("linear.weight", "transformer.linear.weight")
+            megatron_weight = mapping.to_megatron(hf_weight, megatron_module)
             # megatron_weight.shape = [1024, 1024] on each rank
 
     Note:
-        This bridge also handles bias terms, which are 1D tensors split
+        This mapping also handles bias terms, which are 1D tensors split
         along their only dimension following the same pattern.
     """
 
@@ -597,7 +597,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
 
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
-    """Bridge for **row-parallel** linear weights.
+    """Mapping for **row-parallel** linear weights.
 
     Megatron shards row-parallel tensors along **dimension 1** (the *input*
     dimension of a linear layer).
@@ -669,7 +669,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
 
 
 class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
-    """Bridge for weights that are **fully replicated** across TP ranks.
+    """Mapping for weights that are **fully replicated** across TP ranks.
 
     Examples: layer-norm scales, biases, router weights in MoE, etc.
 
@@ -719,16 +719,16 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
 
 class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
     """
-    Smart bridge that automatically detects and applies the correct parallelism strategy.
+    Smart mapping that automatically detects and applies the correct parallelism strategy.
 
-    This bridge eliminates the need to manually specify whether a layer is
+    This mapping eliminates the need to manually specify whether a layer is
     column-parallel, row-parallel, or replicated. It examines the Megatron
-    module at runtime and delegates to the appropriate specialized bridge.
+    module at runtime and delegates to the appropriate specialized mapping.
 
     **Detection strategy**
     1. Check module class name against a registry of known types
     2. If unknown, examine module attributes (tensor_model_parallel, partition_dim)
-    3. Delegate to appropriate bridge: ColumnParallel, RowParallel, or Replicated
+    3. Delegate to appropriate mapping: ColumnParallel, RowParallel, or Replicated
 
     This abstraction is particularly useful for model-agnostic code where you
     don't know the parallelism type ahead of time, or when working with models
@@ -743,22 +743,22 @@ class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
         .. code-block:: python
 
             # Automatically handles any weight type
-            bridge = TPAwareMapping(
+            mapping = TPAwareMapping(
                 megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                 hf_param="model.layers.*.mlp.gate_proj.weight"
             )
 
             # Works with column-parallel layers
-            megatron_weight = bridge.to_megatron(hf_weight, column_parallel_module)
+            megatron_weight = mapping.to_megatron(hf_weight, column_parallel_module)
 
             # Also works with normalization layers
-            norm_weight = bridge.to_megatron(hf_norm, layer_norm_module)
+            norm_weight = mapping.to_megatron(hf_norm, layer_norm_module)
 
             # Register custom module types
             TPAwareMapping.register_module_type("MyCustomLinear", "column")
 
     Note:
-        If the parallelism type cannot be determined, the bridge will raise
+        If the parallelism type cannot be determined, the mapping will raise
         a descriptive error suggesting how to fix the issue.
     """
 
@@ -806,13 +806,13 @@ class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
         cls._MODULE_TYPE_REGISTRY[parallelism_type].add(module_name)
 
     def __init__(self, megatron_param: str, hf_param: str):
-        """Initialize TP-aware bridge."""
+        """Initialize TP-aware mapping."""
         super().__init__(megatron_param, hf_param)
 
-        # Create delegate bridges
-        self._column_bridge = ColumnParallelMapping(megatron_param, hf_param)
-        self._row_bridge = RowParallelMapping(megatron_param, hf_param)
-        self._replicated_bridge = ReplicatedMapping(megatron_param, hf_param)
+        # Create delegate mappings
+        self._column_mapping = ColumnParallelMapping(megatron_param, hf_param)
+        self._row_mapping = RowParallelMapping(megatron_param, hf_param)
+        self._replicated_mapping = ReplicatedMapping(megatron_param, hf_param)
 
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
@@ -845,7 +845,7 @@ class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
         raise ValueError(
             f"Cannot determine parallelism type for module '{module_type}' "
             f"at weight '{self.megatron_param}'.\n"
-            f"Please use an explicit bridge type (e.g., ColumnParallelMapping) "
+            f"Please use an explicit mapping type (e.g., ColumnParallelMapping) "
             f"or register the module type using:\n"
             f"  TPAwareMapping.register_module_type('{module_type}', 'column|row|replicated')\n\n"
             f"Currently known module types:\n{json.dumps(known_types, indent=2)}"
@@ -856,15 +856,15 @@ class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
         weights: torch.Tensor,
         megatron_module: nn.Module,
     ) -> torch.Tensor:
-        """Delegate to appropriate bridge based on module type."""
+        """Delegate to appropriate mapping based on module type."""
         parallelism_type = self._detect_parallelism_type(megatron_module)
 
         if parallelism_type == "column":
-            return self._column_bridge.to_megatron(weights, megatron_module)
+            return self._column_mapping.to_megatron(weights, megatron_module)
         elif parallelism_type == "row":
-            return self._row_bridge.to_megatron(weights, megatron_module)
+            return self._row_mapping.to_megatron(weights, megatron_module)
         elif parallelism_type == "replicated":
-            return self._replicated_bridge.to_megatron(weights, megatron_module)
+            return self._replicated_mapping.to_megatron(weights, megatron_module)
 
         raise ValueError(f"Unknown parallelism type: {parallelism_type}")
 
@@ -873,7 +873,7 @@ class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
         megatron_weight: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
-        """Delegate to appropriate bridge based on module type."""
+        """Delegate to appropriate mapping based on module type."""
         # Need to determine type even if module is None (different PP rank)
         if megatron_module is not None:
             parallelism_type = self._detect_parallelism_type(megatron_module)
@@ -884,20 +884,20 @@ class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
             parallelism_type = self.broadcast_obj_from_pp_rank(None)
 
         if parallelism_type == "column":
-            return self._column_bridge.from_megatron(megatron_weight, megatron_module)
+            return self._column_mapping.from_megatron(megatron_weight, megatron_module)
         elif parallelism_type == "row":
-            return self._row_bridge.from_megatron(megatron_weight, megatron_module)
+            return self._row_mapping.from_megatron(megatron_weight, megatron_module)
         elif parallelism_type == "replicated":
-            return self._replicated_bridge.from_megatron(megatron_weight, megatron_module)
+            return self._replicated_mapping.from_megatron(megatron_weight, megatron_module)
         else:
             raise ValueError(f"Unknown parallelism type: {parallelism_type}")
 
 
 class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
-    Bridge for interleaved Query/Key/Value attention projection weights.
+    Mapping for interleaved Query/Key/Value attention projection weights.
 
-    This bridge handles the conversion between separate Q, K, V matrices used in
+    This mapping handles the conversion between separate Q, K, V matrices used in
     standard transformers and Megatron's optimized interleaved format. The
     interleaving pattern groups queries with their corresponding key-value pairs
     to maximize GEMM efficiency during attention computation.
@@ -919,8 +919,8 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     Example:
         .. code-block:: python
 
-            # Create bridge for attention weights
-            bridge = QKVMapping(
+            # Create mapping for attention weights
+            mapping = QKVMapping(
                 megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                 q="model.layers.*.self_attn.q_proj.weight",
                 k="model.layers.*.self_attn.k_proj.weight",
@@ -929,20 +929,20 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
             # Convert from HuggingFace to Megatron
             qkv_weights = {"q": q_tensor, "k": k_tensor, "v": v_tensor}
-            megatron_qkv = bridge.to_megatron(qkv_weights, megatron_module)
+            megatron_qkv = mapping.to_megatron(qkv_weights, megatron_module)
 
             # Convert from Megatron to HuggingFace
-            hf_weights = bridge.from_megatron(megatron_qkv, megatron_module)
+            hf_weights = mapping.from_megatron(megatron_qkv, megatron_module)
             # Returns: {"q_proj.weight": ..., "k_proj.weight": ..., "v_proj.weight": ...}
 
     Note:
-        This bridge automatically handles both regular multi-head attention
+        This mapping automatically handles both regular multi-head attention
         (same number of Q, K, V heads) and grouped query attention (fewer
         KV heads than Q heads) based on the model configuration.
     """
 
     def __init__(self, megatron_param: str, q: str, k: str, v: str):
-        """Initialize QKV bridge.
+        """Initialize QKV mapping.
 
         Args:
             megatron_param (str): Megatron QKV parameter name pattern.
@@ -951,11 +951,11 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             v (str): Value weight name pattern.
         """
         super().__init__(megatron_param, {"q": q, "k": k, "v": v})
-        # Delegate all tensor-parallel logic to the smart TP-aware bridge so we
+        # Delegate all tensor-parallel logic to the smart TP-aware mapping so we
         # do not hard-code the assumption that QKV projections are column-parallel.
         # This keeps the format-handling (merge/split) concerns separate from
         # TP/PP distribution mechanics.
-        self._tp_bridge = TPAwareMapping(megatron_param, megatron_param)
+        self._tp_mapping = TPAwareMapping(megatron_param, megatron_param)
 
     def to_megatron(
         self,
@@ -976,8 +976,8 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             merged = None
 
-        # Delegate the actual sharding/broadcasting to the TP-aware bridge.
-        return self._tp_bridge.to_megatron(merged, megatron_module)
+        # Delegate the actual sharding/broadcasting to the TP-aware mapping.
+        return self._tp_mapping.to_megatron(merged, megatron_module)
 
     def from_megatron(
         self,
@@ -997,7 +997,7 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(cfg_local)
 
         # Delegate TP/PP gathering.
-        packed_dict = self._tp_bridge.from_megatron(megatron_weight, megatron_module)
+        packed_dict = self._tp_mapping.from_megatron(megatron_weight, megatron_module)
 
         if not packed_dict:
             return {}
@@ -1031,7 +1031,7 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
 
 class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
-    r"""Bridge for **gated-MLP** projection weights (SwiGLU / GeGLU).
+    r"""Mapping for **gated-MLP** projection weights (SwiGLU / GeGLU).
 
     Checkpoint formats expose two independent matrices:
 
@@ -1041,7 +1041,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     Megatron concatenates them row-wise (`[G; U]`) so that a single GEMM can
     produce both activations.
 
-    **Responsibilities handled by this bridge**
+    **Responsibilities handled by this mapping**
     1.  **Concatenate / split** – convert between `[G; U]` (Megatron) and the
         separate `{G, U}` matrices (external).
     2.  **Tensor-parallel distribution** – delegated to an internal
@@ -1050,7 +1050,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
 
     def __init__(self, megatron_param: str, gate: str, up: str):
-        """Initialize gated MLP bridge.
+        """Initialize gated MLP mapping.
 
         Args:
             megatron_param (str): Megatron MLP parameter name pattern.
@@ -1058,7 +1058,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             up (str): Up projection weight name pattern.
         """
         super().__init__(megatron_param, {"gate": gate, "up": up})
-        self._tp_bridge = TPAwareMapping(megatron_param, megatron_param)
+        self._tp_mapping = TPAwareMapping(megatron_param, megatron_param)
 
     def to_megatron(
         self,
@@ -1070,7 +1070,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         merged = merge_gated_mlp_weights(config, weights["gate"], weights["up"]) if self.tp_rank == 0 else None
 
-        return self._tp_bridge.to_megatron(merged, megatron_module)
+        return self._tp_mapping.to_megatron(merged, megatron_module)
 
     def from_megatron(
         self,
@@ -1085,7 +1085,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             cfg_local = self._get_config(megatron_module)
             config = self.broadcast_obj_from_pp_rank(cfg_local)
 
-        packed_dict = self._tp_bridge.from_megatron(megatron_weight, megatron_module)
+        packed_dict = self._tp_mapping.from_megatron(megatron_weight, megatron_module)
 
         if not packed_dict:
             return {}
@@ -1107,13 +1107,13 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
 
 class MOEMapping(MegatronParamMapping[torch.Tensor]):
-    """Bridge for **Mixture of Experts (MoE)** weight distribution.
+    """Mapping for **Mixture of Experts (MoE)** weight distribution.
 
     MoE models distribute expert weights across Expert Parallel (EP) ranks.
-    Each EP rank owns a subset of experts, and this bridge handles the
+    Each EP rank owns a subset of experts, and this mapping handles the
     EP distribution while delegating TP operations to TPAwareMapping.
 
-    **Key features handled by this bridge**
+    **Key features handled by this mapping**
     1.  **Expert parallel distribution** – different experts on different EP ranks
     2.  **Dynamic expert IDs** – weight names contain expert indices as wildcards
     3.  **Cross-EP communication** – broadcasting weights from owning EP rank
@@ -1127,7 +1127,7 @@ class MOEMapping(MegatronParamMapping[torch.Tensor]):
     """
 
     def __init__(self, megatron_param: str, hf_param: str):
-        """Initialize MoE weight bridge.
+        """Initialize MoE weight mapping.
 
         Args:
             megatron_param (str): Megatron expert weight pattern (expert ID as last
@@ -1136,9 +1136,9 @@ class MOEMapping(MegatronParamMapping[torch.Tensor]):
         """
         super().__init__(megatron_param, hf_param)
 
-        # Create a TP bridge for handling tensor parallelism
+        # Create a TP mapping for handling tensor parallelism
         # This will be used after EP distribution is resolved
-        self._tp_bridge = TPAwareMapping(megatron_param, hf_param)
+        self._tp_mapping = TPAwareMapping(megatron_param, hf_param)
 
     def to_megatron(
         self,
@@ -1156,8 +1156,8 @@ class MOEMapping(MegatronParamMapping[torch.Tensor]):
         config = self._get_config(megatron_module)
 
         if self.ep_size == 1:
-            # No EP distribution, just delegate to TP bridge
-            return self._tp_bridge.to_megatron(weights, megatron_module)
+            # No EP distribution, just delegate to TP mapping
+            return self._tp_mapping.to_megatron(weights, megatron_module)
 
         # Extract expert ID from the resolved parameter name
         expert_id = self._get_expert_id_from_name(self.megatron_param)
@@ -1167,8 +1167,8 @@ class MOEMapping(MegatronParamMapping[torch.Tensor]):
 
         # Only process on the owning rank
         if self.ep_rank == owning_ep_rank:
-            # Now delegate TP distribution to the TP bridge
-            return self._tp_bridge.to_megatron(weights, megatron_module)
+            # Now delegate TP distribution to the TP mapping
+            return self._tp_mapping.to_megatron(weights, megatron_module)
         else:
             # This rank doesn't own this expert
             return None
@@ -1201,8 +1201,8 @@ class MOEMapping(MegatronParamMapping[torch.Tensor]):
             config = self.broadcast_obj_from_pp_rank(cfg_local)
 
         if self.ep_size == 1:
-            # No EP distribution, delegate directly to TP bridge
-            return self._tp_bridge.from_megatron(megatron_weight, megatron_module)
+            # No EP distribution, delegate directly to TP mapping
+            return self._tp_mapping.from_megatron(megatron_weight, megatron_module)
 
         # Extract expert ID from resolved name
         expert_id = self._get_expert_id_from_name(self.megatron_param)
@@ -1214,7 +1214,7 @@ class MOEMapping(MegatronParamMapping[torch.Tensor]):
         # (TPAwareMapping needs the weight on all ranks for TP gathering)
         if self.ep_rank == owning_ep_rank:
             # First gather TP shards on the owning EP rank
-            tp_gathered = self._tp_bridge.from_megatron(megatron_weight, megatron_module)
+            tp_gathered = self._tp_mapping.from_megatron(megatron_weight, megatron_module)
             # Extract the gathered weight (there should be only one key)
             if tp_gathered:
                 gathered_weight = next(iter(tp_gathered.values()))

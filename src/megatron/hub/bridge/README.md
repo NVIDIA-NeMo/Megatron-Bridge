@@ -71,7 +71,7 @@ The bridge framework uses a layered architecture with clear separation of concer
 The framework uses decorators to register bridge implementations, enabling automatic routing:
 
 ```python
-@MegatronModelBridge.impl(source=LlamaForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
 class MegatronCausalLlamaBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained):
         # Convert HF config to Megatron provider
@@ -81,18 +81,18 @@ class MegatronCausalLlamaBridge(MegatronModelBridge):
             # ... more config mapping
         )
     
-    def state_bridge(self):
+    def mapping_registry(self):
         # Define weight mappings
         return MegatronStateBridge(
             TPAwareMapping(
-                megatron="embedding.word_embeddings.weight",
-                to="model.embed_tokens.weight"
+                megatron_param="embedding.word_embeddings.weight",
+                hf_param="model.embed_tokens.weight"
             ),
             # ... more mappings
         )
 ```
 
-### Weight Bridge Strategies
+### Param Mapping Strategies
 
 Different weight transformation strategies handle various parallelism patterns:
 
@@ -170,7 +170,7 @@ layer_norm: [hidden] → [hidden] (same on all ranks)
 
 ### Custom Weight Transformations
 
-Create custom weight bridges for special formats:
+Create custom param mappings for special formats:
 
 ```python
 class MyCustomMapping(MegatronParamMapping):
@@ -219,7 +219,7 @@ To add support for a new model architecture:
 
 1. **Create a Bridge Class**
    ```python
-   @MegatronModelBridge.impl(source=YourHFModel, target=YourMegatronModel)
+   @MegatronModelBridge.register_bridge(source=YourHFModel, target=YourMegatronModel)
    class YourModelBridge(MegatronModelBridge):
        pass
    ```
@@ -234,7 +234,7 @@ To add support for a new model architecture:
 
 3. **Define Weight Mappings**
    ```python
-   def state_bridge(self):
+   def mapping_registry(self):
        return MegatronStateBridge(
            # Define all weight mappings
        )
@@ -261,7 +261,7 @@ if is_llama_3_1_config(config):
     
 # QKV fusion with proper head ordering
 QKVMapping(
-    megatron="decoder.layers.*.self_attention.linear_qkv.weight",
+    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
     q="model.layers.*.self_attn.q_proj.weight",
     k="model.layers.*.self_attn.k_proj.weight", 
     v="model.layers.*.self_attn.v_proj.weight"
@@ -269,7 +269,7 @@ QKVMapping(
 
 # Gated MLP handling
 GatedMLPMapping(
-    megatron="decoder.layers.*.mlp.linear_fc1.weight",
+    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
     gate="model.layers.*.mlp.gate_proj.weight",
     up="model.layers.*.mlp.up_proj.weight"
 )
@@ -300,11 +300,11 @@ logging.getLogger("megatron.hub.bridge").setLevel(logging.DEBUG)
 
 # Inspect mappings
 bridge = CausalLMBridge.from_pretrained("model")
-state_bridge = bridge.state_bridge()
-print(state_bridge.get_all_mappings())
+mapping_registry = bridge.mapping_registry()
+print(mapping_registry.get_all_mappings())
 
 # Verify weight shapes
-for task in bridge._build_plan_from_hf(hf_model, meg_models):
+for task in bridge._build_plan_hf_to_megatron(hf_model, meg_models):
     print(f"{task.param_name}: {task.megatron_param.shape}")
 ```
 

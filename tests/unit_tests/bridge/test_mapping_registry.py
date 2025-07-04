@@ -14,14 +14,14 @@
 
 import pytest
 
-from megatron.hub.bridge.state_bridge import MegatronStateBridge
+from megatron.hub.bridge.mapping_registry import MegatronStateBridge
 from megatron.hub.bridge.param_mapping import DirectMapping, QKVMapping
 
 
 class TestMegatronStateBridge:
     @pytest.fixture
     def sample_mappings(self):
-        """Provides a sample list of weight bridge mappings."""
+        """Provides a sample list of param mapping mappings."""
         return [
             DirectMapping(
                 megatron_param="embedding.word_embeddings.weight",
@@ -44,34 +44,34 @@ class TestMegatronStateBridge:
         ]
 
     @pytest.fixture
-    def state_bridge(self, sample_mappings):
+    def mapping_registry(self, sample_mappings):
         """Initializes MegatronStateBridge with sample mappings."""
         return MegatronStateBridge(*sample_mappings)
 
-    def test_init_and_len(self, state_bridge, sample_mappings):
-        """Test initialization and length of the state bridge."""
-        assert len(state_bridge) == len(sample_mappings)
-        assert state_bridge.get_all_mappings() == sample_mappings
+    def test_init_and_len(self, mapping_registry, sample_mappings):
+        """Test initialization and length of the mapping registry."""
+        assert len(mapping_registry) == len(sample_mappings)
+        assert mapping_registry.get_all_mappings() == sample_mappings
 
-    def test_query_megatron_exact_match(self, state_bridge):
+    def test_megatron_to_hf_lookup_exact_match(self, mapping_registry):
         """Test querying with an exact megatron parameter name."""
-        mapping = state_bridge.query_megatron("embedding.word_embeddings.weight")
+        mapping = mapping_registry.megatron_to_hf_lookup("embedding.word_embeddings.weight")
         assert mapping is not None
         assert mapping.megatron_param == "embedding.word_embeddings.weight"
         assert mapping.hf_param == "model.embed_tokens.weight"
         assert isinstance(mapping, DirectMapping)
 
-    def test_query_megatron_wildcard_match(self, state_bridge):
+    def test_megatron_to_hf_lookup_wildcard_match(self, mapping_registry):
         """Test querying with a wildcard in the megatron parameter name."""
-        mapping = state_bridge.query_megatron("decoder.layers.10.mlp.linear_fc1.weight")
+        mapping = mapping_registry.megatron_to_hf_lookup("decoder.layers.10.mlp.linear_fc1.weight")
         assert mapping is not None
         assert mapping.megatron_param == "decoder.layers.10.mlp.linear_fc1.weight"
         assert mapping.hf_param == "model.layers.10.mlp.gate_proj.weight"
         assert isinstance(mapping, DirectMapping)
 
-    def test_query_megatron_qkv_wildcard_match(self, state_bridge):
+    def test_megatron_to_hf_lookup_qkv_wildcard_match(self, mapping_registry):
         """Test querying a QKV bridge with a wildcard."""
-        mapping = state_bridge.query_megatron("decoder.layers.5.self_attention.linear_qkv.weight")
+        mapping = mapping_registry.megatron_to_hf_lookup("decoder.layers.5.self_attention.linear_qkv.weight")
         assert mapping is not None
         assert isinstance(mapping, QKVMapping)
         assert mapping.megatron_param == "decoder.layers.5.self_attention.linear_qkv.weight"
@@ -79,69 +79,69 @@ class TestMegatronStateBridge:
         assert mapping.hf_param["k"] == "model.layers.5.self_attn.k_proj.weight"
         assert mapping.hf_param["v"] == "model.layers.5.self_attn.v_proj.weight"
 
-    def test_query_megatron_no_match(self, state_bridge):
+    def test_megatron_to_hf_lookup_no_match(self, mapping_registry):
         """Test querying a non-existent parameter name."""
-        mapping = state_bridge.query_megatron("non.existent.weight")
+        mapping = mapping_registry.megatron_to_hf_lookup("non.existent.weight")
         assert mapping is None
 
-    def test_query_to_exact_match(self, state_bridge):
+    def test_hf_to_megatron_lookup_exact_match(self, mapping_registry):
         """Test reverse querying with an exact destination name."""
-        mapping = state_bridge.query_to("lm_head.weight")
+        mapping = mapping_registry.hf_to_megatron_lookup("lm_head.weight")
         assert mapping is not None
         assert mapping.megatron_param == "output_layer.weight"
         assert mapping.hf_param == "lm_head.weight"
 
-    def test_query_to_wildcard_match(self, state_bridge):
+    def test_hf_to_megatron_lookup_wildcard_match(self, mapping_registry):
         """Test reverse querying with a wildcard in the destination name."""
-        mapping = state_bridge.query_to("model.layers.3.mlp.gate_proj.weight")
+        mapping = mapping_registry.hf_to_megatron_lookup("model.layers.3.mlp.gate_proj.weight")
         assert mapping is not None
         assert mapping.megatron_param == "decoder.layers.3.mlp.linear_fc1.weight"
         assert mapping.hf_param == "model.layers.3.mlp.gate_proj.weight"
 
-    def test_query_to_dict_destination_wildcard(self, state_bridge):
+    def test_hf_to_megatron_lookup_dict_destination_wildcard(self, mapping_registry):
         """Test reverse querying for a QKV bridge with wildcards."""
-        mapping_q = state_bridge.query_to("model.layers.12.self_attn.q_proj.weight")
+        mapping_q = mapping_registry.hf_to_megatron_lookup("model.layers.12.self_attn.q_proj.weight")
         assert mapping_q is not None
         assert isinstance(mapping_q, QKVMapping)
         assert mapping_q.megatron_param == "decoder.layers.12.self_attention.linear_qkv.weight"
         assert mapping_q.hf_param["q"] == "model.layers.12.self_attn.q_proj.weight"
 
-        mapping_k = state_bridge.query_to("model.layers.0.self_attn.k_proj.weight")
+        mapping_k = mapping_registry.hf_to_megatron_lookup("model.layers.0.self_attn.k_proj.weight")
         assert mapping_k is not None
         assert mapping_k.megatron_param == "decoder.layers.0.self_attention.linear_qkv.weight"
 
-    def test_query_to_no_match(self, state_bridge):
+    def test_hf_to_megatron_lookup_no_match(self, mapping_registry):
         """Test reverse querying a non-existent destination name."""
-        mapping = state_bridge.query_to("non.existent.weight")
+        mapping = mapping_registry.hf_to_megatron_lookup("non.existent.weight")
         assert mapping is None
 
-    def test_get_all_mappings(self, state_bridge, sample_mappings):
+    def test_get_all_mappings(self, mapping_registry, sample_mappings):
         """Test retrieving all mappings."""
-        all_mappings = state_bridge.get_all_mappings()
+        all_mappings = mapping_registry.get_all_mappings()
         assert all_mappings == sample_mappings
         # Ensure it's a copy
         all_mappings.append("new_item")
-        assert len(state_bridge.get_all_mappings()) == len(sample_mappings)
+        assert len(mapping_registry.get_all_mappings()) == len(sample_mappings)
 
-    def test_get_mappings_by_pattern(self, state_bridge):
+    def test_get_mappings_by_pattern(self, mapping_registry):
         """Test retrieving mappings by a regex pattern."""
-        mlp_mappings = state_bridge.get_mappings_by_pattern("decoder.layers.*.mlp.*")
+        mlp_mappings = mapping_registry.get_mappings_by_pattern("decoder.layers.*.mlp.*")
         assert len(mlp_mappings) == 1
         assert mlp_mappings[0].megatron_param == "decoder.layers.*.mlp.linear_fc1.weight"
 
-        qkv_mappings = state_bridge.get_mappings_by_pattern("decoder.layers.*.self_attention.linear_qkv.weight")
+        qkv_mappings = mapping_registry.get_mappings_by_pattern("decoder.layers.*.self_attention.linear_qkv.weight")
         assert len(qkv_mappings) == 1
         assert isinstance(qkv_mappings[0], QKVMapping)
 
-        all_decoder = state_bridge.get_mappings_by_pattern("decoder.*")
+        all_decoder = mapping_registry.get_mappings_by_pattern("decoder.*")
         assert len(all_decoder) == 2
 
-        no_match = state_bridge.get_mappings_by_pattern("encoder.*")
+        no_match = mapping_registry.get_mappings_by_pattern("encoder.*")
         assert len(no_match) == 0
 
-    def test_describe(self, state_bridge):
+    def test_describe(self, mapping_registry):
         """Test the human-readable description of the bridge."""
-        description = state_bridge.describe()
+        description = mapping_registry.describe()
         assert isinstance(description, str)
         assert "MegatronStateBridge with 4 mappings" in description
         assert "embedding.word_embeddings.weight" in description
@@ -151,12 +151,12 @@ class TestMegatronStateBridge:
         assert "bridge: QKVMapping" in description
         assert "bridge: DirectMapping" in description
 
-    def test_iterator_and_repr(self, state_bridge, sample_mappings):
+    def test_iterator_and_repr(self, mapping_registry, sample_mappings):
         """Test the iterator and string representation of the bridge."""
-        assert repr(state_bridge) == "MegatronStateBridge(4 mappings)"
+        assert repr(mapping_registry) == "MegatronStateBridge(4 mappings)"
 
         count = 0
-        for mapping in state_bridge:
+        for mapping in mapping_registry:
             assert mapping in sample_mappings
             count += 1
         assert count == len(sample_mappings)
@@ -165,12 +165,12 @@ class TestMegatronStateBridge:
 class TestMegatronStateBridgeEdgeCases:
     """Test edge cases and additional functionality."""
 
-    def test_empty_state_bridge(self):
-        """Test creating an empty state bridge."""
+    def test_empty_mapping_registry(self):
+        """Test creating an empty mapping registry."""
         bridge = MegatronStateBridge()
         assert len(bridge) == 0
-        assert bridge.query_megatron("any.weight") is None
-        assert bridge.query_to("any.weight") is None
+        assert bridge.megatron_to_hf_lookup("any.weight") is None
+        assert bridge.hf_to_megatron_lookup("any.weight") is None
         assert bridge.get_all_mappings() == []
         assert bridge.get_mappings_by_pattern("*") == []
         assert repr(bridge) == "MegatronStateBridge(0 mappings)"
@@ -189,13 +189,13 @@ class TestMegatronStateBridgeEdgeCases:
         bridge = MegatronStateBridge(mapping)
 
         # Query with multiple indices
-        result = bridge.query_megatron("decoder.layers.3.blocks.2.weight")
+        result = bridge.megatron_to_hf_lookup("decoder.layers.3.blocks.2.weight")
         assert result is not None
         assert result.megatron_param == "decoder.layers.3.blocks.2.weight"
         assert result.hf_param == "model.layers.3.sublayers.2.weight"
 
         # Reverse query
-        result = bridge.query_to("model.layers.5.sublayers.1.weight")
+        result = bridge.hf_to_megatron_lookup("model.layers.5.sublayers.1.weight")
         assert result is not None
         assert result.megatron_param == "decoder.layers.5.blocks.1.weight"
         assert result.hf_param == "model.layers.5.sublayers.1.weight"
@@ -206,12 +206,12 @@ class TestMegatronStateBridgeEdgeCases:
         bridge = MegatronStateBridge(mapping)
 
         # Should not match non-numeric values
-        assert bridge.query_megatron("decoder.layers.abc.weight") is None
-        assert bridge.query_megatron("decoder.layers.12a.weight") is None
-        assert bridge.query_megatron("decoder.layers.1.2.weight") is None
+        assert bridge.megatron_to_hf_lookup("decoder.layers.abc.weight") is None
+        assert bridge.megatron_to_hf_lookup("decoder.layers.12a.weight") is None
+        assert bridge.megatron_to_hf_lookup("decoder.layers.1.2.weight") is None
 
         # Should match numeric values
-        assert bridge.query_megatron("decoder.layers.123.weight") is not None
+        assert bridge.megatron_to_hf_lookup("decoder.layers.123.weight") is not None
 
     def test_duplicate_patterns(self):
         """Test behavior with duplicate patterns (first match wins)."""
@@ -220,7 +220,7 @@ class TestMegatronStateBridgeEdgeCases:
         bridge = MegatronStateBridge(mapping1, mapping2)
 
         # First mapping should win
-        result = bridge.query_megatron("decoder.layers.0.weight")
+        result = bridge.megatron_to_hf_lookup("decoder.layers.0.weight")
         assert result is not None
         assert result.hf_param == "model.layers.0.weight_v1"
 
@@ -239,7 +239,7 @@ class TestMegatronStateBridgeEdgeCases:
         bridge = MegatronStateBridge(mapping)
 
         # Test forward query
-        result = bridge.query_megatron("model.0.transformer.5.attention.qkv")
+        result = bridge.megatron_to_hf_lookup("model.0.transformer.5.attention.qkv")
         assert result is not None
         assert result.megatron_param == "model.0.transformer.5.attention.qkv"
         assert result.hf_param["q"] == "transformer.blocks.0.layers.5.q"
@@ -247,7 +247,7 @@ class TestMegatronStateBridgeEdgeCases:
         assert result.hf_param["v"] == "transformer.blocks.0.layers.5.v"
 
         # Test reverse query for each component
-        result_q = bridge.query_to("transformer.blocks.2.layers.3.q")
+        result_q = bridge.hf_to_megatron_lookup("transformer.blocks.2.layers.3.q")
         assert result_q is not None
         assert result_q.megatron_param == "model.2.transformer.3.attention.qkv"
 
@@ -258,12 +258,12 @@ class TestMegatronStateBridgeEdgeCases:
         bridge = MegatronStateBridge(mapping)
 
         # Should properly escape special characters
-        result = bridge.query_megatron("decoder.layers.5.weight[0]")
+        result = bridge.megatron_to_hf_lookup("decoder.layers.5.weight[0]")
         assert result is not None
         assert result.hf_param == "model.layers.5.weight(0)"
 
         # Should not match without proper brackets
-        assert bridge.query_megatron("decoder.layers.5.weight0") is None
+        assert bridge.megatron_to_hf_lookup("decoder.layers.5.weight0") is None
 
     def test_pattern_matching_edge_cases(self):
         """Test various edge cases in pattern matching."""
@@ -275,17 +275,17 @@ class TestMegatronStateBridgeEdgeCases:
         bridge = MegatronStateBridge(*mappings)
 
         # Test single component wildcard
-        result = bridge.query_megatron("5.weight")
+        result = bridge.megatron_to_hf_lookup("5.weight")
         assert result is not None
         assert result.hf_param == "5.w"
 
         # Test wildcard in middle
-        result = bridge.query_megatron("prefix.100.suffix")
+        result = bridge.megatron_to_hf_lookup("prefix.100.suffix")
         assert result is not None
         assert result.hf_param == "p.100.s"
 
         # Test wildcard only
-        result = bridge.query_megatron("42")
+        result = bridge.megatron_to_hf_lookup("42")
         assert result is not None
         assert result.hf_param == "transformed.42"
 

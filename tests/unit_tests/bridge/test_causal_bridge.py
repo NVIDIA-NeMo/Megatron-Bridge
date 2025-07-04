@@ -220,7 +220,7 @@ class TestCausalLMBridge:
         mock_provider = Mock(spec=GPTModelProvider)
         mock_provider.register_pre_wrap_hook = Mock()
         mock_model_bridge.provider_bridge.return_value = mock_provider
-        mock_model_bridge.load_state_from_hf = Mock()
+        mock_model_bridge.load_weights_hf_to_megatron = Mock()
 
         with patch("megatron.hub.bridge.causal_bridge.PreTrainedCausalLM", MockPreTrainedCausalLM):
             with patch.object(CausalLMBridge, "_model_bridge", mock_model_bridge):
@@ -455,7 +455,7 @@ class TestCausalLMBridgeEdgeCases:
 
         # Mock the export process
         with patch("megatron.hub.bridge.causal_bridge.PreTrainedCausalLM", MockPreTrainedCausalLM):
-            with patch("megatron.hub.bridge.causal_bridge.model_bridge.bridge_state_to_hf") as mock_bridge_state:
+            with patch("megatron.hub.bridge.causal_bridge.model_bridge.stream_weights_megatron_to_hf") as mock_bridge_state:
                 mock_weight_iter = [("weight1", torch.randn(10, 10)), ("weight2", torch.randn(5, 5))]
                 mock_bridge_state.return_value = iter(mock_weight_iter)
 

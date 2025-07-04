@@ -321,7 +321,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
             ... ))
         """
         query = (self._get_causal_lm_architecture(), self._get_model_instance(model))
-        return model_bridge.bridge_state_to_hf(
+        return model_bridge.stream_weights_megatron_to_hf(
             query, model, self.hf_pretrained, order=order, cpu=cpu, show_progress=show_progress, mode=mode
         )
 
@@ -403,7 +403,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
         query = (self._get_causal_lm_architecture(), self._get_model_instance(model))
-        generator = model_bridge.bridge_state_to_hf(
+        generator = model_bridge.stream_weights_megatron_to_hf(
             query, model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
         )
 
@@ -421,9 +421,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
             torch.distributed.barrier()
 
     def push_to_hub(self, path: str | Path) -> None: ...
-
-    def bridge_state_to_megatron(self) -> Iterable[model_bridge.MegatronWeightTuple]:
-        return self._model_bridge.bridge_state_to_megatron(self.hf_pretrained)
 
     def to_model(
         self,
@@ -478,11 +475,11 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         if load_weights:
             if hf_path is None:
-                provider.register_pre_wrap_hook(partial(self._model_bridge.load_state_from_hf, self.hf_pretrained))
+                provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained))
             else:
                 # Load from specified path
                 pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
-                provider.register_pre_wrap_hook(partial(self._model_bridge.load_state_from_hf, pre_trained))
+                provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
         return provider
 
@@ -594,18 +591,18 @@ class CausalLMBridge(Generic[MegatronModelT]):
                         + "\n".join(f"  • {model}" for model in supported_models)
                         + f"\n\nTo add support for {architecture}, you need to:\n"
                         f"1. Create a new bridge class that inherits from MegatronModelBridge\n"
-                        f"2. Implement the required methods (provider_bridge, state_bridge)\n"
-                        f"3. Register it with @MegatronModelBridge.impl decorator\n\n"
+                        f"2. Implement the required methods (provider_bridge, mapping_registry)\n"
+                        f"3. Register it with @MegatronModelBridge.register_bridge decorator\n\n"
                         f"Example implementation:\n"
                         f"  from megatron.hub.bridge.model_bridge import MegatronModelBridge\n"
                         f"  from transformers import {architecture}\n"
                         f"  from megatron.core.models.gpt import GPTModel\n\n"
-                        f"  @MegatronModelBridge.impl(source={architecture}, target=GPTModel)\n"
+                        f"  @MegatronModelBridge.register_bridge(source={architecture}, target=GPTModel)\n"
                         f"  class Megatron{architecture.replace('ForCausalLM', '')}Bridge(MegatronModelBridge):\n"
                         f"      def provider_bridge(self, hf_pretrained):\n"
                         f"          # Return a ModelProvider instance\n"
                         f"          ...\n\n"
-                        f"      def state_bridge(self):\n"
+                        f"      def mapping_registry(self):\n"
                         f"          # Return a MegatronStateBridge with weight mappings\n"
                         f"          ...\n\n"
                         f"For reference implementations, see:\n"

@@ -321,7 +321,7 @@ class TestGatedMLPMapping:
 
 
 class TestMappingEdgeCases:
-    """Test edge cases and error handling in weight bridges."""
+    """Test edge cases and error handling in param mappings."""
 
     def test_wildcard_pattern_validation(self):
         """Test that wildcard patterns are validated correctly."""

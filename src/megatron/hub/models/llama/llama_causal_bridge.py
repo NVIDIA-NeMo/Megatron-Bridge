@@ -20,7 +20,7 @@ from transformers import LlamaForCausalLM
 
 from megatron.hub.bridge import MegatronModelBridge
 from megatron.hub.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.hub.bridge.state_bridge import MegatronStateBridge
+from megatron.hub.bridge.mapping_registry import MegatronMappingRegistry
 from megatron.hub.bridge.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
@@ -29,7 +29,7 @@ from megatron.hub.bridge.param_mapping import (
 from megatron.hub.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
 
 
-@MegatronModelBridge.impl(source=LlamaForCausalLM, target=GPTModel)
+@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
 class LlamaCausalBridge(MegatronModelBridge):
     """
     Megatron Hub Bridge for Llama Causal LM.
@@ -79,7 +79,7 @@ class LlamaCausalBridge(MegatronModelBridge):
 
         return provider
 
-    def state_bridge(self) -> MegatronStateBridge:
+    def mapping_registry(self) -> MegatronMappingRegistry:
         # Expected to return MegatronStateBridge(TPAwareMapping(megatron_param, hf_param), ...)
         # We can also use a dictionary-based mapping for clarity
         # Dictionary-based mapping:
@@ -131,4 +131,4 @@ class LlamaCausalBridge(MegatronModelBridge):
             else:
                 raise TypeError(f"Unsupported hf_param type for {megatron_param}: {type(hf_param)}")
 
-        return MegatronStateBridge(*mappings)
+        return MegatronMappingRegistry(*mappings)
