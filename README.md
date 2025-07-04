@@ -107,8 +107,10 @@ If you do not have `uv` installed, please refer to the installation [docs](https
 ```
 Megatron-Hub/
 ├── examples/
+│   ├── bridge/                  # Bridge usage examples
 │   └── recipes/                 # Training examples
 ├── src/megatron/hub/
+│   ├── bridge/                  # HuggingFace bridge infrastructure
 │   ├── common/                  # Shared utilities and mixins
 │   ├── core/
 │   │   ├── models/              # Wrapped MCore model builders
@@ -121,7 +123,6 @@ Megatron-Hub/
 │   ├── peft/                    # PEFT transformations and wrappers
 │   ├── recipes/                 # Complete training recipes
 │   └── training/                # Training loop components
-│       ├── converters/          # Model converters for HuggingFace
 │       ├── tokenizers/          # Tokenizer library
 │       └── utils/               # Training-specific utilities
 └── tests/                       # Comprehensive test suite
