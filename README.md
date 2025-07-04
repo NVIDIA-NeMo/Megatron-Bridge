@@ -38,17 +38,22 @@ Megatron Hub provides out-of-the-box configuration recipes for a wide range of m
 
 #### Launching Recipes
 
-All recipes are ready to train out of the box, using mock data by default. For an example of how to override the default configuration through YAML or Hydra-style CLI overrides, please have a look at this [script](https://github.com/NVIDIA-NeMo/Megatron-Hub/examples/recipes/llama3_8b/pretrain_llama3_8b.py). When your script is ready to be launched, see the following examples for reference on launching with NeMo-Run:
+All recipes are ready to train out of the box, using mock data by default. For an example of how to override the default configuration through YAML or Hydra-style CLI overrides, please have a look at this [script](https://github.com/NVIDIA-NeMo/Megatron-Hub/examples/recipes/llama3_8b/pretrain_llama3_8b.py). The script can then be launched with `torchrun`. For example, with the aforementioned script:
+```sh
+torchrun --nproc-per-node=2 pretrain_llama3_8b.py model.tensor_model_parallel_size=1 <additional overrides ...>
+```
+
+Optionally, Megatron Hub also supports launching with [NeMo-Run](https://github.com/NVIDIA-NeMo/Run). See the following examples for reference on launching with NeMo-Run:
 
 - [pretrain_llama3_8b_nemo_run_script.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_script.py)
 - [pretrain_llama3_8b_nemo_run_partial.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_partial.py)
 
 
-These examples can also be run as is with the Llama3 8b recipe.
+These examples can also be run as is with the Llama3 8b recipe (with NeMo-Run installed).
 
 Launch Llama3 8b Pretraining with NeMo-Run's `run.Script`:
 ```sh
-uv run python examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_script.py \
+uv run python pretrain_llama3_8b_nemo_run_script.py \
     --nproc-per-node=2 \
     model.pipeline_model_parallel_size=1 \
     train.train_iters=10 # this script passes Hydra-style overrides to the target script
@@ -56,7 +61,7 @@ uv run python examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_script.py \
 
 Launch Llama3 8b Pretraining with NeMo-Run's `run.Partial`
 ```sh
-uv run python examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_partial.py \
+uv run python pretrain_llama3_8b_nemo_run_partial.py \
     --nproc-per-node=2
 ```
 
