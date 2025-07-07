@@ -133,6 +133,7 @@ jobs:
 
       - name: Import GPG key (for signing)
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec
+        id: gpg-action
         with:
           gpg_private_key: ${{ secrets.SSH_KEY }}
           passphrase: ${{ secrets.SSH_PWD }}
@@ -170,3 +171,4 @@ jobs:
             🙏 Please merge this PR only if the CI workflow completed successfully.
           commit-message: ${{ env.title }}
           signoff: true
+          committer: "${{ steps.gpg-action.outputs.name }} <${{ steps.gpg-action.outputs.email }}>"
