@@ -1,13 +1,5 @@
 # Documentation Development
 
-- [Documentation Development](#documentation-development)
-  - [Build the Documentation](#build-the-documentation)
-  - [Live Building](#live-building)
-  - [Run Tests in Python Docstrings](#run-tests-in-python-docstrings)
-  - [Write Tests in Python Docstrings](#write-tests-in-python-docstrings)
-  - [Documentation Version](#documentation-version)
-
-
 ## Build the Documentation
 
 The following sections describe how to set up and build the NeMo RL documentation.
