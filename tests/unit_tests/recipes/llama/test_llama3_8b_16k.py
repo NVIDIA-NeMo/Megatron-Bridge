@@ -254,8 +254,10 @@ class TestPretrainConfig:
 
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
-        assert config.ddp.overlap_grad_reduce is True
-        assert config.ddp.overlap_param_gather is True
+        # Note: overlap_grad_reduce and overlap_param_gather are now controlled by CommOverlapConfig
+        # and default to False when data_parallel_size is None or <= 1
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
         assert config.ddp.average_in_collective is True
         assert config.ddp.use_distributed_optimizer is True
 

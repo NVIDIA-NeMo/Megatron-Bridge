@@ -21,6 +21,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.hub.models.llama import Llama32ModelProvider3B
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -87,11 +88,13 @@ def pretrain_config(
     train_iters: int = 1_168_251,
     global_batch_size: int = 512,
     micro_batch_size: int = 1,
+    seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
     # Precision recipe
     precision_config: str | MixedPrecisionConfig = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3.2 3B model.
@@ -115,10 +118,12 @@ def pretrain_config(
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
+        seq_length (int): Sequence length for the model.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -160,6 +165,9 @@ def pretrain_config(
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
@@ -176,7 +184,7 @@ def pretrain_config(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=8192,  # Hardcoded to 8192 for Llama3.2 3B pretraining
+            sequence_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
@@ -205,5 +213,11 @@ def pretrain_config(
     if isinstance(precision_config, str):
         precision_config = get_mixed_precision_config(precision_config)
     precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    if comm_overlap_config is None:
+        comm_overlap_config = CommOverlapConfig(
+            tp_comm_overlap=False,
+        )
+    comm_overlap_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     return cfg
