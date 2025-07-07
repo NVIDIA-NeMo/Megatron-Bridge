@@ -14,4 +14,5 @@ performance-guide.md
 :hidden:
 
 apidocs/index.rst
+documentation.md
 ```
