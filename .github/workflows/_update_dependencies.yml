@@ -143,7 +143,7 @@ jobs:
         run: |
           if git ls-remote --exit-code origin ${{ env.SOURCE_BRANCH }}; then
             git fetch origin ${{ env.SOURCE_BRANCH }}
-            git rebase origin/${{ env.SOURCE_BRANCH }}
+            git rebase -S origin/${{ env.SOURCE_BRANCH }}
           fi
 
       - name: Download lock file
