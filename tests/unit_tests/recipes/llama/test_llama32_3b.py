@@ -395,8 +395,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         # Default setup should have TP comm overlap disabled for 3B model
-        assert config.model.tp_comm_overlap is False
-        assert config.model.tp_comm_overlap_cfg is None
+        assert config.comm_overlap is not None
 
     def test_pretrain_config_custom_comm_overlap(self):
         """Test custom CommOverlapConfig."""
@@ -408,9 +407,9 @@ class TestPretrainConfig:
         )
         config = pretrain_config(comm_overlap_config=custom_overlap)
 
-        # Should apply custom config but may be disabled due to TP size
+        # Should use the custom config
         # Since default TP size is 1, it should be disabled
-        assert config.model.tp_comm_overlap is False
+        assert config.comm_overlap is not None
 
     def test_pretrain_config_seq_length_parameter(self):
         """Test seq_length parameter."""

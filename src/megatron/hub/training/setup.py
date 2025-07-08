@@ -104,6 +104,11 @@ def setup(
     state.cfg = cfg
     # TODO: Freeze state.cfg
 
+    cfg.validate()
+    # Apply communication overlap configuration if provided at the very beginning
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
     # Initialize async checkpoint worker if enabled
     init_async_checkpoint_worker(state)
 

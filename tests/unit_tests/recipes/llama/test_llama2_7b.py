@@ -157,8 +157,6 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
-            num_nodes=8,  # 4 * 2 * 8 = 64 GPUs needed
-            gpus_per_node=8,
             tensor_parallelism=4,
             pipeline_parallelism=2,
             context_parallelism=8,
@@ -277,8 +275,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         # Default setup should have TP comm overlap disabled for 7B model
-        assert config.model.tp_comm_overlap is False
-        assert config.model.tp_comm_overlap_cfg is None
+        assert config.comm_overlap is not None
 
     def test_pretrain_config_custom_comm_overlap(self):
         """Test custom CommOverlapConfig."""
@@ -290,9 +287,9 @@ class TestPretrainConfig:
         )
         config = pretrain_config(comm_overlap_config=custom_overlap)
 
-        # Should apply custom config but may be disabled due to TP size
+        # Should use the custom config
         # Since default TP size is 1, it should be disabled
-        assert config.model.tp_comm_overlap is False
+        assert config.comm_overlap is not None
 
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""
@@ -354,8 +351,6 @@ class TestPretrainConfig:
     ):
         """Test various parallelism combinations."""
         config = pretrain_config(
-            num_nodes=tensor_parallelism * pipeline_parallelism * context_parallelism // 8,
-            gpus_per_node=8,
             tensor_parallelism=tensor_parallelism,
             pipeline_parallelism=pipeline_parallelism,
             context_parallelism=context_parallelism,

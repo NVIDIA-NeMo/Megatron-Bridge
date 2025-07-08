@@ -88,8 +88,6 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_parameters(self):
         """Test pretrain_config with custom parameters."""
         config = pretrain_config(
-            num_nodes=64,  # 8 * 8 * 8 = 512 GPUs needed
-            gpus_per_node=8,
             tensor_parallelism=8,
             pipeline_parallelism=8,
             context_parallelism=8,
@@ -116,8 +114,6 @@ class TestPretrainConfig:
     def test_pretrain_config_128k_sequence_length_override(self):
         """Test that sequence length is hardcoded to 128k and cannot be overridden."""
         config = pretrain_config(
-            num_nodes=16,  # 4 * 4 * 8 = 128 GPUs needed
-            gpus_per_node=8,
             tensor_parallelism=4,
             pipeline_parallelism=4,
             context_parallelism=8,
@@ -173,8 +169,6 @@ class TestPretrainConfig:
     ):
         """Test various parallelism combinations for 128k sequences."""
         config = pretrain_config(
-            num_nodes=tensor_parallelism * pipeline_parallelism * context_parallelism // 8,
-            gpus_per_node=8,
             tensor_parallelism=tensor_parallelism,
             pipeline_parallelism=pipeline_parallelism,
             context_parallelism=context_parallelism,

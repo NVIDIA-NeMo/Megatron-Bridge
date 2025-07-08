@@ -26,6 +26,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.hub.core.utils.common_utils import get_world_size_safe
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
+from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.tokenizers.config import TokenizerConfig
 from megatron.hub.training.utils.config_utils import _ConfigContainerBase as Container
 
@@ -680,6 +681,7 @@ class ConfigContainer(Container):
     straggler: Optional[StragglerDetectionConfig] = None
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
+    comm_overlap: Optional[CommOverlapConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -717,6 +719,10 @@ class ConfigContainer(Container):
         # Distributed
         world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
+
+        # Set data_parallel_size on comm_overlap config if present
+        if self.comm_overlap is not None:
+            self.comm_overlap.data_parallel_size = self.data_parallel_size
 
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 
