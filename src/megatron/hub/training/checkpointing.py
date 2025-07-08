@@ -821,7 +821,7 @@ def load_checkpoint(
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
     skip_load_to_model_and_opt: bool = False,
-) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
+) -> tuple[int, int]:
     """Load a model checkpoint.
 
     Handles loading model state, optimizer state, scheduler state, RNG state,
@@ -840,10 +840,8 @@ def load_checkpoint(
 
     Returns:
         A tuple containing:
-        - state_dict: The loaded state dictionary (or None if skipping).
-        - checkpoint_name: The path of the loaded checkpoint.
-        - release: Boolean indicating if it was a release checkpoint.
-        - ckpt_type: The type of checkpoint loaded (LOCAL, GLOBAL, or None).
+        - iteration: The training iteration number.
+        - num_floating_point_operations_so_far: The total FLOPs computed so far.
     """
     cfg = state.cfg
     load_dir = cfg.checkpoint.load
@@ -874,17 +872,25 @@ def _load_checkpoint_from_path(
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
     skip_load_to_model_and_opt: bool = False,
-) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
+) -> tuple[int, int]:
     """Load a checkpoint from a given path.
 
     Args:
         load_dir: The directory containing the checkpoint.
         state: The GlobalState object.
         model: The model module(s) to load state into.
-    """
-    if not checkpoint_exists(load_dir):
-        raise FileNotFoundError(f"No checkpoint found for the path {load_dir}")
+        optimizer: The optimizer instance to load state into.
+        opt_param_scheduler: The scheduler instance to load state into.
+        strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+        checkpointing_context: Dictionary to store context across loads (e.g., strategies).
+        skip_load_to_model_and_opt: If True, only loads metadata (iteration, rng) but
+                                      skips loading state into model and optimizer modules.
 
+    Returns:
+        A tuple containing:
+        - iteration: The training iteration number.
+        - num_floating_point_operations_so_far: The total FLOPs computed so far.
+    """
     cfg = state.cfg
 
     model = unwrap_model(model)
