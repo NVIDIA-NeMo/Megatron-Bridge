@@ -100,9 +100,15 @@ def setup(
         A SetupOutput named tuple containing the initialized state, model,
         optimizer, scheduler, data iterators, and checkpointing context.
     """
+    # TODO: Freeze state.cfg
+
+    cfg.validate()
+    # Apply communication overlap configuration if provided at the very beginning
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
     state = GlobalState()
     state.cfg = cfg
-    # TODO: Freeze state.cfg
 
     # Initialize async checkpoint worker if enabled
     init_async_checkpoint_worker(state)
