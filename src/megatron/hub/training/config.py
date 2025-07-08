@@ -91,6 +91,19 @@ class DistributedInitConfig:
     use_gloo_process_groups: bool = True
     """If set, create Gloo process groups for communications."""
 
+    use_sharp: bool = False
+    """Set the use of SHARP for the collective communications of data-parallel process groups.
+    When `True`, run barrier within each data-parallel process group,
+    which specifies the SHARP application target groups.
+    """
+
+    high_priority_stream_groups: Optional[list[str]] = None
+    """Specify which communicator groups should use high priority streams during creation.
+    Assigning high priority to communication streams ensures that communication kernels
+    are scheduled with higher priority, minimizing the exposed communication when it is
+    overlapped with other computation kernels.
+    """
+
 
 @dataclass
 class RerunStateMachineConfig:

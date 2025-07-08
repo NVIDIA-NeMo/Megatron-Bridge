@@ -367,6 +367,8 @@ def _initialize_distributed(
                 get_embedding_ranks=get_embedding_ranks,
                 get_position_embedding_ranks=get_position_embedding_ranks,
                 create_gloo_process_groups=dist_config.use_gloo_process_groups,
+                use_sharp=dist_config.use_sharp,
+                high_priority_stream_groups=dist_config.high_priority_stream_groups,
             )
             if get_rank_safe() == 0:
                 print(
