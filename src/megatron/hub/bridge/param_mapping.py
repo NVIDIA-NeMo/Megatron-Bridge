@@ -22,7 +22,6 @@ import torch.nn as nn
 from megatron.core import mpu
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
 
 
@@ -167,7 +166,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """Broadcast a tensor from the pipeline-parallel rank that owns it.
 
         Broadcasts to **all** PP ranks. This mirrors the behaviour of
-        `broadcast_from_megatron_pp` in the original MMapping implementation and
+        `broadcast_from_megatron_pp` in the original MBridge implementation and
         additionally keeps the tensor-parallel metadata (`tensor_model_parallel`,
         `partition_dim`) consistent on every rank.
 
@@ -462,7 +461,8 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weight is None:
             return {}
 
-        return {str(self.hf_param): megatron_weight}
+        assert isinstance(self.hf_param, str)
+        return {self.hf_param: megatron_weight}
 
 
 class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
@@ -584,7 +584,8 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             return {}
 
         if self.tp_size == 1:
-            return {str(self.hf_param): megatron_weight}
+            assert isinstance(self.hf_param, str)
+            return {self.hf_param: megatron_weight}
 
         # Gather from all TP ranks
         gathered = self.gather_from_tp_ranks(megatron_weight)
@@ -713,7 +714,8 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
 
         # For replicated weights, only rank 0 returns to avoid duplicates
         if self.tp_rank == 0:
-            return {str(self.hf_param): megatron_weight}
+            assert isinstance(self.hf_param, str)
+            return {self.hf_param: megatron_weight}
         return {}
 
 
