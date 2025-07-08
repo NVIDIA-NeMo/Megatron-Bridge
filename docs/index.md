@@ -13,6 +13,6 @@ performance-guide.md
 :caption: Development
 :hidden:
 
-apidocs/index.rst
 documentation.md
+apidocs/index.rst
 ```
