@@ -154,18 +154,22 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
+            num_nodes=16,  # 8 * 8 * 2 = 128 GPUs needed
+            gpus_per_node=8,
             tensor_parallelism=8,
-            pipeline_parallelism=4,
-            context_parallelism=4,
+            pipeline_parallelism=8,
+            context_parallelism=2,
             sequence_parallelism=False,
             pipeline_parallelism_dtype=torch.float32,
+            virtual_pipeline_parallelism=10,
         )
 
         assert config.model.tensor_model_parallel_size == 8
-        assert config.model.pipeline_model_parallel_size == 4
-        assert config.model.context_parallel_size == 4
+        assert config.model.pipeline_model_parallel_size == 8
+        assert config.model.context_parallel_size == 2
         assert config.model.sequence_parallel is False
         assert config.model.pipeline_dtype == torch.bfloat16
+        assert config.model.virtual_pipeline_model_parallel_size == 10
 
     def test_pretrain_config_with_custom_directory(self):
         """Test pretrain_config with custom directory."""
@@ -321,6 +325,8 @@ class TestPretrainConfig:
     ):
         """Test various parallelism combinations optimized for 16k."""
         config = pretrain_config(
+            num_nodes=tensor_parallelism * pipeline_parallelism * context_parallelism // 8,
+            gpus_per_node=8,
             tensor_parallelism=tensor_parallelism,
             pipeline_parallelism=pipeline_parallelism,
             context_parallelism=context_parallelism,

@@ -62,6 +62,9 @@ def model_config(
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "default",
+    # World size configuration
+    num_nodes: int = 2,
+    gpus_per_node: int = 8,
     # Dataset configuration
     data_paths: Optional[List[str]] = None,
     data_args_path: Optional[str] = None,
@@ -95,6 +98,8 @@ def pretrain_config(
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
+        num_nodes (int): Number of nodes for distributed training.
+        gpus_per_node (int): Number of GPUs per node for distributed training.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
         data_args_path (Optional[str]): Path to file containing data arguments.
         train_data_path (Optional[List[str]]): List of training data paths.
@@ -124,6 +129,8 @@ def pretrain_config(
     cfg = llama3_8b.pretrain_config(
         dir=dir,
         name=name,
+        num_nodes=num_nodes,
+        gpus_per_node=gpus_per_node,
         data_paths=data_paths,
         data_args_path=data_args_path,
         train_data_path=train_data_path,

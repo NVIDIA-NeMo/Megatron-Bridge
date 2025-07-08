@@ -69,6 +69,9 @@ def model_config(
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "default",
+    # World size configuration
+    num_nodes: int = 1,
+    gpus_per_node: int = 8,
     # Dataset configuration
     data_paths: Optional[List[str]] = None,
     data_args_path: Optional[str] = None,
@@ -102,6 +105,8 @@ def pretrain_config(
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
+        num_nodes (int): Number of nodes for distributed training.
+        gpus_per_node (int): Number of GPUs per node for distributed training.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
         data_args_path (Optional[str]): Path to file containing data arguments.
         train_data_path (Optional[List[str]]): List of training data paths.
@@ -218,6 +223,7 @@ def pretrain_config(
     if comm_overlap_config is None:
         comm_overlap_config = CommOverlapConfig(
             tp_comm_overlap=False,
+            data_parallel_size=cfg.get_data_parallel_size(world_size=num_nodes * gpus_per_node),
         )
     comm_overlap_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 

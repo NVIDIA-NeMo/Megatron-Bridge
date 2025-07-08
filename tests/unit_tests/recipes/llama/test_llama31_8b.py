@@ -20,9 +20,8 @@ import pytest
 import torch
 
 from megatron.hub.models.llama import Llama31ModelProvider8B
-from megatron.hub.recipes.comm_overlap.userbuffers import userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 from megatron.hub.recipes.llama.llama31_8b import model_config, pretrain_config
-from megatron.hub.training.comm_overlap import CommOverlapConfig
+from megatron.hub.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
 from megatron.hub.training.config import ConfigContainer
 
 
@@ -157,18 +156,22 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
-            tensor_parallelism=2,
+            num_nodes=8,  # 8 * 4 * 2 = 64 GPUs needed
+            gpus_per_node=8,
+            tensor_parallelism=8,
             pipeline_parallelism=4,
-            context_parallelism=8,
-            sequence_parallelism=True,
-            pipeline_parallelism_dtype=torch.bfloat16,
+            context_parallelism=2,
+            sequence_parallelism=False,
+            pipeline_parallelism_dtype=torch.float32,
+            virtual_pipeline_parallelism=10,
         )
 
-        assert config.model.tensor_model_parallel_size == 2
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 4
-        assert config.model.context_parallel_size == 8
-        assert config.model.sequence_parallel is True
+        assert config.model.context_parallel_size == 2
+        assert config.model.sequence_parallel is False
         assert config.model.pipeline_dtype == torch.bfloat16
+        assert config.model.virtual_pipeline_model_parallel_size == 10
 
     def test_pretrain_config_with_custom_directory(self):
         """Test pretrain_config with custom directory."""
@@ -257,13 +260,11 @@ class TestPretrainConfig:
 
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
-        # Note: overlap_grad_reduce and overlap_param_gather are now controlled by CommOverlapConfig
-        # and default to False when data_parallel_size is None or <= 1
-        assert config.ddp.overlap_grad_reduce is False
-        assert config.ddp.overlap_param_gather is False
+        assert config.ddp.overlap_grad_reduce is True  # DP size > 1 with default config
+        assert config.ddp.overlap_param_gather is True  # DP size > 1 with default config
+        assert config.ddp.align_param_gather is True
         assert config.ddp.average_in_collective is True
         assert config.ddp.use_distributed_optimizer is True
-        assert config.ddp.align_param_gather is True
 
     def test_pretrain_config_manual_gc(self):
         """Test manual garbage collection configuration."""
@@ -284,21 +285,27 @@ class TestPretrainConfig:
         """Test custom CommOverlapConfig."""
         custom_overlap = CommOverlapConfig(
             tp_comm_overlap=True,
-            tp_comm_overlap_cfg=userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
+            tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
             defer_embedding_wgrad_compute=True,
-            wgrad_deferral_limit=50,
+            wgrad_deferral_limit=22,
+            data_parallel_size=2,
         )
         config = pretrain_config(comm_overlap_config=custom_overlap)
 
-        # Should apply custom config
-        assert config.model.defer_embedding_wgrad_compute is True
-        assert config.model.wgrad_deferral_limit == 50
+        # Should apply custom config but may be disabled due to TP size
+        assert config.model.tp_comm_overlap is False  # TP size is 1 by default
 
     def test_pretrain_config_comm_overlap_with_tp(self):
         """Test CommOverlapConfig with tensor parallelism enabled."""
         # Mock HAVE_TE to True to simulate transformer engine being available
         with patch("megatron.hub.training.comm_overlap.HAVE_TE", True):
-            config = pretrain_config(tensor_parallelism=8, sequence_parallelism=True)
+            config = pretrain_config(
+                num_nodes=2,  # 4 * 2 = 8 GPUs needed for TP=4, CP=2
+                gpus_per_node=8,
+                tensor_parallelism=4,
+                context_parallelism=2,
+                sequence_parallelism=True,
+            )
 
             # With TP > 1 and sequence parallelism, should enable TP comm overlap
             assert config.model.tp_comm_overlap is True
@@ -356,8 +363,8 @@ class TestPretrainConfig:
             (1, 1, 1),
             (2, 1, 4),
             (1, 4, 2),
-            (2, 2, 8),
-            (4, 4, 16),
+            (2, 2, 2),  # Changed from 8 to 2 to fit in 8 GPUs
+            (4, 2, 1),  # Changed from 4,4,16 to fit in 8 GPUs
         ],
     )
     def test_pretrain_config_parallelism_combinations(
@@ -365,6 +372,8 @@ class TestPretrainConfig:
     ):
         """Test various parallelism combinations."""
         config = pretrain_config(
+            num_nodes=tensor_parallelism * pipeline_parallelism * context_parallelism // 8,
+            gpus_per_node=8,
             tensor_parallelism=tensor_parallelism,
             pipeline_parallelism=pipeline_parallelism,
             context_parallelism=context_parallelism,

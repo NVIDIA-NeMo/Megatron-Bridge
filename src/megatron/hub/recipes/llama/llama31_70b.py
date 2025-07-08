@@ -19,10 +19,9 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.hub.models.llama import Llama31ModelProvider70B
-from megatron.hub.recipes.comm_overlap.userbuffers import userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.hub.training.comm_overlap import CommOverlapConfig
+from megatron.hub.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -70,6 +69,9 @@ def model_config(
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "default",
+    # World size configuration
+    num_nodes: int = 4,
+    gpus_per_node: int = 8,
     # Dataset configuration
     data_paths: Optional[List[str]] = None,
     data_args_path: Optional[str] = None,
@@ -102,6 +104,8 @@ def pretrain_config(
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
+        num_nodes (int): Number of nodes for distributed training.
+        gpus_per_node (int): Number of GPUs per node for distributed training.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
         data_args_path (Optional[str]): Path to file containing data arguments.
         train_data_path (Optional[List[str]]): List of training data paths.
@@ -221,6 +225,7 @@ def pretrain_config(
             wgrad_deferral_limit=50,
             overlap_param_gather_with_optimizer_step=False,  # Currently disabled due to an issue with checkpointing
             align_param_gather=True,
+            data_parallel_size=cfg.get_data_parallel_size(world_size=num_nodes * gpus_per_node),
         )
     comm_overlap_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 

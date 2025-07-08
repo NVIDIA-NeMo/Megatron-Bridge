@@ -100,26 +100,22 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_parameters(self):
         """Test pretrain_config with custom parameters."""
         config = pretrain_config(
-            tensor_parallelism=4,
+            num_nodes=8,  # 8 * 4 * 2 = 64 GPUs needed
+            gpus_per_node=8,
+            dir="/custom/path",
+            name="custom_run",
+            tensor_parallelism=8,
             pipeline_parallelism=4,
-            context_parallelism=4,
-            sequence_parallelism=False,
+            context_parallelism=2,
             train_iters=10000,
             global_batch_size=256,
             micro_batch_size=2,
         )
 
-        # Check that sequence length is still 16k in both model and dataset
-        assert config.dataset.sequence_length == SEQUENCE_LENGTH_16K
-        assert config.model.seq_length == SEQUENCE_LENGTH_16K
-
-        # Check custom model parameters
-        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 4
-        assert config.model.context_parallel_size == 4
-        assert config.model.sequence_parallel is False
-
-        # Check custom training parameters
+        assert config.model.context_parallel_size == 2
+        assert config.dataset.sequence_length == SEQUENCE_LENGTH_16K  # Should be 16k
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2

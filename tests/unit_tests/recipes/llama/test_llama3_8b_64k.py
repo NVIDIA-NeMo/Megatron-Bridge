@@ -113,6 +113,8 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_parameters(self):
         """Test pretrain_config with custom parameters."""
         config = pretrain_config(
+            num_nodes=32,
+            gpus_per_node=8,
             tensor_parallelism=8,
             pipeline_parallelism=4,
             context_parallelism=8,
@@ -142,7 +144,7 @@ class TestPretrainConfig:
         # Test with various parameters, but sequence length should always be 64k
         configs = [
             pretrain_config(),
-            pretrain_config(tensor_parallelism=8),
+            pretrain_config(num_nodes=8, gpus_per_node=8, tensor_parallelism=8),
             pretrain_config(train_iters=100000),
             pretrain_config(global_batch_size=1024),
         ]
@@ -199,6 +201,8 @@ class TestPretrainConfig:
     ):
         """Test various parallelism combinations for 64k sequences."""
         config = pretrain_config(
+            num_nodes=tensor_parallelism * pipeline_parallelism * context_parallelism // 8,
+            gpus_per_node=8,
             tensor_parallelism=tensor_parallelism,
             pipeline_parallelism=pipeline_parallelism,
             context_parallelism=context_parallelism,

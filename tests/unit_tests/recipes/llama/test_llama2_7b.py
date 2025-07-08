@@ -157,6 +157,8 @@ class TestPretrainConfig:
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
+            num_nodes=8,  # 4 * 2 * 8 = 64 GPUs needed
+            gpus_per_node=8,
             tensor_parallelism=4,
             pipeline_parallelism=2,
             context_parallelism=8,
@@ -257,8 +259,8 @@ class TestPretrainConfig:
 
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
-        assert config.ddp.overlap_grad_reduce is False
-        assert config.ddp.overlap_param_gather is False
+        assert config.ddp.overlap_grad_reduce is True  # DP size > 1 with default config
+        assert config.ddp.overlap_param_gather is True  # DP size > 1 with default config
         assert config.ddp.average_in_collective is True
         assert config.ddp.use_distributed_optimizer is True
 
@@ -284,6 +286,7 @@ class TestPretrainConfig:
             tp_comm_overlap=True,
             defer_embedding_wgrad_compute=True,
             wgrad_deferral_limit=50,
+            data_parallel_size=1,  # Add this to avoid None
         )
         config = pretrain_config(comm_overlap_config=custom_overlap)
 
@@ -342,8 +345,8 @@ class TestPretrainConfig:
             (1, 1, 1),
             (2, 1, 4),
             (1, 4, 2),
-            (2, 2, 8),
-            (4, 4, 16),
+            (2, 2, 2),  # Changed from 8 to 2 to fit in 8 GPUs
+            (4, 2, 1),  # Changed from 4,4,16 to fit in 8 GPUs
         ],
     )
     def test_pretrain_config_parallelism_combinations(
@@ -351,6 +354,8 @@ class TestPretrainConfig:
     ):
         """Test various parallelism combinations."""
         config = pretrain_config(
+            num_nodes=tensor_parallelism * pipeline_parallelism * context_parallelism // 8,
+            gpus_per_node=8,
             tensor_parallelism=tensor_parallelism,
             pipeline_parallelism=pipeline_parallelism,
             context_parallelism=context_parallelism,

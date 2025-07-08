@@ -260,10 +260,8 @@ class TestPretrainConfig:
 
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
-        # Note: overlap_grad_reduce and overlap_param_gather are now controlled by CommOverlapConfig
-        # and default to False when data_parallel_size is None or <= 1
-        assert config.ddp.overlap_grad_reduce is False
-        assert config.ddp.overlap_param_gather is False
+        assert config.ddp.overlap_grad_reduce is True  # DP size > 1 with default config
+        assert config.ddp.overlap_param_gather is True  # DP size > 1 with default config
         assert config.ddp.average_in_collective is True
         assert config.ddp.use_distributed_optimizer is True
 
@@ -406,11 +404,13 @@ class TestPretrainConfig:
             tp_comm_overlap=True,
             defer_embedding_wgrad_compute=True,
             wgrad_deferral_limit=50,
+            data_parallel_size=1,  # Add this to avoid None
         )
         config = pretrain_config(comm_overlap_config=custom_overlap)
 
         # Should apply custom config but may be disabled due to TP size
-        assert config.model.tp_comm_overlap is False  # TP size is 1 by default
+        # Since default TP size is 1, it should be disabled
+        assert config.model.tp_comm_overlap is False
 
     def test_pretrain_config_seq_length_parameter(self):
         """Test seq_length parameter."""
