@@ -143,12 +143,8 @@ class _TextMemMapDataset(Dataset):
                 build_index_fn=build_index_fn,
                 index_mapping_dir=index_mapping_dir,
             )
-<<<<<<< HEAD
 
         if is_distributed and not rank_0_prepare_data():
-=======
-        if is_distributed and not lightning_prepare_data():
->>>>>>> 84e98c6 (fix packed sequences)
             torch.distributed.barrier()
 
         if is_distributed and get_rank_safe() == 0:
@@ -172,12 +168,8 @@ class _TextMemMapDataset(Dataset):
                 build_index_fn=build_index_fn,
                 index_mapping_dir=index_mapping_dir,
             )
-<<<<<<< HEAD
 
         if is_distributed and not rank_0_prepare_data():
-=======
-        if is_distributed and not lightning_prepare_data():
->>>>>>> 84e98c6 (fix packed sequences)
             torch.distributed.barrier()
 
         logger.info("Loading data files")
