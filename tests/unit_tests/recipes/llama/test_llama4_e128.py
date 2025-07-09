@@ -140,7 +140,7 @@ class TestPretrainConfig:
 
         # Check DDP settings
         assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.grad_reduce_in_fp32 is True
+        assert config.ddp.grad_reduce_in_fp32 is False  # Expert models use FP32=False by default
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
         assert config.ddp.average_in_collective is True
@@ -395,3 +395,44 @@ class TestPretrainConfig:
             config = pretrain_config(expert_tensor_parallelism=expert_tp, expert_model_parallelism=expert_mp)
             assert config.model.expert_tensor_parallel_size == expert_tp
             assert config.model.expert_model_parallel_size == expert_mp
+
+    def test_pretrain_config_manual_gc(self):
+        """Test manual garbage collection configuration."""
+        config = pretrain_config()
+
+        assert config.train.manual_gc is True
+        assert config.train.manual_gc_interval == 100
+        assert config.train.manual_gc_eval == 100
+
+    def test_pretrain_config_default_comm_overlap(self):
+        """Test default CommOverlapConfig setup."""
+        config = pretrain_config()
+
+        # Default setup should have TP comm overlap enabled for 128-expert model
+        assert config.comm_overlap is not None
+
+    def test_pretrain_config_custom_comm_overlap(self):
+        """Test custom CommOverlapConfig."""
+        from megatron.hub.training.comm_overlap import CommOverlapConfig
+
+        custom_overlap = CommOverlapConfig(
+            tp_comm_overlap=True,
+            defer_embedding_wgrad_compute=True,
+            wgrad_deferral_limit=50,
+        )
+        config = pretrain_config(comm_overlap_config=custom_overlap)
+
+        # Should use the custom config
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+
+    def test_pretrain_config_ddp_configuration(self):
+        """Test distributed data parallel configuration for Llama4 128-Experts."""
+        config = pretrain_config()
+
+        assert config.ddp.check_for_nan_in_grad is True
+        assert config.ddp.grad_reduce_in_fp32 is False  # Expert models use FP32=False by default
+        assert config.ddp.overlap_grad_reduce is True
+        assert config.ddp.overlap_param_gather is True
+        assert config.ddp.average_in_collective is True
+        assert config.ddp.use_distributed_optimizer is True
