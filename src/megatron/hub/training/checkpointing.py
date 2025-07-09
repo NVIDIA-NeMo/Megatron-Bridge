@@ -1377,7 +1377,10 @@ def _load_base_checkpoint(
         if os.path.isfile(tracker_filename):
             train_state = read_train_state(tracker_filename)
             iteration = train_state.step
-            # release = train_state.release
+
+    if cfg.checkpoint.ckpt_step is not None:
+        iteration = cfg.checkpoint.ckpt_step
+        # release = train_state.release
     if non_persistent_iteration != -1:  # there is a non-persistent checkpoint
         if non_persistent_iteration >= iteration:
             return _load_non_persistent_base_checkpoint(
