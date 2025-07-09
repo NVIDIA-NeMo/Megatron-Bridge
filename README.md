@@ -12,7 +12,7 @@
 
 ## Overview
 
-Megatron Hub is an extension of NVIDIA's Megatron Core library that enables pretraining and finetuning HuggingFace models using a Megatron-style training loop, with features like model parallelisms and FP8 precision.
+Megatron Hub is an extension of NVIDIA's Megatron Core library that enables pretraining and finetuning HuggingFace models using a performant and scalable training loop, with features like model parallelisms and FP8 precision.
 
 Megatron Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
@@ -26,7 +26,7 @@ Megatron Hub is designed for researchers and engineers who need to train large-s
 
 ## Supported Models
 
-Megatron Hub provides out-of-the-box configuration recipes for a wide range of models, built on top of base model architectures from Megatron Core:
+Megatron Hub provides out-of-the-box recipes for a wide range of models, built on top of base model architectures from Megatron Core:
 
 ### Large Language Models
 
