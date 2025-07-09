@@ -155,17 +155,19 @@ class TestPretrainConfig:
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
             tensor_parallelism=8,
-            pipeline_parallelism=4,
-            context_parallelism=4,
+            pipeline_parallelism=8,
+            context_parallelism=2,
             sequence_parallelism=False,
             pipeline_parallelism_dtype=torch.float32,
+            virtual_pipeline_parallelism=10,
         )
 
         assert config.model.tensor_model_parallel_size == 8
-        assert config.model.pipeline_model_parallel_size == 4
-        assert config.model.context_parallel_size == 4
+        assert config.model.pipeline_model_parallel_size == 8
+        assert config.model.context_parallel_size == 2
         assert config.model.sequence_parallel is False
         assert config.model.pipeline_dtype == torch.bfloat16
+        assert config.model.virtual_pipeline_model_parallel_size == 10
 
     def test_pretrain_config_with_custom_directory(self):
         """Test pretrain_config with custom directory."""
@@ -254,6 +256,8 @@ class TestPretrainConfig:
 
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
+        # Note: overlap_grad_reduce and overlap_param_gather are now controlled by CommOverlapConfig
+        # and default to False when data_parallel_size is None or <= 1
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
         assert config.ddp.average_in_collective is True

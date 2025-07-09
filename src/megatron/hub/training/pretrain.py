@@ -45,10 +45,7 @@ def pretrain(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    config.validate()
-
     dataset_provider = get_dataset_provider(config.dataset)
-
     setup_output = setup(config, dataset_provider)
     state = setup_output.state
     model = setup_output.model

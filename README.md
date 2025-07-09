@@ -33,8 +33,8 @@ Megatron Hub provides out-of-the-box configuration recipes for a wide range of m
 | Model                  | Style     | Sizes     | Pretrain     | Finetune     |
 |------------------------|-----------|-----------|--------------|--------------|
 | Llama 3                | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | [8b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama3_8b.py), [70b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama3_70b.py)   | ✅ | ❌ |
-| Llama 3.1              | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | 8b, 70b, 405b    | ❌ | ❌ |
-| Llama 3.2              | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | 1b, 3b           | ❌ | ❌ |
+| Llama 3.1              | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | [8b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama31_8b.py), [70b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama31_70b.py), [405b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama31_405b.py)    | ✅ | ❌ |
+| Llama 3.2              | [GPT](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/models/gpt_provider.py)       | [1b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama32_1b.py), [3b](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/src/megatron/hub/recipes/llama/llama32_3b.py)           | ✅ | ❌ |
 
 #### Launching Recipes
 

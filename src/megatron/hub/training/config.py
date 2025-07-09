@@ -27,6 +27,7 @@ from megatron.hub.core.utils.common_utils import get_world_size_safe
 from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.peft.base import PEFT
+from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.tokenizers.config import TokenizerConfig
 from megatron.hub.training.utils.config_utils import _ConfigContainerBase as Container
 
@@ -90,6 +91,19 @@ class DistributedInitConfig:
 
     use_gloo_process_groups: bool = True
     """If set, create Gloo process groups for communications."""
+
+    use_sharp: bool = False
+    """Set the use of SHARP for the collective communications of data-parallel process groups.
+    When `True`, run barrier within each data-parallel process group,
+    which specifies the SHARP application target groups.
+    """
+
+    high_priority_stream_groups: Optional[list[str]] = None
+    """Specify which communicator groups should use high priority streams during creation.
+    Assigning high priority to communication streams ensures that communication kernels
+    are scheduled with higher priority, minimizing the exposed communication when it is
+    overlapped with other computation kernels.
+    """
 
 
 @dataclass
@@ -682,6 +696,26 @@ class ConfigContainer(Container):
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
     peft: Optional[PEFT] = None
+    comm_overlap: Optional[CommOverlapConfig] = None
+
+    def get_data_parallel_size(self, world_size: int) -> int:
+        """Calculate the data parallel size based on the model configuration."""
+        model_cfg = self.model
+        encoder_model_size = (
+            getattr(model_cfg, "encoder_tensor_model_parallel_size", 0)
+            * getattr(model_cfg, "encoder_pipeline_model_parallel_size", 0)
+            * model_cfg.context_parallel_size
+        )
+        decoder_model_size = (
+            model_cfg.tensor_model_parallel_size
+            * model_cfg.pipeline_model_parallel_size
+            * model_cfg.context_parallel_size
+        )
+        total_model_size = encoder_model_size + decoder_model_size
+        assert world_size % total_model_size == 0, f"""
+        world size ({world_size}) is not divisible by total_model_size ({encoder_model_size=} + {decoder_model_size=})
+        """
+        return world_size // total_model_size
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
@@ -699,22 +733,11 @@ class ConfigContainer(Container):
 
         # Distributed
         world_size = get_world_size_safe()
-        model_cfg = self.model
-        encoder_model_size = (
-            getattr(model_cfg, "encoder_tensor_model_parallel_size", 0)
-            * getattr(model_cfg, "encoder_pipeline_model_parallel_size", 0)
-            * model_cfg.context_parallel_size
-        )
-        decoder_model_size = (
-            model_cfg.tensor_model_parallel_size
-            * model_cfg.pipeline_model_parallel_size
-            * model_cfg.context_parallel_size
-        )
-        total_model_size = encoder_model_size + decoder_model_size
-        assert world_size % total_model_size == 0, f"""
-        world size ({world_size}) is not divisible by total_model_size ({encoder_model_size=} + {decoder_model_size=})
-        """
-        self.data_parallel_size = world_size // total_model_size
+        self.data_parallel_size = self.get_data_parallel_size(world_size)
+
+        # Set data_parallel_size on comm_overlap config if present
+        if self.comm_overlap is not None:
+            self.comm_overlap.data_parallel_size = self.data_parallel_size
 
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 

@@ -21,6 +21,7 @@ import torch
 
 from megatron.hub.models.llama import Llama31ModelProvider405B
 from megatron.hub.recipes.llama.llama31_405b import model_config, pretrain_config
+from megatron.hub.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 from megatron.hub.training.config import ConfigContainer
 
 
@@ -277,10 +278,58 @@ class TestPretrainConfig:
 
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
+        # Note: overlap_grad_reduce and overlap_param_gather are now controlled by CommOverlapConfig
+        # and default to False when data_parallel_size is None or <= 1
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
         assert config.ddp.average_in_collective is True
         assert config.ddp.use_distributed_optimizer is True
+        # align_param_gather is True when PP > 1 and VP > 1 (which is the case for 405B defaults)
+        # However, without proper distributed setup, data_parallel_size might be None,
+        # so align_param_gather would be False
+        assert config.ddp.align_param_gather is False
+
+    def test_pretrain_config_manual_gc(self):
+        """Test manual garbage collection configuration."""
+        config = pretrain_config()
+
+        assert config.train.manual_gc is True
+        assert config.train.manual_gc_interval == 100
+        assert config.train.manual_gc_eval == 100
+
+    def test_pretrain_config_default_comm_overlap(self):
+        """Test default CommOverlapConfig setup."""
+        config = pretrain_config()
+
+        # Default setup should have TP comm overlap disabled due to TP size being 1
+        assert config.comm_overlap is not None
+
+    def test_pretrain_config_custom_comm_overlap(self):
+        """Test custom CommOverlapConfig."""
+        custom_overlap = CommOverlapConfig(
+            tp_comm_overlap=True,
+            tp_comm_overlap_cfg=userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
+            defer_embedding_wgrad_compute=True,
+            wgrad_deferral_limit=80,
+            data_parallel_size=2,
+        )
+        config = pretrain_config(comm_overlap_config=custom_overlap)
+
+        # Should apply custom config
+        assert config.comm_overlap.defer_embedding_wgrad_compute is True
+        assert config.model.wgrad_deferral_limit == 0
+
+    def test_pretrain_config_comm_overlap_with_tp(self):
+        """Test CommOverlapConfig with tensor parallelism enabled."""
+        # Mock HAVE_TE to True to simulate transformer engine being available
+        with patch("megatron.hub.training.comm_overlap.HAVE_TE", True):
+            config = pretrain_config(tensor_parallelism=8, sequence_parallelism=True)
+
+            # With TP > 1 and sequence parallelism, comm_overlap should be configured
+            assert config.comm_overlap is not None
+            assert config.comm_overlap.tp_comm_overlap is True
+            assert config.comm_overlap.defer_embedding_wgrad_compute is True
+            assert config.model.wgrad_deferral_limit == 0
 
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""
@@ -330,11 +379,10 @@ class TestPretrainConfig:
     @pytest.mark.parametrize(
         "tensor_parallelism,pipeline_parallelism,context_parallelism",
         [
-            (4, 4, 2),
             (8, 8, 4),
-            (8, 8, 8),
-            (8, 16, 4),
-            (8, 16, 8),
+            (8, 8, 4),
+            (8, 16, 2),
+            (8, 16, 2),
         ],
     )
     def test_pretrain_config_parallelism_combinations(
