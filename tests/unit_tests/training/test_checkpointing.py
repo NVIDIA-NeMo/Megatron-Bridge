@@ -205,6 +205,7 @@ def save_checkpoint_fixtures():
     mock_cfg.checkpoint.save_rng = True
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_ckpt_type = "global"
+    mock_cfg.checkpoint.ckpt_step = None
 
     # Create nested mock attributes
     mock_cfg.optimizer = Mock()
@@ -378,6 +379,7 @@ def load_checkpoint_fixtures():
     mock_cfg.optimizer.use_distributed_optimizer = False
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_save_interval = None
+    mock_cfg.checkpoint.ckpt_step = None
 
     mock_state.cfg = mock_cfg
 
@@ -569,6 +571,7 @@ def mock_config():
     """Fixture for config-based tests."""
     mock_cfg = Mock(spec=ConfigContainer)
     mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
+    mock_cfg.checkpoint.ckpt_step = None
     return mock_cfg
 
 
@@ -710,6 +713,7 @@ class TestLoadBaseCheckpoint:
         mock_cfg = Mock(spec=ConfigContainer)
         mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
         mock_cfg.checkpoint.exit_on_missing_checkpoint = False
+        mock_cfg.checkpoint.ckpt_step = None
         return mock_cfg
 
     @patch("megatron.hub.training.checkpointing._get_non_persistent_iteration")
