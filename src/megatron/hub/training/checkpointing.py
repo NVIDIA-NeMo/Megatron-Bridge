@@ -1379,6 +1379,7 @@ def _load_base_checkpoint(
             iteration = train_state.step
             # release = train_state.release
 
+    # Allow user to specify the loaded iteration.
     if cfg.checkpoint.ckpt_step is not None:
         iteration = cfg.checkpoint.ckpt_step
 
