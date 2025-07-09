@@ -822,3 +822,28 @@ class TestRerunConfigValidation:
                 full_cfg.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestCheckpointConfig:
+    """Tests for CheckpointConfig class."""
+
+    @pytest.mark.parametrize(
+        "load_main_params_from_ckpt, load_optim, expect_assertion_error",
+        [
+            (True, False, False),  # Valid combination
+            (True, True, True),  # Invalid combination - should raise error
+            (False, False, False),  # Valid combination
+            (False, True, False),  # Valid combination
+        ],
+    )
+    def test_load_main_params_from_ckpt_validation_parametrized(
+        self, load_main_params_from_ckpt, load_optim, expect_assertion_error
+    ):
+        """Parametrized test for load_main_params_from_ckpt validation."""
+        if expect_assertion_error:
+            with pytest.raises(AssertionError, match="load_main_params_from_ckpt must be used with load_optim=False"):
+                create_test_checkpoint_config(
+                    load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim
+                )
+        else:
+            create_test_checkpoint_config(load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim)

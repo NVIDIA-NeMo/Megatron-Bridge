@@ -355,6 +355,12 @@ class CheckpointConfig:
     load_optim: bool = True
     """Do not load optimizer when loading checkpoint."""
 
+    load_main_params_from_ckpt: bool = False
+    """Load main parameters from checkpoint. When loading a model from a checkpoint without loading
+    the optimizer, the model parameters are updated but for fp16 optimizer with main parameters,
+    the main parameters need to also be updated.
+    """
+
     load_rng: bool = True
     """Do not load rng state when loading checkpoint."""
 
@@ -445,6 +451,10 @@ class CheckpointConfig:
 
     replication_factor: int = 2
     """Number of machines storing the replica of a given rank's data."""
+
+    def __post_init__(self) -> None:
+        if self.load_main_params_from_ckpt:
+            assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
 
 
 @dataclass(kw_only=True)

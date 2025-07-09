@@ -41,7 +41,6 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
 )
-from megatron.core.fp8_utils import is_float8tensor
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 
@@ -1016,9 +1015,6 @@ def _load_checkpoint_from_path(
             rerun_state=gen_sd_rerun_state,
         )
 
-    # When "--fp8-param-gather" is disabled, this function doesn't modify anything.
-    fix_fp8_params_lose_precision_when_loading_dist_ckpt(load_kwargs["sharded_state_dict"])
-
     # For PEFT, check if resuming from a checkpoint saved during training, which contains only the PEFT adapter states
     # This situation occurs when:
     # 1. The PEFT config is set
@@ -1114,8 +1110,10 @@ def _load_checkpoint_from_path(
             raise e
     else:
         if (cfg.model.fp16 or cfg.model.bf16) and optimizer is not None:
-            optimizer.reload_model_params()
-
+            if cfg.checkpoint.load_main_params_from_ckpt:
+                optimizer.reload_model_params(state_dict=state_dict)
+            else:
+                optimizer.reload_model_params()
     # rerun state
     try:
         if "rerun_state_machine" in state_dict:
@@ -1248,27 +1246,6 @@ def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str,
         )
     }
     return checkpointing_context
-
-
-def fix_fp8_params_lose_precision_when_loading_dist_ckpt(state_dict: dict[str, Any]) -> None:
-    """Workaround for FP8 parameters losing precision during distributed checkpoint loading.
-
-    When loading a distributed checkpoint, FP8 tensors within the model's state_dict
-    can sometimes lose precision. This function iterates through the model state
-    dictionary entries (keys starting with "model") and converts any ShardedTensors
-    containing FP8 data back to a higher precision format (via `.from_float8()`)
-    and moves them to the CPU before they are loaded into the model.
-
-    Args:
-        state_dict: The state dictionary loaded from the checkpoint, potentially
-                    containing FP8 tensors within model states. This dictionary
-                    is modified in-place.
-    """
-    for key in state_dict.keys():
-        if key.startswith("model"):
-            for _, sharded_tensor in state_dict[key].items():
-                if is_float8tensor(sharded_tensor.data):
-                    sharded_tensor.data = sharded_tensor.data.from_float8().cpu()
 
 
 def apply_peft_adapter_filter_to_state_dict(state_dict: dict[str, Any], peft_config: PEFT) -> dict[str, Any]:
