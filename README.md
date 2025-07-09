@@ -21,7 +21,7 @@ Megatron Hub is designed for researchers and engineers who need to train large-s
 - **Model Conversion**: Seamless bidirectional conversion between Hugging Face and Megatron formats for interoperability
 - **Training Infrastructure**: Configurable and scalable training loop that handles data loading, distributed training, checkpointing, and logging
 - **Parameter-Efficient Finetuning**: PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
-- **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama3, with optimized hyperparameters and distributed training configuration
+- **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration
 - **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
 
 ## Supported Models
@@ -49,9 +49,9 @@ Optionally, Megatron Hub also supports launching with [NeMo-Run](https://github.
 - [pretrain_llama3_8b_nemo_run_partial.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_partial.py)
 
 
-These examples can also be run as is with the Llama3 8b recipe (with NeMo-Run installed).
+These examples can also be run as is with the Llama 3 8b recipe (with NeMo-Run installed).
 
-Launch Llama3 8b Pretraining with NeMo-Run's `run.Script`:
+Launch Llama 3 8b Pretraining with NeMo-Run's `run.Script`:
 ```sh
 uv run python pretrain_llama3_8b_nemo_run_script.py \
     --nproc-per-node=2 \
@@ -59,7 +59,7 @@ uv run python pretrain_llama3_8b_nemo_run_script.py \
     train.train_iters=10 # this script passes Hydra-style overrides to the target script
 ```
 
-Launch Llama3 8b Pretraining with NeMo-Run's `run.Partial`
+Launch Llama 3 8b Pretraining with NeMo-Run's `run.Partial`
 ```sh
 uv run python pretrain_llama3_8b_nemo_run_partial.py \
     --nproc-per-node=2
