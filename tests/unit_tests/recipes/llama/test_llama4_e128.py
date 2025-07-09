@@ -140,7 +140,7 @@ class TestPretrainConfig:
 
         # Check DDP settings
         assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.grad_reduce_in_fp32 is False  # Expert models use FP32=False by default
+        assert config.ddp.grad_reduce_in_fp32 is True
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
         assert config.ddp.average_in_collective is True
@@ -431,7 +431,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.grad_reduce_in_fp32 is False  # Expert models use FP32=False by default
+        assert config.ddp.grad_reduce_in_fp32 is True
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
         assert config.ddp.average_in_collective is True
