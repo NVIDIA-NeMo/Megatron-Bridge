@@ -1381,6 +1381,7 @@ def _load_base_checkpoint(
 
     if cfg.checkpoint.ckpt_step is not None:
         iteration = cfg.checkpoint.ckpt_step
+
     if non_persistent_iteration != -1:  # there is a non-persistent checkpoint
         if non_persistent_iteration >= iteration:
             return _load_non_persistent_base_checkpoint(
