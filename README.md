@@ -19,7 +19,7 @@ Megatron Hub is designed for researchers and engineers who need to train large-s
 ## Key Features
 
 - **Model Conversion**: Seamless bidirectional conversion between Hugging Face and Megatron formats for interoperability
-- **Training Infrastructure**: Configurable and scalable training loop that handles data loading, distributed training, checkpointing, and logging
+- **Training Infrastructure**: Configurable training loop with near linear performance scalability to thousands of nodes that handles data loading, distributed training, checkpointing, and logging
 - **Parameter-Efficient Finetuning**: PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
 - **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration
 - **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
