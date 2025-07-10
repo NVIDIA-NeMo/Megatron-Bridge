@@ -21,6 +21,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.llama import Llama32ModelProvider1B
+from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -33,6 +34,9 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.hub.training.gpt_step import forward_step
+from megatron.hub.training.pretrain import pretrain
+from tests.functional_tests.utils import broadcast_path, initialize_distributed
 
 
 class TestPretrain:
@@ -66,6 +70,17 @@ class TestPretrain:
         """
         Test end to end training with checkpoint functionality.
         """
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+
+        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
+        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
+
+        # Create subdirectories (all ranks can do this safely)
+        if get_rank_safe() == 0:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            os.makedirs(tensorboard_dir, exist_ok=True)
+
         checkpoint_dir = str(tmp_path / "checkpoints")
         tensorboard_dir = str(tmp_path / "tensorboard")
 
@@ -174,9 +189,16 @@ class TestPretrain:
         """
         Test end to end training with virtual pipeline parallelism.
         """
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
 
-        checkpoint_dir = str(tmp_path / "checkpoints")
-        tensorboard_dir = str(tmp_path / "tensorboard")
+        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
+        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
+
+        # Create subdirectories (all ranks can do this safely)
+        if get_rank_safe() == 0:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            os.makedirs(tensorboard_dir, exist_ok=True)
 
         try:
             global_batch_size = 8

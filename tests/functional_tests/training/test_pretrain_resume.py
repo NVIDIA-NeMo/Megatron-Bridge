@@ -14,6 +14,7 @@
 
 import os
 import shutil
+import time
 from dataclasses import dataclass
 
 import pytest
@@ -21,6 +22,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
+from megatron.hub.core.utils.common_utils import get_rank_safe
 from megatron.hub.models.llama import Llama3ModelProvider
 from megatron.hub.training.config import (
     CheckpointConfig,
@@ -34,6 +36,7 @@ from megatron.hub.training.config import (
 )
 from megatron.hub.training.gpt_step import forward_step
 from megatron.hub.training.pretrain import pretrain
+from tests.functional_tests.utils import broadcast_path, initialize_distributed
 
 
 @dataclass
@@ -55,14 +58,14 @@ class TestPretrainResume:
         """Teardown method called after each test method."""
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
-            if torch.distributed.get_rank() == 0:
+            if get_rank_safe() == 0:
                 if os.path.exists(tmp_path):
                     shutil.rmtree(tmp_path)
             torch.distributed.barrier()
 
     def _verify_checkpoint_files(self, checkpoint_dir, total_iters):
         """Verify that checkpoint files were created correctly."""
-        if torch.distributed.get_rank() == 0:
+        if get_rank_safe() == 0:
             latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
             assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
 
@@ -77,8 +80,17 @@ class TestPretrainResume:
         """
         Test end to end training with checkpoint saving and resuming functionality.
         """
-        checkpoint_dir = str(tmp_path / "checkpoints")
-        tensorboard_dir = str(tmp_path / "tensorboard")
+
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+
+        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
+        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
+
+        # Create subdirectories (all ranks can do this safely)
+        if get_rank_safe() == 0:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            os.makedirs(tensorboard_dir, exist_ok=True)
 
         try:
             global_batch_size = 8
@@ -164,6 +176,11 @@ class TestPretrainResume:
             # Verify checkpoint files from first run
             self._verify_checkpoint_files(checkpoint_dir, checkpoint_iters)
 
+            torch.distributed.barrier()
+
+            print(f"[RANK {get_rank_safe()}]: going to load checkpoint")
+            time.sleep(1)
+
             # Second training run - resume from checkpoint and train for remaining 10 iterations
             cfg_second = ConfigContainer(
                 model=Llama3ModelProvider145M(),
@@ -243,6 +260,4 @@ class TestPretrainResume:
             self._verify_checkpoint_files(checkpoint_dir, total_iters)
 
         finally:
-            # pytest's tmp_path fixture doesn't clean up immediately.
-            # Clean up manually.
-            self.clear_directories(tmp_path)
+            self.clear_directories(shared_base_dir)
