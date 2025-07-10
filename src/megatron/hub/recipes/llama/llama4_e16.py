@@ -21,6 +21,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.hub.models.llama import Llama4Experts16ModelProvider
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -100,6 +101,7 @@ def pretrain_config(
     lr_warmup_iters: int = 2000,
     # Precision recipe
     precision_config: str | MixedPrecisionConfig = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama4 16-Experts (Scout) model.
@@ -129,6 +131,7 @@ def pretrain_config(
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -163,6 +166,8 @@ def pretrain_config(
         min_lr=min_lr,
     )
 
+    comm_overlap = comm_overlap_config if comm_overlap_config is not None else CommOverlapConfig(tp_comm_overlap=True)
+
     # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
@@ -172,12 +177,14 @@ def pretrain_config(
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             average_in_collective=True,
@@ -211,6 +218,7 @@ def pretrain_config(
             async_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        comm_overlap=comm_overlap,
     )
 
     # Apply precision configuration
