@@ -32,7 +32,7 @@ For quick exploration of Megatron-Hub, we recommend installing our pip package:
 pip install megatron-hub
 ```
 
-### Pip install with TransformerEngine support
+### 📦 Pip install with TransformerEngine support
 
 For TransformerEngine support, the following system requirements need to be fulfilled:
 
