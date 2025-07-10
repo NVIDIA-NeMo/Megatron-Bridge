@@ -16,13 +16,41 @@ Megatron Hub is an extension of NVIDIA's Megatron Core library that enables pret
 
 Megatron Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
-## Key Features
+## 🚀 Key Features
 
 - **Model Conversion**: Seamless bidirectional conversion between Hugging Face and Megatron formats for interoperability
 - **Training Infrastructure**: Configurable training loop with near linear performance scalability to thousands of nodes that handles data loading, distributed training, checkpointing, and logging
 - **Parameter-Efficient Finetuning**: PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
 - **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration
 - **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
+
+## 🔧 Installation
+
+### Pip Installation
+
+To install with pip, use the following command:
+
+```bash
+pip install megatron-hub
+```
+
+For TransformerEngine support, make sure to follow their [system requirements](https://github.com/NVIDIA/TransformerEngine/?tab=readme-ov-file#installation) and run the following command:
+
+```bash
+pip install torch setuptools pybind11 wheel_stub  # Required for TE
+pip install --no-build-isolation megatron-hub[te]
+```
+
+### 🐳 NeMo-FW container
+
+Best experience, highest performance and full feature support is guaranteed by the [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags). Please fetch the most recent $TAG and run the following command to start a container:
+
+```bash
+docker run --rm -it -w /workdir -v $(pwd):/workdir \
+  --entrypoint bash \
+  --gpus all \
+  nvcr.io/nvidia/nemo:${TAG}
+```
 
 ## Supported Models
 
@@ -72,54 +100,6 @@ uv run python pretrain_llama3_8b_nemo_run_partial.py \
 ## Performance Benchmarks
 
 Coming soon ...
-
-## Installation
-
-### Pip Installation
-
-To install with pip, use the following command:
-
-```bash
-pip install megatron-hub
-```
-
-For TransformerEngine support, make sure to follow their [system requirements](https://github.com/NVIDIA/TransformerEngine/?tab=readme-ov-file#installation) and run the following command:
-
-```bash
-pip install torch setuptools pybind11 wheel_stub  # Required for TE
-pip install --no-build-isolation megatron-hub[te]
-```
-
-### uv Installation
-
-To install Megatron Hub to an active virtual environment or project environment, use the command:
-
-```
-uv pip install git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
-```
-
-To add Megatron Hub as a dependency for your project, use the following command:
-
-```
-uv add git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
-```
-
-If you are a contributor, you can install this project for development with the following commands:
-
-```
-git clone https://github.com/NVIDIA-NeMo/Megatron-Hub.git
-cd Megatron-Hub
-uv sync
-```
-
-To install additional dependency groups use one of the following commands instead:
-
-```
-uv sync --group docs # for building the documentation
-uv sync --group dev --group test # for running linters and tests
-```
-
-If you do not have `uv` installed, please refer to the installation [docs](https://docs.astral.sh/uv/getting-started/installation/).
 
 ## Project Structure
 
