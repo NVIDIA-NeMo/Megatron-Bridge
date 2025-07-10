@@ -49,8 +49,8 @@ class MixedPrecisionConfig:
     fp8_wgrad: bool = True
     fp8_dot_product_attention: bool = False
     fp8_multi_head_attention: bool = False
-    fp8_param: bool = True
-    fp8_param_gather: bool = True
+    fp8_param: Optional[bool] = None
+    fp8_param_gather: bool = False
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
     initial_loss_scale: Optional[float] = None
@@ -59,6 +59,14 @@ class MixedPrecisionConfig:
     hysteresis: Optional[float] = None
     num_layers_at_start_in_bf16: int = 0
     num_layers_at_end_in_bf16: int = 0
+
+    def __post_init__(self):
+        if self.fp8_param is None:
+            self.fp8_param = self.fp8_param_gather
+        elif self.fp8_param_gather != self.fp8_param:
+            raise ValueError(
+                "Getting conflicting values for fp8_param and fp8_param_gather. Please only set fp8_param_gather."
+            )
 
     def setup(
         self,
