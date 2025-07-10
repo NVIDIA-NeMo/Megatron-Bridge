@@ -88,7 +88,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install nemo-export-deploy${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
+      - name: Install megatron-hub${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
         shell: bash -x -e -u -o pipefail {0}
         run: |
           apt-get update
@@ -119,16 +119,10 @@ jobs:
           ref: v0.39.0
           path: FW-CI-templates
 
-      - name: Check imports for nemo_deploy
+      - name: Check imports for megatron-hub
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
-          package-name: nemo_deploy
-          python-binary: ./venv/bin/python
-
-      - name: Check imports for nemo_export
-        uses: ./FW-CI-templates/.github/actions/check-imports
-        with:
-          package-name: nemo_export
+          package-name: megatron.hub
           python-binary: ./venv/bin/python
 
   uv-test-cuda:
