@@ -131,7 +131,7 @@ jobs:
           package-name: nemo_export
           python-binary: ./venv/bin/python
 
-  ngc-cuda-test:
+  uv-test-cuda:
     runs-on: linux-amd64-cpu16
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC CUDA
     container:
@@ -206,7 +206,7 @@ jobs:
           package-name: megatron.hub
           python-binary: ./venv/bin/python
 
-  uv-test:
+  uv-test-no-cuda:
     runs-on: ${{ matrix.arch }}
     name: UV - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
@@ -253,7 +253,7 @@ jobs:
           python-binary: ./venv/bin/python
 
   install-test-summary:
-    needs: [pip-test, uv-test, ngc-cuda-test]
+    needs: [pip-test-no-cuda, pip-test-cuda, uv-test-no-cuda, uv-test-cuda]
     runs-on: ubuntu-latest
     name: Install test summary
     steps:
