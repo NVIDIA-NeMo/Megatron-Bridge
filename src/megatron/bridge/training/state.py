@@ -279,6 +279,7 @@ class GlobalState:
         if (
             not self._nvrx_straggler_created
             and self._nvrx_straggler_manager is None
+            and self.cfg is not None
             and self.cfg.nvrx_straggler is not None
         ):
             self._nvrx_straggler_manager = NVRxStragglerDetectionManager(self.cfg.nvrx_straggler)
@@ -288,7 +289,12 @@ class GlobalState:
     @property
     def energy_monitor(self) -> Optional[EnergyMonitor]:
         """The EnergyMonitor instance for tracking energy consumption."""
-        if not self._energy_monitor_created and self._energy_monitor is None and self.cfg.logger.log_energy:
+        if (
+            not self._energy_monitor_created
+            and self._energy_monitor is None
+            and self.cfg is not None
+            and self.cfg.logger.log_energy
+        ):
             self._energy_monitor = EnergyMonitor()
             self._energy_monitor_created = True
         return self._energy_monitor
