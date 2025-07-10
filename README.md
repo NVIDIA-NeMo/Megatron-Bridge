@@ -26,15 +26,22 @@ Megatron Hub is designed for researchers and engineers who need to train large-s
 
 ## 🔧 Installation
 
-### 📦 Pip Installation
-
-To install with pip, use the following command:
+For quick exploration of Megatron-Hub, we recommend installing our pip package:
 
 ```bash
 pip install megatron-hub
 ```
 
-For TransformerEngine support, make sure to follow their [system requirements](https://github.com/NVIDIA/TransformerEngine/?tab=readme-ov-file#installation) and run the following command:
+### Pip install with TransformerEngine support
+
+For TransformerEngine support, the following system requirements need to be fulfilled:
+
+- Python 3.12
+- PyTorch 2.7
+- CUDA 12.8
+- Ubuntu 24.04
+
+Use the following to install Megatron-Hub with TransformerEngine:
 
 ```bash
 pip install torch setuptools pybind11 wheel_stub  # Required for TE
@@ -51,6 +58,10 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
   --gpus all \
   nvcr.io/nvidia/nemo:${TAG}
 ```
+
+### uv
+
+For installing Megatron-Hub with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/CONTRIBUTING.md)
 
 ## Supported Models
 
