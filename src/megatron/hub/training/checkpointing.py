@@ -497,12 +497,13 @@ def save_checkpoint(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     # Collect cfg, model, RNG.
-    optim_sd_kwargs = {}
+    sharded_sd_metadata = _build_sharded_state_dict_metadata(
+        cfg.optimizer.use_distributed_optimizer, ckpt_cfg.fully_parallel_save
+    )
     if cfg.optimizer.use_distributed_optimizer:
-        optim_sd_kwargs["sharding_type"] = (
-            "fully_sharded_model_space" if ckpt_cfg.fully_parallel_save else "dp_zero_gather_scatter"
+        print_rank_0(
+            f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
         )
-        print_rank_0(f"Storing distributed optimizer sharded state of type {optim_sd_kwargs['sharding_type']}")
 
     state_dict = generate_state_dict(
         cfg,
@@ -511,7 +512,8 @@ def save_checkpoint(
         opt_param_scheduler,
         rng_state,
         iteration=train_state.step,
-        optim_sd_kwargs=optim_sd_kwargs,
+        optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
+        model_sd_kwargs=dict(metadata=sharded_sd_metadata),
         rerun_state=rerun_state,
     )
 
@@ -560,6 +562,7 @@ def save_checkpoint(
             async_sharded_save=ckpt_cfg.async_save,
             validate_access_integrity=validate_sharding_integrity,
             preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
+            content_metadata=sharded_sd_metadata,
         )
         # [ModelOpt]: save sharded modelopt_state
         if has_nvidia_modelopt:
@@ -768,6 +771,7 @@ def generate_state_dict(
     rng_state: ShardedObject,
     iteration: Optional[int] = None,
     optim_sd_kwargs: Optional[dict[str, Any]] = None,
+    model_sd_kwargs: Optional[dict[str, Any]] = None,
     rerun_state: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Generate the state dictionary to be saved in a checkpoint.
@@ -780,6 +784,7 @@ def generate_state_dict(
         rng_state: Collected RNG states as a ShardedObject.
         iteration: The current training iteration.
         optim_sd_kwargs: Additional keyword arguments for optimizer state dict generation.
+        model_sd_kwargs: Metadata for model state dict generation.
         rerun_state: State dictionary from the rerun state machine.
 
     Returns:
@@ -792,10 +797,10 @@ def generate_state_dict(
         state_dict["iteration"] = iteration
 
     if len(model) == 1:
-        state_dict["model"] = model[0].sharded_state_dict()
+        state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
     else:
         for i in range(len(model)):
-            state_dict["model%d" % i] = model[i].sharded_state_dict()
+            state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
 
     # Optimizer stuff.
     if cfg.checkpoint.save_optim:
@@ -926,7 +931,6 @@ def _load_checkpoint_from_path(
     mismatch_msg = "(TP, PP, encoder TP, encoder PP) mismatch after resume ({} vs {} from checkpoint)".format(
         run_tp_pp, ckpt_tp_pp
     )
-
     # Determine if RNG state will be loaded
     if (
         ckpt_tp_pp == run_tp_pp
@@ -942,7 +946,8 @@ def _load_checkpoint_from_path(
         if ckpt_tp_pp != run_tp_pp:
             print_rank_0("{}: RNG state will be ignored".format(mismatch_msg))
 
-    optim_sd_kwargs = dict(is_loading=True)
+    sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
+    print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
     # Determine if optimizer state will be loaded
     if (
         not release
@@ -954,31 +959,33 @@ def _load_checkpoint_from_path(
         gen_sd_opt_param_scheduler = opt_param_scheduler
 
         if cfg.optimizer.use_distributed_optimizer:
-            optim_sd_kwargs["sharding_type"] = (
-                "fully_sharded_model_space"
-                if run_config["checkpoint"]["fully_parallel_save"]
-                else "dp_zero_gather_scatter"
-            )
-            # This is for backwards-compatibility.
-            # Can be removed once 'fully_sharded_bucket_space' loading is removed
-            for maybe_dist_opt_optim_state in (state_dict["optimizer"], *state_dict["optimizer"].values()):
-                if "param_state_sharding_type" in maybe_dist_opt_optim_state:
-                    if maybe_dist_opt_optim_state["param_state_sharding_type"] == "fully_sharded_bucket_space":
-                        print_rank_0(
-                            "Detected deprecated `fully_sharded_bucket_space` DistributedOptimizer checkpoint format"
-                        )
-                        optim_sd_kwargs["sharding_type"] = maybe_dist_opt_optim_state["param_state_sharding_type"]
-                    break
-
-            if ckpt_tp_pp != run_tp_pp and optim_sd_kwargs["sharding_type"] != "fully_sharded_model_space":
+            if sharded_sd_metadata is None:
+                # Backward-compatibility with old checkpoints which don't have content versioning
+                # Can be removed after ending support for optimizer checkpoints with MCore < v0.13
+                # (for MCore v0.13+ checkpoints `sharded_sd_metadata is not None`)
+                sharded_sd_metadata = {
+                    "distrib_optim_sharding_type": (
+                        "fully_sharded_model_space"
+                        if run_config["checkpoint"]["fully_parallel_save"]
+                        else "dp_zero_gather_scatter"
+                    ),
+                }
+            if (
+                ckpt_tp_pp != run_tp_pp
+                and sharded_sd_metadata["distrib_optim_sharding_type"] != "fully_sharded_model_space"
+            ):
                 raise RuntimeError(
-                    f"{mismatch_msg}: not supported for DistributedOptimizer "
-                    f"with sharding type {optim_sd_kwargs['sharding_type']}. "
-                    f"Please use `ckpt-fully-parallel-save` flag during checkpoint saving."
+                    f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
+                    f" {sharded_sd_metadata['distrib_optim_sharding_type']}."
+                    f" Please use `checkpoint_config.fully_parallel_save=True` for checkpoint saving."
                 )
+
     else:
         gen_sd_optim = None
         gen_sd_opt_param_scheduler = None
+
+    optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
+    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
     # Determine if rerun state will be loaded
     if ckpt_tp_pp == run_tp_pp and not release and not cfg.checkpoint.finetune and "rerun_state_machine" in state_dict:
@@ -1013,6 +1020,7 @@ def _load_checkpoint_from_path(
             gen_sd_opt_param_scheduler,
             gen_sd_rng_state,
             optim_sd_kwargs=optim_sd_kwargs,
+            model_sd_kwargs=model_sd_kwargs,
             rerun_state=gen_sd_rerun_state,
         )
 
@@ -1532,3 +1540,27 @@ def _load_base_checkpoint(
         raise RuntimeError(
             "Loading non-distributed checkpoints is no longer supported. Please use distributed checkpointing formats."
         )
+
+
+def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, ckpt_fully_parallel_save: bool) -> dict:
+    """Builds metadata used for sharded_state_dict versioning.
+
+    The whole content metadata is passed to ``shared_state_dict`` model and optimizer methods
+    and therefore affects only the logic behind sharded_state_dict creation.
+    The content metadata should be minimalistic, ideally flat (or with a single nesting level)
+    and with semantically meaningful flag names (e.g. `distrib_optim_sharding_type`).
+    In particular, a simple integer (or SemVer) versioning flag (e.g. `metadata['version'] = 3.4`)
+    is discouraged, because the metadata serves for all models and optimizers and it's practically
+    impossible to enforce a linearly increasing versioning for this whole space.
+
+    Args:
+        use_distributed_optimizer: Whether to use distributed optimizer.
+        ckpt_fully_parallel_save: Whether to use fully parallel save.
+    """
+    metadata = {}
+    if use_distributed_optimizer:
+        if ckpt_fully_parallel_save:
+            metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
+        else:
+            metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
+    return metadata
