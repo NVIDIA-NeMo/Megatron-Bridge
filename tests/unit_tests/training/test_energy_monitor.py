@@ -30,14 +30,9 @@ class TestEnergyMonitorIntegration:
         mock_train.exit_signal = None
 
         mock_model = Mock()
-        mock_model.num_moe_experts = None
-
         mock_optimizer = Mock()
-
         mock_scheduler = Mock()
-
         mock_dataset = Mock()
-
         mock_logger = Mock()
         mock_logger.log_energy = False
         mock_logger.log_interval = 1
@@ -51,7 +46,6 @@ class TestEnergyMonitorIntegration:
         mock_logger.tensorboard_queue_size = 1000
 
         mock_tokenizer = Mock()
-
         mock_checkpoint = Mock()
 
         # Create ConfigContainer with all required fields
