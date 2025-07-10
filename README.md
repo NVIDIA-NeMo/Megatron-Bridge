@@ -26,7 +26,7 @@ Megatron Hub is designed for researchers and engineers who need to train large-s
 
 ## 🔧 Installation
 
-### Pip Installation
+### 📦 Pip Installation
 
 To install with pip, use the following command:
 
