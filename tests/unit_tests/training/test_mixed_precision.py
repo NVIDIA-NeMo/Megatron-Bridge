@@ -85,6 +85,34 @@ class TestMegatronMixedPrecisionConfig:
         assert config.fp8_param is False
         assert config.fp8_param_gather is False
 
+    def test_fp8_param_synchronization(self):
+        """Test that fp8_param and fp8_param_gather stay synchronized."""
+        # Test initial synchronization
+        config = MixedPrecisionConfig(fp8_param_gather=True)
+        assert config.fp8_param is True
+        assert config.fp8_param_gather is True
+
+        # Test changing fp8_param_gather updates fp8_param
+        config.fp8_param_gather = False
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
+
+        # Test changing fp8_param updates fp8_param_gather
+        config.fp8_param = True
+        assert config.fp8_param is True
+        assert config.fp8_param_gather is True
+
+        # Test with explicit values during initialization
+        config2 = MixedPrecisionConfig(fp8_param=True, fp8_param_gather=False)
+        # After initialization, they should be synchronized (fp8_param_gather wins as it's set last)
+        assert config2.fp8_param is False
+        assert config2.fp8_param_gather is False
+
+        # Test None initialization
+        config3 = MixedPrecisionConfig(fp8_param=None, fp8_param_gather=True)
+        assert config3.fp8_param is True
+        assert config3.fp8_param_gather is True
+
     def test_fp8_param_matching_fp8_param_gather(self):
         """Test that matching values for fp8_param and fp8_param_gather work correctly."""
         # Both True
@@ -96,20 +124,6 @@ class TestMegatronMixedPrecisionConfig:
         config = MixedPrecisionConfig(fp8_param=False, fp8_param_gather=False)
         assert config.fp8_param is False
         assert config.fp8_param_gather is False
-
-    def test_fp8_param_conflicting_with_fp8_param_gather(self):
-        """Test that conflicting values for fp8_param and fp8_param_gather raise ValueError."""
-        # fp8_param=True, fp8_param_gather=False
-        with pytest.raises(ValueError) as exc_info:
-            MixedPrecisionConfig(fp8_param=True, fp8_param_gather=False)
-        assert "Getting conflicting values for fp8_param and fp8_param_gather" in str(exc_info.value)
-        assert "Please only set fp8_param_gather" in str(exc_info.value)
-
-        # fp8_param=False, fp8_param_gather=True
-        with pytest.raises(ValueError) as exc_info:
-            MixedPrecisionConfig(fp8_param=False, fp8_param_gather=True)
-        assert "Getting conflicting values for fp8_param and fp8_param_gather" in str(exc_info.value)
-        assert "Please only set fp8_param_gather" in str(exc_info.value)
 
     @patch("logging.debug")
     def test_setup_with_gpt_config(self, mock_log):
@@ -459,8 +473,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8_amax_history_len == 1024
         assert config.fp8_amax_compute_algo == "max"
         assert config.fp8_param_gather is True
-        # Note: fp8_param remains False because fp8_param_gather is set after __post_init__
-        assert config.fp8_param is False
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_fp16_with_fp8_mixed(self):
         config = fp16_with_fp8_mixed()
@@ -478,8 +492,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8_amax_history_len == 1024
         assert config.fp8_amax_compute_algo == "max"
         assert config.fp8_param_gather is True
-        # Note: fp8_param remains False because fp8_param_gather is set after __post_init__
-        assert config.fp8_param is False
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_bf16_with_mxfp8_mixed(self):
         config = bf16_with_mxfp8_mixed()
@@ -523,8 +537,8 @@ class TestMixedPrecisionRecipes:
         assert config.num_layers_at_start_in_bf16 == 1
         assert config.num_layers_at_end_in_bf16 == 1
         assert config.fp8_param_gather is True
-        # Note: fp8_param remains False because fp8_param_gather is set after __post_init__
-        assert config.fp8_param is False
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_nemotron_h_bf16_with_fp8_current_scaling_mixed(self):
         config = nemotron_h_bf16_with_fp8_current_scaling_mixed()
@@ -540,8 +554,8 @@ class TestMixedPrecisionRecipes:
         assert config.num_layers_at_start_in_bf16 == 2
         assert config.num_layers_at_end_in_bf16 == 2
         assert config.fp8_param_gather is True
-        # Note: fp8_param remains False because fp8_param_gather is set after __post_init__
-        assert config.fp8_param is False
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_fp16_with_fp8_current_scaling_mixed(self):
         config = fp16_with_fp8_current_scaling_mixed()
@@ -557,8 +571,8 @@ class TestMixedPrecisionRecipes:
         assert config.num_layers_at_start_in_bf16 == 1
         assert config.num_layers_at_end_in_bf16 == 1
         assert config.fp8_param_gather is True
-        # Note: fp8_param remains False because fp8_param_gather is set after __post_init__
-        assert config.fp8_param is False
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_bf16_with_fp8_subchannel_scaling_mixed(self):
         config = bf16_with_fp8_subchannel_scaling_mixed()
