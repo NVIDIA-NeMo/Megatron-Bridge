@@ -555,6 +555,9 @@ class LoggerConfig:
     set_level_for_all_loggers: bool = False
     """Set the logging level for all loggers. If False, only level for NeMo loggers will be set."""
 
+    log_energy: bool = False
+    """If set, log energy consumption (in Joules)."""
+
 
 @dataclass(kw_only=True)
 class ProfilingConfig:

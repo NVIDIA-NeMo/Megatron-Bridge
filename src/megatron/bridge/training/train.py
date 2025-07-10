@@ -97,6 +97,7 @@ def train(
     train_config = config.train
     timers = global_state.timers
     straggler_timer = global_state.straggler_timer
+    energy_monitor = global_state.energy_monitor
 
     # Check num args to forward_step_func
     num_fw_args = check_forward_step_func_num_args(forward_step_func)
@@ -116,6 +117,10 @@ def train(
 
     num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
     num_floating_point_operations_since_last_log_event = 0.0
+
+    if energy_monitor is not None:
+        energy_monitor.setup()
+        energy_monitor.resume()
 
     timers("interval-time", log_level=0).start(barrier=True)
     report_memory_flag = True
@@ -341,6 +346,8 @@ def train(
             and train_config.eval_interval
             and global_state.train_state.step % train_config.eval_interval == 0
         ):
+            if energy_monitor is not None:
+                energy_monitor.pause()
             timers("interval-time").stop()
             if should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model)
@@ -373,6 +380,8 @@ def train(
                 enable_forward_pre_hook(model)
                 pre_hook_enabled = True
             timers("interval-time", log_level=0).start(barrier=True)
+            if energy_monitor is not None:
+                energy_monitor.resume()
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
@@ -416,6 +425,12 @@ def train(
 
     # Shutdown NVRx straggler detection if enabled
     safe_shutdown_nvrx_straggler_manager(global_state.nvrx_straggler_manager)
+
+    if energy_monitor is not None:
+        energy_monitor.lap()
+        total_energy = energy_monitor.get_total()
+        print_rank_0(f"Total training energy (GPU): {total_energy / 1e6} MJ")
+        energy_monitor.shutdown()
 
     # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
     if should_exit:
@@ -756,9 +771,15 @@ def save_checkpoint_and_time(
         train_data_iterator: Optional training data iterator to save its state.
     """
     timers = state.timers
+    energy_monitor = state.energy_monitor
 
     # Stop timer to get accurate train interval time and exclude checkpointing duration
     timers("interval-time").stop()
+
+    # Pause energy monitor
+    if energy_monitor is not None:
+        energy_monitor.pause()
+
     # Extra barrier is added to make sure all ranks report the max time.
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
@@ -784,6 +805,8 @@ def save_checkpoint_and_time(
         compute_throughputs_and_append_to_progress_log(state, num_floating_point_operations_so_far)
 
     # Recover timing
+    if energy_monitor is not None:
+        energy_monitor.resume()
     timers("interval-time", log_level=0).start(barrier=True)
 
 

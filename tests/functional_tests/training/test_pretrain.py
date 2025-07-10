@@ -136,6 +136,7 @@ class TestPretrain:
                 logger=LoggerConfig(
                     log_interval=5,
                     tensorboard_dir=tensorboard_dir,
+                    log_energy=True,
                 ),
                 tokenizer=TokenizerConfig(
                     tokenizer_type="NullTokenizer",
