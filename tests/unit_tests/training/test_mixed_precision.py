@@ -447,6 +447,9 @@ class TestMixedPrecisionRecipes:
         assert config.pipeline_dtype == torch.bfloat16
         assert config.autocast_enabled is False
         assert config.grad_reduce_in_fp32 is True
+        # Base BF16 recipe should have fp8_param as False
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
 
     def test_fp16_mixed(self):
         config = fp16_mixed()
@@ -457,6 +460,9 @@ class TestMixedPrecisionRecipes:
         assert config.pipeline_dtype == torch.half
         assert config.autocast_enabled is False
         assert config.grad_reduce_in_fp32 is False
+        # Base FP16 recipe should have fp8_param as False
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
 
     def test_bf16_with_fp8_mixed(self):
         config = bf16_with_fp8_mixed()
