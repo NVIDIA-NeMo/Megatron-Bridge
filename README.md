@@ -31,22 +31,23 @@ huggingface-cli login --token <your token>
 
 You can then run the following to import a model from HuggingFace and start training with mock data:
 ```python
-from megatron.hub import AutoBridge
+if __name__ == "__main__":
+    from megatron.hub import AutoBridge
 
-import megatron.hub.recipes.llama.llama32_1b as llama32_1b
-from megatron.hub.training.gpt_step import forward_step
-from megatron.hub.training.pretrain import pretrain
+    import megatron.hub.recipes.llama.llama32_1b as llama32_1b
+    from megatron.hub.training.gpt_step import forward_step
+    from megatron.hub.training.pretrain import pretrain
 
-# Load Llama from HuggingFace Hub and convert to Megatron
-bridge = AutoBridge.from_pretrained("meta-llama/Llama-3.2-1B")
-model_provider = bridge.to_provider()
+    # Load Llama from HuggingFace Hub and convert to Megatron
+    bridge = AutoBridge.from_pretrained("meta-llama/Llama-3.2-1B")
+    model_provider = bridge.to_provider()
 
-# Get defaults for other configuration from an existing Llama 3.2 recipe
-cfg = llama32_1b.pretrain_config()
-cfg.model = model_provider
-cfg.train.train_iters = 10
+    # Get defaults for other configuration from an existing Llama 3.2 recipe
+    cfg = llama32_1b.pretrain_config()
+    cfg.model = model_provider
+    cfg.train.train_iters = 10
 
-pretrain(cfg, forward_step)
+    pretrain(cfg, forward_step)
 ```
 
 You can launch the above script with:
