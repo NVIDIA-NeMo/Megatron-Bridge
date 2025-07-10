@@ -16,14 +16,6 @@ Megatron Hub is an extension of NVIDIA's Megatron Core library that enables pret
 
 Megatron Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
-## 🚀 Key Features
-
-- **Model Conversion**: Seamless bidirectional conversion between Hugging Face and Megatron formats for interoperability
-- **Training Infrastructure**: Configurable training loop with near linear performance scalability to thousands of nodes that handles data loading, distributed training, checkpointing, and logging
-- **Parameter-Efficient Finetuning**: PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
-- **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration
-- **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
-
 ## 🔧 Installation
 
 For quick exploration of Megatron-Hub, we recommend installing our pip package:
@@ -62,6 +54,14 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 ### uv
 
 For installing Megatron-Hub with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/CONTRIBUTING.md)
+
+## 🚀 Key Features
+
+- **Model Conversion**: Seamless bidirectional conversion between Hugging Face and Megatron formats for interoperability
+- **Training Infrastructure**: Configurable training loop with near linear performance scalability to thousands of nodes that handles data loading, distributed training, checkpointing, and logging
+- **Parameter-Efficient Finetuning**: PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
+- **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration
+- **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
 
 ## Supported Models
 
