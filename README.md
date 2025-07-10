@@ -39,6 +39,7 @@ Megatron Hub provides out-of-the-box recipes for a wide range of models, built o
 #### Launching Recipes
 
 All recipes are ready to train out of the box, using mock data by default. For an example of how to override the default configuration through YAML or Hydra-style CLI overrides, please have a look at this [script](https://github.com/NVIDIA-NeMo/Megatron-Hub/examples/recipes/llama3_8b/pretrain_llama3_8b.py). The script can then be launched with `torchrun`. For example, with the aforementioned script:
+
 ```sh
 torchrun --nproc-per-node=2 pretrain_llama3_8b.py model.tensor_model_parallel_size=1 <additional overrides ...>
 ```
@@ -48,10 +49,10 @@ Optionally, Megatron Hub also supports launching with [NeMo-Run](https://github.
 - [pretrain_llama3_8b_nemo_run_script.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_script.py)
 - [pretrain_llama3_8b_nemo_run_partial.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_partial.py)
 
-
 These examples can also be run as is with the Llama 3 8b recipe (with NeMo-Run installed).
 
 Launch Llama 3 8b Pretraining with NeMo-Run's `run.Script`:
+
 ```sh
 uv run python pretrain_llama3_8b_nemo_run_script.py \
     --nproc-per-node=2 \
@@ -60,6 +61,7 @@ uv run python pretrain_llama3_8b_nemo_run_script.py \
 ```
 
 Launch Llama 3 8b Pretraining with NeMo-Run's `run.Partial`
+
 ```sh
 uv run python pretrain_llama3_8b_nemo_run_partial.py \
     --nproc-per-node=2
@@ -67,32 +69,43 @@ uv run python pretrain_llama3_8b_nemo_run_partial.py \
 
 <!-- ### Vision-Language Models -->
 
-
 ## Performance Benchmarks
 
 Coming soon ...
 
-## Installation 
+## Installation
 
 ### Pip Installation
+
 To install with pip, use the following command:
-```
-pip install git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
+
+```bash
+pip install megatron-hub
 ```
 
+For TransformerEngine support, make sure to follow their [system requirements](https://github.com/NVIDIA/TransformerEngine/?tab=readme-ov-file#installation) and run the following command:
+
+```bash
+pip install torch setuptools pybind11 wheel_stub  # Required for TE
+pip install --no-build-isolation megatron-hub[te]
+```
 
 ### uv Installation
+
 To install Megatron Hub to an active virtual environment or project environment, use the command:
+
 ```
 uv pip install git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 ```
 
 To add Megatron Hub as a dependency for your project, use the following command:
+
 ```
 uv add git+https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 ```
 
 If you are a contributor, you can install this project for development with the following commands:
+
 ```
 git clone https://github.com/NVIDIA-NeMo/Megatron-Hub.git
 cd Megatron-Hub
@@ -100,6 +113,7 @@ uv sync
 ```
 
 To install additional dependency groups use one of the following commands instead:
+
 ```
 uv sync --group docs # for building the documentation
 uv sync --group dev --group test # for running linters and tests
