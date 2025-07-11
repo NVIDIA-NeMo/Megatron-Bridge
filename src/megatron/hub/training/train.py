@@ -889,7 +889,6 @@ def checkpoint_and_decide_exit(
                 checkpointing_context,
                 train_data_iterator=train_data_iterator,
             )
-        torch.distributed.barrier()
         barrier_and_log(f"exiting program at iteration {state.train_state.step}")
 
         return True
