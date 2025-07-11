@@ -208,7 +208,7 @@ def pretrain_config(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer"),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=32000),
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,

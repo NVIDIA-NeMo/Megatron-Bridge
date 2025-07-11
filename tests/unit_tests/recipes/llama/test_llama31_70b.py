@@ -330,6 +330,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert config.tokenizer.tokenizer_type == "NullTokenizer"
+        assert config.tokenizer.vocab_size == 32000
 
     def test_pretrain_config_rng_configuration(self):
         """Test RNG configuration."""
