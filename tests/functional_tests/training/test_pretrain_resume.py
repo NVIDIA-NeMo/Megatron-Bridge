@@ -65,7 +65,7 @@ class TestPretrainResume:
 
     def _verify_checkpoint_files(self, checkpoint_dir, total_iters):
         """Verify that checkpoint files were created correctly."""
-        if get_rank_safe() == 0:
+        if torch.distributed.get_rank() == 0:
             latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
             assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
 
