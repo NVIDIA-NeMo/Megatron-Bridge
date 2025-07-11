@@ -96,7 +96,9 @@ def get_model(
 
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
-    _set_tensor_parallel_attributes(model)
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
 
     _print_num_params(model)
 
@@ -276,17 +278,6 @@ def _print_num_params(model: list[MegatronModule]) -> None:
             ),
             flush=True,
         )
-
-
-def _set_tensor_parallel_attributes(model: list[MegatronModule]) -> None:
-    """Set tensor model parallel attributes if not set.
-
-    Args:
-        model: List of model modules to set tensor model parallel attributes
-    """
-    for model_module in model:
-        for param in model_module.parameters():
-            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
 
 
 @runtime_checkable
