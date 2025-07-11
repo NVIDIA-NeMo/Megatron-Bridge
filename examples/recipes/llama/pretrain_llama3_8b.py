@@ -139,30 +139,30 @@ def main() -> None:
 
     # Load and merge YAML overrides if a config file is provided
     if args.config_file:
-        logger.critical(f"Loading YAML overrides from: {args.config_file}")
+        logger.debug(f"Loading YAML overrides from: {args.config_file}")
         if not os.path.exists(args.config_file):
             logger.error(f"Override YAML file not found: {args.config_file}")
             sys.exit(1)
         yaml_overrides_omega = OmegaConf.load(args.config_file)
         merged_omega_conf = OmegaConf.merge(merged_omega_conf, yaml_overrides_omega)
-        logger.critical("YAML overrides merged successfully.")
+        logger.debug("YAML overrides merged successfully.")
 
     # Apply command-line overrides using Hydra-style parsing
     if cli_overrides:
-        logger.critical(f"Applying Hydra-style command-line overrides: {cli_overrides}")
+        logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
         merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
-        logger.critical("Hydra-style command-line overrides applied successfully.")
+        logger.debug("Hydra-style command-line overrides applied successfully.")
 
     # Apply the final merged OmegaConf configuration back to the original ConfigContainer
-    logger.critical("Applying final merged configuration back to Python ConfigContainer...")
+    logger.debug("Applying final merged configuration back to Python ConfigContainer...")
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
     # Display final configuration
-    logger.critical("--- Final Merged Configuration ---")
+    logger.info("--- Final Merged Configuration ---")
     cfg.to_yaml()
-    logger.critical("----------------------------------")
+    logger.info("----------------------------------")
 
     # Start training
     logger.debug("Starting pretraining...")
