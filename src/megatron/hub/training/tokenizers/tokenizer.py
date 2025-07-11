@@ -1001,8 +1001,8 @@ class _NullTokenizer(MegatronTokenizer):
 
     def __init__(self, vocab_size):
         super().__init__(None, vocab_size=vocab_size)
-        self._vocab_size_without_eod = int(vocab_size)
-        self._eod_id = self._vocab_size_without_eod
+        self._vocab_size = int(vocab_size)
+        self._eod_id = self._vocab_size - 1
 
     def tokenize(self, text):
         """Tokenizes by splitting the string by spaces and converting parts to integers."""
@@ -1024,7 +1024,7 @@ class _NullTokenizer(MegatronTokenizer):
     @property
     def vocab_size(self):
         """Returns the vocabulary size, including the EOD token."""
-        return self._vocab_size_without_eod + 1
+        return self._vocab_size
 
     @property
     def vocab(self):
