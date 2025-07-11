@@ -78,7 +78,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--nproc-per-node",
         type=int,
-        default=1,
+        default=2,
         help="Number of processes per node for TorchRun (typically number of GPUs).",
     )
     parser.add_argument(

@@ -352,6 +352,7 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
 
     This function traverses nested dataclass structures and applies override values
     from a dictionary. It handles type conversions for special cases like torch.dtype.
+    It also handles dictionaries with _target_ fields by instantiating them properly.
 
     Args:
         config_obj: The dataclass instance to modify
@@ -368,9 +369,22 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
             )
             continue
 
-        current_attr: Any = getattr(config_obj, key)
+        current_attr = getattr(config_obj, key)
 
-        if isinstance(value, dict) and dataclasses.is_dataclass(current_attr) and not isinstance(current_attr, type):
+        # Handle dictionaries with _target_ fields
+        if isinstance(value, dict) and "_target_" in value:
+            try:
+                from megatron.hub.core.utils.instantiate_utils import instantiate
+
+                instantiated_obj = instantiate(value)
+                setattr(config_obj, key, instantiated_obj)
+                logger.debug(f"Successfully instantiated {key} from _target_: {value['_target_']}")
+                continue
+            except Exception as e:
+                logger.warning(f"Failed to instantiate {key} from _target_: {e}")
+
+        # Handle nested dataclass structures
+        if dataclasses.is_dataclass(current_attr) and isinstance(value, dict):
             _apply_overrides(current_attr, value)
         else:
             try:

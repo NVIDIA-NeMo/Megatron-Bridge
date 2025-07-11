@@ -39,8 +39,18 @@ def main(args: argparse.Namespace) -> None:
     cfg: ConfigContainer = pretrain_config()
 
     # Example of applying programmatic overrides
-    cfg.train.train_iters = 10
-    cfg.logger.log_interval = 50
+    cfg.train.train_iters = 20
+    cfg.train.global_batch_size = 8
+    cfg.train.micro_batch_size = 1
+    cfg.train.eval_iters = 0
+
+    cfg.scheduler.lr_warmup_iters = 5
+
+    cfg.logger.log_interval = 1
+
+    cfg.dataset.sequence_length = 4096
+    cfg.checkpoint.save = None
+
     if cfg.profiling is None:
         cfg.profiling = ProfilingConfig()
     cfg.profiling.use_nsys_profiler = False
@@ -59,7 +69,7 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Example launcher for Llama3 8B pretraining using nemo_run.Partial.")
     parser.add_argument(
-        "--nproc-per-node", type=int, default=1, help="Number of processes per node (typically number of GPUs)."
+        "--nproc-per-node", type=int, default=2, help="Number of processes per node (typically number of GPUs)."
     )
     parser.add_argument("--dryrun", action="store_true", help="Dry run the script.")
 

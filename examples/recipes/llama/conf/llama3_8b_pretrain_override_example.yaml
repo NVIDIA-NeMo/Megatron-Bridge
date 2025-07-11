@@ -19,32 +19,30 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
-  tensor_model_parallel_size: 2
-  pipeline_model_parallel_size: 2
-  context_parallel_size: 1
-  pipeline_dtype: torch.bfloat16
+  seq_length: 4096
 
 train:
-  train_iters: 500000
-  global_batch_size: 256
-  micro_batch_size: 4
-  eval_interval: 1000
+  train_iters: 20
+  global_batch_size: 8
+  micro_batch_size: 1
+  eval_iters: 0
 
 optimizer:
   lr: 0.00025
   min_lr: 0.000025
 
 scheduler:
-  lr_warmup_iters: 1000
+  lr_warmup_iters: 10
 
 checkpoint:
-  save_interval: 1000
+  # Directory to save to. If null, no checkpoint will be saved.
+  save: null
 
 logger:
-  log_interval: 5
+  log_interval: 1
 
 dataset:
-  num_workers: 4
+  sequence_length: 4096
 
 rng:
   seed: 42
@@ -53,8 +51,11 @@ ddp:
   grad_reduce_in_fp32: true
 
 profiling:
+  # For optional fields in the config, specify the target to instantiate the object.
+  _target_: megatron.hub.training.config.ProfilingConfig
   use_nsys_profiler: false
-  profile_step_start: 1000
-  profile_step_end: 10000
+  profile_step_start: 5
+  profile_step_end: 10
   use_pytorch_profiler: true
   profile_ranks: [0, 1]
+  record_shapes: true

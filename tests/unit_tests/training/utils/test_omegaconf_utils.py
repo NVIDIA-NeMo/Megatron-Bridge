@@ -74,6 +74,23 @@ class ConfigWithOptionalFields:
     value: int = 42
 
 
+@dataclasses.dataclass
+class ProfilingConfig:
+    """Mock ProfilingConfig for testing _target_ functionality."""
+
+    use_pytorch_profiler: bool = False
+    profile_ranks: list = dataclasses.field(default_factory=list)
+    pytorch_profiler_config: Optional[dict] = None
+
+
+@dataclasses.dataclass
+class ConfigWithOptionalProfilingConfig:
+    """Config with optional profiling config for testing _target_ mechanism."""
+
+    name: str = "test"
+    profiling: Optional[ProfilingConfig] = None
+
+
 def dummy_function():
     """Dummy function for testing callable detection."""
     return "dummy"
@@ -454,6 +471,68 @@ class TestApplyOverrides:
         # Original values should be unchanged
         assert config.name == "test"
         assert config.value == 42
+
+    def test_target_mechanism_instantiation(self):
+        """Test that _target_ fields are properly instantiated."""
+        config = ConfigWithOptionalProfilingConfig()
+        assert config.profiling is None
+
+        # Create override with _target_ using the full module path
+        overrides = {
+            "profiling": {
+                "_target_": "tests.unit_tests.training.utils.test_omegaconf_utils.ProfilingConfig",
+                "use_pytorch_profiler": True,
+                "profile_ranks": [0, 1, 2],
+                "pytorch_profiler_config": {"record_shapes": True},
+            }
+        }
+
+        _apply_overrides(config, overrides)
+
+        # Verify the object was properly instantiated
+        assert config.profiling is not None
+        assert isinstance(config.profiling, ProfilingConfig)
+        assert config.profiling.use_pytorch_profiler is True
+        assert config.profiling.profile_ranks == [0, 1, 2]
+        assert config.profiling.pytorch_profiler_config == {"record_shapes": True}
+
+    def test_target_mechanism_with_failed_instantiation(self):
+        """Test that _target_ mechanism handles failed instantiation gracefully."""
+        config = ConfigWithOptionalProfilingConfig()
+
+        # Create override with invalid _target_
+        overrides = {"profiling": {"_target_": "nonexistent.InvalidClass", "use_pytorch_profiler": True}}
+
+        # Should not raise exception, just log warning and fall through
+        _apply_overrides(config, overrides)
+
+        # Since instantiation failed, should fall back to setting the dict directly
+        assert config.profiling is not None
+        assert isinstance(config.profiling, dict)
+        assert config.profiling["_target_"] == "nonexistent.InvalidClass"
+        assert config.profiling["use_pytorch_profiler"] is True
+
+    def test_target_mechanism_with_existing_dataclass(self):
+        """Test that _target_ mechanism works with existing dataclass instances."""
+        config = ConfigWithOptionalProfilingConfig()
+        # Pre-populate with an existing instance
+        config.profiling = ProfilingConfig(use_pytorch_profiler=False, profile_ranks=[])
+
+        # Create override with _target_ for the same field
+        overrides = {
+            "profiling": {
+                "_target_": "tests.unit_tests.training.utils.test_omegaconf_utils.ProfilingConfig",
+                "use_pytorch_profiler": True,
+                "profile_ranks": [0, 1],
+            }
+        }
+
+        _apply_overrides(config, overrides)
+
+        # Should replace the existing instance with new one
+        assert isinstance(config.profiling, ProfilingConfig)
+        assert config.profiling.use_pytorch_profiler is True
+        assert config.profiling.profile_ranks == [0, 1]
 
 
 class TestApplyOverridesWithPreservation:
