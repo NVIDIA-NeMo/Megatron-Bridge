@@ -38,13 +38,13 @@ from megatron.core.transformer.module import MegatronModule
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
 
+from megatron.hub.bridge.param_mapping import MegatronParamMapping
 from megatron.hub.bridge.state_bridge import MegatronStateBridge
-from megatron.hub.bridge.weight_bridge import MegatronWeightBridge
 from megatron.hub.common.decorators import dispatch
 from megatron.hub.core.models.model_provider import ModelProviderProtocol
 
 
-WeightBridgeT = TypeVar("WeightBridgeT", bound=MegatronWeightBridge)
+MappingT = TypeVar("MappingT", bound=MegatronParamMapping)
 
 
 class WeightDistributionMode(Enum):
@@ -81,11 +81,11 @@ class HFSaveTask(NamedTuple):
     pp_rank: int
     vp_stage: Optional[int]
     megatron_name: str
-    weight_bridge: MegatronWeightBridge
+    param_mapping: MegatronParamMapping
 
 
 @dataclass(frozen=True)
-class _HFLoadTask(Generic[WeightBridgeT]):
+class _HFLoadTask(Generic[MappingT]):
     """A single step in the *HF ➜ Megatron* loading schedule.
 
     Attributes:
@@ -95,12 +95,12 @@ class _HFLoadTask(Generic[WeightBridgeT]):
             (no ``module.`` prefixes).
         megatron_module (torch.nn.Module): Reference to the Megatron model (or
             sub-module) that **owns** the parameter. Needed by the
-            :pyclass:`~megatron.hub.bridge.weight_bridge.MegatronWeightBridge` for
+            :pyclass:`~megatron.hub.bridge.param_mapping.MegatronParamMapping` for
             configuration information (e.g. hidden size, number of heads).
         megatron_param (torch.Tensor): The actual :pyclass:`torch.nn.Parameter`
             object which will receive the shard on *this* process after the
             bridge finishes any TP/PP communication.
-        bridge (WeightBridgeT): Concrete :pyclass:`MegatronWeightBridge`
+        bridge (MappingT): Concrete :pyclass:`MegatronParamMapping`
             instance responsible for all heavy-lifting (format conversion,
             TP scatter, PP broadcast).
     """
@@ -109,7 +109,7 @@ class _HFLoadTask(Generic[WeightBridgeT]):
     param_name: str
     megatron_module: torch.nn.Module
     megatron_param: torch.Tensor
-    bridge: WeightBridgeT
+    bridge: MappingT
 
     def to_megatron(
         self,
@@ -121,7 +121,7 @@ class _HFLoadTask(Generic[WeightBridgeT]):
 
 
 @dataclass(frozen=True)
-class _HFSaveTask(Generic[WeightBridgeT]):
+class _HFSaveTask(Generic[MappingT]):
     """A single step in the *Megatron ➜ HF* export schedule.
 
     Attributes:
@@ -130,7 +130,7 @@ class _HFSaveTask(Generic[WeightBridgeT]):
             is built with VP, otherwise ``None``.
         param_name (str): Fully-qualified, *unwrapped* Megatron parameter name
             to export.
-        bridge (WeightBridgeT): :pyclass:`MegatronWeightBridge` instance which
+        bridge (MappingT): :pyclass:`MegatronParamMapping` instance which
             will gather TP shards, broadcast from the owning PP rank, perform
             any reshaping, and finally return a ``dict[str, Tensor]`` mapping
             HF keys → tensors.
@@ -139,7 +139,7 @@ class _HFSaveTask(Generic[WeightBridgeT]):
     pp_rank: int
     vp_stage: Optional[int]
     param_name: str
-    bridge: WeightBridgeT
+    bridge: MappingT
 
     def from_megatron(
         self,
@@ -188,7 +188,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
     The bridge pattern separates concerns:
     - MegatronModelBridge: Orchestrates the overall conversion process
     - MegatronStateBridge: Manages parameter name mappings
-    - MegatronWeightBridge: Handles actual weight transformations and distribution
+    - MegatronParamMapping: Handles actual weight transformations and distribution
 
     Key responsibilities:
     1. Build conversion plans that map each parameter to its appropriate bridge
@@ -223,9 +223,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
             def state_bridge(self) -> MegatronStateBridge:
                 return MegatronStateBridge(
-                    TPAwareWeightBridge(
-                        megatron="embedding.word_embeddings.weight",
-                        to="model.embed_tokens.weight"
+                    TPAwareMapping(
+                        megatron_param="embedding.word_embeddings.weight",
+                        hf_param="model.embed_tokens.weight"
                     ),
                     ...
                 )
@@ -350,7 +350,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         This abstract method must be implemented by subclasses to specify how
         parameters map between the two formats. The returned MegatronStateBridge
-        contains all weight bridges needed for the model architecture.
+        contains all param mappings needed for the model architecture.
 
         Returns:
             MegatronStateBridge: MegatronStateBridge containing all weight
@@ -361,17 +361,17 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
                 def state_bridge(self):
                     return MegatronStateBridge(
-                        TPAwareWeightBridge(
-                            megatron="embedding.word_embeddings.weight",
-                            to="model.embed_tokens.weight"
+                        TPAwareMapping(
+                            megatron_param="embedding.word_embeddings.weight",
+                            hf_param="model.embed_tokens.weight"
                         ),
-                        QKVWeightBridge(
-                            megatron="decoder.layers.*.self_attention.linear_qkv.weight",
+                        QKVMapping(
+                            megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                             q="model.layers.*.self_attn.q_proj.weight",
                             k="model.layers.*.self_attn.k_proj.weight",
                             v="model.layers.*.self_attn.v_proj.weight"
                         ),
-                        # ... more weight bridges
+                        # ... more param mappings
                     )
         """
         raise NotImplementedError("Subclass must implement state_bridge method")
@@ -384,7 +384,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         executes it with proper progress tracking and error handling.
 
         The actual weight transformations and distribution are delegated to the
-        appropriate MegatronWeightBridge instances based on the state mappings.
+        appropriate MegatronParamMapping instances based on the state mappings.
 
         Args:
             src (HFPreTrained): HuggingFace model or state source containing the
@@ -399,7 +399,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         1. Build a plan mapping each Megatron parameter to its source
         2. For each parameter in the plan:
             - Fetch source weights from HuggingFace state
-            - Apply format transformation via the weight bridge
+            - Apply format transformation via the param mapping
             - Distribute to appropriate TP/PP ranks
             - Copy into the Megatron parameter
 
@@ -437,10 +437,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
             for task in load_plan:
                 # 1) Fetch source tensor(s) from HF state dict
-                if isinstance(task.bridge.to, str):
-                    megatron_weights = state_accessor[task.bridge.to]
+                if isinstance(task.bridge.hf_param, str):
+                    megatron_weights = state_accessor[task.bridge.hf_param]
                 else:
-                    megatron_weights = {k: state_accessor[v] for k, v in task.bridge.to.items()}
+                    megatron_weights = {k: state_accessor[v] for k, v in task.bridge.hf_param.items()}
 
                 # 2) Delegate conversion & distribution to the bridge
                 weight_local = task.to_megatron(megatron_weights, task.megatron_module)
@@ -450,11 +450,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     # Check shape compatibility before copying
                     if weight_local.shape != task.megatron_param.shape:
                         raise ValueError(
-                            f"Shape mismatch for {task.bridge.megatron}:\n"
+                            f"Shape mismatch for {task.bridge.megatron_param}:\n"
                             f"  Expected shape: {task.megatron_param.shape}\n"
                             f"  Got shape: {weight_local.shape}\n"
                             f"  Bridge type: {type(task.bridge).__name__}\n"
-                            f"  HF mapping: {task.bridge.to}"
+                            f"  HF mapping: {task.bridge.hf_param}"
                         )
                     task.megatron_param.data.copy_(weight_local)
 
@@ -495,10 +495,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         for task in self._build_plan_from_hf(src, dst):
             accessor: Mapping[str, torch.Tensor] = src.state
-            if isinstance(task.bridge.to, str):
-                src_weights = accessor[task.bridge.to]
+            if isinstance(task.bridge.hf_param, str):
+                src_weights = accessor[task.bridge.hf_param]
             else:
-                src_weights = {k: accessor[v] for k, v in task.bridge.to.items()}
+                src_weights = {k: accessor[v] for k, v in task.bridge.hf_param.items()}
 
             shard = task.to_megatron(src_weights, task.megatron_module)
             if shard is not None:
@@ -616,7 +616,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 elif mode == WeightDistributionMode.DISTRIBUTE:
                     # Each rank gets its shard (no gathering)
                     # In this mode, we need to modify the behavior to skip gathering
-                    # This would require changes to the weight bridges themselves
+                    # This would require changes to the param mappings themselves
                     # For now, we'll yield whatever shard this rank has
                     if task.pp_rank == mpu.get_pipeline_model_parallel_rank() and weight is not None:
                         # Return the local shard without gathering
@@ -752,7 +752,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         self,
         param: torch.Tensor,
         hf_state: Mapping[str, torch.Tensor],
-        weight_bridge: MegatronWeightBridge,
+        param_mapping: MegatronParamMapping,
         provider: ModelProviderTarget,
     ) -> Optional[torch.Tensor]:
         """
@@ -763,7 +763,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         # Load on rank 0
         if tp_rank == 0:
-            weight = self._load_from_hf(hf_state, weight_bridge, provider)
+            weight = self._load_from_hf(hf_state, param_mapping, provider)
             if weight is not None:
                 weight = weight.to(torch.cuda.current_device())
         else:
@@ -783,8 +783,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             is_tp = is_tensor_parallel(param)
 
             # If it's a tensor-parallel parameter with a specific split strategy, create shards.
-            if is_tp and weight_bridge.tp_split_strategy:
-                shards = weight_bridge.tp_split_strategy(provider, weight)
+            if is_tp and param_mapping.tp_split_strategy:
+                shards = param_mapping.tp_split_strategy(provider, weight)
             else:
                 # Otherwise, this is a replicated parameter (either non-TP, or TP without a split strategy).
                 shards = [weight] * tp_world_size
@@ -797,29 +797,29 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return output_weight
 
     def _load_from_hf(
-        self, hf_state: Mapping[str, torch.Tensor], weight_bridge: MegatronWeightBridge, provider: ModelProviderTarget
+        self, hf_state: Mapping[str, torch.Tensor], param_mapping: MegatronParamMapping, provider: ModelProviderTarget
     ) -> Optional[torch.Tensor]:
         """Load weight from HF using mapping."""
-        if isinstance(weight_bridge.dst, str):
+        if isinstance(param_mapping.dst, str):
             # Simple mapping
-            if weight_bridge.dst not in hf_state:
+            if param_mapping.dst not in hf_state:
                 return None
-            weight = hf_state[weight_bridge.dst]
+            weight = hf_state[param_mapping.dst]
             # Apply to_target transformation if defined
-            if weight_bridge.to_target:
-                weight = weight_bridge.to_target(provider, weight)
+            if param_mapping.to_target:
+                weight = param_mapping.to_target(provider, weight)
             return weight
         else:
             # Complex mapping with transformation
             weights = {}
-            for key, hf_name in weight_bridge.dst.items():
+            for key, hf_name in param_mapping.dst.items():
                 if hf_name not in hf_state:
                     return None
                 weights[key] = hf_state[hf_name]
 
             # Apply transformation
-            if weight_bridge.to_target:
-                return weight_bridge.to_target(provider, **weights)
+            if param_mapping.to_target:
+                return param_mapping.to_target(provider, **weights)
             return None
 
     def _get_layer_offset(self, model: MegatronModule, vp_idx: int) -> int:
@@ -909,11 +909,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     continue
 
                 # ensure src weights exist
-                if isinstance(bridge.to, str):
-                    if bridge.to not in state_accessor:
+                if isinstance(bridge.hf_param, str):
+                    if bridge.hf_param not in state_accessor:
                         continue
                 else:
-                    if any(v not in state_accessor for v in bridge.to.values()):
+                    if any(v not in state_accessor for v in bridge.hf_param.values()):
                         continue
 
                 owner_module = self._unwrap_model(model)
@@ -996,7 +996,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     bridge = sb.query_to(hf_key)
                 continue
 
-            src_name = bridge.megatron if hasattr(bridge, "megatron") else None
+            src_name = bridge.megatron_param if hasattr(bridge, "megatron_param") else None
             if not src_name or src_name in emitted:
                 continue
 

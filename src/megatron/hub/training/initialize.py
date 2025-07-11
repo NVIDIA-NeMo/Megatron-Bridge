@@ -27,6 +27,7 @@ from megatron.core.num_microbatches_calculator import (
     destroy_num_microbatches_calculator,
     init_num_microbatches_calculator,
 )
+from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.hub.core.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
@@ -154,6 +155,9 @@ def torch_dist_init(
             rng_config.te_rng_tracker,
             rng_config.inference_rng_tracker,
         )
+
+        if model_config.num_moe_experts is not None:
+            MoEAuxLossAutoScaler.set_loss_scale(torch.ones(1, device=torch.cuda.current_device()))
 
     if skip_mpu_initialization:
         return None
@@ -367,6 +371,8 @@ def _initialize_distributed(
                 get_embedding_ranks=get_embedding_ranks,
                 get_position_embedding_ranks=get_position_embedding_ranks,
                 create_gloo_process_groups=dist_config.use_gloo_process_groups,
+                use_sharp=dist_config.use_sharp,
+                high_priority_stream_groups=dist_config.high_priority_stream_groups,
             )
             if get_rank_safe() == 0:
                 print(

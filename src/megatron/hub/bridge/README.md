@@ -52,8 +52,8 @@ The bridge framework uses a layered architecture with clear separation of concer
 │                Orchestration Layer                      │
 │            (MegatronModelBridge)                        │
 ├─────────────────────────────────────────────────────────┤
-│    Mapping Layer    │    Transformation Layer           │
-│ (MegatronStateBridge)│   (MegatronWeightBridge)         │
+│    Mapping Layer     │    Transformation Layer          │
+│ (MegatronStateBridge)│   (MegatronParamMapping)         │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -61,7 +61,7 @@ The bridge framework uses a layered architecture with clear separation of concer
 
 1. **MegatronModelBridge**: High-level orchestrator that coordinates the conversion process
 2. **MegatronStateBridge**: Registry of parameter name mappings between formats
-3. **MegatronWeightBridge**: Handles weight transformations and distributed communication
+3. **MegatronParamMapping**: Handles weight transformations and distributed communication
 4. **CausalLMBridge**: User-friendly API for causal language models
 
 ## Design Patterns
@@ -84,24 +84,24 @@ class MegatronCausalLlamaBridge(MegatronModelBridge):
     def state_bridge(self):
         # Define weight mappings
         return MegatronStateBridge(
-            TPAwareWeightBridge(
-                megatron="embedding.word_embeddings.weight",
-                to="model.embed_tokens.weight"
+            TPAwareMapping(
+                megatron_param="embedding.word_embeddings.weight",
+                hf_param="model.embed_tokens.weight"
             ),
             # ... more mappings
         )
 ```
 
-### Weight Bridge Strategies
+### Param Mapping Strategies
 
 Different weight transformation strategies handle various parallelism patterns:
 
-- **DirectWeightBridge**: Simple 1:1 mapping
-- **ColumnParallelWeightBridge**: Splits along output dimension
-- **RowParallelWeightBridge**: Splits along input dimension
-- **QKVWeightBridge**: Handles QKV matrix interleaving
-- **GatedMLPWeightBridge**: Manages gated activation concatenation
-- **TPAwareWeightBridge**: Auto-detects and applies correct strategy
+- **DirectMapping**: Simple 1:1 mapping
+- **ColumnParallelMapping**: Splits along output dimension
+- **RowParallelMapping**: Splits along input dimension
+- **QKVMapping**: Handles QKV matrix interleaving
+- **GatedMLPMapping**: Manages gated activation concatenation
+- **TPAwareMapping**: Auto-detects and applies correct strategy
 
 ## Conversion Process
 
@@ -170,10 +170,10 @@ layer_norm: [hidden] → [hidden] (same on all ranks)
 
 ### Custom Weight Transformations
 
-Create custom weight bridges for special formats:
+Create custom param mappings for special formats:
 
 ```python
-class MyCustomWeightBridge(MegatronWeightBridge):
+class MyCustomMapping(MegatronParamMapping):
     def to_megatron(self, weights, megatron_module):
         # Custom transformation logic
         transformed = my_transform(weights)
@@ -242,7 +242,7 @@ To add support for a new model architecture:
 
 4. **Register Custom Modules** (if needed)
    ```python
-   TPAwareWeightBridge.register_module_type(
+   TPAwareMapping.register_module_type(
        "YourColumnParallelLinear", "column"
    )
    ```
@@ -260,16 +260,16 @@ if is_llama_3_1_config(config):
     rotary_base = config.rope_scaling["rope_type"] == "llama3"
     
 # QKV fusion with proper head ordering
-QKVWeightBridge(
-    megatron="decoder.layers.*.self_attention.linear_qkv.weight",
+QKVMapping(
+    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
     q="model.layers.*.self_attn.q_proj.weight",
     k="model.layers.*.self_attn.k_proj.weight", 
     v="model.layers.*.self_attn.v_proj.weight"
 )
 
 # Gated MLP handling
-GatedMLPWeightBridge(
-    megatron="decoder.layers.*.mlp.linear_fc1.weight",
+GatedMLPMapping(
+    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
     gate="model.layers.*.mlp.gate_proj.weight",
     up="model.layers.*.mlp.up_proj.weight"
 )

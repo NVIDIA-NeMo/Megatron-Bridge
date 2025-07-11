@@ -20,12 +20,12 @@ from transformers import LlamaForCausalLM
 
 from megatron.hub.bridge import MegatronModelBridge
 from megatron.hub.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.hub.bridge.state_bridge import MegatronStateBridge
-from megatron.hub.bridge.weight_bridge import (
-    GatedMLPWeightBridge,
-    QKVWeightBridge,
-    TPAwareWeightBridge,
+from megatron.hub.bridge.param_mapping import (
+    GatedMLPMapping,
+    QKVMapping,
+    TPAwareMapping,
 )
+from megatron.hub.bridge.state_bridge import MegatronStateBridge
 from megatron.hub.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
 
 
@@ -84,52 +84,52 @@ class LlamaCausalBridge(MegatronModelBridge):
             # ------------------------------------------------------------------
             # Embedding & output projection – column-parallel
             # ------------------------------------------------------------------
-            TPAwareWeightBridge(
-                megatron="embedding.word_embeddings.weight",
-                to="model.embed_tokens.weight",
+            TPAwareMapping(
+                megatron_param="embedding.word_embeddings.weight",
+                hf_param="model.embed_tokens.weight",
             ),
-            TPAwareWeightBridge(
-                megatron="output_layer.weight",
-                to="lm_head.weight",
+            TPAwareMapping(
+                megatron_param="output_layer.weight",
+                hf_param="lm_head.weight",
             ),
             # ------------------------------------------------------------------
             # LayerNorm (replicated across TP ranks)
             # ------------------------------------------------------------------
-            TPAwareWeightBridge(
-                megatron="decoder.final_layernorm.weight",
-                to="model.norm.weight",
+            TPAwareMapping(
+                megatron_param="decoder.final_layernorm.weight",
+                hf_param="model.norm.weight",
             ),
-            TPAwareWeightBridge(
-                megatron="decoder.layers.*.input_layernorm.weight",
-                to="model.layers.*.input_layernorm.weight",
+            TPAwareMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.layer_norm_weight",
+                hf_param="model.layers.*.input_layernorm.weight",
             ),
-            TPAwareWeightBridge(
-                megatron="decoder.layers.*.pre_mlp_layernorm.weight",
-                to="model.layers.*.post_attention_layernorm.weight",
+            TPAwareMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.layer_norm_weight",
+                hf_param="model.layers.*.post_attention_layernorm.weight",
             ),
             # ------------------------------------------------------------------
             # Attention – fused QKV & output projection
             # ------------------------------------------------------------------
-            QKVWeightBridge(
-                megatron="decoder.layers.*.self_attention.linear_qkv.weight",
+            QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                 q="model.layers.*.self_attn.q_proj.weight",
                 k="model.layers.*.self_attn.k_proj.weight",
                 v="model.layers.*.self_attn.v_proj.weight",
             ),
-            TPAwareWeightBridge(
-                megatron="decoder.layers.*.self_attention.linear_proj.weight",
-                to="model.layers.*.self_attn.o_proj.weight",
+            TPAwareMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_proj.weight",
+                hf_param="model.layers.*.self_attn.o_proj.weight",
             ),
             # ------------------------------------------------------------------
             # MLP – gated projection & output projection
             # ------------------------------------------------------------------
-            GatedMLPWeightBridge(
-                megatron="decoder.layers.*.mlp.linear_fc1.weight",
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                 gate="model.layers.*.mlp.gate_proj.weight",
                 up="model.layers.*.mlp.up_proj.weight",
             ),
-            TPAwareWeightBridge(
-                megatron="decoder.layers.*.mlp.linear_fc2.weight",
-                to="model.layers.*.mlp.down_proj.weight",
+            TPAwareMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc2.weight",
+                hf_param="model.layers.*.mlp.down_proj.weight",
             ),
         )

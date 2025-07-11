@@ -28,7 +28,13 @@ from megatron.hub.data.loaders import setup_data_iterators
 from megatron.hub.models import GPTModelProvider, T5ModelProvider
 from megatron.hub.training.tokenizers.tokenizer import build_tokenizer
 from megatron.hub.training import fault_tolerance
-from megatron.hub.training.checkpointing import checkpoint_exists, init_checkpointing_context, load_checkpoint, init_async_checkpoint_worker
+from megatron.hub.training.checkpointing import (
+    _load_checkpoint_from_path,
+    checkpoint_exists,
+    init_checkpointing_context,
+    load_checkpoint,
+    init_async_checkpoint_worker,
+)
 from megatron.hub.training.config import ConfigContainer
 from megatron.hub.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.hub.training.optim import setup_optimizer
@@ -100,9 +106,15 @@ def setup(
         A SetupOutput named tuple containing the initialized state, model,
         optimizer, scheduler, data iterators, and checkpointing context.
     """
+    # TODO: Freeze state.cfg
+
+    cfg.validate()
+    # Apply communication overlap configuration if provided at the very beginning
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
     state = GlobalState()
     state.cfg = cfg
-    # TODO: Freeze state.cfg
 
     # Initialize async checkpoint worker if enabled
     init_async_checkpoint_worker(state)
@@ -161,6 +173,13 @@ def setup(
 
     # Model, optimizer, and learning rate.
     timers("model-and-optimizer-setup", log_level=0).start(barrier=True)
+
+    # Register PEFT pre-wrap hook if PEFT is configured
+    if cfg.peft is not None:
+        peft_hook = _create_peft_pre_wrap_hook(cfg, state)
+        cfg.model.register_pre_wrap_hook(peft_hook)
+        print_rank_0("Registered PEFT pre-wrap hook")
+
     model = cfg.model(
         ddp_config=cfg.ddp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
@@ -175,22 +194,21 @@ def setup(
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
     )
-    _update_model_config_funcs(
-        model,
-        cfg.model,
-        cfg.ddp,
-        optimizer,
-        align_grad_reduce=cfg.dist.align_grad_reduce,
-    )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
-    # Load checkpoint if applicable
-    if (cfg.checkpoint.load is not None or cfg.checkpoint.pretrained_checkpoint is not None) and (
-        checkpoint_exists(cfg.checkpoint.load) or checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
-    ):
-        timers("load-checkpoint", log_level=0).start(barrier=True)
+    # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
+    if cfg.peft is not None:
+        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
+        if should_load_checkpoint:
+            # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
+            # This is switched off here in order to load these states from the checkpoint
+            cfg.checkpoint.finetune = False
+    else:
+        should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
 
+    if should_load_checkpoint:
+        timers("load-checkpoint", log_level=0).start(barrier=True)
         load_checkpoint(
             state,
             model,
@@ -201,6 +219,14 @@ def setup(
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
+
+    _update_model_config_funcs(
+        model,
+        cfg.model,
+        cfg.ddp,
+        optimizer,
+        align_grad_reduce=cfg.dist.align_grad_reduce,
+    )
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
@@ -264,3 +290,96 @@ def _update_model_config_funcs(
             model_config.param_sync_func = model_config.param_sync_func[0]
     model_config.finalize_model_grads_func = finalize_model_grads
     model_config.grad_scale_func = optimizer.scale_loss
+
+
+def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
+    """Create a pre-wrap hook that handles PEFT logic.
+
+    This hook is executed before the model is wrapped with DDP/FSDP and handles:
+    1. Loading pretrained checkpoints for PEFT
+    2. Applying PEFT transformation to the model
+
+    Args:
+        cfg: Configuration container
+        state: Global state object containing timers and other state
+
+    Returns:
+        A callable hook that can be registered with the model provider
+    """
+    def peft_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+        """Pre-wrap hook that handles PEFT transformation.
+
+        Args:
+            model: List of base model modules before distributed wrapping
+
+        Returns:
+            List of potentially PEFT-transformed model modules
+        """
+        # Only apply PEFT logic if PEFT is configured
+        if cfg.peft is None:
+            return model
+
+        print_rank_0("Applying PEFT pre-wrap hook...")
+
+        # Load pretrained checkpoint if available
+        if cfg.checkpoint.pretrained_checkpoint is None or not checkpoint_exists(cfg.checkpoint.pretrained_checkpoint):
+            raise ValueError(f"Invalid pretrained checkpoint directory found: {cfg.checkpoint.pretrained_checkpoint}")
+
+        # Explicitly set finetune to avoid loading optimizer and RNG states
+        cfg.checkpoint.finetune = True
+        state.timers("load-pretrained-checkpoint", log_level=0).start(barrier=True)
+        print_rank_0(f"Loading base model weights from: {cfg.checkpoint.pretrained_checkpoint}")
+
+        # Directly call load_checkpoint_from path in order to avoid
+        # the load directory overriding the pretrained checkpoint path
+        # This is needed to initialize the base model weights first, and then conditionally load adapter states after
+        _load_checkpoint_from_path(
+            load_dir=cfg.checkpoint.pretrained_checkpoint,
+            state=state,
+            model=model,
+            optimizer=None,  # Don't load optimizer - will be created after PEFT
+            opt_param_scheduler=None,  # Don't load scheduler - will be created after PEFT
+            checkpointing_context={},
+            skip_load_to_model_and_opt=False,
+        )
+        state.timers("load-pretrained-checkpoint").stop(barrier=True)
+        state.timers.log(["load-pretrained-checkpoint"])
+
+        # Apply PEFT transformation
+        transformed_model = _apply_peft_transformation(cfg.peft, model)
+
+        return transformed_model
+
+    return peft_pre_wrap_hook
+
+
+def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[MegatronModule]:
+    """Apply PEFT transformation to the base model.
+
+    Args:
+        peft: PEFT configuration/object
+        base_model: Base model before PEFT transformation
+
+    Returns:
+        Model with PEFT transformation applied
+    """
+    print_rank_0("Applying PEFT transformation...")
+    transformed_model = peft(base_model, training=True)
+    peft.set_params_to_save(transformed_model)
+
+    # Log PEFT statistics
+    model_to_analyze = transformed_model[0] if isinstance(transformed_model, list) else transformed_model
+    total_params = 0
+    trainable_params = 0
+    for param in model_to_analyze.parameters():
+        param_count = param.numel()
+        total_params += param_count
+        if param.requires_grad:
+            trainable_params += param_count
+
+    print_rank_0(f"PEFT Statistics:")
+    print_rank_0(f"  Total parameters: {total_params:,}")
+    print_rank_0(f"  Trainable parameters: {trainable_params:,}")
+    print_rank_0(f"  Trainable percentage: {100 * trainable_params / total_params:.2f}%")
+
+    return transformed_model

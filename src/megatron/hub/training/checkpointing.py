@@ -53,6 +53,7 @@ from megatron.hub.core.utils.common_utils import (
     unwrap_model,
 )
 from megatron.hub.core.utils.import_utils import safe_import
+from megatron.hub.peft.base import PEFT
 from megatron.hub.training import fault_tolerance
 from megatron.hub.training.config import CheckpointConfig, ConfigContainer
 from megatron.hub.training.state import GlobalState, TrainState
@@ -514,6 +515,10 @@ def save_checkpoint(
         rerun_state=rerun_state,
     )
 
+    # Apply PEFT filtering to save adapter-only checkpoints
+    if cfg.peft is not None:
+        state_dict = apply_peft_adapter_filter_to_state_dict(state_dict, cfg.peft)
+
     if ckpt_type == CheckpointType.GLOBAL:
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             # TODO Handle non-empty directories (e.g., after a crash during saving).
@@ -816,7 +821,7 @@ def load_checkpoint(
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
     skip_load_to_model_and_opt: bool = False,
-) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
+) -> tuple[int, int]:
     """Load a model checkpoint.
 
     Handles loading model state, optimizer state, scheduler state, RNG state,
@@ -835,10 +840,8 @@ def load_checkpoint(
 
     Returns:
         A tuple containing:
-        - state_dict: The loaded state dictionary (or None if skipping).
-        - checkpoint_name: The path of the loaded checkpoint.
-        - release: Boolean indicating if it was a release checkpoint.
-        - ckpt_type: The type of checkpoint loaded (LOCAL, GLOBAL, or None).
+        - iteration: The training iteration number.
+        - num_floating_point_operations_so_far: The total FLOPs computed so far.
     """
     cfg = state.cfg
     load_dir = cfg.checkpoint.load
@@ -854,6 +857,41 @@ def load_checkpoint(
         if not checkpoint_exists(load_dir):
             raise FileNotFoundError("No checkpoint found in load directory or pretrained directory")
         cfg.checkpoint.finetune = True
+
+    return _load_checkpoint_from_path(
+        load_dir, state, model, optimizer, opt_param_scheduler, strict, checkpointing_context
+    )
+
+
+def _load_checkpoint_from_path(
+    load_dir: str,
+    state: GlobalState,
+    model: Union[torch.nn.Module, list[torch.nn.Module]],
+    optimizer: Optional[torch.optim.Optimizer],
+    opt_param_scheduler: Optional[Any],
+    strict: bool = True,
+    checkpointing_context: Optional[dict[str, Any]] = None,
+    skip_load_to_model_and_opt: bool = False,
+) -> tuple[int, int]:
+    """Load a checkpoint from a given path.
+
+    Args:
+        load_dir: The directory containing the checkpoint.
+        state: The GlobalState object.
+        model: The model module(s) to load state into.
+        optimizer: The optimizer instance to load state into.
+        opt_param_scheduler: The scheduler instance to load state into.
+        strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+        checkpointing_context: Dictionary to store context across loads (e.g., strategies).
+        skip_load_to_model_and_opt: If True, only loads metadata (iteration, rng) but
+                                      skips loading state into model and optimizer modules.
+
+    Returns:
+        A tuple containing:
+        - iteration: The training iteration number.
+        - num_floating_point_operations_so_far: The total FLOPs computed so far.
+    """
+    cfg = state.cfg
 
     model = unwrap_model(model)
 
@@ -981,6 +1019,24 @@ def load_checkpoint(
     # When "--fp8-param-gather" is disabled, this function doesn't modify anything.
     fix_fp8_params_lose_precision_when_loading_dist_ckpt(load_kwargs["sharded_state_dict"])
 
+    # For PEFT, check if resuming from a checkpoint saved during training, which contains only the PEFT adapter states
+    # This situation occurs when:
+    # 1. The PEFT config is set
+    # 2. Loading from a checkpoint saved during training (not loading from a pretrained checkpoint)
+    # 3. Not in finetune mode
+    is_peft_resume = (
+        cfg.peft is not None
+        and cfg.checkpoint.load is not None
+        and load_dir == cfg.checkpoint.load
+        and load_dir != cfg.checkpoint.pretrained_checkpoint
+        and not cfg.checkpoint.finetune
+    )
+
+    if is_peft_resume:
+        load_kwargs["sharded_state_dict"] = apply_peft_adapter_filter_to_state_dict(
+            load_kwargs["sharded_state_dict"], cfg.peft
+        )
+
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir, cfg, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
     )
@@ -1004,11 +1060,12 @@ def load_checkpoint(
 
     # Model.
     if not skip_load_to_model_and_opt:
+        load_strict = False if is_peft_resume else strict
         if len(model) == 1:
-            model[0].load_state_dict(state_dict["model"], strict=strict)
+            model[0].load_state_dict(state_dict["model"], strict=load_strict)
         else:
             for i in range(len(model)):
-                model[i].load_state_dict(state_dict["model%d" % i], strict=strict)
+                model[i].load_state_dict(state_dict["model%d" % i], strict=load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
@@ -1212,6 +1269,54 @@ def fix_fp8_params_lose_precision_when_loading_dist_ckpt(state_dict: dict[str, A
             for _, sharded_tensor in state_dict[key].items():
                 if is_float8tensor(sharded_tensor.data):
                     sharded_tensor.data = sharded_tensor.data.from_float8().cpu()
+
+
+def apply_peft_adapter_filter_to_state_dict(state_dict: dict[str, Any], peft_config: PEFT) -> dict[str, Any]:
+    """Filter state dict to contain only PEFT adapter parameters in model sections.
+
+    This function takes a complete state dict (generated by generate_state_dict) and
+    filters it to retain only PEFT adapter parameters for checkpoint saving.
+    Follows the same key logic pattern as generate_state_dict for consistency.
+
+    Args:
+        state_dict: Complete state dict from generate_state_dict()
+        peft_config: PEFT configuration for filtering logic
+
+    Returns:
+        Filtered state dict containing only adapter parameters in model weights,
+        while preserving all non-model metadata (checkpoint_version, iteration, etc.)
+    """
+    return {
+        checkpoint_section_key: (
+            # Filter model parameters to only include adapter weights
+            {
+                parameter_name: parameter_value
+                for parameter_name, parameter_value in checkpoint_section_value.items()
+                if peft_config.adapter_key_filter(parameter_name)
+            }
+            if _is_model_section(checkpoint_section_key)
+            else checkpoint_section_value
+        )
+        for checkpoint_section_key, checkpoint_section_value in state_dict.items()
+    }
+
+
+def _is_model_section(section_key: str) -> bool:
+    """Check if a checkpoint section contains model parameters.
+
+    Model sections are named:
+    - "model" (single model)
+    - "model0", "model1", etc. (pipeline parallel models)
+
+    Non-model sections include: "optimizer", "iteration", "checkpoint_version", etc.
+    """
+    is_single_model = section_key == "model"
+    is_pipeline_model = (
+        section_key.startswith("model")
+        and section_key != "model"
+        and section_key[5:].isdigit()  # to match virtual pipeline state dict handling
+    )
+    return is_single_model or is_pipeline_model
 
 
 def _transpose_first_dim(

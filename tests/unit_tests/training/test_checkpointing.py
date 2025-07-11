@@ -297,7 +297,7 @@ class TestSaveCheckpoint:
         mock_unwrap.return_value = save_checkpoint_fixtures["mock_model"]
         mock_get_rng.return_value = Mock()
         mock_rerun.return_value.state_dict.return_value = {}
-        mock_gen_state.return_value = {"model": "state"}
+        mock_gen_state.return_value = {"model": {"param1": "value1", "param2": "value2"}}
         mock_mpu.get_expert_data_parallel_rank.return_value = 0
         mock_mpu.get_tensor_model_parallel_rank.return_value = 0
         mock_mpu.get_tensor_model_parallel_world_size.return_value = 1

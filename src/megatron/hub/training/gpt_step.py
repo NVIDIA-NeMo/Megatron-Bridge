@@ -19,6 +19,7 @@ from typing import Iterable
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.utils import get_batch_on_this_cp_rank
 
 from megatron.hub.training.config import ConfigContainer, FinetuningDatasetConfig
@@ -27,6 +28,40 @@ from megatron.hub.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
+    """Extract packed sequence parameters from the batch.
+
+    Creates and returns a PackedSeqParams object with appropriate parameters
+    for packed sequence processing.
+
+    Args:
+        batch: Input batch containing packed sequence information
+
+    Returns:
+        PackedSeqParams: Parameters for packed sequence processing
+    """
+
+    cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
+    # remove -1 "paddings" added in collate_fn
+    if (cu_seqlens_argmin := batch.get("cu_seqlens_argmin", None)) is not None:
+        # pre-compute cu_seqlens_argmin in dataset class for perf
+        cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
+    else:
+        cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
+
+    # pre-compute max_seqlens in dataset class for perf
+    max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
+
+    # these args are passed eventually into TEDotProductAttention.forward()
+    return PackedSeqParams(
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_q=max_seqlen,
+        max_seqlen_kv=max_seqlen,
+        qkv_format="thd",
+    )
 
 
 def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
@@ -38,19 +73,32 @@ def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
-    assert data_iterator is not None, "data_iterator must not be None"
+    batch = next(data_iterator)
 
-    data = next(data_iterator)
+    required_device_keys = set()
+    required_host_keys = set()
 
-    batch = {
-        "tokens": data["tokens"].cuda(non_blocking=True),
-        "labels": data["labels"].cuda(non_blocking=True),
-        "loss_mask": data["loss_mask"].cuda(non_blocking=True),
-        "attention_mask": None if "attention_mask" not in data else data["attention_mask"].cuda(non_blocking=True),
-        "position_ids": data["position_ids"].cuda(non_blocking=True),
-    }
+    required_device_keys.add("attention_mask")
+    if "cu_seqlens" in batch:
+        required_device_keys.add("cu_seqlens")
+        required_host_keys.add("cu_seqlens_argmin")
+        required_host_keys.add("max_seqlen")
 
-    return batch
+    if parallel_state.is_pipeline_first_stage():
+        required_device_keys.update(("tokens", "position_ids"))
+    if parallel_state.is_pipeline_last_stage():
+        required_device_keys.update(("labels", "loss_mask"))
+
+    _batch_required_keys = {}
+    for key, val in batch.items():
+        if key in required_device_keys:
+            _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
+        elif key in required_host_keys:
+            _batch_required_keys[key] = val.cpu() if val is not None else None
+        else:
+            _batch_required_keys[key] = None
+
+    return _batch_required_keys
 
 
 def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> dict[str, torch.Tensor]:
@@ -186,6 +234,9 @@ def get_batch(
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
 ]:
     """Generate a batch.
 
@@ -194,21 +245,34 @@ def get_batch(
         cfg: Configuration container
 
     Returns:
-        tuple of tensors containing tokens, labels, loss_mask, attention_mask, and position_ids
+        tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
+        cu_seqlens, cu_seqlens_argmin, and max_seqlen
     """
     if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
-        return None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     if isinstance(cfg.dataset, FinetuningDatasetConfig):
         batch = get_batch_from_iterator(data_iterator)
     else:
         # get batches based on the TP rank you are on
         batch = get_batch_on_this_tp_rank(data_iterator, cfg)
+        batch["cu_seqlens"] = None
+        batch["cu_seqlens_argmin"] = None
+        batch["max_seqlen"] = None
 
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)
 
-    return batch.values()
+    return (
+        batch["tokens"],
+        batch["labels"],
+        batch["loss_mask"],
+        batch["attention_mask"],
+        batch["position_ids"],
+        batch.get("cu_seqlens"),
+        batch.get("cu_seqlens_argmin"),
+        batch.get("max_seqlen"),
+    )
 
 
 def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -> tuple[torch.Tensor, partial]:
@@ -227,7 +291,9 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
-        tokens, labels, loss_mask, attention_mask, position_ids = get_batch(data_iterator, state.cfg)
+        tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = get_batch(
+            data_iterator, state.cfg
+        )
     timers("batch-generator").stop()
 
     forward_args = {
@@ -236,6 +302,15 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -
         "attention_mask": attention_mask,
         "labels": labels,
     }
+
+    # Add packed sequence support
+    if cu_seqlens is not None:
+        packed_seq_params = {
+            "cu_seqlens": cu_seqlens,
+            "cu_seqlens_argmin": cu_seqlens_argmin,
+            "max_seqlen": max_seqlen,
+        }
+        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     with straggler_timer:
         output_tensor = model(**forward_args)

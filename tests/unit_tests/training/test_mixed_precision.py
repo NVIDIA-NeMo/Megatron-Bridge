@@ -17,6 +17,7 @@
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
@@ -35,6 +36,7 @@ from megatron.hub.training.mixed_precision import (
     fp16_with_fp8_mixed,
     fp16_with_fp8_subchannel_scaling_mixed,
     fp16_with_mxfp8_mixed,
+    get_mixed_precision_config,
     nemotron_h_bf16_with_fp8_current_scaling_mixed,
     update_config_with_precision_overrides,
 )
@@ -63,6 +65,63 @@ class TestMegatronMixedPrecisionConfig:
         assert config.fp8_wgrad is False
         assert config.fp8_dot_product_attention is True
         assert config.fp8_multi_head_attention is True
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
+
+    def test_fp8_param_initialization_from_fp8_param_gather(self):
+        """Test that fp8_param is initialized from fp8_param_gather when None."""
+        # Test with fp8_param_gather=True
+        config = MixedPrecisionConfig(fp8_param=None, fp8_param_gather=True)
+        assert config.fp8_param is True
+        assert config.fp8_param_gather is True
+
+        # Test with fp8_param_gather=False
+        config = MixedPrecisionConfig(fp8_param=None, fp8_param_gather=False)
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
+
+        # Test default behavior (both should default to False)
+        config = MixedPrecisionConfig()
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
+
+    def test_fp8_param_synchronization(self):
+        """Test that fp8_param and fp8_param_gather stay synchronized."""
+        # Test initial synchronization
+        config = MixedPrecisionConfig(fp8_param_gather=True)
+        assert config.fp8_param is True
+        assert config.fp8_param_gather is True
+
+        # Test changing fp8_param_gather updates fp8_param
+        config.fp8_param_gather = False
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
+
+        # Test changing fp8_param updates fp8_param_gather
+        config.fp8_param = True
+        assert config.fp8_param is True
+        assert config.fp8_param_gather is True
+
+        # Test with explicit values during initialization
+        config2 = MixedPrecisionConfig(fp8_param=True, fp8_param_gather=False)
+        # After initialization, they should be synchronized (fp8_param_gather wins as it's set last)
+        assert config2.fp8_param is False
+        assert config2.fp8_param_gather is False
+
+        # Test None initialization
+        config3 = MixedPrecisionConfig(fp8_param=None, fp8_param_gather=True)
+        assert config3.fp8_param is True
+        assert config3.fp8_param_gather is True
+
+    def test_fp8_param_matching_fp8_param_gather(self):
+        """Test that matching values for fp8_param and fp8_param_gather work correctly."""
+        # Both True
+        config = MixedPrecisionConfig(fp8_param=True, fp8_param_gather=True)
+        assert config.fp8_param is True
+        assert config.fp8_param_gather is True
+
+        # Both False
+        config = MixedPrecisionConfig(fp8_param=False, fp8_param_gather=False)
         assert config.fp8_param is False
         assert config.fp8_param_gather is False
 
@@ -388,6 +447,9 @@ class TestMixedPrecisionRecipes:
         assert config.pipeline_dtype == torch.bfloat16
         assert config.autocast_enabled is False
         assert config.grad_reduce_in_fp32 is True
+        # Base BF16 recipe should have fp8_param as False
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
 
     def test_fp16_mixed(self):
         config = fp16_mixed()
@@ -398,6 +460,9 @@ class TestMixedPrecisionRecipes:
         assert config.pipeline_dtype == torch.half
         assert config.autocast_enabled is False
         assert config.grad_reduce_in_fp32 is False
+        # Base FP16 recipe should have fp8_param as False
+        assert config.fp8_param is False
+        assert config.fp8_param_gather is False
 
     def test_bf16_with_fp8_mixed(self):
         config = bf16_with_fp8_mixed()
@@ -414,6 +479,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8_amax_history_len == 1024
         assert config.fp8_amax_compute_algo == "max"
         assert config.fp8_param_gather is True
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_fp16_with_fp8_mixed(self):
         config = fp16_with_fp8_mixed()
@@ -431,6 +498,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8_amax_history_len == 1024
         assert config.fp8_amax_compute_algo == "max"
         assert config.fp8_param_gather is True
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_bf16_with_mxfp8_mixed(self):
         config = bf16_with_mxfp8_mixed()
@@ -443,6 +512,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8 == "hybrid"
         assert config.fp8_recipe == "mxfp8"
         assert config.fp8_param_gather is False
+        # Verify fp8_param is initialized from fp8_param_gather
+        assert config.fp8_param is False
 
     def test_fp16_with_mxfp8_mixed(self):
         config = fp16_with_mxfp8_mixed()
@@ -455,6 +526,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8 == "hybrid"
         assert config.fp8_recipe == "mxfp8"
         assert config.fp8_param_gather is False
+        # Verify fp8_param is initialized from fp8_param_gather
+        assert config.fp8_param is False
 
     def test_bf16_with_fp8_current_scaling_mixed(self):
         config = bf16_with_fp8_current_scaling_mixed()
@@ -470,6 +543,8 @@ class TestMixedPrecisionRecipes:
         assert config.num_layers_at_start_in_bf16 == 1
         assert config.num_layers_at_end_in_bf16 == 1
         assert config.fp8_param_gather is True
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_nemotron_h_bf16_with_fp8_current_scaling_mixed(self):
         config = nemotron_h_bf16_with_fp8_current_scaling_mixed()
@@ -485,6 +560,8 @@ class TestMixedPrecisionRecipes:
         assert config.num_layers_at_start_in_bf16 == 2
         assert config.num_layers_at_end_in_bf16 == 2
         assert config.fp8_param_gather is True
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_fp16_with_fp8_current_scaling_mixed(self):
         config = fp16_with_fp8_current_scaling_mixed()
@@ -500,6 +577,8 @@ class TestMixedPrecisionRecipes:
         assert config.num_layers_at_start_in_bf16 == 1
         assert config.num_layers_at_end_in_bf16 == 1
         assert config.fp8_param_gather is True
+        # fp8_param should now be kept in sync with fp8_param_gather
+        assert config.fp8_param is True
 
     def test_bf16_with_fp8_subchannel_scaling_mixed(self):
         config = bf16_with_fp8_subchannel_scaling_mixed()
@@ -512,6 +591,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8 == "hybrid"
         assert config.fp8_recipe == "blockwise"
         assert config.fp8_param_gather is False
+        # Verify fp8_param is initialized from fp8_param_gather
+        assert config.fp8_param is False
 
     def test_fp16_with_fp8_subchannel_scaling_mixed(self):
         config = fp16_with_fp8_subchannel_scaling_mixed()
@@ -524,6 +605,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8 == "hybrid"
         assert config.fp8_recipe == "blockwise"
         assert config.fp8_param_gather is False
+        # Verify fp8_param is initialized from fp8_param_gather
+        assert config.fp8_param is False
 
     def test_recipe_returns_new_instance(self):
         """Test that each recipe returns a new instance."""
@@ -577,3 +660,43 @@ class TestMixedPrecisionRecipes:
         # Verify DDP config settings were applied
         assert ddp_config.grad_reduce_in_fp32 is True
         assert ddp_config.bf16 is True
+
+
+class TestRegisterAndGetMixedPrecisionConfig:
+    """Tests for the `register` decorator and `get_mixed_precision_config` helper."""
+
+    def test_register_decorator_adds_recipe(self):
+        """Ensure that the `register` decorator adds the factory function to the global registry
+        and that each invocation returns a fresh `MixedPrecisionConfig` instance.
+        """
+        # Local import to avoid polluting global namespace before test discovery.
+        from megatron.hub.training.mixed_precision import (
+            MIXED_PRECISION_RECIPES,
+            MixedPrecisionConfig,
+            get_mixed_precision_config,
+            register,
+        )
+
+        @register  # noqa: WPS430 – intentional decorator usage inside test
+        def custom_fp32_config() -> MixedPrecisionConfig:  # pylint: disable=missing-docstring
+            return MixedPrecisionConfig(fp32=True)
+
+        # The recipe should now be registered under its function name.
+        assert "custom_fp32_config" in MIXED_PRECISION_RECIPES
+
+        # Fetch two separate instances via different access paths.
+        cfg_from_dict = MIXED_PRECISION_RECIPES["custom_fp32_config"]()
+        cfg_from_helper = get_mixed_precision_config("custom_fp32_config")
+
+        # They should both be `MixedPrecisionConfig` instances and distinct objects.
+        assert isinstance(cfg_from_dict, MixedPrecisionConfig)
+        assert isinstance(cfg_from_helper, MixedPrecisionConfig)
+        assert cfg_from_dict is not cfg_from_helper
+        assert cfg_from_helper.fp32 is True
+
+    def test_get_mixed_precision_config_invalid_name(self):
+        """Verify that an unknown recipe name raises a clear `ValueError`."""
+        with pytest.raises(ValueError) as exc_info:
+            get_mixed_precision_config("does_not_exist")
+
+        assert "Unknown mixed-precision recipe" in str(exc_info.value)

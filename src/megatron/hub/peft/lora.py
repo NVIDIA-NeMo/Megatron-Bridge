@@ -91,10 +91,6 @@ class LoRA(PEFT, ModuleMatcher):
     a2a_experimental: bool = False
     lora_dtype: torch.dtype = None
 
-    def __post_init__(self):
-        """Initialize attributes from parent classes."""
-        PEFT.__post_init__(self)
-
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
         Applies LoRA to a specific module within the model architecture.

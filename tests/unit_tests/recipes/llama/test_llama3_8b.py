@@ -21,6 +21,7 @@ import torch
 
 from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.recipes.llama.llama3_8b import model_config, pretrain_config
+from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.config import ConfigContainer
 
 
@@ -261,6 +262,35 @@ class TestPretrainConfig:
         assert config.ddp.average_in_collective is True
         assert config.ddp.use_distributed_optimizer is True
 
+    def test_pretrain_config_manual_gc(self):
+        """Test manual garbage collection configuration."""
+        config = pretrain_config()
+
+        assert config.train.manual_gc is True
+        assert config.train.manual_gc_interval == 100
+        assert config.train.manual_gc_eval == 100
+
+    def test_pretrain_config_default_comm_overlap(self):
+        """Test default CommOverlapConfig setup."""
+        config = pretrain_config()
+
+        # Default setup should have TP comm overlap disabled for 8B model
+        assert config.comm_overlap is not None
+
+    def test_pretrain_config_custom_comm_overlap(self):
+        """Test custom CommOverlapConfig."""
+        custom_overlap = CommOverlapConfig(
+            tp_comm_overlap=True,
+            defer_embedding_wgrad_compute=True,
+            wgrad_deferral_limit=50,
+            data_parallel_size=1,
+        )
+        config = pretrain_config(comm_overlap_config=custom_overlap)
+
+        # Should use the custom config
+        # Since default TP size is 1, it should be disabled
+        assert config.comm_overlap is not None
+
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""
         config = pretrain_config(train_iters=50000)
@@ -353,3 +383,34 @@ class TestPretrainConfig:
         config = pretrain_config(seq_length=seq_length)
 
         assert config.dataset.sequence_length == seq_length
+
+    def test_pretrain_config_precision_fp16_mixed(self):
+        """Ensure precision recipe 'fp16_mixed' correctly updates model, optimizer, and ddp config."""
+        config = pretrain_config(precision_config="fp16_mixed")
+
+        # Model should be FP16, not BF16
+        assert config.model.fp16 is True
+        assert getattr(config.model, "bf16", False) is False
+
+        # Optimizer flags propagated
+        assert config.optimizer.fp16 is True
+        assert config.optimizer.bf16 is False
+
+        # DDP flag overridden by precision recipe
+        assert config.ddp.grad_reduce_in_fp32 is False
+
+    def test_pretrain_config_precision_bf16_with_fp8_mixed(self):
+        """Ensure recipe 'bf16_with_fp8_mixed' sets BF16 + FP8 related fields."""
+        config = pretrain_config(precision_config="bf16_with_fp8_mixed")
+
+        # Model flags
+        assert config.model.bf16 is True
+        assert config.model.fp8 == "hybrid"
+        assert config.model.fp8_recipe == "delayed"
+
+        # Optimizer should remain in BF16 mode
+        assert config.optimizer.bf16 is True
+        assert config.optimizer.fp16 is False
+
+        # DDP grad reduction should stay in FP32 for BF16 recipe
+        assert config.ddp.grad_reduce_in_fp32 is True

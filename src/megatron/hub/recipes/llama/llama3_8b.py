@@ -21,6 +21,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -30,6 +31,7 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 
 
 def model_config(
@@ -90,6 +92,9 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    # Precision recipe
+    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 8B model.
@@ -117,6 +122,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int) Number of warmup iterations for the learning rate.
+        precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -159,6 +165,9 @@ def pretrain_config(
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
@@ -198,6 +207,16 @@ def pretrain_config(
             async_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        comm_overlap=comm_overlap_config,
     )
+
+    if isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    if cfg.comm_overlap is None:
+        cfg.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=False,
+        )
 
     return cfg

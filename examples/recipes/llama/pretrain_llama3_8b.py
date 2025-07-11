@@ -72,7 +72,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 # Define paths relative to this script's location
-# Assumes this script (pretrain_llama3_8b.py) is in Megatron-Hub/examples/llm/llama3_8b/
+# Assumes this script (pretrain_llama3_8b.py) is in Megatron-Hub/examples/recipes/llama/
 # and the config is in a 'conf' subdirectory.
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "llama3_8b_pretrain_override_example.yaml"

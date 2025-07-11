@@ -15,7 +15,7 @@
 import re
 from typing import List, Optional, Tuple
 
-from megatron.hub.bridge.weight_bridge import MegatronWeightBridge
+from megatron.hub.bridge.param_mapping import MegatronParamMapping
 
 
 class MegatronStateBridge:
@@ -31,18 +31,18 @@ class MegatronStateBridge:
     handles the resolution of wildcards in parameter names.
 
     Args:
-        *mappings: Variable number of MegatronWeightBridge objects defining
+        *mappings: Variable number of MegatronParamMapping objects defining
             the individual weight mappings
 
     Example:
         >>> # Create a state bridge with various mappings
         >>> weight_map = MegatronStateBridge(
-        ...     TPAwareWeightBridge(
-        ...         megatron="embedding.word_embeddings.weight",
-        ...         to="model.embed_tokens.weight",
+        ...     TPAwareMapping(
+        ...         megatron_param="embedding.word_embeddings.weight",
+        ...         hf_param="model.embed_tokens.weight",
         ...     ),
-        ...     QKVWeightBridge(
-        ...         megatron="decoder.layers.*.self_attention.linear_qkv.weight",
+        ...     QKVMapping(
+        ...         megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
         ...         q="model.layers.*.self_attn.q_proj.weight",
         ...         k="model.layers.*.self_attn.k_proj.weight",
         ...         v="model.layers.*.self_attn.v_proj.weight",
@@ -51,49 +51,49 @@ class MegatronStateBridge:
 
         >>> # Query for a specific layer (wildcards are resolved)
         >>> mapping = weight_map.query_megatron("decoder.layers.0.self_attention.linear_qkv.weight")
-        >>> print(mapping.to)  # Will show resolved HF names for layer 0
+        >>> print(mapping.hf_param)  # Will show resolved HF names for layer 0
 
         >>> # Reverse lookup from HF name
         >>> mapping = weight_map.query_to("model.layers.5.self_attn.q_proj.weight")
-        >>> print(mapping.megatron)  # Shows corresponding Megatron name
+        >>> print(mapping.megatron_param)  # Shows corresponding Megatron name
 
         >>> # Build from a list
-        >>> mappings_list = [bridge1, bridge2, bridge3]
-        >>> weight_map = MegatronStateBridge(*mappings_list)
+        >>> mappings = [bridge1, bridge2, bridge3]
+        >>> weight_map = MegatronStateBridge(*mappings)
 
     Note:
         Wildcard patterns use '*' which matches any sequence of digits (0-9).
         This is specifically designed for layer indices in transformer models.
     """
 
-    def __init__(self, *mappings: MegatronWeightBridge):
+    def __init__(self, *mappings: MegatronParamMapping):
         """
         Initialize MegatronStateBridge with weight mappings.
 
         Args:
-            *mappings: MegatronWeightBridge objects
+            *mappings: MegatronParamMapping objects
         """
         self.mappings = list(mappings)
 
         # Pre-compile patterns for efficiency
         self._compiled_patterns = []
-        self._reverse_patterns = []  # For to -> megatron lookups
+        self._reverse_patterns = []  # For hf_param -> megatron lookups
 
         for mapping in mappings:
             # Compile source patterns
-            if "*" in mapping.megatron:
+            if "*" in mapping.megatron_param:
                 # Convert glob pattern to regex
                 # decoder.layers.*.mlp.linear_fc1.weight -> decoder\.layers\.(\d+)\.mlp\.linear_fc1\.weight
-                pattern = re.escape(mapping.megatron)
+                pattern = re.escape(mapping.megatron_param)
                 pattern = pattern.replace(r"\*", r"(\d+)")
                 self._compiled_patterns.append((re.compile(f"^{pattern}$"), mapping))
             else:
                 self._compiled_patterns.append((None, mapping))
 
             # Compile destination patterns for reverse lookups
-            if isinstance(mapping.to, str):
-                if "*" in mapping.to:
-                    pattern = re.escape(mapping.to)
+            if isinstance(mapping.hf_param, str):
+                if "*" in mapping.hf_param:
+                    pattern = re.escape(mapping.hf_param)
                     pattern = pattern.replace(r"\*", r"(\d+)")
                     self._reverse_patterns.append((re.compile(f"^{pattern}$"), mapping))
                 else:
@@ -101,16 +101,16 @@ class MegatronStateBridge:
             else:
                 # For dict destinations, compile patterns for each value
                 reverse_dict_patterns = {}
-                for key, to_pattern in mapping.to.items():
-                    if "*" in to_pattern:
-                        pattern = re.escape(to_pattern)
+                for key, hf_pattern in mapping.hf_param.items():
+                    if "*" in hf_pattern:
+                        pattern = re.escape(hf_pattern)
                         pattern = pattern.replace(r"\*", r"(\d+)")
                         reverse_dict_patterns[key] = re.compile(f"^{pattern}$")
                     else:
                         reverse_dict_patterns[key] = None
                 self._reverse_patterns.append((reverse_dict_patterns, mapping))
 
-    def query_megatron(self, megatron_name: str) -> Optional[MegatronWeightBridge]:
+    def query_megatron(self, megatron_name: str) -> Optional[MegatronParamMapping]:
         """
         Get mapping for a Megatron parameter name.
 
@@ -123,7 +123,7 @@ class MegatronStateBridge:
                 Example: "decoder.layers.0.self_attention.linear_qkv.weight"
 
         Returns:
-            MegatronWeightBridge: Bridge instance with resolved wildcards, or None
+            MegatronParamMapping: Bridge instance with resolved wildcards, or None
                 if no matching mapping is found. The returned bridge will have
                 all wildcards replaced with actual values.
 
@@ -131,12 +131,12 @@ class MegatronStateBridge:
             >>> # Query with exact layer number
             >>> bridge = state_map.query_megatron("decoder.layers.5.mlp.linear_fc1.weight")
             >>> if bridge:
-            ...     print(f"Maps to: {bridge.to}")  # Shows HF name for layer 5
+            ...     print(f"Maps to: {bridge.hf_param}")  # Shows HF name for layer 5
         """
         for pattern, mapping in self._compiled_patterns:
             if pattern is None:
                 # Direct match
-                if mapping.megatron == megatron_name:
+                if mapping.megatron_param == megatron_name:
                     return mapping
             else:
                 # Pattern match
@@ -146,7 +146,7 @@ class MegatronStateBridge:
                     return self._resolve_mapping(mapping, match.groups())
         return None
 
-    def query_to(self, to_name: str) -> Optional[MegatronWeightBridge]:
+    def query_to(self, hf_param_name: str) -> Optional[MegatronParamMapping]:
         """
         Get mapping for a destination parameter name (reverse lookup).
 
@@ -154,22 +154,22 @@ class MegatronStateBridge:
         the corresponding megatron name.
 
         Args:
-            to_name: Destination parameter name to look up
+            hf_param_name: Destination parameter name to look up
 
         Returns:
-            MegatronWeightBridge with resolved wildcards, or None if no match found
+            MegatronParamMapping with resolved wildcards, or None if no match found
         """
         for pattern_info, mapping in self._reverse_patterns:
-            if isinstance(mapping.to, str):
+            if isinstance(mapping.hf_param, str):
                 # Simple string destination
                 pattern = pattern_info
                 if pattern is None:
                     # Direct match
-                    if mapping.to == to_name:
+                    if mapping.hf_param == hf_param_name:
                         return mapping
                 else:
                     # Pattern match
-                    match = pattern.match(to_name)
+                    match = pattern.match(hf_param_name)
                     if match:
                         return self._resolve_mapping(mapping, match.groups())
             else:
@@ -178,17 +178,17 @@ class MegatronStateBridge:
                 for key, pattern in patterns_dict.items():
                     if pattern is None:
                         # Direct match
-                        if mapping.to[key] == to_name:
+                        if mapping.hf_param[key] == hf_param_name:
                             # Create a simplified mapping for this specific key
                             return self._resolve_mapping(mapping, ())
                     else:
                         # Pattern match
-                        match = pattern.match(to_name)
+                        match = pattern.match(hf_param_name)
                         if match:
                             return self._resolve_mapping(mapping, match.groups())
         return None
 
-    def _resolve_mapping(self, mapping: MegatronWeightBridge, captures: Tuple[str, ...]) -> MegatronWeightBridge:
+    def _resolve_mapping(self, mapping: MegatronParamMapping, captures: Tuple[str, ...]) -> MegatronParamMapping:
         """
         Resolve wildcards in mapping using captured values.
 
@@ -197,15 +197,15 @@ class MegatronStateBridge:
             captures: Captured values from regex match
 
         Returns:
-            New MegatronWeightBridge with wildcards replaced by actual values
+            New MegatronParamMapping with wildcards replaced by actual values
         """
         return mapping.resolve(captures)
 
-    def get_all_mappings(self) -> List[MegatronWeightBridge]:
+    def get_all_mappings(self) -> List[MegatronParamMapping]:
         """Get all mappings in this MegatronStateBridge."""
         return self.mappings.copy()
 
-    def get_mappings_by_pattern(self, pattern: str) -> List[MegatronWeightBridge]:
+    def get_mappings_by_pattern(self, pattern: str) -> List[MegatronParamMapping]:
         """
         Get all mappings that match a given pattern.
 
@@ -213,7 +213,7 @@ class MegatronStateBridge:
             pattern: Pattern to match (supports * wildcards)
 
         Returns:
-            List of matching MegatronWeightBridge objects
+            List of matching MegatronParamMapping objects
         """
         # Convert pattern to regex
         regex_pattern = re.escape(pattern)
@@ -222,7 +222,7 @@ class MegatronStateBridge:
 
         matches = []
         for mapping in self.mappings:
-            if compiled_pattern.match(mapping.megatron):
+            if compiled_pattern.match(mapping.megatron_param):
                 matches.append(mapping)
 
         return matches
@@ -248,12 +248,12 @@ class MegatronStateBridge:
         """
         lines = [f"MegatronStateBridge with {len(self.mappings)} mappings:"]
         for i, mapping in enumerate(self.mappings):
-            lines.append(f"\n{i + 1}. {mapping.megatron}")
-            if isinstance(mapping.to, str):
-                lines.append(f"   → {mapping.to}")
+            lines.append(f"\n{i + 1}. {mapping.megatron_param}")
+            if isinstance(mapping.hf_param, str):
+                lines.append(f"   → {mapping.hf_param}")
             else:
                 lines.append("   → {")
-                for key, value in mapping.to.items():
+                for key, value in mapping.hf_param.items():
                     lines.append(f"       {key}: {value}")
                 lines.append("     }")
 
