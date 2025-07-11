@@ -76,7 +76,7 @@ class TestPretrain:
         checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
         tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
 
-        if get_rank_safe() == 0:
+        if torch.distributed.get_rank() == 0:
             os.makedirs(checkpoint_dir, exist_ok=True)
             os.makedirs(tensorboard_dir, exist_ok=True)
 
@@ -194,8 +194,7 @@ class TestPretrain:
         checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
         tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
 
-        # Create subdirectories (all ranks can do this safely)
-        if get_rank_safe() == 0:
+        if torch.distributed.get_rank() == 0:
             os.makedirs(checkpoint_dir, exist_ok=True)
             os.makedirs(tensorboard_dir, exist_ok=True)
 
