@@ -58,7 +58,7 @@ class TestPretrainResume:
         """Teardown method called after each test method."""
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
-            if get_rank_safe() == 0:
+            if torch.distributed.get_rank() == 0:
                 if os.path.exists(tmp_path):
                     shutil.rmtree(tmp_path)
             torch.distributed.barrier()
