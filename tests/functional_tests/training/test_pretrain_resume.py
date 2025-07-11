@@ -14,7 +14,6 @@
 
 import os
 import shutil
-import time
 from dataclasses import dataclass
 
 import pytest
@@ -22,7 +21,6 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.core.utils.common_utils import get_rank_safe
 from megatron.hub.models.llama import Llama3ModelProvider
 from megatron.hub.training.config import (
     CheckpointConfig,
@@ -176,9 +174,6 @@ class TestPretrainResume:
             self._verify_checkpoint_files(checkpoint_dir, checkpoint_iters)
 
             torch.distributed.barrier()
-
-            print(f"[RANK {get_rank_safe()}]: going to load checkpoint")
-            time.sleep(1)
 
             # Second training run - resume from checkpoint and train for remaining 10 iterations
             cfg_second = ConfigContainer(
