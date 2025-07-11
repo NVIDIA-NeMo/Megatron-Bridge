@@ -73,6 +73,10 @@ class TestPretrainResume:
             metadata_file = os.path.join(final_iter_dir, ".metadata")
             assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
 
+            # Check that there are exactly 2 files with .distcp extension
+            distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
+            assert len(distcp_files) == 2, f"Expected 2 .distcp files, found {len(distcp_files)}: {distcp_files}"
+
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_save_load(self, tmp_path):
         """
