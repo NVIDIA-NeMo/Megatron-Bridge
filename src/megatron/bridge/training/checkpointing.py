@@ -210,6 +210,7 @@ def checkpoint_exists(checkpoints_path: str) -> bool:
     return os.path.exists(os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}"))
 
 
+@lru_cache()
 def read_train_state(train_state_filename: str) -> TrainState:
     """Read the train state metadata from a YAML file (rank 0 only).
 
