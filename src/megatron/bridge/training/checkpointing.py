@@ -210,7 +210,6 @@ def checkpoint_exists(checkpoints_path: str) -> bool:
     return os.path.exists(os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}"))
 
 
-@lru_cache()
 def read_train_state(train_state_filename: str) -> TrainState:
     """Read the train state metadata from a YAML file (rank 0 only).
 
@@ -1053,7 +1052,9 @@ def _load_checkpoint_from_path(
     assert state.train_state.skipped_train_samples == 0
     assert state.train_state.consumed_valid_samples == 0
 
-    state.train_state = read_train_state(get_checkpoint_train_state_filename(checkpoint_name))
+    if not cfg.checkpoint.finetune:
+        state.train_state = read_train_state(get_checkpoint_train_state_filename(checkpoint_name))
+
     # Set iteration.
     if cfg.checkpoint.finetune or release:
         state.train_state.step = 0

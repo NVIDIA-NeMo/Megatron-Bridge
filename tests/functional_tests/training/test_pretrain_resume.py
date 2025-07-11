@@ -73,9 +73,11 @@ class TestPretrainResume:
             metadata_file = os.path.join(final_iter_dir, ".metadata")
             assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
 
-            # Check that there are exactly 2 files with .distcp extension
             distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
-            assert len(distcp_files) == 2, f"Expected 2 .distcp files, found {len(distcp_files)}: {distcp_files}"
+            num_expected_files = 2 * torch.distributed.get_world_size()
+            assert len(distcp_files) == num_expected_files, (
+                f"Expected {num_expected_files} .distcp files, found {len(distcp_files)}: {distcp_files}"
+            )
 
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_save_load(self, tmp_path):
@@ -92,6 +94,8 @@ class TestPretrainResume:
         if torch.distributed.get_rank() == 0:
             os.makedirs(checkpoint_dir, exist_ok=True)
             os.makedirs(tensorboard_dir, exist_ok=True)
+
+        torch.distributed.barrier()
 
         try:
             global_batch_size = 8
@@ -174,6 +178,8 @@ class TestPretrainResume:
             # Run first training job
             pretrain(cfg_first, forward_step)
 
+            torch.distributed.barrier()
+
             # Verify checkpoint files from first run
             self._verify_checkpoint_files(checkpoint_dir, checkpoint_iters)
 
@@ -253,6 +259,8 @@ class TestPretrainResume:
 
             # Run second training job (resume from checkpoint)
             pretrain(cfg_second, forward_step)
+
+            torch.distributed.barrier()
 
             # Verify checkpoint files from second run
             self._verify_checkpoint_files(checkpoint_dir, total_iters)
