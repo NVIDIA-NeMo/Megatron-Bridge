@@ -1195,7 +1195,13 @@ def init_async_checkpoint_worker(global_state: GlobalState) -> None:
     """
     from megatron.hub.core.utils.common_utils import print_rank_0
 
-    if global_state.cfg.checkpoint.async_save and global_state.cfg.checkpoint.use_persistent_ckpt_worker:
+    checkpoint_config = global_state.cfg.checkpoint
+
+    if (
+        checkpoint_config.save is not None
+        and checkpoint_config.async_save
+        and checkpoint_config.use_persistent_ckpt_worker
+    ):
         # Access the async_calls_queue property to trigger lazy initialization
         # This creates the persistent worker immediately during setup
         _ = global_state.async_calls_queue
