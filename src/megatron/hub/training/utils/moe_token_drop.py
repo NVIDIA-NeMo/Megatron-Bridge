@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 def apply_moe_token_drop(
-    model_provider: GPTModelProvider,
+    model_provider: TransformerConfig,
     moe_expert_capacity_factor: float = 1.0,
     moe_pad_expert_input_to_capacity: bool = True,
 ) -> None:
     """Token drop improves performance by better balancing work across experts, but may affect convergence.
 
     Args:
-        model_provider (GPTModelProvider): The model provider to apply the token drop to
+        model_provider (TransformerConfig): The transformer config to apply the token drop settings to
         moe_expert_capacity_factor (float): The capacity factor for all experts
         moe_pad_expert_input_to_capacity (bool): Pad the input for each expert to the expert capacity length
 
