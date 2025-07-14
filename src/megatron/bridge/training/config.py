@@ -33,6 +33,9 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 
 
+logger: logging.Logger = logging.getLogger(__name__)
+
+
 @dataclass(kw_only=True)
 class RNGConfig:
     """Configuration settings for random number generation."""
@@ -454,8 +457,12 @@ class CheckpointConfig:
     """Number of machines storing the replica of a given rank's data."""
 
     def __post_init__(self) -> None:
+        """Post-initialization checks for checkpoint config."""
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
+        
+        if self.async_save:
+            assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
 
 
 @dataclass(kw_only=True)
