@@ -322,6 +322,7 @@ class TestLoRAFinetune:
             val_proportion=None,
             dataset_kwargs=dataset_kwargs,
             packed_sequence_specs=packed_sequence_specs,
+            rewrite=False,
         )
 
         return config
