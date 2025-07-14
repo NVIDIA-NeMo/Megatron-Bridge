@@ -240,7 +240,6 @@ class TestDoRAFinetune:
             do_validation=False,
             do_test=False,
             val_proportion=None,
-            delete_raw=True,
         )
 
     def _create_logger_config(self, tensorboard_dir):

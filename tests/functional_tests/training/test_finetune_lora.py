@@ -320,7 +320,6 @@ class TestLoRAFinetune:
             do_validation=False,
             do_test=False,
             val_proportion=None,
-            delete_raw=True,
             dataset_kwargs=dataset_kwargs,
             packed_sequence_specs=packed_sequence_specs,
         )
