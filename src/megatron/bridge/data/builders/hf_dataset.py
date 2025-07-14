@@ -70,6 +70,7 @@ class HFDatasetConfig(FinetuningDatasetConfig):
         split_val_from_train: If True, creates validation set from training set.
                               If False, uses test set to create validation set.
         delete_raw: If True, delete the raw downloaded dataset files after processing.
+        rewrite: If True, rewrite existing processed files.
         hf_kwargs: Additional keyword arguments to pass to `load_dataset`.
         hf_filter_lambda: Optional function to filter the loaded dataset.
         hf_filter_lambda_kwargs: Optional keyword arguments for `hf_filter_lambda`.
@@ -84,6 +85,7 @@ class HFDatasetConfig(FinetuningDatasetConfig):
     val_proportion: Optional[float] = 0.05
     split_val_from_train: bool = True
     delete_raw: bool = False
+    rewrite: bool = True
     hf_kwargs: Optional[dict[str, Any]] = None
     hf_filter_lambda: Optional[Callable] = None
     hf_filter_lambda_kwargs: Optional[dict[str, Any]] = None
