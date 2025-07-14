@@ -21,6 +21,7 @@ import torch
 
 from megatron.hub.models.llama import Llama32ModelProvider3B
 from megatron.hub.recipes.llama.llama32_3b import model_config, pretrain_config
+from megatron.hub.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.hub.training.comm_overlap import CommOverlapConfig
 from megatron.hub.training.config import ConfigContainer
 
@@ -283,7 +284,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.vocab_size == 32000
+        assert config.tokenizer.vocab_size == DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     def test_pretrain_config_rng_configuration(self):
         """Test RNG configuration."""

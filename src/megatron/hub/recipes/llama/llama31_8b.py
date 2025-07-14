@@ -21,6 +21,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.hub.models.llama import Llama31ModelProvider8B
 from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.hub.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.hub.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 from megatron.hub.training.config import (
     CheckpointConfig,
@@ -193,7 +194,7 @@ def pretrain_config(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=32000),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
