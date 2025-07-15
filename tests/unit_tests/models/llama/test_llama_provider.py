@@ -14,7 +14,7 @@
 
 import torch.nn.functional as F
 
-from megatron.hub.models.llama import (
+from megatron.bridge.models.llama import (
     Llama2ModelProvider7B,
     Llama3ModelProvider,
     Llama3ModelProvider8B,

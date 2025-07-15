@@ -16,8 +16,8 @@
 
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.hub.training.config import SchedulerConfig
+from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.training.config import SchedulerConfig
 
 
 class TestOptimizerUtils:

@@ -26,16 +26,16 @@ import torch.nn as nn
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
-from megatron.hub.peft.base import PEFT
-from megatron.hub.peft.lora import LoRA
-from megatron.hub.training.checkpointing import (
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.checkpointing import (
     _is_model_section,
     apply_peft_adapter_filter_to_state_dict,
     load_checkpoint,
 )
-from megatron.hub.training.config import CheckpointConfig, ConfigContainer
-from megatron.hub.training.state import GlobalState
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.state import GlobalState
 
 
 @dataclass
@@ -409,10 +409,10 @@ class TestPEFTCheckpointLoading:
         assert filtered_dict["iteration"] == 1000
         assert "optimizer" in filtered_dict
 
-    @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
-    @patch("megatron.hub.training.checkpointing.checkpoint_exists")
-    @patch("megatron.hub.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
-    @patch("megatron.hub.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
+    @patch("megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
+    @patch("megatron.bridge.training.checkpointing.generate_state_dict")
     def test_load_checkpoint_peft_resume_detection(
         self, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
     ):
@@ -477,20 +477,20 @@ class TestPEFTCheckpointLoading:
 
         # Call load_checkpoint
         with (
-            patch("megatron.hub.training.checkpointing.read_train_state") as mock_read_train_state,
-            patch("megatron.hub.training.checkpointing.get_checkpoint_train_state_filename"),
-            patch("megatron.hub.training.checkpointing.update_num_microbatches"),
-            patch("megatron.hub.training.checkpointing.get_checkpoint_version") as mock_get_version,
-            patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
-            patch("megatron.hub.training.checkpointing.restore_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.read_train_state") as mock_read_train_state,
+            patch("megatron.bridge.training.checkpointing.get_checkpoint_train_state_filename"),
+            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
+            patch("megatron.bridge.training.checkpointing.get_checkpoint_version") as mock_get_version,
+            patch("megatron.bridge.training.checkpointing.set_checkpoint_version"),
+            patch("megatron.bridge.training.checkpointing.restore_sharded_modelopt_state"),
             patch("torch.distributed.barrier"),
-            patch("megatron.hub.training.checkpointing.print_rank_0"),
-            patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
-            patch("megatron.hub.training.checkpointing.unwrap_model") as mock_unwrap_model,
-            patch("megatron.hub.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
-            patch("megatron.hub.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
-            patch("megatron.hub.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
-            patch("megatron.hub.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.print_rank_0"),
+            patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.bridge.training.checkpointing.unwrap_model") as mock_unwrap_model,
+            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
+            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
+            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
@@ -525,8 +525,8 @@ class TestPEFTCheckpointLoading:
             # Verify model.load_state_dict was called with filtered dict and strict=False
             mock_model[0].load_state_dict.assert_called_once_with(filtered_sharded_state_dict["model"], strict=False)
 
-    @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
-    @patch("megatron.hub.training.checkpointing.checkpoint_exists")
+    @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
     def test_load_checkpoint_non_peft_regular_loading(self, mock_checkpoint_exists, mock_load_base):
         """Test that non-PEFT scenarios use regular loading without filtering."""
         # Setup mocks
@@ -577,20 +577,20 @@ class TestPEFTCheckpointLoading:
 
         # Call load_checkpoint
         with (
-            patch("megatron.hub.training.checkpointing.read_train_state") as mock_read_train_state,
-            patch("megatron.hub.training.checkpointing.get_checkpoint_train_state_filename"),
-            patch("megatron.hub.training.checkpointing.update_num_microbatches"),
-            patch("megatron.hub.training.checkpointing.get_checkpoint_version") as mock_get_version,
-            patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
-            patch("megatron.hub.training.checkpointing.restore_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.read_train_state") as mock_read_train_state,
+            patch("megatron.bridge.training.checkpointing.get_checkpoint_train_state_filename"),
+            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
+            patch("megatron.bridge.training.checkpointing.get_checkpoint_version") as mock_get_version,
+            patch("megatron.bridge.training.checkpointing.set_checkpoint_version"),
+            patch("megatron.bridge.training.checkpointing.restore_sharded_modelopt_state"),
             patch("torch.distributed.barrier"),
-            patch("megatron.hub.training.checkpointing.print_rank_0"),
-            patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
-            patch("megatron.hub.training.checkpointing.unwrap_model") as mock_unwrap_model,
-            patch("megatron.hub.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
-            patch("megatron.hub.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
-            patch("megatron.hub.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
-            patch("megatron.hub.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.print_rank_0"),
+            patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.bridge.training.checkpointing.unwrap_model") as mock_unwrap_model,
+            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
+            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
+            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
@@ -619,10 +619,10 @@ class TestPEFTCheckpointLoading:
             # Verify model.load_state_dict was called with full dict and original strict value
             mock_model[0].load_state_dict.assert_called_once_with(mock_state_dict["model"], strict=True)
 
-    @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
-    @patch("megatron.hub.training.checkpointing.checkpoint_exists")
-    @patch("megatron.hub.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
-    @patch("megatron.hub.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
+    @patch("megatron.bridge.training.checkpointing.apply_peft_adapter_filter_to_state_dict")
+    @patch("megatron.bridge.training.checkpointing.generate_state_dict")
     def test_load_checkpoint_peft_resume_multi_model(
         self, mock_generate_state_dict, mock_filter, mock_checkpoint_exists, mock_load_base
     ):
@@ -693,21 +693,21 @@ class TestPEFTCheckpointLoading:
 
         # Call load_checkpoint
         with (
-            patch("megatron.hub.training.checkpointing.read_train_state") as mock_read_train_state,
-            patch("megatron.hub.training.checkpointing.get_checkpoint_train_state_filename"),
-            patch("megatron.hub.training.checkpointing.update_num_microbatches"),
-            patch("megatron.hub.training.checkpointing.get_checkpoint_version") as mock_get_version,
-            patch("megatron.hub.training.checkpointing.set_checkpoint_version"),
-            patch("megatron.hub.training.checkpointing.restore_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.read_train_state") as mock_read_train_state,
+            patch("megatron.bridge.training.checkpointing.get_checkpoint_train_state_filename"),
+            patch("megatron.bridge.training.checkpointing.update_num_microbatches"),
+            patch("megatron.bridge.training.checkpointing.get_checkpoint_version") as mock_get_version,
+            patch("megatron.bridge.training.checkpointing.set_checkpoint_version"),
+            patch("megatron.bridge.training.checkpointing.restore_sharded_modelopt_state"),
             patch("megatron.core.mpu.set_virtual_pipeline_model_parallel_rank"),
             patch("torch.distributed.barrier"),
-            patch("megatron.hub.training.checkpointing.print_rank_0"),
-            patch("megatron.hub.training.checkpointing.read_run_config") as mock_read_run_config,
-            patch("megatron.hub.training.checkpointing.unwrap_model") as mock_unwrap_model,
-            patch("megatron.hub.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
-            patch("megatron.hub.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
-            patch("megatron.hub.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
-            patch("megatron.hub.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.print_rank_0"),
+            patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.bridge.training.checkpointing.unwrap_model") as mock_unwrap_model,
+            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_rank", return_value=0),
+            patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
+            patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
@@ -784,7 +784,7 @@ class TestPEFTCheckpointingIntegration:
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
 
-        from megatron.hub.training.initialize import _set_random_seed
+        from megatron.bridge.training.initialize import _set_random_seed
 
         _set_random_seed(
             seed_=1234,

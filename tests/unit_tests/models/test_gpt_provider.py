@@ -14,7 +14,7 @@
 
 from unittest.mock import Mock, patch
 
-from megatron.hub.models import GPTModelProvider
+from megatron.bridge.models import GPTModelProvider
 
 
 class TestGPTModelProvider:
@@ -69,9 +69,9 @@ class TestGPTModelProvider:
         )
 
         # Mock dependencies
-        with patch("megatron.hub.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.hub.models.gpt_provider.get_vocab_size", return_value=1000):
-                with patch("megatron.hub.models.gpt_provider.MCoreGPTModel") as mock_model:
+        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
+            with patch("megatron.bridge.models.gpt_provider.get_vocab_size", return_value=1000):
+                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
                     mock_ps.is_pipeline_first_stage.return_value = True
                     mock_ps.is_pipeline_last_stage.return_value = True
                     mock_instance = Mock()
@@ -97,9 +97,9 @@ class TestGPTModelProvider:
             num_attention_heads=4,
         )
 
-        with patch("megatron.hub.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.hub.models.gpt_provider.get_vocab_size", return_value=50000) as mock_get_vocab:
-                with patch("megatron.hub.models.gpt_provider.MCoreGPTModel"):
+        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
+            with patch("megatron.bridge.models.gpt_provider.get_vocab_size", return_value=50000) as mock_get_vocab:
+                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel"):
                     mock_ps.is_pipeline_first_stage.return_value = True
                     mock_ps.is_pipeline_last_stage.return_value = True
 
@@ -117,9 +117,9 @@ class TestGPTModelProvider:
             vocab_size=1000,
         )
 
-        with patch("megatron.hub.models.gpt_provider.parallel_state") as mock_ps:
-            with patch("megatron.hub.models.gpt_provider.get_vocab_size", return_value=1000):
-                with patch("megatron.hub.models.gpt_provider.MCoreGPTModel") as mock_gpt:
+        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
+            with patch("megatron.bridge.models.gpt_provider.get_vocab_size", return_value=1000):
+                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_gpt:
                     # Test default behavior - uses parallel_state
                     mock_ps.is_pipeline_first_stage.return_value = False
                     mock_ps.is_pipeline_last_stage.return_value = True
@@ -226,7 +226,7 @@ class TestGPTModelProvider:
 
         assert provider.attention_softmax_in_fp32 is True
 
-    @patch("megatron.hub.models.gpt_provider.parallel_state")
+    @patch("megatron.bridge.models.gpt_provider.parallel_state")
     def test_provide_with_generation_config(self, mock_parallel_state):
         """Test provide method with generation configuration."""
         mock_parallel_state.is_pipeline_first_stage.return_value = True

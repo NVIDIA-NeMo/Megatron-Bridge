@@ -23,9 +23,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
-from megatron.hub.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
-from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.peft.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
 
 
 class SimpleModel(nn.Module):
@@ -225,9 +225,11 @@ class TestCanonicalLoRA:
                     return (False, 512, 2048, False, True)
             return (False, 512, 512, False, True)  # default
 
-        with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs):
+        with patch(
+            "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs
+        ):
             # Mock ParallelLinearAdapter
-            with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
                 mock_adapter.return_value = nn.Linear(1, 1)  # Simple mock
 
                 # Apply CanonicalLoRA
@@ -483,11 +485,11 @@ class TestCanonicalLoRA:
         lora = CanonicalLoRA(target_modules=["linear_q", "linear_k", "linear_v"])
 
         # Mock the get_adapter_attributes_from_linear function
-        with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
+        with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
             mock_get_attrs.return_value = (False, 512, 1536, False, True)
 
             # Mock ParallelLinearAdapter
-            with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
                 mock_adapter.return_value = nn.Linear(1, 1)  # Simple mock
 
                 # Apply CanonicalLoRA first time
@@ -521,11 +523,11 @@ class TestCanonicalLoRAMegatronLayers:
         lora = CanonicalLoRA(target_modules=["linear_q", "linear_k", "linear_v"])
 
         # Mock the get_adapter_attributes_from_linear function
-        with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
+        with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
             mock_get_attrs.return_value = (False, 512, 1536, False, True)
 
             # Mock ParallelLinearAdapter
-            with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
                 mock_adapter.return_value = nn.Linear(1, 1)  # Simple mock
 
                 # Apply CanonicalLoRA
@@ -543,11 +545,11 @@ class TestCanonicalLoRAMegatronLayers:
         lora = CanonicalLoRA(target_modules=["linear_fc1_up", "linear_fc1_gate"])
 
         # Mock the get_adapter_attributes_from_linear function
-        with patch("megatron.hub.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
+        with patch("megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear") as mock_get_attrs:
             mock_get_attrs.return_value = (False, 512, 2048, False, True)
 
             # Mock ParallelLinearAdapter
-            with patch("megatron.hub.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
+            with patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter:
                 mock_adapter.return_value = nn.Linear(1, 1)  # Simple mock
 
                 # Apply CanonicalLoRA
@@ -668,7 +670,7 @@ class TestCanonicalLoRAMegatronIntegration:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
-        from megatron.hub.training.initialize import _set_random_seed
+        from megatron.bridge.training.initialize import _set_random_seed
 
         _set_random_seed(
             seed_=1234,

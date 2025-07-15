@@ -24,7 +24,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from megatron.hub.models.gpt_full_te_layer_autocast_spec import (
+from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
     ApexGuardDefaults,
     get_gpt_full_te_layer_autocast_spec,
     torch_dtype_from_precision,
@@ -35,7 +35,7 @@ from megatron.hub.models.gpt_full_te_layer_autocast_spec import (
 try:
     import transformer_engine.pytorch as te  # noqa: F401
 
-    from megatron.hub.models.gpt_full_te_layer_autocast_spec import (
+    from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
         AutocastTransformerLayer,
         TETransformerLayerAutocast,
     )
@@ -175,7 +175,7 @@ class TestAutocastTransformerLayer:
         """Test handling of different Transformer Engine versions."""
         mock_te_init.return_value = None
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.version") as mock_version:
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.version") as mock_version:
             # Test version > 1.5.0
             mock_version.return_value = "1.6.0"
             _ = AutocastTransformerLayer(**basic_config)
@@ -270,7 +270,7 @@ class TestTETransformerLayerAutocast:
         mock_pp_rank.return_value = 0
         mock_pp_world_size.return_value = 1
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
 
             assert isinstance(layer, TETransformerLayerAutocast)
@@ -291,7 +291,7 @@ class TestTETransformerLayerAutocast:
         # Ensure external_cuda_graph is False so we get tuple return
         mock_config.external_cuda_graph = False
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()
             mock_transformer.forward.return_value = torch.randn(2, 4, 512)
             mock_autocast.return_value = mock_transformer
@@ -325,7 +325,7 @@ class TestTETransformerLayerAutocast:
         mock_pp_rank.return_value = 1  # Second pipeline rank
         mock_pp_world_size.return_value = 2  # Two pipeline ranks
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             layer = TETransformerLayerAutocast(mock_config, layer_number=0)
 
             offset = layer._get_layer_offset()
@@ -345,8 +345,8 @@ class TestTETransformerLayerAutocast:
         mock_pp_world_size.return_value = 1
         mock_config.enable_cuda_graph = True
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
-            with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
+            with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
                 # Create a proper mock instance that inherits from nn.Module
                 class MockCudaGraphManager(torch.nn.Module):
                     def __init__(self, config):
@@ -371,7 +371,7 @@ class TestTETransformerLayerAutocast:
         mock_pp_world_size.return_value = 1
         mock_config.external_cuda_graph = True
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()
             mock_transformer.forward.return_value = torch.randn(2, 4, 512)
             mock_autocast.return_value = mock_transformer
@@ -396,9 +396,9 @@ class TestTETransformerLayerAutocast:
         mock_pp_rank.return_value = 0
         mock_pp_world_size.return_value = 1
 
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch(
-                "megatron.hub.models.gpt_full_te_layer_autocast_spec.make_sharded_tensors_for_checkpoint"
+                "megatron.bridge.models.gpt_full_te_layer_autocast_spec.make_sharded_tensors_for_checkpoint"
             ) as mock_make_sharded:
                 mock_make_sharded.return_value = {"test_key": "test_value"}
 
@@ -421,7 +421,7 @@ class TestGetGPTFullTELayerAutocastSpec:
         config.num_layers = 12
         return config
 
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.get_num_layers_to_build")
+    @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.get_num_layers_to_build")
     def test_get_gpt_full_te_layer_autocast_spec_basic(self, mock_get_num_layers, mock_transformer_config):
         """Test basic functionality of get_gpt_full_te_layer_autocast_spec."""
         mock_get_num_layers.return_value = 12
@@ -443,7 +443,7 @@ class TestGetGPTFullTELayerAutocastSpec:
             assert isinstance(layer_spec, ModuleSpec)
             assert layer_spec.module == TETransformerLayerAutocast
 
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.get_num_layers_to_build")
+    @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.get_num_layers_to_build")
     def test_get_gpt_full_te_layer_autocast_spec_different_num_layers(
         self, mock_get_num_layers, mock_transformer_config
     ):
@@ -458,7 +458,7 @@ class TestGetGPTFullTELayerAutocastSpec:
 class TestWithoutTransformerEngine:
     """Test behavior when Transformer Engine is not available."""
 
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False)
+    @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False)
     def test_get_gpt_full_te_layer_autocast_spec_without_te(self):
         """Test that get_gpt_full_te_layer_autocast_spec raises assertion when TE is not available."""
         mock_config = Mock()
@@ -468,7 +468,7 @@ class TestWithoutTransformerEngine:
 
     def test_autocast_transformer_layer_without_te(self):
         """Test that AutocastTransformerLayer raises assertion when TE is not available."""
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
             with pytest.raises(AssertionError, match="AutocastTransformerLayer requires Transformer Engine"):
                 # Try to create an instance with some dummy config
                 basic_config = {
@@ -487,7 +487,7 @@ class TestWithoutTransformerEngine:
 
     def test_te_transformer_layer_autocast_without_te(self):
         """Test that TETransformerLayerAutocast raises assertion when TE is not available."""
-        with patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
             with pytest.raises(AssertionError, match="TETransformerLayerAutocast requires Transformer Engine"):
                 mock_config = Mock()
                 TETransformerLayerAutocast(mock_config, layer_number=0)
@@ -497,7 +497,7 @@ class TestVersionCompatibility:
     """Test version compatibility handling."""
 
     @pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.version")
+    @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.version")
     def test_te_version_compatibility_old_version(self, mock_version):
         """Test handling of older TE versions."""
         mock_version.return_value = "1.4.0"
@@ -525,7 +525,7 @@ class TestVersionCompatibility:
             assert "ub_split_rs" in kwargs
 
     @pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
-    @patch("megatron.hub.models.gpt_full_te_layer_autocast_spec.version")
+    @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.version")
     def test_te_version_compatibility_new_version(self, mock_version):
         """Test handling of newer TE versions."""
         mock_version.return_value = "1.7.0"

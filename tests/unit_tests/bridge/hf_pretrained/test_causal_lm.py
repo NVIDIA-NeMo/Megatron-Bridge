@@ -23,7 +23,7 @@ import pytest
 import torch
 from transformers import PreTrainedTokenizer
 
-from megatron.hub.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.converters.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class TestPreTrainedCausalLMInitialization:
@@ -111,7 +111,7 @@ class TestPreTrainedCausalLMInitialization:
 class TestPreTrainedCausalLMConfigProperty:
     """Test config property and lazy loading."""
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
     def test_config_lazy_load(self, mock_from_pretrained, mock_config):
         """Test config is lazy loaded on first access."""
         mock_from_pretrained.return_value = mock_config
@@ -137,7 +137,7 @@ class TestPreTrainedCausalLMConfigProperty:
         with pytest.raises(ValueError, match="model_name_or_path must be provided"):
             _ = lm.config
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
     def test_config_with_kwargs(self, mock_from_pretrained, mock_config):
         """Test config loading with additional kwargs."""
         mock_from_pretrained.return_value = mock_config
@@ -157,7 +157,7 @@ class TestPreTrainedCausalLMConfigProperty:
         assert lm._config is mock_config
         assert lm.config is mock_config
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
     def test_config_cached(self, mock_from_pretrained, mock_config):
         """Test config is cached after first load."""
         mock_from_pretrained.return_value = mock_config
@@ -176,7 +176,7 @@ class TestPreTrainedCausalLMConfigProperty:
 class TestPreTrainedCausalLMTokenizerProperty:
     """Test tokenizer property and lazy loading."""
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_tokenizer_lazy_load(self, mock_from_pretrained, mock_tokenizer):
         """Test tokenizer is lazy loaded on first access."""
         mock_from_pretrained.return_value = mock_tokenizer
@@ -202,7 +202,7 @@ class TestPreTrainedCausalLMTokenizerProperty:
         with pytest.raises(ValueError, match="model_name_or_path must be provided"):
             _ = lm.tokenizer
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_tokenizer_pad_token_set(self, mock_from_pretrained):
         """Test pad token is set to eos token if None."""
         mock_tokenizer = Mock(spec=PreTrainedTokenizer)
@@ -215,7 +215,7 @@ class TestPreTrainedCausalLMTokenizerProperty:
 
         assert mock_tokenizer.pad_token == "</s>"
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_tokenizer_pad_token_not_overwritten(self, mock_from_pretrained):
         """Test existing pad token is not overwritten."""
         mock_tokenizer = Mock(spec=PreTrainedTokenizer)
@@ -241,7 +241,7 @@ class TestPreTrainedCausalLMTokenizerProperty:
 class TestPreTrainedCausalLMModelProperty:
     """Test model property and lazy loading."""
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_model_lazy_load(self, mock_from_pretrained, mock_model):
         """Test model is lazy loaded on first access."""
         mock_from_pretrained.return_value = mock_model
@@ -267,7 +267,7 @@ class TestPreTrainedCausalLMModelProperty:
         with pytest.raises(ValueError, match="model_name_or_path must be provided"):
             _ = lm.model
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_model_with_dtype(self, mock_from_pretrained, mock_model):
         """Test model loading with specific dtype."""
         mock_from_pretrained.return_value = mock_model
@@ -280,7 +280,7 @@ class TestPreTrainedCausalLMModelProperty:
         call_kwargs = mock_from_pretrained.call_args[1]
         assert call_kwargs["torch_dtype"] == torch.float16
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_model_with_preloaded_config(self, mock_from_pretrained, mock_model, mock_config):
         """Test model loading uses preloaded config."""
         mock_from_pretrained.return_value = mock_model
@@ -294,7 +294,7 @@ class TestPreTrainedCausalLMModelProperty:
         call_kwargs = mock_from_pretrained.call_args[1]
         assert call_kwargs["config"] is mock_config
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_model_moved_to_device(self, mock_from_pretrained, mock_model):
         """Test model is moved to specified device."""
         mock_from_pretrained.return_value = mock_model
@@ -305,7 +305,7 @@ class TestPreTrainedCausalLMModelProperty:
 
         mock_model.to.assert_called_once_with("cuda:1")
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_model_generation_config_set(self, mock_from_pretrained, mock_model, mock_generation_config):
         """Test generation config is set on model if available."""
         mock_from_pretrained.return_value = mock_model
@@ -332,7 +332,7 @@ class TestPreTrainedCausalLMModelProperty:
 class TestPreTrainedCausalLMGenerationConfig:
     """Test generation config property."""
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.GenerationConfig.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.GenerationConfig.from_pretrained")
     def test_generation_config_lazy_load(self, mock_from_pretrained, mock_generation_config):
         """Test generation config is lazy loaded."""
         mock_from_pretrained.return_value = mock_generation_config
@@ -348,7 +348,7 @@ class TestPreTrainedCausalLMGenerationConfig:
         assert config is mock_generation_config
         mock_from_pretrained.assert_called_once()
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.GenerationConfig.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.GenerationConfig.from_pretrained")
     def test_generation_config_not_found(self, mock_from_pretrained):
         """Test generation config returns None if not found."""
         mock_from_pretrained.side_effect = Exception("Not found")
@@ -383,7 +383,7 @@ class TestPreTrainedCausalLMGenerationConfig:
 class TestPreTrainedCausalLMMethods:
     """Test methods of PreTrainedCausalLM."""
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_generate_method(self, mock_from_pretrained, mock_model):
         """Test generate method forwards to model."""
         mock_from_pretrained.return_value = mock_model
@@ -397,7 +397,7 @@ class TestPreTrainedCausalLMMethods:
         mock_model.generate.assert_called_once_with(input_ids, max_length=10, temperature=0.8)
         assert torch.equal(result, torch.tensor([[1, 2, 3, 4, 5]]))
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_call_method(self, mock_from_pretrained):
         """Test __call__ method forwards to model."""
         mock_model = Mock()
@@ -416,7 +416,7 @@ class TestPreTrainedCausalLMMethods:
         mock_model.assert_called_once_with(input_ids, attention_mask=attention_mask)
         assert result is mock_output
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_encode_method(self, mock_from_pretrained):
         """Test encode method uses tokenizer."""
         # Create tokenizer mock
@@ -437,7 +437,7 @@ class TestPreTrainedCausalLMMethods:
         mock_encoded.to.assert_called_once_with("cuda")
         assert result is mock_encoded
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_encode_method_batch(self, mock_from_pretrained):
         """Test encode method with batch input."""
         mock_tokenizer = Mock()
@@ -453,7 +453,7 @@ class TestPreTrainedCausalLMMethods:
 
         mock_tokenizer.assert_called_once_with(texts, return_tensors="pt")
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_decode_method(self, mock_from_pretrained, mock_tokenizer):
         """Test decode method uses tokenizer."""
         mock_from_pretrained.return_value = mock_tokenizer
@@ -669,9 +669,9 @@ class TestPreTrainedCausalLMStateDict:
 class TestPreTrainedCausalLMIntegration:
     """Integration tests with mocked transformers."""
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoConfig.from_pretrained")
     def test_full_pipeline(
         self,
         mock_config_load,
@@ -703,7 +703,7 @@ class TestPreTrainedCausalLMIntegration:
         assert mock_model_load.called
         assert mock_tokenizer_load.called
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_type_safety(self, mock_from_pretrained):
         """Test generic type annotations work correctly."""
         from transformers import GPT2LMHeadModel
@@ -730,7 +730,7 @@ class TestPreTrainedCausalLMEdgeCases:
         assert lm.model_name_or_path == model_path
         assert isinstance(lm.model_name_or_path, Path)
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained")
     def test_model_loading_error_propagation(self, mock_from_pretrained):
         """Test model loading errors are propagated."""
         mock_from_pretrained.side_effect = RuntimeError("Model not found")
@@ -745,7 +745,7 @@ class TestPreTrainedCausalLMEdgeCases:
         lm = PreTrainedCausalLM(**{})
         assert lm.init_kwargs == {}
 
-    @patch("megatron.hub.bridge.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.converters.hf_pretrained.causal_lm.AutoTokenizer.from_pretrained")
     def test_tokenizer_with_none_pad_and_eos(self, mock_from_pretrained):
         """Test tokenizer when both pad and eos tokens are None."""
         mock_tokenizer = Mock(spec=PreTrainedTokenizer)

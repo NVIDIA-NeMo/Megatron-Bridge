@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for megatron.hub.training.checkpointing module."""
+"""Unit tests for megatron.bridge.training.checkpointing module."""
 
 import tempfile
 from pathlib import Path
@@ -20,7 +20,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from megatron.hub.training.checkpointing import (
+from megatron.bridge.training.checkpointing import (
     CheckpointType,
     _get_non_persistent_iteration,
     _load_base_checkpoint,
@@ -37,8 +37,8 @@ from megatron.hub.training.checkpointing import (
     load_checkpoint,
     save_checkpoint,
 )
-from megatron.hub.training.config import CheckpointConfig, ConfigContainer
-from megatron.hub.training.state import GlobalState, TrainState
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.state import GlobalState, TrainState
 
 
 class _DummyClass:
@@ -64,7 +64,7 @@ class TestCheckpointUtilities:
         result = get_checkpoint_name(checkpoints_path, iteration, release=release)
         assert result == expected
 
-    @patch("megatron.hub.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     def test_find_checkpoint_rank_0(self, mock_dist_ckpt):
         """Test finding distributed checkpoints."""
         # Test when checkpoint exists
@@ -146,8 +146,8 @@ class TestCheckpointTypes:
 class TestRNGState:
     """Test RNG state collection."""
 
-    @patch("megatron.hub.training.checkpointing.mpu")
-    @patch("megatron.hub.training.checkpointing.tensor_parallel")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
     @patch("torch.distributed.is_initialized")
     @patch("torch.cuda.get_rng_state")
     @patch("torch.get_rng_state")
@@ -235,31 +235,31 @@ def save_checkpoint_fixtures():
 def _patch_modelopt_state_saver():
     """Conditionally patch modelopt state saving function."""
     if has_nvidia_modelopt:
-        return patch("megatron.hub.training.checkpointing.save_sharded_modelopt_state")
+        return patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
     return patch.object(_dummy_obj, "save_sharded_modelopt_state")
 
 
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
-    @patch("megatron.hub.training.checkpointing.wandb_utils")
-    @patch("megatron.hub.training.checkpointing.is_last_rank")
+    @patch("megatron.bridge.training.checkpointing.wandb_utils")
+    @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("torch.save")
     @patch("shutil.copy")
     @_patch_modelopt_state_saver()
-    @patch("megatron.hub.training.checkpointing.unwrap_model")
-    @patch("megatron.hub.training.checkpointing.get_rng_state")
-    @patch("megatron.hub.training.checkpointing.get_rerun_state_machine")
-    @patch("megatron.hub.training.checkpointing.generate_state_dict")
-    @patch("megatron.hub.training.checkpointing.dist_checkpointing")
-    @patch("megatron.hub.training.checkpointing.mpu")
-    @patch("megatron.hub.training.checkpointing.fault_tolerance")
-    @patch("megatron.hub.training.checkpointing.is_empty_async_queue")
-    @patch("megatron.hub.training.checkpointing.get_rank_safe")
-    @patch("megatron.hub.training.checkpointing.maybe_save_dataloader_state")
-    @patch("megatron.hub.training.checkpointing.ensure_directory_exists")
-    @patch("megatron.hub.training.checkpointing.get_default_save_sharded_strategy")
-    @patch("megatron.hub.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing.get_rng_state")
+    @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
+    @patch("megatron.bridge.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    @patch("megatron.bridge.training.checkpointing.fault_tolerance")
+    @patch("megatron.bridge.training.checkpointing.is_empty_async_queue")
+    @patch("megatron.bridge.training.checkpointing.get_rank_safe")
+    @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
+    @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
+    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
     @patch("torch.distributed.barrier")
@@ -329,7 +329,7 @@ class TestSaveCheckpoint:
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
 
-    @patch("megatron.hub.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_save_checkpoint_invalid_non_persistent_type(self, mock_print_rank_0, save_checkpoint_fixtures):
         """Test error handling for invalid non_persistent_ckpt_type."""
         save_checkpoint_fixtures["mock_cfg"].checkpoint.non_persistent_ckpt_type = "invalid"
@@ -397,12 +397,12 @@ def load_checkpoint_fixtures():
 class TestLoadCheckpoint:
     """Test checkpoint loading functionality."""
 
-    @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
-    @patch("megatron.hub.training.checkpointing.read_train_state")
-    @patch("megatron.hub.training.checkpointing.read_run_config")
-    @patch("megatron.hub.training.checkpointing.unwrap_model")
-    @patch("megatron.hub.training.checkpointing.checkpoint_exists")
-    @patch("megatron.hub.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.barrier")
     def test_load_checkpoint_not_found(
@@ -435,21 +435,21 @@ class TestLoadCheckpoint:
         # Should return default values when no checkpoint found
         assert result == (0, 0)
 
-    @patch("megatron.hub.training.checkpointing._load_base_checkpoint")
-    @patch("megatron.hub.training.checkpointing.read_train_state")
-    @patch("megatron.hub.training.checkpointing.read_run_config")
-    @patch("megatron.hub.training.checkpointing.unwrap_model")
-    @patch("megatron.hub.training.checkpointing.checkpoint_exists")
-    @patch("megatron.hub.training.checkpointing.set_checkpoint_version")
-    @patch("megatron.hub.training.checkpointing.update_num_microbatches")
-    @patch("megatron.hub.training.checkpointing.wandb_utils")
-    @patch("megatron.hub.training.checkpointing.is_last_rank")
-    @patch("megatron.hub.training.checkpointing.print_rank_0")
-    @patch("megatron.hub.training.checkpointing.mpu")
-    @patch("megatron.hub.training.checkpointing.get_rerun_state_machine")
-    @patch("megatron.hub.training.checkpointing.tensor_parallel")
-    @patch("megatron.hub.training.checkpointing.generate_state_dict")
-    @patch("megatron.hub.training.checkpointing.get_rng_state")
+    @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
+    @patch("megatron.bridge.training.checkpointing.set_checkpoint_version")
+    @patch("megatron.bridge.training.checkpointing.update_num_microbatches")
+    @patch("megatron.bridge.training.checkpointing.wandb_utils")
+    @patch("megatron.bridge.training.checkpointing.is_last_rank")
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
+    @patch("megatron.bridge.training.checkpointing.tensor_parallel")
+    @patch("megatron.bridge.training.checkpointing.generate_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_rng_state")
     @patch("random.setstate")
     @patch("numpy.random.set_state")
     @patch("torch.set_rng_state")
@@ -575,7 +575,7 @@ def mock_config():
 class TestNonPersistentCheckpoints:
     """Test non-persistent checkpoint functionality."""
 
-    @patch("megatron.hub.training.checkpointing.read_train_state")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("os.path.isfile")
     def test_get_non_persistent_iteration_global(self, mock_isfile, mock_read_state, mock_config):
         """Test getting iteration from global non-persistent checkpoint."""
@@ -629,7 +629,7 @@ class TestCheckpointingContext:
 
         assert result == {}
 
-    @patch("megatron.hub.training.checkpointing.HAVE_RESIL", True)
+    @patch("megatron.bridge.training.checkpointing.HAVE_RESIL", True)
     @patch("nvidia_resiliency_ext.checkpointing.local.ckpt_managers.local_manager.LocalCheckpointManager")
     @patch("nvidia_resiliency_ext.checkpointing.local.replication.strategies.CliqueReplicationStrategy")
     def test_init_checkpointing_context_local(self, mock_strategy, mock_manager):
@@ -650,7 +650,7 @@ class TestCheckpointingContext:
         assert result["local_checkpoint_manager"] == "mock_manager"
         mock_strategy.from_replication_params.assert_called_with(2, 3)
 
-    @patch("megatron.hub.training.checkpointing.HAVE_RESIL", False)
+    @patch("megatron.bridge.training.checkpointing.HAVE_RESIL", False)
     def test_init_checkpointing_context_local_no_resil(self):
         """Test error when nvidia_resiliency_ext is not available."""
         mock_config = Mock(spec=CheckpointConfig)
@@ -712,8 +712,8 @@ class TestLoadBaseCheckpoint:
         mock_cfg.checkpoint.exit_on_missing_checkpoint = False
         return mock_cfg
 
-    @patch("megatron.hub.training.checkpointing._get_non_persistent_iteration")
-    @patch("megatron.hub.training.checkpointing.read_train_state")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("os.path.isfile")
     def test_load_base_checkpoint_no_checkpoint(self, mock_isfile, mock_read_state, mock_get_np_iter, base_config):
         """Test when no checkpoint is found."""
@@ -724,9 +724,9 @@ class TestLoadBaseCheckpoint:
 
         assert result == (None, "", False, None)
 
-    @patch("megatron.hub.training.checkpointing._get_non_persistent_iteration")
-    @patch("megatron.hub.training.checkpointing.read_train_state")
-    @patch("megatron.hub.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("os.path.isfile")
     def test_load_base_checkpoint_non_distributed_error(
         self, mock_isfile, mock_dist_ckpt, mock_read_state, mock_get_np_iter, base_config

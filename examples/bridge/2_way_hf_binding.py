@@ -33,8 +33,8 @@ import os
 
 from rich.console import Console
 
-from megatron.hub import CausalLMBridge
-from megatron.hub.bridge.utils import weights_verification_table
+from megatron.bridge import CausalLMBridge
+from megatron.bridge.bridge.utils import weights_verification_table
 
 
 console = Console()

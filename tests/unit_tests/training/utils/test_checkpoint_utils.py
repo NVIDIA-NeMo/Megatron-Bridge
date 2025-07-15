@@ -22,7 +22,7 @@ from unittest.mock import mock_open, patch
 import pytest
 import yaml
 
-from megatron.hub.training.utils.checkpoint_utils import (
+from megatron.bridge.training.utils.checkpoint_utils import (
     CONFIG_FILE,
     TRACKER_PREFIX,
     TRAIN_STATE_FILE,
@@ -133,8 +133,8 @@ class TestCheckpointUtils:
         result = get_checkpoint_train_state_filename(checkpoint_dir, prefix)
         assert result == expected_path
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
     def test_read_run_config_rank_0_success(self, mock_is_initialized, mock_get_rank):
         """Test read_run_config successful read on rank 0."""
         # Setup mocks
@@ -150,10 +150,10 @@ class TestCheckpointUtils:
 
         assert result == config_data
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_world_size_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
     @patch("torch.distributed.get_rank")  # Mock the direct torch.distributed.get_rank call
     def test_read_run_config_distributed_success(
         self, mock_torch_get_rank, mock_broadcast, mock_is_initialized, mock_get_world_size, mock_get_rank
@@ -179,8 +179,8 @@ class TestCheckpointUtils:
         assert result == config_data
         mock_broadcast.assert_called_once()
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
     def test_read_run_config_file_not_found(self, mock_is_initialized, mock_get_rank):
         """Test read_run_config handles file not found error."""
         mock_get_rank.return_value = 0
@@ -190,8 +190,8 @@ class TestCheckpointUtils:
             with pytest.raises(RuntimeError, match="Unable to load config file"):
                 read_run_config("nonexistent.yaml")
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
     def test_read_run_config_invalid_yaml(self, mock_is_initialized, mock_get_rank):
         """Test read_run_config handles invalid YAML."""
         mock_get_rank.return_value = 0
@@ -203,9 +203,9 @@ class TestCheckpointUtils:
             with pytest.raises(RuntimeError, match="Unable to load config file"):
                 read_run_config("invalid.yaml")
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.load")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
     def test_read_train_state_rank_0_success(self, mock_torch_load, mock_is_initialized, mock_get_rank):
         """Test read_train_state successful read on rank 0."""
         # Setup mocks
@@ -224,10 +224,10 @@ class TestCheckpointUtils:
         assert result.step == 1000
         mock_torch_load.assert_called_once_with("train_state.pt", map_location="cpu")
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_world_size_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
     @patch("torch.distributed.get_rank")  # Mock the direct torch.distributed.get_rank call
     def test_read_train_state_distributed_success(
         self, mock_torch_get_rank, mock_broadcast, mock_is_initialized, mock_get_world_size, mock_get_rank
@@ -257,9 +257,9 @@ class TestCheckpointUtils:
         assert result.epoch == 10
         mock_broadcast.assert_called_once()
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.load")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
     def test_read_train_state_load_error(self, mock_torch_load, mock_is_initialized, mock_get_rank):
         """Test read_train_state handles torch.load error."""
         mock_get_rank.return_value = 0
@@ -269,9 +269,9 @@ class TestCheckpointUtils:
         with pytest.raises(RuntimeError, match="Unable to load train state file"):
             read_train_state("corrupted.pt", MockTrainState)
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.load")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
     def test_read_train_state_class_instantiation_error(self, mock_torch_load, mock_is_initialized, mock_get_rank):
         """Test read_train_state handles train state class instantiation error."""
         mock_get_rank.return_value = 0
@@ -288,8 +288,10 @@ class TestCheckpointUtils:
     def test_caching_behavior_read_run_config(self):
         """Test that read_run_config uses caching properly."""
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             config_data = {"test": "data"}
             config_yaml = yaml.dump(config_data)
@@ -307,9 +309,11 @@ class TestCheckpointUtils:
     def test_caching_behavior_read_train_state(self):
         """Test that read_train_state uses caching properly."""
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.load") as mock_load,
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
+            patch("megatron.bridge.training.utils.checkpoint_utils.torch.load") as mock_load,
         ):
             state_dict = {"iteration": 100, "epoch": 5}
             mock_load.return_value = state_dict
@@ -330,10 +334,10 @@ class TestCheckpointUtils:
         assert TRACKER_PREFIX == "latest"
         assert CONFIG_FILE == "run_config.yaml"
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_world_size_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
     @patch("torch.distributed.get_rank")  # Mock the direct torch.distributed.get_rank call
     def test_distributed_error_propagation(
         self, mock_torch_get_rank, mock_broadcast, mock_is_initialized, mock_get_world_size, mock_get_rank
@@ -369,8 +373,10 @@ class TestCheckpointUtils:
 
         # Test reading the real file (mocking distributed to avoid complexity)
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             result = read_run_config(str(config_file))
             assert result == config_data
@@ -381,8 +387,10 @@ class TestCheckpointUtils:
         config_file.write_text("")
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             result = read_run_config(str(config_file))
             assert result is None  # Empty YAML file returns None
@@ -412,9 +420,9 @@ class TestCheckpointUtils:
         def read_config_worker():
             try:
                 with (
-                    patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+                    patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
                     patch(
-                        "megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized",
+                        "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized",
                         return_value=False,
                     ),
                     patch("builtins.open", mock_open(read_data=config_yaml)),
@@ -456,8 +464,10 @@ class TestCheckpointUtils:
             yaml.dump(large_config, f)
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             start_time = time.time()
             result = read_run_config(str(config_file))
@@ -486,9 +496,11 @@ class TestCheckpointUtils:
         }
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.load", return_value=complex_state_dict),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
+            patch("megatron.bridge.training.utils.checkpoint_utils.torch.load", return_value=complex_state_dict),
         ):
             result = read_train_state("complex_state.pt", ComplexTrainState)
 
@@ -516,8 +528,10 @@ class TestCheckpointUtils:
             expected_results.append(config_data)
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             # Read all files
             results = []
@@ -534,8 +548,8 @@ class TestCheckpointUtils:
             avg_time_per_file = (end_time - start_time) / num_files
             assert avg_time_per_file < 0.01, f"Average time per file: {avg_time_per_file:.4f}s"
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
     def test_permission_error_handling(self, mock_is_initialized, mock_get_rank):
         """Test handling of permission errors when reading files."""
         mock_get_rank.return_value = 0
@@ -545,9 +559,9 @@ class TestCheckpointUtils:
             with pytest.raises(RuntimeError, match="Unable to load config file"):
                 read_run_config("restricted_config.yaml")
 
-    @patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.hub.training.utils.checkpoint_utils.torch.load")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
+    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
     def test_out_of_memory_error_handling(self, mock_torch_load, mock_is_initialized, mock_get_rank):
         """Test handling of out-of-memory errors during torch.load."""
         mock_get_rank.return_value = 0
@@ -573,8 +587,10 @@ class TestCheckpointUtils:
             yaml.dump(config_data, f, allow_unicode=True)
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             result = read_run_config(str(config_file))
             assert result == config_data
@@ -596,8 +612,10 @@ class TestCheckpointUtils:
             yaml.dump(deep_config, f)
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             result = read_run_config(str(config_file))
             assert result == deep_config
@@ -624,10 +642,10 @@ class TestCheckpointUtils:
         config_data = {"test": f"rank_{rank}_of_{world_size}"}
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=rank),
-            patch("megatron.hub.training.utils.checkpoint_utils.get_world_size_safe", return_value=world_size),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=rank),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe", return_value=world_size),
             patch(
-                "megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized",
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized",
                 return_value=(world_size > 1),
             ),
         ):
@@ -645,7 +663,7 @@ class TestCheckpointUtils:
                     else:
                         # Multi-process, rank 0 reads and broadcasts
                         with patch(
-                            "megatron.hub.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list"
+                            "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list"
                         ) as mock_broadcast:
                             result = read_run_config("config.yaml")
                             assert result == config_data
@@ -653,7 +671,7 @@ class TestCheckpointUtils:
             else:
                 # Non-rank 0 receives from broadcast
                 with patch(
-                    "megatron.hub.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list"
+                    "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list"
                 ) as mock_broadcast:
 
                     def broadcast_side_effect(obj_list, src):
@@ -707,8 +725,10 @@ class TestCheckpointUtils:
             yaml.dump(config_data, f)
 
         with (
-            patch("megatron.hub.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch("megatron.hub.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
         ):
             result = read_run_config(str(config_file))
             assert result == config_data

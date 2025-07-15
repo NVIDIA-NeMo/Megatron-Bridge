@@ -14,7 +14,7 @@
 
 import torch.nn.functional as F
 
-from megatron.hub.models.qwen import (
+from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
     Qwen2ModelProvider7B,

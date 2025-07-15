@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from megatron.hub.training.finetune import finetune
+from megatron.bridge.training.finetune import finetune
 from tests.unit_tests.training.test_config import (
     create_test_checkpoint_config,
     create_test_config_container,
@@ -75,7 +75,7 @@ class TestFinetune:
         mock_forward_step_func = Mock()
 
         # Mock the pretrain function to avoid actual training
-        with patch("megatron.hub.training.finetune.pretrain") as mock_pretrain:
+        with patch("megatron.bridge.training.finetune.pretrain") as mock_pretrain:
             try:
                 # This should not raise an AssertionError
                 finetune(container, mock_forward_step_func)
@@ -103,7 +103,7 @@ class TestFinetune:
         mock_forward_step_func = Mock()
 
         # Mock the pretrain function to avoid actual training
-        with patch("megatron.hub.training.finetune.pretrain") as mock_pretrain:
+        with patch("megatron.bridge.training.finetune.pretrain") as mock_pretrain:
             try:
                 # This should not raise an AssertionError
                 finetune(container, mock_forward_step_func)

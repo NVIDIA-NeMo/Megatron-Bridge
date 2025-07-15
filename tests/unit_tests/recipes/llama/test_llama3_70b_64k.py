@@ -18,10 +18,10 @@ import tempfile
 import pytest
 import torch
 
-from megatron.hub.models.llama import Llama3ModelProvider70B
-from megatron.hub.recipes.llama.llama3_70b_64k import SEQUENCE_LENGTH_64K, model_config, pretrain_config
-from megatron.hub.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.hub.training.config import ConfigContainer
+from megatron.bridge.models.llama import Llama3ModelProvider70B
+from megatron.bridge.recipes.llama.llama3_70b_64k import SEQUENCE_LENGTH_64K, model_config, pretrain_config
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit

@@ -14,7 +14,7 @@
 
 """Unit tests for Squad dataset processor."""
 
-from megatron.hub.data.hf_processors.squad import process_squad_example
+from megatron.bridge.data.hf_processors.squad import process_squad_example
 
 
 class TestProcessSquadExample:

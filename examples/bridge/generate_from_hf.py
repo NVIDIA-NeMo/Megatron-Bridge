@@ -16,7 +16,7 @@ import torch
 from rich.progress import track
 from transformers import AutoTokenizer
 
-from megatron.hub import CausalLMBridge
+from megatron.bridge import CausalLMBridge
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"

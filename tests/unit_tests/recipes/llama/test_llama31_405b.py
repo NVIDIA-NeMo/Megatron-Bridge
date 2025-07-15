@@ -19,11 +19,14 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.hub.models.llama import Llama31ModelProvider405B
-from megatron.hub.recipes.llama.llama31_405b import model_config, pretrain_config
-from megatron.hub.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.hub.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
-from megatron.hub.training.config import ConfigContainer
+from megatron.bridge.models.llama import Llama31ModelProvider405B
+from megatron.bridge.recipes.llama.llama31_405b import model_config, pretrain_config
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.comm_overlap import (
+    CommOverlapConfig,
+    userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
+)
+from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit
@@ -251,7 +254,7 @@ class TestPretrainConfig:
         assert config.dataset.blend is not None
         assert config.dataset.blend_per_split is None
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
+    @patch("megatron.bridge.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
     def test_pretrain_config_fallback_to_mock_when_no_weights(self, mock_get_blend):
         """Test pretrain_config falls back to mock when no weights are returned."""
         # Mock function returns None for both weights
@@ -323,7 +326,7 @@ class TestPretrainConfig:
     def test_pretrain_config_comm_overlap_with_tp(self):
         """Test CommOverlapConfig with tensor parallelism enabled."""
         # Mock HAVE_TE to True to simulate transformer engine being available
-        with patch("megatron.hub.training.comm_overlap.HAVE_TE", True):
+        with patch("megatron.bridge.training.comm_overlap.HAVE_TE", True):
             config = pretrain_config(tensor_parallelism=8, sequence_parallelism=True)
 
             # With TP > 1 and sequence parallelism, comm_overlap should be configured

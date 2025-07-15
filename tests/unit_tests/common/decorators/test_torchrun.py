@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for megatron.hub.common.decorators.torchrun module."""
+"""Tests for megatron.bridge.common.decorators.torchrun module."""
 
 from unittest.mock import patch
 
-from megatron.hub.common.decorators.torchrun import torchrun_main
+from megatron.bridge.common.decorators.torchrun import torchrun_main
 
 
 class TestTorchrunMain:
@@ -83,7 +83,7 @@ class TestTorchrunMain:
         assert my_function.__name__ == "my_function"
         assert my_function.__doc__ == "This is my function."
 
-    @patch("megatron.hub.common.decorators.torchrun.record")
+    @patch("megatron.bridge.common.decorators.torchrun.record")
     def test_record_decorator_applied(self, mock_record):
         """Test that the record decorator is applied."""
         mock_record.side_effect = lambda fn: fn  # Just return the function

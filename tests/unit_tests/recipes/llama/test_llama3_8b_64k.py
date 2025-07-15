@@ -19,9 +19,9 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.hub.models.llama import Llama3ModelProvider8B
-from megatron.hub.recipes.llama.llama3_8b_64k import SEQUENCE_LENGTH_64K, model_config, pretrain_config
-from megatron.hub.training.config import ConfigContainer
+from megatron.bridge.models.llama import Llama3ModelProvider8B
+from megatron.bridge.recipes.llama.llama3_8b_64k import SEQUENCE_LENGTH_64K, model_config, pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit
@@ -65,7 +65,7 @@ class TestModelConfig:
 
     def test_model_config_inheritance_from_llama3_8b(self):
         """Test that model_config correctly delegates to llama3_8b.model_config."""
-        with patch("megatron.hub.recipes.llama.llama3_8b.model_config") as mock_base_config:
+        with patch("megatron.bridge.recipes.llama.llama3_8b.model_config") as mock_base_config:
             mock_base_config.return_value = Llama3ModelProvider8B(
                 tensor_model_parallel_size=4,
                 pipeline_model_parallel_size=2,

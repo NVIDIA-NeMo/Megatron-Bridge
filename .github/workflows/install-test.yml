@@ -65,10 +65,10 @@ jobs:
           ref: v0.39.0
           path: FW-CI-templates
 
-      - name: Check imports for megatron-hub
+      - name: Check imports for megatron-bridge
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
-          package-name: megatron.hub
+          package-name: megatron.bridge
           python-binary: python
 
   pip-test-cuda:
@@ -88,7 +88,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install megatron-hub${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
+      - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
         shell: bash -x -e -u -o pipefail {0}
         run: |
           apt-get update
@@ -119,10 +119,10 @@ jobs:
           ref: v0.39.0
           path: FW-CI-templates
 
-      - name: Check imports for megatron-hub
+      - name: Check imports for megatron-bridge
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
-          package-name: megatron.hub
+          package-name: megatron.bridge
           python-binary: ./venv/bin/python
 
   uv-test-cuda:
@@ -194,10 +194,10 @@ jobs:
           ref: v0.39.0
           path: FW-CI-templates
 
-      - name: Check imports for megatron-hub
+      - name: Check imports for megatron-bridge
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
-          package-name: megatron.hub
+          package-name: megatron.bridge
           python-binary: ./venv/bin/python
 
   uv-test-no-cuda:
@@ -240,10 +240,10 @@ jobs:
           ref: v0.39.0
           path: FW-CI-templates
 
-      - name: Check imports for megatron-hub
+      - name: Check imports for megatron-bridge
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
-          package-name: megatron.hub
+          package-name: megatron.bridge
           python-binary: ./venv/bin/python
 
   install-test-summary:

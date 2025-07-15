@@ -16,10 +16,10 @@ import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.hub.models.llama import Llama4Experts16ModelProvider
-from megatron.hub.recipes.llama.llama4_e16 import model_config, pretrain_config
-from megatron.hub.training.config import ConfigContainer, TrainingConfig
-from megatron.hub.training.mixed_precision import get_mixed_precision_config
+from megatron.bridge.models.llama import Llama4Experts16ModelProvider
+from megatron.bridge.recipes.llama.llama4_e16 import model_config, pretrain_config
+from megatron.bridge.training.config import ConfigContainer, TrainingConfig
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
 @pytest.mark.unit

@@ -27,7 +27,7 @@ except ImportError:
     HAS_NEMO_RUN = False
 
 if HAS_NEMO_RUN:
-    from megatron.hub.recipes.run_plugins import (
+    from megatron.bridge.recipes.run_plugins import (
         FaultTolerancePlugin,
         NsysPlugin,
         PerfEnvPlugin,
@@ -35,8 +35,8 @@ if HAS_NEMO_RUN:
         PyTorchProfilerPlugin,
         WandbPlugin,
     )
-    from megatron.hub.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
-    from megatron.hub.training.config import ProfilingConfig
+    from megatron.bridge.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
+    from megatron.bridge.training.config import ProfilingConfig
 
 
 def create_test_config(**kwargs):
@@ -44,8 +44,8 @@ def create_test_config(**kwargs):
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.optimizer import OptimizerConfig
 
-    from megatron.hub.models.llama import Llama3ModelProvider8B
-    from megatron.hub.training.config import (
+    from megatron.bridge.models.llama import Llama3ModelProvider8B
+    from megatron.bridge.training.config import (
         CheckpointConfig,
         ConfigContainer,
         GPTDatasetConfig,
@@ -339,7 +339,7 @@ class TestFaultTolerancePlugin:
 
         with patch.object(run, "FaultTolerance", return_value=MagicMock()):
             # Capture logger warning
-            from megatron.hub.recipes import run_plugins
+            from megatron.bridge.recipes import run_plugins
 
             with patch.object(run_plugins.logger, "warning") as mock_warning:
                 plugin.setup(task, executor)
@@ -582,9 +582,9 @@ class TestWandbPlugin:
         executor.env_vars = {}
 
         # Capture logger warning
-        import megatron.hub.recipes.run_plugins
+        import megatron.bridge.recipes.run_plugins
 
-        with patch.object(megatron.hub.recipes.run_plugins.logger, "warning") as mock_warning:
+        with patch.object(megatron.bridge.recipes.run_plugins.logger, "warning") as mock_warning:
             plugin.setup(task, executor)
 
         # Verify warning was logged

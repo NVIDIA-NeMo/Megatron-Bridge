@@ -14,7 +14,7 @@ jobs:
     environment: nemo-ci
     outputs:
       mcore: ${{ steps.get-branch.outputs.mcore_release_branch }}
-      megatron-hub: ${{ steps.get-branch.outputs.megatron_hub_release_branch }}
+      megatron-bridge: ${{ steps.get-branch.outputs.megatron_bridge_release_branch }}
     steps:
       - name: Get release branch names
         id: get-branch
@@ -27,11 +27,11 @@ jobs:
             tail -n1)
           echo "mcore_release_branch=$latest_branch" >> $GITHUB_OUTPUT
 
-          latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA-NeMo/megatron-hub.git 'refs/heads/r*' | 
+          latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA-NeMo/megatron-bridge.git 'refs/heads/r*' | 
             grep -o 'r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
             sort -V | 
             tail -n1)
-          echo "megatron_hub_release_branch=$latest_branch" >> $GITHUB_OUTPUT
+          echo "megatron_bridge_release_branch=$latest_branch" >> $GITHUB_OUTPUT
 
   bump-tags:
     needs: [get-release-branch-names]
@@ -40,7 +40,7 @@ jobs:
       matrix:
         include:
           - mcore-target-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
-            target-branch: ${{ needs.get-release-branch-names.outputs.megatron-hub }}
+            target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
           - mcore-target-branch: main
             target-branch: main
     uses: ./.github/workflows/_update_dependencies.yml

@@ -20,8 +20,8 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.llama import Llama32ModelProvider1B
-from megatron.hub.training.config import (
+from megatron.bridge.models.llama import Llama32ModelProvider1B
+from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     LoggerConfig,
@@ -31,8 +31,8 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.gpt_step import forward_step
-from megatron.hub.training.pretrain import pretrain
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 
 class TestPretrain:
@@ -223,7 +223,7 @@ class TestPretrain:
             )
 
             # Setup communication overlap for VPP
-            from megatron.hub.training.comm_overlap import CommOverlapConfig
+            from megatron.bridge.training.comm_overlap import CommOverlapConfig
 
             comm_overlap = CommOverlapConfig(
                 data_parallel_size=1,

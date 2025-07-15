@@ -28,8 +28,8 @@ import nemo_run as run
 import torch.nn.init as init
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
-from megatron.hub.training.config import (
+from megatron.bridge.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
+from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     GPTDatasetConfig,
@@ -247,7 +247,7 @@ class TestPrepareConfigForNemoRun:
     def test_with_real_gpt_config(self):
         """Test with a real GPTConfig to ensure compatibility."""
         # Import actual configs for realistic testing
-        from megatron.hub.recipes.llama.llama3_8b import model_config
+        from megatron.bridge.recipes.llama.llama3_8b import model_config
 
         # Get a real model config
         model_cfg = model_config()

@@ -57,8 +57,8 @@ def mock_nvidia_resiliency_ext():
 
 
 # Import after mocking is set up
-from megatron.hub.training.config import NVRxStragglerDetectionConfig
-from megatron.hub.training.nvrx_straggler import (
+from megatron.bridge.training.config import NVRxStragglerDetectionConfig
+from megatron.bridge.training.nvrx_straggler import (
     NVRxStragglerDetectionManager,
     check_nvrx_straggler_detection,
     safe_shutdown_nvrx_straggler_manager,
@@ -164,7 +164,7 @@ class TestNVRxStragglerDetectionManager:
     @pytest.fixture
     def mock_straggler_module(self):
         """Mock the nvidia_resiliency_ext.straggler module."""
-        with patch("megatron.hub.training.nvrx_straggler.straggler") as mock_straggler:
+        with patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler:
             mock_straggler.Detector = Mock()
             mock_straggler.CallableId = Mock()
             yield mock_straggler
@@ -317,7 +317,7 @@ class TestNVRxStragglerDetectionManager:
 
         assert result is False
 
-    @patch("megatron.hub.training.nvrx_straggler.time.monotonic")
+    @patch("megatron.bridge.training.nvrx_straggler.time.monotonic")
     def test_check_stragglers_no_report(self, mock_time, manager, mock_straggler_module):
         """Test check_stragglers when no report is generated."""
         mock_time.return_value = 1000.0
@@ -329,7 +329,7 @@ class TestNVRxStragglerDetectionManager:
 
         assert result is False
 
-    @patch("megatron.hub.training.nvrx_straggler.time.monotonic")
+    @patch("megatron.bridge.training.nvrx_straggler.time.monotonic")
     def test_check_stragglers_with_report_no_stragglers(self, mock_time, manager, mock_straggler_module):
         """Test check_stragglers with report but no stragglers."""
         mock_time.side_effect = [1000.0, 1001.0]
@@ -351,7 +351,7 @@ class TestNVRxStragglerDetectionManager:
         assert result is False
         mock_report.identify_stragglers.assert_called_once_with(gpu_rel_threshold=0.7, gpu_indiv_threshold=0.7)
 
-    @patch("megatron.hub.training.nvrx_straggler.time.monotonic")
+    @patch("megatron.bridge.training.nvrx_straggler.time.monotonic")
     def test_check_stragglers_with_stragglers_no_stop(self, mock_time, manager, mock_straggler_module):
         """Test check_stragglers with stragglers but stop_if_detected=False."""
         mock_time.side_effect = [1000.0, 1001.0]
@@ -376,7 +376,7 @@ class TestNVRxStragglerDetectionManager:
 
         assert result is False
 
-    @patch("megatron.hub.training.nvrx_straggler.time.monotonic")
+    @patch("megatron.bridge.training.nvrx_straggler.time.monotonic")
     @patch("torch.distributed.broadcast")
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.cuda.current_device", return_value=0)
@@ -531,7 +531,7 @@ class TestIntegration:
     def test_full_workflow(self, full_config):
         """Test the complete workflow from initialization to shutdown."""
         # Use the same mocking pattern as other tests for consistency
-        with patch("megatron.hub.training.nvrx_straggler.straggler") as mock_straggler:
+        with patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler:
             # Setup mocks
             mock_straggler.Detector = Mock()
             mock_straggler.CallableId = Mock()

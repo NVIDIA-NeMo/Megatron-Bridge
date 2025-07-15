@@ -24,7 +24,7 @@ import sys
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = "Megatron-Hub"
+project = "Megatron-Bridge"
 copyright = "2025, NVIDIA Corporation"
 author = "NVIDIA Corporation"
 release = "0.0.1"
@@ -61,8 +61,7 @@ sys.path.insert(0, os.path.abspath(".."))
 
 autodoc2_packages = [
     {
-        "path": "../src/megatron/hub",  # Path to your package relative to conf.py
-        "exclude_dirs": ["converters"],  # list of directory names to exclude
+        "path": "../src/megatron/bridge",  # Path to your package relative to conf.py
     }
 ]
 autodoc2_render_plugin = "myst"  # Use MyST for rendering docstrings

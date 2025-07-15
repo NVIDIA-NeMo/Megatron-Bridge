@@ -14,8 +14,8 @@
 
 import pytest
 
-from megatron.hub.bridge.mapping_registry import MegatronMappingRegistry
-from megatron.hub.bridge.param_mapping import DirectMapping, QKVMapping
+from megatron.bridge.bridge.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.bridge.param_mapping import DirectMapping, QKVMapping
 
 
 class TestMegatronMappingRegistry:
@@ -323,7 +323,7 @@ class TestMegatronMappingRegistryEdgeCases:
 
     def test_describe_formatting(self):
         """Test the describe method formatting with various bridge types."""
-        from megatron.hub.bridge.param_mapping import GatedMLPMapping, TPAwareMapping
+        from megatron.bridge.converters.param_mapping import GatedMLPMapping, TPAwareMapping
 
         mappings = [
             DirectMapping("a.weight", "b.weight"),

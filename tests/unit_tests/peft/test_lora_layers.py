@@ -25,14 +25,14 @@ import pytest
 import torch
 import torch.nn as nn
 
-from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
 
 
 # Test if Transformer Engine is available
 try:
     import transformer_engine.pytorch as te
 
-    from megatron.hub.peft.lora import TELinearAdapter
+    from megatron.bridge.peft.lora import TELinearAdapter
 
     HAVE_TE = True
 except ImportError:

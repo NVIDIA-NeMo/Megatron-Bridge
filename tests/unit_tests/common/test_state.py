@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for megatron.hub.common.state module."""
+"""Tests for megatron.bridge.common.state module."""
 
 import pytest
 import torch
 
-from megatron.hub.common.state import StateDict
+from megatron.bridge.common.state import StateDict
 
 
 class TestStateDict:

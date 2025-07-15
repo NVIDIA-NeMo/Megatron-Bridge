@@ -52,7 +52,7 @@ ignore = [
 ]
 
 [lint.isort]
-known-first-party = ["megatron.hub"]
+known-first-party = ["megatron.bridge"]
 known-third-party = [
     # External megatron dependencies
     "megatron.core",
