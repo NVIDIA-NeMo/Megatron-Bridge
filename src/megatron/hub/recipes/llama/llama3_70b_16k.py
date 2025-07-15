@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import torch
 
@@ -90,7 +90,7 @@ def pretrain_config(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
     # Precision recipe
-    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 70B model with 16k sequence length.
@@ -120,7 +120,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int) Number of warmup iterations for the learning rate.
-        precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
+        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.

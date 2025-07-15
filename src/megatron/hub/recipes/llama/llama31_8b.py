@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -93,7 +93,7 @@ def pretrain_config(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
     # Precision recipe
-    precision_config: str | MixedPrecisionConfig = "bf16_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
@@ -121,7 +121,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        precision_config (str | MixedPrecisionConfig): Precision configuration for the model.
+        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration for the model.
 
     Returns:
