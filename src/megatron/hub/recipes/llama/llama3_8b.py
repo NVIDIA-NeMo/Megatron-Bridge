@@ -95,7 +95,7 @@ def pretrain_config(
     lr_warmup_iters: int = 2000,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: CommOverlapConfig | None = None,
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 8B model.

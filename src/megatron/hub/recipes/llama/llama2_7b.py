@@ -95,7 +95,7 @@ def pretrain_config(
     lr_warmup_iters: int = 2000,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: CommOverlapConfig | None = None,
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama2 7B model.
@@ -124,7 +124,7 @@ def pretrain_config(
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration for the model.
+        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
