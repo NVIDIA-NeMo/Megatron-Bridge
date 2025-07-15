@@ -52,7 +52,6 @@ class LlamaModelProvider(GPTModelProvider):
     # Fusions
     bias_activation_fusion: bool = True
     masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
-    persist_layer_norm: bool = True
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
     use_transformer_engine_op_fuser: Optional[bool] = None
@@ -124,7 +123,6 @@ class Llama3ModelProvider(LlamaModelProvider):
     # Fusions
     bias_activation_fusion: bool = True
     masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
-    persist_layer_norm: bool = True
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
     share_embeddings_and_output_weights: bool = False
