@@ -651,7 +651,7 @@ class TestLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get the model with LoRA applied via hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False, vp_stage=None)
 
         # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
@@ -702,7 +702,7 @@ class TestLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get and adapt model using hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False, vp_stage=None)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Test forward pass with proper Megatron input format
