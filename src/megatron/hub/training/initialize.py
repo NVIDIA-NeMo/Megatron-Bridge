@@ -412,13 +412,12 @@ def _set_random_seed(
 
 def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
     """Compilie JIT functions before the main training steps"""
-    if model_config.fp16:
-        dtype = torch.float16
-    elif model_config.bf16:
+    if model_config.bf16:
         dtype = torch.bfloat16
+    elif model_config.fp16:
+        dtype = torch.float16
     else:
         dtype = torch.float32
-
     # Warmup fused bias+gelu
     bias = torch.rand(
         model_config.ffn_hidden_size // model_config.tensor_model_parallel_size,
