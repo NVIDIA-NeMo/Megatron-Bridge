@@ -784,3 +784,10 @@ class ConfigContainer(Container):
 
         if self.peft is not None:
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
+
+        if isinstance(self.dataset, GPTDatasetConfig):
+            assert self.model.seq_length == self.dataset.sequence_length, (
+                f"Please ensure sequence length configuration in model config and "
+                f"dataset config match.\nSequence length in model config: {self.model.seq_length}, "
+                f"Sequence length in dataset config: {self.dataset.sequence_length}"
+            )
