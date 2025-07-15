@@ -16,17 +16,10 @@ from typing import List, Optional, Union
 
 import torch
 
-<<<<<<< HEAD:src/megatron/hub/recipes/llama/llama3_70b_16k.py
-from megatron.hub.models.llama import Llama3ModelProvider70B
-from megatron.hub.recipes.llama import llama3_70b
-from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.mixed_precision import MixedPrecisionConfig
-=======
 from megatron.bridge.models.llama import Llama3ModelProvider70B
 from megatron.bridge.recipes.llama import llama3_70b
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
->>>>>>> 9aab891 (rename hub to bridge):src/megatron/bridge/recipes/llama/llama3_70b_16k.py
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 # 16k sequence length constant

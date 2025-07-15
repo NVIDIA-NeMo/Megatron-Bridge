@@ -19,7 +19,7 @@ import torch
 from megatron.bridge.models.llama import Llama3ModelProvider70B
 from megatron.bridge.recipes.llama import llama3_70b
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 # 64k sequence length constant

@@ -31,7 +31,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def model_config(
