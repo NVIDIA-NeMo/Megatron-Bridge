@@ -19,7 +19,7 @@ import torch
 from megatron.hub.models.llama import Llama3ModelProvider8B
 from megatron.hub.recipes.llama import llama3_8b
 from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig
 
 
 SEQ_LENGTH: int = 16384
@@ -159,10 +159,5 @@ def pretrain_config(
 
     # Ensure dataset sequence length is set to 16k
     cfg.dataset.sequence_length = SEQ_LENGTH
-
-    # Apply precision configuration again after overriding the model
-    if isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
-    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     return cfg

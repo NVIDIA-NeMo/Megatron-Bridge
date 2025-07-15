@@ -19,7 +19,7 @@ import torch
 from megatron.hub.models.llama import Llama3ModelProvider70B
 from megatron.hub.recipes.llama import llama3_70b
 from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig
 
 
 # 64k sequence length constant
@@ -165,10 +165,5 @@ def pretrain_config(
         context_parallelism=context_parallelism,
         sequence_parallelism=sequence_parallelism,
     )
-
-    # Re-apply precision configuration after updating model
-    if isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
-    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     return cfg

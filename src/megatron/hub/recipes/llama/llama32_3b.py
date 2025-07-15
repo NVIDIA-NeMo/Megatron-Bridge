@@ -32,7 +32,7 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig
 
 
 def model_config(
@@ -209,12 +209,8 @@ def pretrain_config(
         ),
         rng=RNGConfig(seed=1234),
         comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
     )
-
-    # Apply precision configuration
-    if isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
-    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(

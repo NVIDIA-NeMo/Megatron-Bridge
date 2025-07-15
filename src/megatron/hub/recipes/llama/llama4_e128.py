@@ -31,7 +31,7 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.hub.training.mixed_precision import MixedPrecisionConfig
 
 
 def model_config(
@@ -212,11 +212,7 @@ def pretrain_config(
             async_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        mixed_precision=precision_config,
     )
-
-    # Apply precision configuration
-    if isinstance(precision_config, str):
-        precision_config = get_mixed_precision_config(precision_config)
-    precision_config.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
     return cfg
