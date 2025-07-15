@@ -1,6 +1,6 @@
 <div align="center">
 
-# Megatron Hub
+# Megatron Bridge
 
 <!-- [![codecov](https://codecov.io/github/NVIDIA-NeMo/Megatron-Hub/graph/badge.svg?token=4NMKZVOW2Z)](https://codecov.io/github/NVIDIA-NeMo/Megatron-Hub) -->
 [![CICD NeMo](https://github.com/NVIDIA-NeMo/Megatron-Hub/actions/workflows/cicd-main.yml/badge.svg)](https://github.com/NVIDIA-NeMo/Megatron-Hub/actions/workflows/cicd-main.yml)
@@ -12,13 +12,13 @@
 
 ## Overview
 
-Megatron Hub is an extension of NVIDIA's Megatron Core library that enables pretraining and finetuning HuggingFace models using a performant and scalable training loop, with features like model parallelisms and FP8 precision.
+Megatron Bridge is an extension of NVIDIA's Megatron Core library that enables pretraining and finetuning HuggingFace models using a performant and scalable training loop, with features like model parallelisms and FP8 precision.
 
-Megatron Hub is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
+Megatron Bridge is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
 ## 🔧 Installation
 
-For quick exploration of Megatron-Hub, we recommend installing our pip package:
+For quick exploration of Megatron-Bridge, we recommend installing our pip package:
 
 ```bash
 pip install megatron-hub
@@ -53,7 +53,7 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 
 ### uv
 
-For installing Megatron-Hub with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/CONTRIBUTING.md)
+For installing Megatron-Bridge with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/CONTRIBUTING.md)
 
 ## 🚀 Key Features
 
@@ -83,7 +83,7 @@ All recipes are ready to train out of the box, using mock data by default. For a
 torchrun --nproc-per-node=2 pretrain_llama3_8b.py model.tensor_model_parallel_size=1 <additional overrides ...>
 ```
 
-Optionally, Megatron Hub also supports launching with [NeMo-Run](https://github.com/NVIDIA-NeMo/Run). See the following examples for reference on launching with NeMo-Run:
+Optionally, Megatron Bridge also supports launching with [NeMo-Run](https://github.com/NVIDIA-NeMo/Run). See the following examples for reference on launching with NeMo-Run:
 
 - [pretrain_llama3_8b_nemo_run_script.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_script.py)
 - [pretrain_llama3_8b_nemo_run_partial.py](https://github.com/NVIDIA-NeMo/Megatron-Hub/blob/main/examples/recipes/llama3_8b/pretrain_llama3_8b_nemo_run_partial.py)
@@ -115,12 +115,12 @@ Coming soon ...
 ## Project Structure
 
 ```
-Megatron-Hub/
+Megatron-Bridge/
 ├── examples/
-│   ├── bridge/                  # Bridge usage examples
+│   ├── converters/              # Bridge usage examples
 │   └── recipes/                 # Training examples
-├── src/megatron/hub/
-│   ├── bridge/                  # HuggingFace bridge infrastructure
+├── src/megatron/bridge/
+│   ├── converters/              # HuggingFace bridge infrastructure
 │   ├── common/                  # Shared utilities and mixins
 │   ├── core/
 │   │   ├── models/              # Wrapped MCore model builders
