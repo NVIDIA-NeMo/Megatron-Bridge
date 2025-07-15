@@ -360,7 +360,7 @@ class TestPretrainConfig:
         # Check model defaults for Llama3.2 1B (small model)
         assert config.model.tensor_model_parallel_size == 1  # Minimal for 1B
         assert config.model.pipeline_model_parallel_size == 1  # Minimal for 1B
-        assert config.model.pipeline_dtype == torch.bfloat16  # Default for small model
+        assert config.model.pipeline_dtype is None  # Default for small model
         assert config.model.sequence_parallel is False  # Default for 1B
         assert config.model.context_parallel_size == 1  # Minimal for 1B
         assert config.model.virtual_pipeline_model_parallel_size is None  # Default

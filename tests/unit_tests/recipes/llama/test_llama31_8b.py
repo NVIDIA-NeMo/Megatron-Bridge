@@ -169,7 +169,7 @@ class TestPretrainConfig:
         assert config.model.pipeline_model_parallel_size == 4
         assert config.model.context_parallel_size == 2
         assert config.model.sequence_parallel is False
-        assert config.model.pipeline_dtype == torch.bfloat16
+        assert config.model.pipeline_dtype == torch.float32
         assert config.model.virtual_pipeline_model_parallel_size == 10
 
     def test_pretrain_config_with_custom_directory(self):
@@ -404,7 +404,7 @@ class TestPretrainConfig:
         # Check model defaults for Llama3.1 8B
         assert config.model.tensor_model_parallel_size == 1  # Default for 8B
         assert config.model.pipeline_model_parallel_size == 1  # Default for 8B
-        assert config.model.pipeline_dtype == torch.bfloat16  # Default
+        assert config.model.pipeline_dtype is None  # Default
         assert config.model.sequence_parallel is False  # Default for 8B
         assert config.model.context_parallel_size == 2  # Llama3.1 specific
         assert config.model.virtual_pipeline_model_parallel_size is None  # Default

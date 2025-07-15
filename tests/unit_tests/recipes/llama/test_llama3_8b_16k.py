@@ -167,7 +167,7 @@ class TestPretrainConfig:
         assert config.model.pipeline_model_parallel_size == 8
         assert config.model.context_parallel_size == 2
         assert config.model.sequence_parallel is False
-        assert config.model.pipeline_dtype == torch.bfloat16
+        assert config.model.pipeline_dtype == torch.float32
         assert config.model.virtual_pipeline_model_parallel_size == 10
 
     def test_pretrain_config_with_custom_directory(self):
