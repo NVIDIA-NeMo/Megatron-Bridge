@@ -290,14 +290,28 @@ def get_vocab_size(config: TransformerConfig, vocab_size: int, make_vocab_size_d
     return after
 
 
-def mtp_block_spec(config: "GPTModelProvider") -> Optional[ModuleSpec]:
-    """Get multi-token prediction block specification if enabled."""
-    if not config.mtp_enabled:
+def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
+    """Pass in the MTP block spec if model has MTP layers.
+
+    Args:
+        config: GPT configuration object
+
+    Returns:
+        ModuleSpec: The MTP module specification
+    """
+    if getattr(config, "mtp_num_layers", None):
+        from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
+
+        if isinstance(config.transformer_layer_spec, Callable):
+            if "vp_stage" in inspect.signature(config.transformer_layer_spec).parameters:
+                spec = config.transformer_layer_spec(config, vp_stage=vp_stage)
+            else:
+                spec = config.transformer_layer_spec(config)
+        else:
+            spec = config.transformer_layer_spec
+        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
+    else:
         return None
-
-    from megatron.core.models.gpt.gpt_layer_specs import get_mtp_layer_spec
-
-    return get_mtp_layer_spec()
 
 
 @dataclass

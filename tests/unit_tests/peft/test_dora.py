@@ -565,7 +565,7 @@ class TestDoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(dora_hook)
 
         # Get the model with DoRA applied via hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False, vp_stage=None)
+        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
@@ -599,7 +599,7 @@ class TestDoRAMegatronIntegration:
         )
 
         # Get base model first to count original parameters
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False, vp_stage=None)
+        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
         base_model = [chunk.cuda() for chunk in base_model]
 
         # Count original parameters
