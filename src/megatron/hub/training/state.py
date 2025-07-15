@@ -189,7 +189,7 @@ class GlobalState:
 
                 import wandb
 
-                save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.save, "wandb")
+                save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
                 wandb_kwargs = {
                     "dir": save_dir,
                     "name": self.cfg.logger.wandb_exp_name,
