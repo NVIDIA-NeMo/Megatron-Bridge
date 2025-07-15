@@ -167,8 +167,9 @@ def setup(
     if not cfg.model.vocab_size:
         cfg.model.vocab_size = tokenizer.vocab_size
     assert cfg.model.vocab_size == tokenizer.vocab_size, (
-        f"Please ensure vocab sizes in model config and tokenizer match, or that model config's "
-        f"vocab size is not set. Vocab size from model config: {cfg.model.vocab_size}, Vocab "
+        f"Please ensure vocab sizes in model config and tokenizer match. To use "
+        f"tokenizer's vocab size, please ensure that vocab size in model config "
+        f"is None.\nVocab size from model config: {cfg.model.vocab_size}, Vocab "
         f"size from tokenizer: {tokenizer.vocab_size}"
     )
 
