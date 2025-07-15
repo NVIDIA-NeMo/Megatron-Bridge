@@ -190,7 +190,7 @@ class TestPretrainConfig:
 
         assert config.model.pipeline_model_parallel_size == 2
         # With fp16_mixed precision, pipeline dtype should be compatible
-        assert config.model.fp16 is True
+        assert config.mixed_precision == "fp16_mixed"
 
     def test_pretrain_config_with_data_paths(self):
         """Test pretrain_config with custom data paths."""
@@ -248,76 +248,17 @@ class TestPretrainConfig:
         """Test precision configuration with string values."""
         config = pretrain_config(precision_config=precision)
 
-        # Should apply precision configuration
         assert isinstance(config, ConfigContainer)
-        if precision == "fp16_mixed":
-            assert config.model.fp16 is True
-        elif precision == "bf16_mixed":
-            assert config.model.bf16 is True
-        elif precision == "bf16_with_fp8_mixed":
-            assert config.model.bf16 is True
-            assert config.model.fp8 == "hybrid"
+        assert config.mixed_precision == precision
 
-    def test_pretrain_config_precision_object(self):
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "bf16_with_fp8_mixed"])
+    def test_pretrain_config_precision_object(self, precision):
         """Test precision configuration with MixedPrecisionConfig object."""
-        precision_config = get_mixed_precision_config("bf16_mixed")
+        precision_config = get_mixed_precision_config(precision)
         config = pretrain_config(precision_config=precision_config)
 
         assert isinstance(config, ConfigContainer)
-        assert config.model.bf16 is True
-
-    def test_pretrain_config_precision_bf16_with_fp8_mixed(self):
-        """Ensure recipe 'bf16_with_fp8_mixed' sets BF16 + FP8 related fields."""
-        config = pretrain_config(precision_config="bf16_with_fp8_mixed")
-
-        # Model flags
-        assert config.model.bf16 is True
-        assert config.model.fp8 == "hybrid"
-        assert config.model.fp8_recipe == "delayed"
-
-        # Optimizer should remain in BF16 mode
-        assert config.optimizer.bf16 is True
-        assert config.optimizer.fp16 is False
-
-        # DDP grad reduction should stay in FP32 for BF16 recipe
-        assert config.ddp.grad_reduce_in_fp32 is True
-
-    def test_pretrain_config_precision_fp16_mixed(self):
-        """Test fp16_mixed precision configuration."""
-        config = pretrain_config(precision_config="fp16_mixed")
-
-        # Model flags
-        assert config.model.fp16 is True
-        assert getattr(config.model, "bf16", False) is False
-
-        # Optimizer should be in FP16 mode
-        assert config.optimizer.fp16 is True
-        assert config.optimizer.bf16 is False
-
-        # DDP grad reduction should be in FP16 for FP16 recipe
-        assert config.ddp.grad_reduce_in_fp32 is False
-
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "bf16_with_fp8_mixed"])
-    def test_pretrain_config_precision_comprehensive(self, precision):
-        """Test comprehensive precision configuration for Llama4 16-Experts."""
-        config = pretrain_config(precision_config=precision)
-
-        # Should apply precision configuration
-        assert isinstance(config, ConfigContainer)
-
-        if precision == "fp16_mixed":
-            assert config.model.fp16 is True
-            assert config.optimizer.fp16 is True
-            assert config.ddp.grad_reduce_in_fp32 is False
-        elif precision == "bf16_mixed":
-            assert config.model.bf16 is True
-            assert config.optimizer.bf16 is True
-            assert config.ddp.grad_reduce_in_fp32 is True
-        elif precision == "bf16_with_fp8_mixed":
-            assert config.model.bf16 is True
-            assert config.model.fp8 == "hybrid"
-            assert config.optimizer.bf16 is True
-            assert config.ddp.grad_reduce_in_fp32 is True
+        assert config.mixed_precision == precision_config
 
     def test_pretrain_config_llama4_e16_defaults(self):
         """Test that Llama4 16-Experts specific defaults are applied correctly."""

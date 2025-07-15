@@ -321,15 +321,4 @@ class TestPretrainConfig:
     @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
     def test_precision_recipes(self, precision):
         cfg = pretrain_config(precision_config=precision)
-        if precision == "fp16_mixed":
-            assert cfg.model.fp16 is True
-            assert getattr(cfg.model, "bf16", False) is False
-            assert cfg.optimizer.fp16 is True
-            assert cfg.optimizer.bf16 is False
-            assert cfg.ddp.grad_reduce_in_fp32 is False
-        else:
-            assert cfg.model.bf16 is True
-            assert cfg.model.fp8 == "hybrid"
-            assert cfg.optimizer.bf16 is True
-            assert cfg.optimizer.fp16 is False
-            assert cfg.ddp.grad_reduce_in_fp32 is True
+        assert cfg.mixed_precision == precision

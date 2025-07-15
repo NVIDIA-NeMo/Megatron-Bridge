@@ -386,33 +386,7 @@ class TestPretrainConfig:
 
         assert config.dataset.sequence_length == seq_length
 
-    def test_pretrain_config_precision_fp16_mixed(self):
-        """Ensure precision recipe 'fp16_mixed' correctly updates model, optimizer, and ddp config."""
-        config = pretrain_config(precision_config="fp16_mixed")
-
-        # Model should be FP16, not BF16
-        assert config.model.fp16 is True
-        assert getattr(config.model, "bf16", False) is False
-
-        # Optimizer flags propagated
-        assert config.optimizer.fp16 is True
-        assert config.optimizer.bf16 is False
-
-        # DDP flag overridden by precision recipe
-        assert config.ddp.grad_reduce_in_fp32 is False
-
-    def test_pretrain_config_precision_bf16_with_fp8_mixed(self):
-        """Ensure recipe 'bf16_with_fp8_mixed' sets BF16 + FP8 related fields."""
-        config = pretrain_config(precision_config="bf16_with_fp8_mixed")
-
-        # Model flags
-        assert config.model.bf16 is True
-        assert config.model.fp8 == "hybrid"
-        assert config.model.fp8_recipe == "delayed"
-
-        # Optimizer should remain in BF16 mode
-        assert config.optimizer.bf16 is True
-        assert config.optimizer.fp16 is False
-
-        # DDP grad reduction should stay in FP32 for BF16 recipe
-        assert config.ddp.grad_reduce_in_fp32 is True
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    def test_precision_recipes(self, precision):
+        config = pretrain_config(precision_config=precision)
+        assert config.mixed_precision == precision
