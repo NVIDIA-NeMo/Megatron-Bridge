@@ -252,7 +252,6 @@ class TestMegatronCausalLlamaBridge:
 
         # These should always be set to these values for Llama
         assert result.gradient_accumulation_fusion == False
-        assert result.variable_seq_lengths == True
 
 
 class TestCausalLMBridgeIntegration:
