@@ -75,7 +75,6 @@ class LlamaCausalBridge(MegatronModelBridge):
         )
 
         provider.gradient_accumulation_fusion = False
-        provider.variable_seq_lengths = True
 
         return provider
 
