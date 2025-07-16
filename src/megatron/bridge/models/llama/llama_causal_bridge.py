@@ -37,15 +37,9 @@ class LlamaCausalBridge(MegatronModelBridge):
     As a user you would not use this bridge directly, but through `CausalBridge` or `AutoBridge`.
 
     Example:
-<<<<<<< HEAD:src/megatron/hub/models/llama/llama_causal_bridge.py
-        >>> from megatron.hub import AutoBridge
+        >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
         >>> provider = bridge.to_megatron_provider()
-=======
-        >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
-        >>> provider = bridge.to_provider()
->>>>>>> d16c00cb (rename hub to bridge):src/megatron/bridge/models/llama/llama_causal_bridge.py
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaModelProvider:
