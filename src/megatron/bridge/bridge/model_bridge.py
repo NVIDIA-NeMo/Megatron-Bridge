@@ -99,7 +99,7 @@ class _HFLoadTask(Generic[MappingT]):
             (no ``module.`` prefixes).
         megatron_module (torch.nn.Module): Reference to the Megatron model (or
             sub-module) that **owns** the parameter. Needed by the
-            :pyclass:`~megatron.bridge.converters.param_mapping.MegatronParamMapping` for
+            :pyclass:`~megatron.bridge.bridge.param_mapping.MegatronParamMapping` for
             configuration information (e.g. hidden size, number of heads).
         megatron_param (torch.Tensor): The actual :pyclass:`torch.nn.Parameter`
             object which will receive the shard on *this* process after the

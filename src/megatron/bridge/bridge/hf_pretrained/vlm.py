@@ -44,7 +44,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
 
     Examples:
         Basic usage with image and text:
-        >>> from megatron.bridge.converters.hf_pretrained.vlm import PreTrainedVLM
+        >>> from megatron.bridge.bridge.hf_pretrained.vlm import PreTrainedVLM
         >>> from PIL import Image
         >>>
         >>> # Create instance - no model loading happens yet
@@ -86,7 +86,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
 
         Using specific VLM types with type hints:
         >>> from transformers import LlavaForConditionalGeneration
-        >>> from megatron.bridge.converters.hf_pretrained.vlm import PreTrainedVLM
+        >>> from megatron.bridge.bridge.hf_pretrained.vlm import PreTrainedVLM
         >>>
         >>> # Type-safe access to Llava-specific features
         >>> llava: PreTrainedVLM[LlavaForConditionalGeneration] = PreTrainedVLM.from_pretrained(

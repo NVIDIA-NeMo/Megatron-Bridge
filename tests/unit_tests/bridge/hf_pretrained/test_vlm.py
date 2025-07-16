@@ -151,7 +151,7 @@ class TestPreTrainedVLMInitialization:
 class TestPreTrainedVLMConfigProperty:
     """Test config property and lazy loading."""
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoConfig.from_pretrained")
     def test_config_lazy_load(self, mock_from_pretrained, mock_config):
         """Test config is lazy loaded on first access."""
         mock_from_pretrained.return_value = mock_config
@@ -205,7 +205,7 @@ class TestPreTrainedVLMProcessorProperty:
 
         return processor
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoProcessor.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoProcessor.from_pretrained")
     def test_processor_lazy_load(self, mock_from_pretrained):
         """Test processor is lazy loaded on first access."""
         mock_processor = self.create_mock_processor()
@@ -232,7 +232,7 @@ class TestPreTrainedVLMProcessorProperty:
         with pytest.raises(ValueError, match="model_name_or_path must be provided"):
             _ = vlm.processor
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoProcessor.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoProcessor.from_pretrained")
     def test_processor_load_failure(self, mock_from_pretrained):
         """Test processor loading failure raises informative error."""
         mock_from_pretrained.side_effect = Exception("Not found")
@@ -256,7 +256,7 @@ class TestPreTrainedVLMProcessorProperty:
 class TestPreTrainedVLMTokenizerProperty:
     """Test tokenizer property and interaction with processor."""
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoTokenizer.from_pretrained")
     def test_tokenizer_from_processor(self, mock_from_pretrained):
         """Test tokenizer accessed from processor."""
         vlm = PreTrainedVLM(model_name_or_path="llava-hf/llava-1.5-7b-hf")
@@ -274,7 +274,7 @@ class TestPreTrainedVLMTokenizerProperty:
         assert tokenizer is mock_tokenizer
         mock_from_pretrained.assert_not_called()
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoTokenizer.from_pretrained")
     def test_tokenizer_load_separately(self, mock_from_pretrained):
         """Test tokenizer loaded separately when not in processor."""
         mock_tokenizer = Mock(spec=PreTrainedTokenizer)
@@ -292,7 +292,7 @@ class TestPreTrainedVLMTokenizerProperty:
         assert tokenizer.pad_token == "</s>"  # Should be set from eos_token
         mock_from_pretrained.assert_called_once()
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoTokenizer.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoTokenizer.from_pretrained")
     def test_tokenizer_load_failure_silent(self, mock_from_pretrained):
         """Test tokenizer loading failure returns None."""
         mock_from_pretrained.side_effect = Exception("Not found")
@@ -323,7 +323,7 @@ class TestPreTrainedVLMImageProcessorProperty:
         # Should return processor's image processor
         assert image_processor is mock_image_processor
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoImageProcessor.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoImageProcessor.from_pretrained")
     def test_image_processor_load_separately(self, mock_from_pretrained):
         """Test image processor loaded separately when not in processor."""
         mock_image_processor = Mock()
@@ -342,7 +342,7 @@ class TestPreTrainedVLMImageProcessorProperty:
 class TestPreTrainedVLMModelProperty:
     """Test model property and lazy loading."""
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoModel.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoModel.from_pretrained")
     def test_model_lazy_load(self, mock_from_pretrained, mock_model):
         """Test model is lazy loaded on first access."""
         mock_from_pretrained.return_value = mock_model
@@ -362,7 +362,7 @@ class TestPreTrainedVLMModelProperty:
         mock_from_pretrained.assert_called_once()
         mock_model.to.assert_called_once()
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoModel.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoModel.from_pretrained")
     def test_model_with_dtype(self, mock_from_pretrained, mock_model):
         """Test model loading with specific dtype."""
         mock_from_pretrained.return_value = mock_model
@@ -640,9 +640,9 @@ class TestPreTrainedVLMStateDict:
 class TestPreTrainedVLMIntegration:
     """Integration tests for common VLM workflows."""
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoModel.from_pretrained")
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoProcessor.from_pretrained")
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoModel.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoProcessor.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.AutoConfig.from_pretrained")
     def test_full_vlm_pipeline(
         self,
         mock_config_load,
@@ -701,7 +701,7 @@ class TestPreTrainedVLMEdgeCases:
         vlm = PreTrainedVLM()
         assert vlm.kwargs == {}
 
-    @patch("megatron.bridge.converters.hf_pretrained.vlm.GenerationConfig.from_pretrained")
+    @patch("megatron.bridge.bridge.hf_pretrained.vlm.GenerationConfig.from_pretrained")
     def test_generation_config_silent_failure(self, mock_from_pretrained):
         """Test generation config returns None on failure."""
         mock_from_pretrained.side_effect = Exception("Not found")

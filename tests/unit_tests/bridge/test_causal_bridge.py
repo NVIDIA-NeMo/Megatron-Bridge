@@ -77,7 +77,7 @@ class TestCausalLMBridge:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.converters.causal_bridge.AutoConfig") as mock_autoconfig:
+            with patch("megatron.bridge.bridge.causal_bridge.AutoConfig") as mock_autoconfig:
                 mock_autoconfig.from_pretrained.return_value = mock_config
 
                 # Skip architecture validation for this test
@@ -105,7 +105,7 @@ class TestCausalLMBridge:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.converters.causal_bridge.AutoConfig") as mock_autoconfig:
+            with patch("megatron.bridge.bridge.causal_bridge.AutoConfig") as mock_autoconfig:
                 mock_autoconfig.from_pretrained.return_value = mock_config
 
                 # Skip architecture validation for this test
@@ -131,7 +131,7 @@ class TestCausalLMBridge:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.converters.causal_bridge.AutoConfig") as mock_autoconfig:
+            with patch("megatron.bridge.bridge.causal_bridge.AutoConfig") as mock_autoconfig:
                 mock_autoconfig.from_pretrained.return_value = mock_config
 
                 # Skip architecture validation for this test
@@ -314,7 +314,7 @@ class TestCausalLMBridgeEdgeCases:
         """Test listing supported models."""
         # Since this method looks at internal dispatch registry,
         # we'll just test that it returns a list
-        with patch("megatron.bridge.converters.causal_bridge.model_bridge") as mock_bridge:
+        with patch("megatron.bridge.bridge.causal_bridge.model_bridge") as mock_bridge:
             # Mock to avoid AttributeError
             mock_bridge.to_megatron = None
             supported = CausalLMBridge.list_supported_models()
