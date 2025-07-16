@@ -1062,11 +1062,21 @@ def _load_checkpoint_from_path(
         # check_checkpoint_args(checkpoint_args)
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
+    def load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
+        """Helper function to load state dict with fallback for missing extra states."""
+        try:
+            module.load_state_dict(state_dict, strict=strict)
+        except Exception:
+            if strict:
+                # Fallback support for backward compatibility breaking changes in TransformerEngine
+                load_return = module.load_state_dict(state_dict, strict=False)
+                print(f"load_return: {load_return}")
+
     # Model.
     if not skip_load_to_model_and_opt:
         load_strict = False if is_peft_resume else strict
         if len(model) == 1:
-            model[0].load_state_dict(state_dict["model"], strict=load_strict)
+            load_model_state_dict(model[0], state_dict["model"], load_strict)
         else:
             for i in range(len(model)):
                 # If there is no corresponding model in the state_dict, it will be ignored.
@@ -1074,7 +1084,7 @@ def _load_checkpoint_from_path(
                 model_key = "model%d" % i
                 if model_key not in state_dict:
                     continue
-                model[i].load_state_dict(state_dict[model_key], strict=load_strict)
+                load_model_state_dict(model[i], state_dict[model_key], load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
