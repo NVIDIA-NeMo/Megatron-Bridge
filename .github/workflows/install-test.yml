@@ -205,8 +205,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: ["ubuntu-latest", "macos-latest"]
-        python-version: ["3.12"]
+        arch: ["ubuntu-latest"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -216,10 +215,34 @@ jobs:
         with:
           version: 0.7.2
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
+      - name: Install CUDA Toolkit for Ubuntu 22.04
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-8
+          sudo apt-get clean
+
+      - name: Install cuDNN headers
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cudnn-cuda-12
+          sudo apt-get clean
+
+      - name: Install Python ${{ matrix.python-version }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sudo add-apt-repository ppa:deadsnakes/ppa -y
+          sudo apt-get update
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get clean
+
+          python${{ matrix.python-version }} -m venv ./venv
+          . ./venv/bin/activate
+          pip install --upgrade pip
 
       - name: Install dependencies with UV
         run: |
