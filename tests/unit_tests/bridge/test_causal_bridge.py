@@ -357,7 +357,9 @@ class TestCausalLMBridgeEdgeCases:
             bridge = CausalLMBridge(mock_hf_model)
 
             # Now patch the from_pretrained method
-            with patch("megatron.bridge.bridge.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
+            with patch(
+                "megatron.bridge.bridge.causal_bridge.PreTrainedCausalLM.from_pretrained"
+            ) as mock_from_pretrained:
                 mock_loaded_model = Mock(spec=PreTrainedCausalLM)
                 mock_from_pretrained.return_value = mock_loaded_model
 
