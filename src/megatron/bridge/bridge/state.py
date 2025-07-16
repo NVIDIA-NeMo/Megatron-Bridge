@@ -86,7 +86,7 @@ class StateDict(Mapping[str, torch.Tensor]):
     .. code-block:: python
 
         # Assume SafetensorsStateSource is available
-        # from megatron.bridge.common.state import SafetensorsStateSource
+        # from megatron.bridge.bridge.state import SafetensorsStateSource
 
         # Imagine a directory 'my_model_checkpoint/' with sharded weights.
         state_from_disk = StateDict(SafetensorsStateSource('my_model_checkpoint/'))

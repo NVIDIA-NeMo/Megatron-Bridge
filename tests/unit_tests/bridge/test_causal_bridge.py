@@ -391,7 +391,7 @@ class TestCausalLMBridgeEdgeCases:
         mock_hf_model.state = Mock()
         mock_hf_model.state.source = Mock(spec=["save_generator"])
 
-        from megatron.bridge.common.state import SafeTensorsStateSource
+        from megatron.bridge.bridge.state import SafeTensorsStateSource
 
         mock_hf_model.state.source = Mock(spec=SafeTensorsStateSource)
         mock_hf_model.state.source.save_generator = Mock()

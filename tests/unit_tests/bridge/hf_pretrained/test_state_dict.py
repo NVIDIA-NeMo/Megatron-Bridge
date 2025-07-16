@@ -26,7 +26,7 @@ import pytest
 import torch
 
 from megatron.bridge.bridge.hf_pretrained.base import PreTrainedBase
-from megatron.bridge.common.state import SafeTensorsStateSource, StateDict, StateSource
+from megatron.bridge.bridge.state import SafeTensorsStateSource, StateDict, StateSource
 
 
 @pytest.fixture
@@ -141,7 +141,7 @@ class TestStateDictKeyRetrieval:
     def test_get_all_keys_from_safetensors(self, temp_safetensors_dir):
         """Test getting keys from safetensors files."""
         # Mock SafeTensorsStateSource to avoid actual file operations
-        with patch("megatron.bridge.common.state.SafeTensorsStateSource") as mock_source_cls:
+        with patch("megatron.bridge.bridge.state.SafeTensorsStateSource") as mock_source_cls:
             mock_source = MagicMock()
             mock_source.keys.return_value = [
                 "transformer.wte.weight",

@@ -20,7 +20,7 @@ from typing import ClassVar, Dict, List, Optional, Union
 import torch
 from transformers import AutoConfig, PreTrainedModel
 
-from megatron.bridge.common.state import SafeTensorsStateSource, StateDict, StateSource
+from megatron.bridge.bridge.state import SafeTensorsStateSource, StateDict, StateSource
 
 
 class PreTrainedBase(ABC):

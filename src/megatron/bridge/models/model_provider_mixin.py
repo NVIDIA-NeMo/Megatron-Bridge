@@ -36,7 +36,7 @@ from megatron.core.enums import ModelType
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.common.config import from_hf_pretrained, save_hf_pretrained
+from megatron.bridge.bridge.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
