@@ -138,7 +138,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.PAT }}
       run: |
-        docker build -f docker/Dockerfile.ci  --secret id=GH_TOKEN -t megatron-bridge.
+        docker build -f docker/Dockerfile.ci  --secret id=GH_TOKEN -t megatron-bridge .
 
     - name: Start container
       shell: bash
