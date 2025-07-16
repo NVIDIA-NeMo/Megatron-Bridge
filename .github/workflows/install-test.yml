@@ -60,7 +60,7 @@ jobs:
       - name: Install project
         run: |
           pip install torch
-          pip install .
+          pip install --no-build-isolation .
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
