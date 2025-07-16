@@ -2669,7 +2669,7 @@ wheels = [
 ]
 
 [[package]]
-name = "megatron-hub"
+name = "megatron-bridge"
 source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
