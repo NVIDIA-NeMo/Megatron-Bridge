@@ -38,6 +38,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install cuDNN headers
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install cudnn-cuda-12
+
       - name: Install Python ${{ matrix.python-version }}
         env:
           ARCH: ${{ matrix.arch }}
