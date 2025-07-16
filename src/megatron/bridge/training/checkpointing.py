@@ -1069,7 +1069,12 @@ def _load_checkpoint_from_path(
             model[0].load_state_dict(state_dict["model"], strict=load_strict)
         else:
             for i in range(len(model)):
-                model[i].load_state_dict(state_dict["model%d" % i], strict=load_strict)
+                # If there is no corresponding model in the state_dict, it will be ignored.
+                # It means that this is an empty stage.
+                model_key = "model%d" % i
+                if model_key not in state_dict:
+                    continue
+                model[i].load_state_dict(state_dict[model_key], strict=load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
