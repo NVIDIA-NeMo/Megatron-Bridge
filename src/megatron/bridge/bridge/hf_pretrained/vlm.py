@@ -29,7 +29,7 @@ from transformers import (
 )
 from transformers.generation.utils import GenerateOutput
 
-from megatron.bridge.converters.hf_pretrained.base import PreTrainedBase
+from megatron.bridge.bridge.hf_pretrained.base import PreTrainedBase
 
 
 # Type variable for generic model type

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.converters.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.converters.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.bridge.hf_pretrained.vlm import PreTrainedVLM
 
 
 __all__ = ["PreTrainedCausalLM", "PreTrainedVLM"]
