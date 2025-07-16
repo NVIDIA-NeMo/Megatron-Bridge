@@ -14,8 +14,8 @@
 """Megatron Hub - A component of the Megatron ecosystem."""
 
 from megatron.bridge import models as _models
-from megatron.bridge.converters.auto_bridge import AutoBridge
-from megatron.bridge.converters.causal_bridge import CausalLMBridge
+from megatron.bridge.bridge.auto_bridge import AutoBridge
+from megatron.bridge.bridge.causal_bridge import CausalLMBridge
 from megatron.bridge.models import *  # noqa: F403
 
 
