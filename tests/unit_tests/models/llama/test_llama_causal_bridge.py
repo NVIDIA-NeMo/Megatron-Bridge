@@ -20,9 +20,9 @@ import pytest
 import torch
 from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
-from megatron.bridge.converters.causal_bridge import CausalLMBridge
-from megatron.bridge.converters.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.converters.model_bridge import MegatronModelBridge
+from megatron.bridge.bridge.causal_bridge import CausalLMBridge
+from megatron.bridge.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.bridge.model_bridge import MegatronModelBridge
 from megatron.bridge.models.llama.llama_causal_bridge import LlamaCausalBridge
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
 
