@@ -62,6 +62,7 @@ sys.path.insert(0, os.path.abspath(".."))
 autodoc2_packages = [
     {
         "path": "../src/megatron/bridge",  # Path to your package relative to conf.py
+        "exclude_dirs": ["converters"],  # list of directory names to exclude
     }
 ]
 autodoc2_render_plugin = "myst"  # Use MyST for rendering docstrings
