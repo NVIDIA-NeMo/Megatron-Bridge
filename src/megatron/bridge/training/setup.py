@@ -17,7 +17,6 @@ import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
-from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 import torch
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.optimizer import MegatronOptimizer
@@ -25,6 +24,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
+from megatron.bridge.core.utils.common_utils import print_rank_0
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
@@ -38,9 +38,9 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.core.utils.common_utils import print_rank_0
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 
 
