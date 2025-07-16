@@ -252,8 +252,8 @@ jobs:
 
           uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
-          uv sync --link-mode copy --locked --only-group build
-          uv sync --link-mode copy --locked --all-groups
+          uv sync --link-mode copy --locked --only-group build --no-cache
+          uv sync --link-mode copy --locked --all-groups --no-cache
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
