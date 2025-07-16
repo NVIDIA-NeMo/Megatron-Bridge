@@ -20,7 +20,6 @@ from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegat
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 
-from megatron.bridge.core.utils.common_utils import print_rank_0
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
 from megatron.bridge.training.config import (
@@ -30,6 +29,7 @@ from megatron.bridge.training.config import (
     MockGPTDatasetConfig,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 def is_dataset_built_on_rank() -> bool:

@@ -1,1 +1,0 @@
-# This module is intented to be moved to mcore soon.

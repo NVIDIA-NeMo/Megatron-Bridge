@@ -27,8 +27,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from megatron.bridge.core.utils.common_utils import get_rank_safe
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger = logging.getLogger(__name__)

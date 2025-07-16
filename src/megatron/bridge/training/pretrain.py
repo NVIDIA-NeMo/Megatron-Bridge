@@ -14,8 +14,6 @@
 
 from typing import Callable
 
-from megatron.bridge.core.utils.common_utils import print_rank_0
-from megatron.bridge.core.utils.decorators import experimental_fn
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
@@ -23,6 +21,8 @@ from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.setup import setup
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
+from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.decorators import experimental_fn
 
 
 @experimental_fn

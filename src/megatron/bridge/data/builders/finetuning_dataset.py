@@ -19,10 +19,10 @@ from typing import Any, Optional, Union
 
 import torch
 
-from megatron.bridge.core.utils.common_utils import get_rank_safe, print_rank_0
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
 from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)

@@ -21,9 +21,9 @@ from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.common.model_provider_mixin import ModelProviderMixin
-from megatron.bridge.core.utils.import_utils import safe_import
 from megatron.bridge.models.gpt_provider import get_vocab_size
+from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.utils.import_utils import safe_import
 
 
 _, HAVE_TE = safe_import("transformer_engine")

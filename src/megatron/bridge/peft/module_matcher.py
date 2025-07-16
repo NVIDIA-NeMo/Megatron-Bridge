@@ -19,8 +19,8 @@ from typing import Dict, List, Optional, Set
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from torch import nn
 
-from megatron.bridge.core.utils.import_utils import safe_import_from
 from megatron.bridge.peft.utils import wildcard_match
+from megatron.bridge.utils.import_utils import safe_import_from
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(

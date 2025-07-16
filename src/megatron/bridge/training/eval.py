@@ -23,11 +23,11 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 
-from megatron.bridge.core.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import check_forward_step_func_num_args, maybe_inject_state
+from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 
 
 def evaluate(

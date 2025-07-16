@@ -17,11 +17,11 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
-from megatron.bridge.core.utils.import_utils import MISSING_NEMO_RUN_MSG
 from megatron.bridge.training.config import (
     FaultToleranceConfig,
     ProfilingConfig,
 )
+from megatron.bridge.utils.import_utils import MISSING_NEMO_RUN_MSG
 
 
 try:

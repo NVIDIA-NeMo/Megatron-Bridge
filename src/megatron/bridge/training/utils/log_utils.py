@@ -22,7 +22,7 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.distributed
 
-from megatron.bridge.core.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)

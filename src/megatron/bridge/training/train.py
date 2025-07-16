@@ -36,7 +36,6 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 
-from megatron.bridge.core.utils.common_utils import get_world_size_safe, print_rank_0
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
@@ -57,6 +56,7 @@ from megatron.bridge.training.utils.train_utils import (
     reduce_max_stat_across_model_parallel_group,
     training_log,
 )
+from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 def train(

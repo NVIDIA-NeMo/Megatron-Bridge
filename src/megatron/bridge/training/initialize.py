@@ -30,9 +30,9 @@ from megatron.core.num_microbatches_calculator import (
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
 from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
-from megatron.bridge.core.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
+from megatron.bridge.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
 
 
 def initialize_megatron(

@@ -18,8 +18,8 @@ from typing import Callable, Optional
 
 import torch
 
-from megatron.bridge.core.utils.import_utils import MISSING_NVRX_MSG
 from megatron.bridge.training.config import NVRxStragglerDetectionConfig
+from megatron.bridge.utils.import_utils import MISSING_NVRX_MSG
 
 
 try:

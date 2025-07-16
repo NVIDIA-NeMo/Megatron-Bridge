@@ -30,8 +30,8 @@ from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_te_version
 
-from megatron.bridge.common.model_provider_mixin import ModelProviderMixin
-from megatron.bridge.core.utils import fusions
+from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)

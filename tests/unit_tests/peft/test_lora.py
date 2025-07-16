@@ -23,10 +23,10 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.core.utils.import_utils import safe_import
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA, LoRAMerge
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.utils.import_utils import safe_import
 
 
 te, HAVE_TE = safe_import("transformer_engine.pytorch")

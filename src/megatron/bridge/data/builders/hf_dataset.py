@@ -24,12 +24,12 @@ from typing import Any, Callable, Optional, Protocol, TypedDict, Union, cast
 from datasets import Dataset, DatasetDict, load_dataset
 from tqdm import tqdm
 
-from megatron.bridge.core.utils.common_utils import print_rank_0
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import get_dataset_root
 from megatron.bridge.training.config import FinetuningDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 logger = logging.getLogger(__name__)

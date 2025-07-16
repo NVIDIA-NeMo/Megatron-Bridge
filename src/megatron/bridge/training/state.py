@@ -26,12 +26,12 @@ from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
 
-from megatron.bridge.core.utils.common_utils import get_rank_safe, get_world_size_safe
-from megatron.bridge.core.utils.yaml_utils import dump_dataclass_to_yaml
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
+from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
+from megatron.bridge.utils.yaml_utils import dump_dataclass_to_yaml
 
 
 @dataclass

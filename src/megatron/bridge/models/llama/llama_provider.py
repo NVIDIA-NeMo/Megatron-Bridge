@@ -22,9 +22,9 @@ import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer import ModuleSpec
 
-from megatron.bridge.core.utils import fusions
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama.llama4_utils import get_llama4_layer_spec
+from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)

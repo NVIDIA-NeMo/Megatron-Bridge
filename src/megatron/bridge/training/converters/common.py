@@ -28,12 +28,12 @@ from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShard
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.core.utils.instantiate_utils import instantiate
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig, TokenizerConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+from megatron.bridge.utils.instantiate_utils import instantiate
 
 
 def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:

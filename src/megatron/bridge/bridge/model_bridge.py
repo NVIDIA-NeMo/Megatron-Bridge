@@ -41,7 +41,7 @@ from transformers.modeling_utils import PreTrainedModel
 from megatron.bridge.bridge.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.bridge.param_mapping import MegatronParamMapping
 from megatron.bridge.common.decorators import dispatch
-from megatron.bridge.core.models.model_provider import ModelProviderProtocol
+from megatron.bridge.models.model_provider import ModelProviderProtocol
 
 
 MappingT = TypeVar("MappingT", bound=MegatronParamMapping)

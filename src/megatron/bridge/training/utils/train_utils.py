@@ -25,10 +25,10 @@ from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.core.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_last
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
+from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_last
 
 
 try:

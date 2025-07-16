@@ -21,7 +21,7 @@ from megatron.core.enums import ModelType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.core.models.model_provider import (
+from megatron.bridge.models.model_provider import (
     ModelProviderProtocol,
     _create_model,
     _ddp_wrap,
@@ -61,8 +61,8 @@ class MockMegatronModule(MegatronModule):
 class TestCreateModel:
     """Test cases for _create_model function."""
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
-    @patch("megatron.bridge.core.models.model_provider.tensor_parallel")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_single_pipeline(self, mock_tensor_parallel, mock_parallel_state):
         """Test model creation with single pipeline stage."""
         # Setup mocks
@@ -84,8 +84,8 @@ class TestCreateModel:
         assert mock_model.model_type == ModelType.encoder_or_decoder
         model_provider.assert_called_once_with(pre_process=True, post_process=True)
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
-    @patch("megatron.bridge.core.models.model_provider.tensor_parallel")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_virtual_pipeline(self, mock_tensor_parallel, mock_parallel_state):
         """Test model creation with virtual pipeline parallelism."""
         # Setup mocks
@@ -106,8 +106,8 @@ class TestCreateModel:
         assert all(model.model_type == ModelType.encoder_or_decoder for model in result)
         assert model_provider.call_count == 2
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
-    @patch("megatron.bridge.core.models.model_provider.tensor_parallel")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_encoder_decoder_single_pipeline(self, mock_tensor_parallel, mock_parallel_state):
         """Test creation of encoder-decoder model with single pipeline."""
         # Setup mocks
@@ -127,8 +127,8 @@ class TestCreateModel:
         assert mock_model.model_type == ModelType.encoder_and_decoder
         model_provider.assert_called_once_with()  # No pre/post process args
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
-    @patch("megatron.bridge.core.models.model_provider.tensor_parallel")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_encoder_decoder_multi_pipeline(self, mock_tensor_parallel, mock_parallel_state):
         """Test creation of encoder-decoder model with multiple pipeline stages."""
         # Setup mocks
@@ -150,8 +150,8 @@ class TestCreateModel:
         assert mock_model.model_type == ModelType.encoder_and_decoder
         model_provider.assert_called_once_with()
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
-    @patch("megatron.bridge.core.models.model_provider.tensor_parallel")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.tensor_parallel")
     def test_create_model_sets_tensor_parallel_attributes(self, mock_tensor_parallel, mock_parallel_state):
         """Test that tensor parallel attributes are set on parameters."""
         # Setup mocks
@@ -176,7 +176,7 @@ class TestCreateModel:
 class TestDDPWrap:
     """Test cases for _ddp_wrap function."""
 
-    @patch("megatron.bridge.core.models.model_provider.DistributedDataParallel")
+    @patch("megatron.bridge.models.model_provider.DistributedDataParallel")
     def test_ddp_wrap_standard(self, mock_ddp):
         """Test wrapping models with standard DDP."""
         # Setup
@@ -212,7 +212,7 @@ class TestDDPWrap:
         for ddp_instance in mock_ddp_instances:
             ddp_instance.broadcast_params.assert_called_once()
 
-    @patch("megatron.bridge.core.models.model_provider.TorchFullyShardedDataParallel")
+    @patch("megatron.bridge.models.model_provider.TorchFullyShardedDataParallel")
     def test_ddp_wrap_fsdp2(self, mock_fsdp):
         """Test wrapping models with FSDP2."""
         # Setup
@@ -239,7 +239,7 @@ class TestDDPWrap:
 
     def test_ddp_wrap_overlap_param_gather(self):
         """Test DDP wrapping with overlap_param_gather_with_optimizer_step."""
-        with patch("megatron.bridge.core.models.model_provider.DistributedDataParallel") as mock_ddp:
+        with patch("megatron.bridge.models.model_provider.DistributedDataParallel") as mock_ddp:
             # Setup
             config = create_test_config()
             models = [MockMegatronModule(config)]
@@ -263,7 +263,7 @@ class TestDDPWrap:
 class TestPrintNumParams:
     """Test cases for _print_num_params function."""
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("builtins.print")
     def test_print_num_params_rank_zero(self, mock_print, mock_parallel_state):
         """Test printing parameters when on data parallel rank 0."""
@@ -283,7 +283,7 @@ class TestPrintNumParams:
         assert "number of parameters" in printed_text
         assert "(1, 2)" in printed_text  # tensor and pipeline ranks
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("builtins.print")
     def test_print_num_params_non_zero_rank(self, mock_print, mock_parallel_state):
         """Test that nothing is printed when not on data parallel rank 0."""
@@ -301,11 +301,11 @@ class TestPrintNumParams:
 class TestGetModel:
     """Test cases for get_model function."""
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_basic(
         self,
         mock_get_model_config,
@@ -341,12 +341,12 @@ class TestGetModel:
         mock_print_params.assert_called_once()
         mock_ddp_wrap.assert_called_once()
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
-    @patch("megatron.bridge.core.models.model_provider.Float16Module")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider.Float16Module")
     def test_get_model_fp16(
         self,
         mock_float16_module,
@@ -383,11 +383,11 @@ class TestGetModel:
         assert config.fp16
         mock_float16_module.assert_called_once_with(config, model)
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_cpu_initialization(
         self,
         mock_get_model_config,
@@ -418,11 +418,11 @@ class TestGetModel:
 
         assert config.use_cpu_initialization
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_no_ddp_wrap(
         self,
         mock_get_model_config,
@@ -453,11 +453,11 @@ class TestGetModel:
         assert len(result) == 1
         assert result[0] is model
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_fsdp2_cpu_init(
         self,
         mock_get_model_config,
@@ -494,11 +494,11 @@ class TestGetModel:
         # Should not call cuda when FSDP2 with CPU init
         model.cuda.assert_not_called()
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider._ddp_wrap")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_pre_wrap_hook(
         self,
         mock_get_model_config,
@@ -588,10 +588,10 @@ class TestModelProviderProtocol:
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
-    @patch("megatron.bridge.core.models.model_provider._create_model")
-    @patch("megatron.bridge.core.models.model_provider._print_num_params")
-    @patch("megatron.bridge.core.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.core.models.model_provider.get_model_config")
+    @patch("megatron.bridge.models.model_provider._create_model")
+    @patch("megatron.bridge.models.model_provider._print_num_params")
+    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
+    @patch("megatron.bridge.models.model_provider.get_model_config")
     def test_get_model_with_meta_device(
         self, mock_get_model_config, mock_correct_amax, mock_print_params, mock_create_model
     ):
@@ -611,7 +611,7 @@ class TestEdgeCases:
         model_provider = Mock()
         ddp_config = DistributedDataParallelConfig()
 
-        with patch("megatron.bridge.core.models.model_provider._ddp_wrap") as mock_wrap:
+        with patch("megatron.bridge.models.model_provider._ddp_wrap") as mock_wrap:
             mock_correct_amax.return_value = [model]
             mock_wrap.return_value = [model]
 
@@ -620,7 +620,7 @@ class TestEdgeCases:
             # Should not call cuda when meta device is used
             model.cuda.assert_not_called()
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
     def test_create_model_virtual_pipeline_with_encoder_decoder_raises(self, mock_parallel_state):
         """Test that virtual pipeline with encoder-decoder raises assertion error."""
         # Setup mocks for virtual pipeline

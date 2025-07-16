@@ -71,8 +71,8 @@ class TestModelsImports:
 
     def test_model_provider_mixin(self):
         """Test that model providers inherit from ModelProviderMixin."""
-        from megatron.bridge.common.model_provider_mixin import ModelProviderMixin
         from megatron.bridge.models import GPTModelProvider, LlamaModelProvider, T5ModelProvider
+        from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
 
         # All providers should inherit from ModelProviderMixin
         assert issubclass(GPTModelProvider, ModelProviderMixin)

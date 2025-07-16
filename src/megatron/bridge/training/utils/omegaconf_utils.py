@@ -374,7 +374,7 @@ def _apply_overrides(config_obj: DataclassInstance, overrides_dict: Dict[str, An
         # Handle dictionaries with _target_ fields
         if isinstance(value, dict) and "_target_" in value:
             try:
-                from megatron.bridge.core.utils.instantiate_utils import instantiate
+                from megatron.bridge.utils.instantiate_utils import instantiate
 
                 instantiated_obj = instantiate(value)
                 setattr(config_obj, key, instantiated_obj)

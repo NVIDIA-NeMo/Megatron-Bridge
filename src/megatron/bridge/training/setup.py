@@ -24,7 +24,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
-from megatron.bridge.core.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer

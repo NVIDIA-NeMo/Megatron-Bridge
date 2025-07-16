@@ -29,7 +29,7 @@ from megatron.core.tensor_parallel.mappings import (
 )
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 
-from megatron.bridge.core.utils.import_utils import safe_import_from
+from megatron.bridge.utils.import_utils import safe_import_from
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(

@@ -28,9 +28,9 @@ from typing_extensions import Unpack
 from megatron.bridge.bridge import model_bridge
 from megatron.bridge.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.bridge.model_bridge import WeightDistributionMode
-from megatron.bridge.common.model_provider_mixin import GetModelKwargs, ModelProviderMixin
 from megatron.bridge.common.state import SafeTensorsStateSource
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.model_provider_mixin import GetModelKwargs, ModelProviderMixin
 
 
 MegatronModelT = TypeVar("ModelT", bound=MegatronModule)

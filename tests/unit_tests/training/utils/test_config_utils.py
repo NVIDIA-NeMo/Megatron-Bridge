@@ -23,8 +23,8 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 import torch
 
-from megatron.bridge.core.utils.instantiate_utils import InstantiationMode
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
 # Test functions for callable testing
