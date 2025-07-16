@@ -25,6 +25,7 @@ from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
+from megatron.bridge.models import model_bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.model_bridge import WeightDistributionMode
@@ -38,13 +39,6 @@ if TYPE_CHECKING:
 
 MegatronModelT = TypeVar("ModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
-
-
-def _get_model_bridge_module():
-    """Delayed import to avoid circular dependency."""
-    from megatron.bridge.models import model_bridge
-
-    return model_bridge
 
 
 class CausalLMBridge(Generic[MegatronModelT]):
@@ -105,7 +99,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         # Access the dispatch registry to find all registered types
 
-        model_bridge = _get_model_bridge_module()
         if hasattr(model_bridge.get_model_bridge, "_exact_types"):
             for arch_type in model_bridge.get_model_bridge._exact_types.keys():
                 if hasattr(arch_type, "__name__"):
@@ -333,7 +326,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
             ... ))
         """
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
-        model_bridge = _get_model_bridge_module()
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, order=order, cpu=cpu, show_progress=show_progress, mode=mode
         )
@@ -416,7 +408,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
-        model_bridge = _get_model_bridge_module()
         generator = model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
         )
@@ -511,7 +502,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        model_bridge = _get_model_bridge_module()
         return model_bridge.get_model_bridge(self._get_causal_lm_architecture())
 
     def _get_causal_lm_architecture(self):
@@ -593,7 +583,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
                 # Test if we have a registered implementation
                 # Check if this architecture is registered in the dispatch system
                 has_implementation = False
-                model_bridge = _get_model_bridge_module()
                 if hasattr(model_bridge.get_model_bridge, "_exact_types"):
                     has_implementation = arch_class in model_bridge.get_model_bridge._exact_types
 
@@ -667,7 +656,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
             lines_for_build.append("  (hf_pretrained): ")  # Fallback for empty repr
 
         # Format to_megatron dispatcher
-        model_bridge = _get_model_bridge_module()
         tm_repr_actual_lines = repr(model_bridge.to_megatron).splitlines()
         if tm_repr_actual_lines:
             # First line of to_megatron part
