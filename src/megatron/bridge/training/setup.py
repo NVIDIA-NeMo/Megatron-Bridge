@@ -17,7 +17,7 @@ import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
-from megatron.hub.training.mixed_precision import get_mixed_precision_config
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 import torch
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.optimizer import MegatronOptimizer
