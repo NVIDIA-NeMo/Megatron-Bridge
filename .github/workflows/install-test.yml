@@ -44,6 +44,7 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
           sudo apt-get install -y cuda-toolkit-12-8
+          sudo apt-get clean
 
       - name: Install cuDNN headers
         run: |
@@ -51,6 +52,7 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
           sudo apt-get install -y cudnn-cuda-12
+          sudo apt-get clean
 
       - name: Install Python ${{ matrix.python-version }}
         env:
@@ -59,6 +61,7 @@ jobs:
           sudo add-apt-repository ppa:deadsnakes/ppa -y
           sudo apt-get update
           sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get clean
 
           python${{ matrix.python-version }} -m venv ./venv
           . ./venv/bin/activate
