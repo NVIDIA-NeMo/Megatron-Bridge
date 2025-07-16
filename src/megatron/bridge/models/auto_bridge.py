@@ -17,7 +17,7 @@ from typing import Any, List, Protocol, Type, Union, runtime_checkable
 
 from transformers import AutoConfig
 
-from megatron.bridge.bridge.causal_bridge import CausalLMBridge
+from megatron.bridge.models.causal_bridge import CausalLMBridge
 
 
 _BRIDGES: List[Type["BridgeProtocol"]] = [

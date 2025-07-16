@@ -1,11 +1,11 @@
 # HuggingFace pre-trained checkpoints
 
-Structured, type-safe classes for working with Hugging Face checkpoints. Each checkpoint type has its own structure - `megatron.bridge.bridge.hf_pretrained` makes these contracts explicit and provides a clean interface.
+Structured, type-safe classes for working with Hugging Face checkpoints. Each checkpoint type has its own structure - `megatron.bridge.models.hf_pretrained` makes these contracts explicit and provides a clean interface.
 
 ## Quick Start
 
 ```python
-from megatron.bridge.bridge.hf_pretrained import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 # Load any Hugging Face model with proper structure
 model = PreTrainedCausalLM.from_hf_pretrained("gpt2")
@@ -34,7 +34,7 @@ result = model.decode(output[0])
 For text generation models (GPT, LLaMA, etc.)
 
 ```python
-from megatron.bridge.bridge.hf_pretrained import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 # Type-safe loading with lazy evaluation
 llama = PreTrainedCausalLM.from_hf_pretrained(
@@ -53,7 +53,7 @@ model = llama.model          # Loads model weights
 For vision-language models (CLIP, LLaVA, etc.)
 
 ```python
-from megatron.bridge.bridge.hf_pretrained import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained import PreTrainedVLM
 
 vlm = PreTrainedVLM.from_hf_pretrained("llava-hf/llava-1.5-7b-hf")
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for megatron.bridge.bridge.config module."""
+"""Tests for megatron.bridge.models.config module."""
 
 import json
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import pytest
 import yaml
 
-from megatron.bridge.bridge.config import (
+from megatron.bridge.models.config import (
     ConfigProtocol,
     from_hf_pretrained,
     save_hf_pretrained,

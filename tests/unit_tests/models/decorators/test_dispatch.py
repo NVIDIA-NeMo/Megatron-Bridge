@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for megatron.bridge.bridge.decorators.dispatch module."""
+"""Tests for megatron.bridge.models.decorators.dispatch module."""
 
 import pytest
 
-from megatron.bridge.bridge.decorators.dispatch import dispatch
+from megatron.bridge.models.decorators.dispatch import dispatch
 
 
 class TestDispatch:

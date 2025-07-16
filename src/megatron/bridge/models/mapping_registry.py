@@ -15,7 +15,7 @@
 import re
 from typing import List, Optional
 
-from megatron.bridge.bridge.param_mapping import MegatronParamMapping
+from megatron.bridge.models.param_mapping import MegatronParamMapping
 
 
 class MegatronMappingRegistry:

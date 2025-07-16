@@ -27,7 +27,7 @@ from transformers import (
 )
 from transformers.generation.utils import GenerateOutput
 
-from megatron.bridge.bridge.hf_pretrained.base import PreTrainedBase
+from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 
 
 # Python 3.12+ supports PEP 692 (TypedDict Unpack)

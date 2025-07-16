@@ -18,7 +18,7 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.bridge.param_mapping import (
+from megatron.bridge.models.param_mapping import (
     ColumnParallelMapping,
     DirectMapping,
     GatedMLPMapping,
@@ -39,7 +39,7 @@ from megatron.bridge.bridge.param_mapping import (
 def mock_distributed_env():
     """Mocks the distributed environment for single-process testing."""
     with (
-        patch("megatron.bridge.bridge.param_mapping.mpu") as mock_mpu,
+        patch("megatron.bridge.models.param_mapping.mpu") as mock_mpu,
         patch("torch.distributed") as mock_dist,
         patch("torch.cuda.current_device", return_value=0),
     ):

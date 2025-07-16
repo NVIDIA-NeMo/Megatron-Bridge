@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.bridge.decorators.dispatch import dispatch
-from megatron.bridge.bridge.decorators.torchrun import torchrun_main
+from megatron.bridge.models.decorators.dispatch import dispatch
+from megatron.bridge.models.decorators.torchrun import torchrun_main
 
 
 __all__ = ["dispatch", "torchrun_main"]

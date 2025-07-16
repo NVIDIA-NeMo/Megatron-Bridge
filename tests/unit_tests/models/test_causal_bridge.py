@@ -19,9 +19,9 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.bridge.causal_bridge import CausalLMBridge
-from megatron.bridge.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.causal_bridge import CausalLMBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class TestCausalLMBridge:
@@ -73,11 +73,11 @@ class TestCausalLMBridge:
         mock_config.architectures = ["GPT2LMHeadModel"]  # Use a real architecture
         mock_model.config = mock_config
 
-        with patch("megatron.bridge.bridge.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
+        with patch("megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.bridge.causal_bridge.AutoConfig") as mock_autoconfig:
+            with patch("megatron.bridge.models.causal_bridge.AutoConfig") as mock_autoconfig:
                 mock_autoconfig.from_pretrained.return_value = mock_config
 
                 # Skip architecture validation for this test
@@ -101,11 +101,11 @@ class TestCausalLMBridge:
         mock_config.architectures = ["GPT2LMHeadModel"]
         mock_model.config = mock_config
 
-        with patch("megatron.bridge.bridge.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
+        with patch("megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.bridge.causal_bridge.AutoConfig") as mock_autoconfig:
+            with patch("megatron.bridge.models.causal_bridge.AutoConfig") as mock_autoconfig:
                 mock_autoconfig.from_pretrained.return_value = mock_config
 
                 # Skip architecture validation for this test
@@ -127,11 +127,11 @@ class TestCausalLMBridge:
         mock_config.architectures = ["GPT2LMHeadModel"]
         mock_model.config = mock_config
 
-        with patch("megatron.bridge.bridge.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
+        with patch("megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained") as mock_from_pretrained:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.bridge.causal_bridge.AutoConfig") as mock_autoconfig:
+            with patch("megatron.bridge.models.causal_bridge.AutoConfig") as mock_autoconfig:
                 mock_autoconfig.from_pretrained.return_value = mock_config
 
                 # Skip architecture validation for this test
@@ -314,7 +314,7 @@ class TestCausalLMBridgeEdgeCases:
         """Test listing supported models."""
         # Since this method looks at internal dispatch registry,
         # we'll just test that it returns a list
-        with patch("megatron.bridge.bridge.causal_bridge.model_bridge") as mock_bridge:
+        with patch("megatron.bridge.models.causal_bridge.model_bridge") as mock_bridge:
             # Mock to avoid AttributeError
             mock_bridge.to_megatron = None
             supported = CausalLMBridge.list_supported_models()
@@ -358,7 +358,7 @@ class TestCausalLMBridgeEdgeCases:
 
             # Now patch the from_pretrained method
             with patch(
-                "megatron.bridge.bridge.causal_bridge.PreTrainedCausalLM.from_pretrained"
+                "megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained"
             ) as mock_from_pretrained:
                 mock_loaded_model = Mock(spec=PreTrainedCausalLM)
                 mock_from_pretrained.return_value = mock_loaded_model
@@ -391,7 +391,7 @@ class TestCausalLMBridgeEdgeCases:
         mock_hf_model.state = Mock()
         mock_hf_model.state.source = Mock(spec=["save_generator"])
 
-        from megatron.bridge.bridge.state import SafeTensorsStateSource
+        from megatron.bridge.models.state import SafeTensorsStateSource
 
         mock_hf_model.state.source = Mock(spec=SafeTensorsStateSource)
         mock_hf_model.state.source.save_generator = Mock()
@@ -438,12 +438,12 @@ class TestCausalLMBridgeEdgeCases:
 
         # Mock the export process
         with patch(
-            "megatron.bridge.bridge.causal_bridge.model_bridge.stream_weights_megatron_to_hf"
+            "megatron.bridge.models.causal_bridge.model_bridge.stream_weights_megatron_to_hf"
         ) as mock_bridge_state:
             mock_weight_iter = [("weight1", torch.randn(10, 10)), ("weight2", torch.randn(5, 5))]
             mock_bridge_state.return_value = iter(mock_weight_iter)
 
-            with patch("megatron.bridge.bridge.causal_bridge.transformers") as mock_transformers:
+            with patch("megatron.bridge.models.causal_bridge.transformers") as mock_transformers:
                 mock_arch_class = Mock()
                 mock_transformers.LlamaForCausalLM = mock_arch_class
 
@@ -466,7 +466,7 @@ class TestCausalLMBridgeEdgeCases:
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
 
-        with patch("megatron.bridge.bridge.causal_bridge.transformers") as mock_transformers:
+        with patch("megatron.bridge.models.causal_bridge.transformers") as mock_transformers:
             mock_arch_class = Mock()
             mock_transformers.LlamaForCausalLM = mock_arch_class
 
@@ -503,7 +503,7 @@ class TestCausalLMBridgeEdgeCases:
         bridge = CausalLMBridge(mock_hf_model)
 
         # Mock transformers to not have the CustomForCausalLM attribute
-        with patch("megatron.bridge.bridge.causal_bridge.transformers") as mock_transformers:
+        with patch("megatron.bridge.models.causal_bridge.transformers") as mock_transformers:
             # Configure mock to raise AttributeError when accessing CustomForCausalLM
             del mock_transformers.CustomForCausalLM
 
@@ -515,7 +515,7 @@ class TestCausalLMBridgeEdgeCases:
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.__repr__ = Mock(return_value="PreTrainedCausalLM(\n  config=...\n)")
 
-        with patch("megatron.bridge.bridge.causal_bridge.model_bridge") as mock_bridge:
+        with patch("megatron.bridge.models.causal_bridge.model_bridge") as mock_bridge:
             mock_bridge.to_megatron = Mock()
             mock_bridge.to_megatron.__repr__ = Mock(return_value="Dispatcher(\n  impls=...\n)")
 
@@ -542,7 +542,7 @@ class TestCausalLMBridgeEdgeCases:
         assert bridge.hf_pretrained == mock_hf_model
 
         # Test methods that might use device
-        with patch("megatron.bridge.bridge.causal_bridge.transformers") as mock_transformers:
+        with patch("megatron.bridge.models.causal_bridge.transformers") as mock_transformers:
             mock_transformers.GPT2ForCausalLM = Mock()
 
             # These operations should work on CPU

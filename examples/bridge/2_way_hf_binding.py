@@ -34,7 +34,7 @@ import os
 from rich.console import Console
 
 from megatron.bridge import CausalLMBridge
-from megatron.bridge.bridge.utils import weights_verification_table
+from megatron.bridge.models.utils import weights_verification_table
 
 
 console = Console()

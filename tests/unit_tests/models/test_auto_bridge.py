@@ -21,8 +21,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from megatron.bridge.bridge.auto_bridge import _BRIDGES, AutoBridge
-from megatron.bridge.bridge.causal_bridge import CausalLMBridge
+from megatron.bridge.models.auto_bridge import _BRIDGES, AutoBridge
+from megatron.bridge.models.causal_bridge import CausalLMBridge
 
 
 class TestAutoBridge:
@@ -58,7 +58,7 @@ class TestAutoBridge:
 
     def test_from_hf_pretrained_with_causal_lm_model(self, llama_config):
         """Test AutoBridge correctly selects CausalLMBridge for causal LM models."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             with patch.object(CausalLMBridge, "from_hf_pretrained") as mock_from_hf_pretrained:
                 # Setup mocks
                 mock_auto_config.from_pretrained.return_value = llama_config
@@ -77,7 +77,7 @@ class TestAutoBridge:
 
     def test_from_hf_pretrained_with_unsupported_model(self, bert_config):
         """Test AutoBridge raises ValueError for unsupported models."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             # Setup mocks
             mock_auto_config.from_pretrained.return_value = bert_config
 
@@ -93,7 +93,7 @@ class TestAutoBridge:
         """Test AutoBridge works with Path objects."""
         model_path = Path("/path/to/gpt2/model")
 
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             with patch.object(CausalLMBridge, "from_hf_pretrained") as mock_from_hf_pretrained:
                 # Setup mocks
                 mock_auto_config.from_pretrained.return_value = gpt2_config
@@ -110,7 +110,7 @@ class TestAutoBridge:
 
     def test_from_pretrained_config_load_failure(self):
         """Test AutoBridge handles config loading failures gracefully."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             # Setup mock to raise exception
             mock_auto_config.from_pretrained.side_effect = Exception("Config not found")
 
@@ -148,7 +148,7 @@ class TestAutoBridge:
         _BRIDGES.extend([FailingBridge, CausalLMBridge])
 
         try:
-            with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+            with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
                 # Setup mocks
                 mock_auto_config.from_pretrained.return_value = gpt2_config
 
@@ -174,7 +174,7 @@ class TestAutoBridge:
 
     def test_can_handle_supported_model(self, llama_config):
         """Test can_handle returns True for supported models."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = llama_config
 
             assert AutoBridge.can_handle("meta-llama/Llama-3-8B") is True
@@ -182,14 +182,14 @@ class TestAutoBridge:
 
     def test_can_handle_unsupported_model(self, bert_config):
         """Test can_handle returns False for unsupported models."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = bert_config
 
             assert AutoBridge.can_handle("bert-base-uncased") is False
 
     def test_can_handle_invalid_path(self):
         """Test can_handle returns False for invalid paths."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = Exception("Not found")
 
             assert AutoBridge.can_handle("invalid/path") is False
@@ -227,7 +227,7 @@ class TestAutoBridge:
         config.architectures = ["GPT2ForCausalLM"]
         config.model_type = "gpt2"
 
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             with patch.object(CausalLMBridge, "from_hf_pretrained") as mock_from_hf_pretrained:
                 mock_auto_config.from_pretrained.return_value = config
                 mock_bridge_instance = Mock(spec=CausalLMBridge)
@@ -241,7 +241,7 @@ class TestAutoBridge:
 
     def test_kwargs_passed_through(self, gpt2_config):
         """Test that all kwargs are properly passed to the selected bridge."""
-        with patch("megatron.bridge.bridge.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.auto_bridge.AutoConfig") as mock_auto_config:
             with patch.object(CausalLMBridge, "from_hf_pretrained") as mock_from_hf_pretrained:
                 mock_auto_config.from_pretrained.return_value = gpt2_config
                 mock_bridge_instance = Mock(spec=CausalLMBridge)
