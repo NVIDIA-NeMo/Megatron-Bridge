@@ -102,19 +102,8 @@ jobs:
           . ./venv/bin/activate
 
           pip install --upgrade pip
-
-          PIP_ARGS=()
-
-          if [[ $EXTRA == *"te"* ]]; then
-            pip install torch setuptools pybind11 wheel_stub
-            PIP_ARGS=(--no-build-isolation)
-          fi
-
-          if [[ $EXTRA == *"trtllm"* ]]; then
-            apt-get install -y libopenmpi-dev
-          fi
-
-          pip install ${PIP_ARGS[@]} .$EXTRA
+          pip install torch pybind11 wheel_stub
+          pip install --no-build-isolation .$EXTRA
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
