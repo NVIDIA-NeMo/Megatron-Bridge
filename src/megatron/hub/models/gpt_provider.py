@@ -28,23 +28,12 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 )
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import get_te_version
 
 from megatron.hub.common.model_provider_mixin import ModelProviderMixin
 from megatron.hub.core.utils import fusions
 
 
 logger = logging.getLogger(__name__)
-
-# Check if transformer engine is available
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-    TE_VERSION = get_te_version()
-except ImportError:
-    HAVE_TE = False
-    TE_VERSION = None
 
 
 def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
@@ -90,13 +79,10 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if HAVE_TE:
-        if config.use_transformer_engine_full_layer_spec:
-            return transformer_engine_full_layer_spec(config)
-        else:
-            return transformer_engine_layer_spec(config)
+    if config.use_transformer_engine_full_layer_spec:
+        return transformer_engine_full_layer_spec(config)
     else:
-        return local_layer_spec(config)
+        return transformer_engine_layer_spec(config)
 
 
 @dataclass
@@ -175,7 +161,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
             self.apply_rope_fusion = False
 
         if self.enable_cuda_graph:
-            assert HAVE_TE, "Transformer Engine is required for cudagraphs."
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "
                 "enabled with use_te_rng_tracker=True'."
@@ -252,7 +237,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         # is not routed through megatron core, which normally handles passing the
         # TP, CP group to the TE modules.
         # Deep iterate but skip self to avoid infinite recursion.
-        if HAVE_TE and self.use_transformer_engine_full_layer_spec:
+        if self.use_transformer_engine_full_layer_spec:
             # Copied from:
             # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
             if parallel_state.get_tensor_model_parallel_world_size() > 1:
@@ -309,7 +294,7 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
                 spec = config.transformer_layer_spec(config)
         else:
             spec = config.transformer_layer_spec
-        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
+        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
 

@@ -296,19 +296,17 @@ class TestPretrainConfig:
 
     def test_pretrain_config_comm_overlap_with_tp(self):
         """Test CommOverlapConfig with tensor parallelism enabled."""
-        # Mock HAVE_TE to True to simulate transformer engine being available
-        with patch("megatron.hub.training.comm_overlap.HAVE_TE", True):
-            config = pretrain_config(
-                tensor_parallelism=4,
-                context_parallelism=2,
-                sequence_parallelism=True,
-            )
+        config = pretrain_config(
+            tensor_parallelism=4,
+            context_parallelism=2,
+            sequence_parallelism=True,
+        )
 
-            # With TP > 1 and sequence parallelism, comm_overlap should be configured
-            assert config.comm_overlap is not None
-            assert config.comm_overlap.tp_comm_overlap is True
-            assert config.comm_overlap.defer_embedding_wgrad_compute is True
-            assert config.comm_overlap.wgrad_deferral_limit == 50  # Default from recipe
+        # With TP > 1 and sequence parallelism, comm_overlap should be configured
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.defer_embedding_wgrad_compute is True
+        assert config.comm_overlap.wgrad_deferral_limit == 50  # Default from recipe
 
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""

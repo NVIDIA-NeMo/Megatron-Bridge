@@ -24,19 +24,10 @@ from copy import deepcopy
 import pytest
 import torch
 import torch.nn as nn
+import transformer_engine.pytorch as te
 
+from megatron.hub.peft.lora import TELinearAdapter
 from megatron.hub.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
-
-
-# Test if Transformer Engine is available
-try:
-    import transformer_engine.pytorch as te
-
-    from megatron.hub.peft.lora import TELinearAdapter
-
-    HAVE_TE = True
-except ImportError:
-    HAVE_TE = False
 
 
 class MockLinearWithTupleReturn(nn.Module):
@@ -306,7 +297,6 @@ class TestPatchLinearModule:
         with pytest.raises(AssertionError):
             patch_linear_module(linear)
 
-    @pytest.mark.skipif(not HAVE_TE or not torch.cuda.is_available(), reason="Transformer Engine requires CUDA")
     def test_patch_te_linear_module(self):
         """Test patching TELinear module."""
         te_linear = te.Linear(10, 5, device="cuda")
@@ -339,7 +329,6 @@ class TestPatchLinearModule:
         assert patched_linear.lora_b.in_features == dim
 
 
-@pytest.mark.skipif(not HAVE_TE or not torch.cuda.is_available(), reason="Transformer Engine requires CUDA")
 class TestTELinearAdapter:
     """Test the TELinearAdapter class."""
 

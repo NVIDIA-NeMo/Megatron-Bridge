@@ -17,26 +17,6 @@ from typing import Any, Callable, Optional, Union
 
 import packaging
 import torch
-
-from megatron.hub.core.utils.import_utils import safe_import_from
-
-
-class ApexGuardDefaults(object):
-    """
-    This class can be used to replace missing classes when apex is missing.
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def __getattr__(self, item):
-        return None
-
-
-TransformerLayer, HAVE_TE = safe_import_from("transformer_engine.pytorch", "TransformerLayer")
-if not HAVE_TE:
-    TransformerLayer = ApexGuardDefaults
-
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
 from megatron.core.transformer.cuda_graphs import CudaGraphManager
@@ -45,6 +25,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules, get_num_layers_to_build
 from megatron.core.transformer.transformer_layer import BaseTransformerLayer
 from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
+from transformer_engine.pytorch import TransformerLayer
 
 
 # Copied from  nemo/collections/nlp/models/language_modeling/megatron/gpt_full_te_layer_autocast_spec.py
@@ -89,8 +70,6 @@ class AutocastTransformerLayer(TransformerLayer):
         device: str = "cuda",
         **kwargs,
     ) -> None:
-        assert HAVE_TE, "AutocastTransformerLayer requires Transformer Engine to be installed."
-
         transformer_layer_args = {
             "hidden_size": hidden_size,
             "ffn_hidden_size": ffn_hidden_size,
@@ -189,8 +168,6 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
     """
 
     def __init__(self, config, layer_number=1, hidden_dropout=None, **kwargs):
-        assert HAVE_TE, "TETransformerLayerAutocast requires Transformer Engine to be installed."
-
         super().__init__(config=config)
         self.layer_number = layer_number + self._get_layer_offset()
 
@@ -344,7 +321,6 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
 # Use this spec to use the full Transformer layer from Transformer Engine
 def get_gpt_full_te_layer_autocast_spec(transformer_config) -> ModuleSpec:
     """Get the ModuleSpec for full Transformer layer from Transformer Engine."""
-    assert HAVE_TE, "Please ensure Transformer Engine is installed."
     num_layers = get_num_layers_to_build(transformer_config)
     return TransformerBlockSubmodules(
         layer_specs=[ModuleSpec(module=TETransformerLayerAutocast)] * num_layers, layer_norm=FusedLayerNorm

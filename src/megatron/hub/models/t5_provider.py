@@ -22,11 +22,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.hub.common.model_provider_mixin import ModelProviderMixin
-from megatron.hub.core.utils.import_utils import safe_import
 from megatron.hub.models.gpt_provider import get_vocab_size
-
-
-_, HAVE_TE = safe_import("transformer_engine")
 
 
 logger = logging.getLogger(__name__)
@@ -60,10 +56,7 @@ def local_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5Model
 
 def default_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5ModelProvider") -> ModuleSpec:
     """Set layer spec conditioning on whether transformer_engine is available"""
-    if HAVE_TE:
-        return transformer_engine_layer_spec(encoder_config, decoder_config)
-    else:
-        return local_layer_spec(encoder_config, decoder_config)
+    return transformer_engine_layer_spec(encoder_config, decoder_config)
 
 
 @dataclass
