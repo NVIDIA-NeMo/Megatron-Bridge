@@ -173,12 +173,8 @@ jobs:
 
           export PATH="./bin/:$PATH"
 
+          uv sync --link-mode copy --locked --only-group build
           uv sync --link-mode copy --locked --all-groups
-
-          bash ./docker/common/install_conflicting_deps.sh \
-            --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
-
-          uv pip install --no-deps -e .
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -222,9 +218,8 @@ jobs:
 
           uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
+          uv sync --link-mode copy --locked --only-group build
           uv sync --link-mode copy --locked --all-groups
-
-          uv pip install --no-deps -e .
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
