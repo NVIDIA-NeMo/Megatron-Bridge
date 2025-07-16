@@ -117,24 +117,19 @@ Coming soon ...
 ```
 Megatron-Bridge/
 ├── examples/
-│   ├── converters/              # Converter usage examples
+│   ├── models/                  # Bridge usage examples
 │   └── recipes/                 # Training examples
 ├── src/megatron/bridge/
-│   ├── converters/              # HuggingFace bridge infrastructure
-│   ├── common/                  # Shared utilities and mixins
-│   ├── core/
-│   │   ├── models/              # Wrapped MCore model builders
-│   │   │   └── model_provider.py
-│   │   └── utils/               # Utilities intended for mcore
 │   ├── data/                    # Dataloaders and iterators
-│   ├── models/                  # Model-specific implementations
+│   ├── models/                  # HuggingFace bridge infrastructure and model-specific implementations
 │   │   ├── llama/               # Llama model providers
 │   │   └── .../                 # Other models (gpt, t5, etc.)
 │   ├── peft/                    # PEFT transformations and wrappers
 │   ├── recipes/                 # Complete training recipes
-│   └── training/                # Training loop components
-│       ├── tokenizers/          # Tokenizer library
-│       └── utils/               # Training-specific utilities
+│   ├── training/                # Training loop components
+│   │   ├── tokenizers/          # Tokenizer library
+│   │   └── utils/               # Training-specific utilities
+│   └── utils/                   # Generic utilities for repo-wide usage
 └── tests/                       # Comprehensive test suite
 ```
 

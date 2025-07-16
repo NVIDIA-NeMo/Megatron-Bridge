@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.hub import CausalLMBridge
+from megatron.bridge import CausalLMBridge
 
 
 def main() -> None:

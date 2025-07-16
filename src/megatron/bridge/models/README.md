@@ -1,4 +1,4 @@
-# Megatron-Bridge Bridge Framework
+# Megatron-Bridge Framework
 
 The bridge framework provides seamless bidirectional conversion between HuggingFace Transformers and Megatron-Core model formats, handling the complexities of distributed model parallelism transparently.
 
