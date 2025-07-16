@@ -206,6 +206,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ["ubuntu-latest"]
+        python-version: ["3.12"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
