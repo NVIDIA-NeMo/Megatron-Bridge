@@ -797,7 +797,7 @@ class TestRerunConfigValidation:
             cfg.__post_init__()
 
     def test_mixed_precision_config(self):
-        from megatron.hub.training.mixed_precision import bf16_with_mxfp8_mixed
+        from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 
         self._check_post_init_idempotency(bf16_with_mxfp8_mixed)
         cfg = bf16_with_mxfp8_mixed()

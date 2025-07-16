@@ -296,7 +296,7 @@ GatedMLPMapping(
 ```python
 # Enable verbose logging
 import logging
-logging.getLogger("megatron.hub.bridge").setLevel(logging.DEBUG)
+logging.getLogger("megatron.bridge.bridge").setLevel(logging.DEBUG)
 
 # Inspect mappings
 bridge = CausalLMBridge.from_hf_pretrained("model")
