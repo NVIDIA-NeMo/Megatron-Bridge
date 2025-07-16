@@ -24,7 +24,7 @@ VERSION = (MAJOR, MINOR, PATCH, PRE_RELEASE)
 __shortversion__ = ".".join(map(str, VERSION[:3]))
 __version__ = ".".join(map(str, VERSION[:3])) + "".join(VERSION[3:])
 
-__package_name__ = "megatron.bridge"
+__package_name__ = "megatron_bridge"
 __contact_names__ = "NVIDIA"
 __contact_emails__ = "nemo-toolkit@nvidia.com"
 __homepage__ = "https://docs.nvidia.com/deeplearning/nemo/user-guide/docs/en/stable/"
