@@ -41,6 +41,8 @@ def on_save_checkpoint_success(
         metadata = {"iteration": iteration}
         artifact_name, artifact_version = _get_artifact_name_and_version(Path(save_dir), Path(checkpoint_path))
         artifact = wandb_writer.Artifact(artifact_name, type="model", metadata=metadata)
+        # wandb's artifact.add_reference requires absolute paths
+        checkpoint_path = str(Path(checkpoint_path).resolve())
         artifact.add_reference(f"file://{checkpoint_path}", checksum=False)
         wandb_writer.run.log_artifact(artifact, aliases=[artifact_version])
         wandb_tracker_filename = _get_wandb_artifact_tracker_filename(save_dir)
