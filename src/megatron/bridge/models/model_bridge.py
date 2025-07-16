@@ -38,7 +38,7 @@ from megatron.core.transformer.module import MegatronModule
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
 
-from megatron.bridge.models.decorators import dispatch
+from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.model_provider import ModelProviderProtocol
 from megatron.bridge.models.param_mapping import MegatronParamMapping
