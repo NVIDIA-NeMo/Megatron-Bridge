@@ -59,7 +59,7 @@ jobs:
 
       - name: Install project
         run: |
-          pip install torch
+          pip install torch pybind11 wheel_stub
           pip install --no-build-isolation .
 
       - name: Checkout check-imports
