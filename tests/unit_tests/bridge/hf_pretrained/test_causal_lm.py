@@ -23,7 +23,7 @@ import pytest
 import torch
 from transformers import PreTrainedTokenizer
 
-from megatron.bridge.converters.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class TestPreTrainedCausalLMInitialization:

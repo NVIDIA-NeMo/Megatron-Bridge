@@ -25,8 +25,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.bridge.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.common.state import SafeTensorsStateSource, StateDict, StateSource
-from megatron.bridge.converters.hf_pretrained.base import PreTrainedBase
 
 
 @pytest.fixture

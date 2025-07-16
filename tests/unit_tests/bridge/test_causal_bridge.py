@@ -21,7 +21,7 @@ from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.bridge.causal_bridge import CausalLMBridge
 from megatron.bridge.bridge.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.hub.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 class TestCausalLMBridge:

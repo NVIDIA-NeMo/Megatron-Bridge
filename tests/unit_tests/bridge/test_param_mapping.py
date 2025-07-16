@@ -18,7 +18,7 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.converters.param_mapping import (
+from megatron.bridge.bridge.param_mapping import (
     ColumnParallelMapping,
     DirectMapping,
     GatedMLPMapping,

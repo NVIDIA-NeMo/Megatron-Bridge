@@ -22,7 +22,7 @@ import pytest
 import torch
 from transformers import AutoConfig, PreTrainedTokenizer, ProcessorMixin
 
-from megatron.bridge.converters.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.bridge.hf_pretrained.vlm import PreTrainedVLM
 
 
 @pytest.fixture

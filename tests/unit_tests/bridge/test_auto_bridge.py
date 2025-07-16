@@ -21,8 +21,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from megatron.bridge.converters.auto_bridge import _BRIDGES, AutoBridge
-from megatron.bridge.converters.causal_bridge import CausalLMBridge
+from megatron.bridge.bridge.auto_bridge import _BRIDGES, AutoBridge
+from megatron.bridge.bridge.causal_bridge import CausalLMBridge
 
 
 class TestAutoBridge:
