@@ -11,9 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Megatron Hub - A component of the Megatron ecosystem."""
+"""Megatron Bridge - A component of the Megatron ecosystem."""
 
 from megatron.bridge import models as _models
+from megatron.bridge.models import *  # noqa: F403
 from megatron.bridge.models.auto_bridge import AutoBridge
 from megatron.bridge.models.causal_bridge import CausalLMBridge
 
