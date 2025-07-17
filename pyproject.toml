@@ -133,9 +133,6 @@ dev = [
     "mypy>=1.8.0",
 ]
 build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0"]
-nemo-legacy = [
-    "nemo-toolkit[automodel,common-only,nlp-only,eval,multimodal-only]",
-]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"
