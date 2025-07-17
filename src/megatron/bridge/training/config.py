@@ -33,9 +33,6 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 
 
-logger: logging.Logger = logging.getLogger(__name__)
-
-
 @dataclass(kw_only=True)
 class RNGConfig:
     """Configuration settings for random number generation."""
