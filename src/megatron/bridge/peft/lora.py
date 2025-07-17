@@ -118,7 +118,8 @@ class LoRA(PEFT, ModuleMatcher):
                 # - is DTensor (has _local_tensor attribute)
                 # - has quant_state attribute
                 if hasattr(module.weight.data, "_local_tensor") or (
-                    getattr(module, "quant_state", None) is not None
+                    HAVE_BNB
+                    and getattr(module, "quant_state", None) is not None
                     and module.quant_state.__class__ == bitsandbytes.functional.QuantState
                 ):
                     lora_cls = patch_linear_module
