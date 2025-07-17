@@ -1470,7 +1470,7 @@ recipes = [
     { name = "nemo-run" },
 ]
 te = [
-    { name = "transformer-engine", marker = "sys_platform != 'darwin'" },
+    { name = "transformer-engine", extra = ["pytorch"], marker = "sys_platform != 'darwin'" },
 ]
 
 [package.dev-dependencies]
@@ -1525,7 +1525,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.9.0" },
     { name = "torch" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "transformer-engine", extras = ["torch"], marker = "sys_platform != 'darwin' and extra == 'te'", specifier = "==2.5.0" },
+    { name = "transformer-engine", extras = ["pytorch"], marker = "sys_platform != 'darwin' and extra == 'te'", specifier = "==2.5.0" },
     { name = "transformers", specifier = ">=4.51.3" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.19.10" },
@@ -3972,6 +3972,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/13/e7/b1af90c00f6c63abfada141f25c2ef7ed620d01aa62d8c3a8f74644b2396/transformer_engine-2.5.0-py3-none-any.whl", hash = "sha256:a78a2ad01b1f97bccd740f701287fa43cf6ba37ba5a9b2d8c401d35ecdd0898e", size = 535575, upload-time = "2025-07-15T20:48:28.119Z" },
 ]
 
+[package.optional-dependencies]
+pytorch = [
+    { name = "transformer-engine-torch" },
+]
+
 [[package]]
 name = "transformer-engine-cu12"
 version = "2.5.0"
@@ -3985,6 +3990,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/17/ca/c2594e92fa63366947b2e34f21e7b2c29f5aa7c8ed3648356623af6fc580/transformer_engine_cu12-2.5.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:06676d92ee87e207c91d27a1947a880c4da502667f7b5dacabc1413dc5c5a795", size = 274123550, upload-time = "2025-07-15T21:15:27.622Z" },
     { url = "https://files.pythonhosted.org/packages/74/84/ee88068473ff38a7d304c7861ff61290eadf1139dfd2fda56804b34724d3/transformer_engine_cu12-2.5.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:d4a63985115bbc399b44a70ef7a8e028cbd53aee6f2a621c11f7c12bd4632095", size = 274534430, upload-time = "2025-07-15T21:16:23.638Z" },
 ]
+
+[[package]]
+name = "transformer-engine-torch"
+version = "2.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "einops" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/1d/73ec467d20d96e0bb12c3047d0567d41955ab2e18ce3c26cb53451773605/transformer_engine_torch-2.5.0.tar.gz", hash = "sha256:f56e65287a1f082ac5f44b8edd3c024131f51414f44ecffcdd1372e2781cb113", size = 159599, upload-time = "2025-07-17T15:37:07.939Z" }
 
 [[package]]
 name = "transformers"
