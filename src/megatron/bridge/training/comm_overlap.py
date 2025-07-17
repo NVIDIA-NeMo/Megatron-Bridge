@@ -22,6 +22,14 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
 
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
 @dataclass
 class TPOverlapCfg:
     """Dataclass for linear layer TP overlap config."""
@@ -423,7 +431,7 @@ class CommOverlapConfig:
             elif not model_cfg.sequence_parallel:
                 logging.warning("Disabling tensor parallel communication overlap due to sequence_parallel=False.")
                 self.user_comm_overlap_cfg.tp_comm_overlap = False
-            else:
+            elif not HAVE_TE:
                 logging.warning("Disabling tensor parallel communication overlap due to TE not detected.")
                 self.user_comm_overlap_cfg.tp_comm_overlap = False
 
