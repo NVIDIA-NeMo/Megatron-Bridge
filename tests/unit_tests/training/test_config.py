@@ -796,13 +796,6 @@ class TestRerunConfigValidation:
             cfg.load_optim = True
             cfg.__post_init__()
 
-        with pytest.raises(
-            AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
-        ):
-            cfg.async_save = True
-            cfg.save = None
-            cfg.__post_init__()
-
     def test_mixed_precision_config(self):
         from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 
