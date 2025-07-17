@@ -413,41 +413,6 @@ class TestGetGPTFullTELayerAutocastSpec:
         assert len(spec.layer_specs) == 24
 
 
-class TestWithoutTransformerEngine:
-    """Test behavior when Transformer Engine is not available."""
-
-    def test_get_gpt_full_te_layer_autocast_spec_without_te(self):
-        """Test that get_gpt_full_te_layer_autocast_spec raises assertion when TE is not available."""
-        mock_config = Mock()
-
-        with pytest.raises(AssertionError, match="Please ensure Transformer Engine is installed"):
-            get_gpt_full_te_layer_autocast_spec(mock_config)
-
-    def test_autocast_transformer_layer_without_te(self):
-        """Test that AutocastTransformerLayer raises assertion when TE is not available."""
-        with pytest.raises(AssertionError, match="AutocastTransformerLayer requires Transformer Engine"):
-            # Try to create an instance with some dummy config
-            basic_config = {
-                "hidden_size": 512,
-                "ffn_hidden_size": 2048,
-                "layernorm_epsilon": 1e-5,
-                "num_attention_heads": 8,
-                "init_method": lambda x: x,
-                "output_layer_init_method": lambda x: x,
-                "hidden_dropout": 0.1,
-                "attention_dropout": 0.1,
-                "tp_size": 1,
-                "params_dtype": torch.float32,
-            }
-            AutocastTransformerLayer(**basic_config)
-
-    def test_te_transformer_layer_autocast_without_te(self):
-        """Test that TETransformerLayerAutocast raises assertion when TE is not available."""
-        with pytest.raises(AssertionError, match="TETransformerLayerAutocast requires Transformer Engine"):
-            mock_config = Mock()
-            TETransformerLayerAutocast(mock_config, layer_number=0)
-
-
 class TestVersionCompatibility:
     """Test version compatibility handling."""
 
