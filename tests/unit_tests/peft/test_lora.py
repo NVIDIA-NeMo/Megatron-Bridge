@@ -541,7 +541,6 @@ class TestLoRAIntegration:
         )
 
 
-@pytest.mark.run_only_on("GPU")
 class TestLoRAMegatronIntegration:
     """Integration tests for LoRA with real Megatron models."""
 
