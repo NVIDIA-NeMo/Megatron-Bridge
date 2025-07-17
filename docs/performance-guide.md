@@ -1,6 +1,6 @@
 # Performance Tuning Guide
 
-Megatron-Hub provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
+Megatron-Bridge provides a wide range of features for performant and memory-efficient LLM training on GPUs, and comes pre-configured with optimal settings. However, factors such as model architecture, hyperparameters, GPU count, and GPU type can affect the available options, and additional tuning may be necessary to achieve optimal performance. This document explores the factors that affect training performance, highlights common issues, and outlines techniques for performance tuning that lead to higher MFU (Model FLOPS Utilization) and TCO.
 
 ```{Note}
 This guide makes references to several configuration settings. These settings will be referenced relative to the the config class that contains them, e.g. `OptimizerConfig.lr`. Please see <project:apidocs/index.rst> for more details on configuration settings.
@@ -29,7 +29,7 @@ This guide references several configuration settings from `TransformerConfig`. P
 
    > 1. You should begin with data-parallel (DP) mapping. As long as the model and activation memory fit within the GPUs, data parallelism generally offers optimal performance, minimizes communication overhead, and maximizes per-GPU tensor sizes (compared to per-tensor sharding).
    >
-   > 2. Megatron-Hub uses the distributed optimizer as the default method for data-parallel training. It shards master parameters and optimizer states across data-parallel ranks, reducing model state memory usage without increasing communication overhead compared to traditional data-parallel training.
+   > 2. Megatron-Bridge uses the distributed optimizer as the default method for data-parallel training. It shards master parameters and optimizer states across data-parallel ranks, reducing model state memory usage without increasing communication overhead compared to traditional data-parallel training.
    >
    >    > 1. `OptimizerConfig.use_distributed_optimizer=true`
 
@@ -67,7 +67,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >
    > 3. Asymmetric Transformer layer allocation across pipeline stages
    >
-   >    > 1. An LLM with a large vocabulary size has computationally heavy embedding lookup and projection operations, leading to load imbalance across pipeline stages. To address this, Megatron-Hub provides an option to allocate one fewer Transformer layer in the first and last pipeline stages, which handle embedding lookup and projection, to better balance workloads.
+   >    > 1. An LLM with a large vocabulary size has computationally heavy embedding lookup and projection operations, leading to load imbalance across pipeline stages. To address this, Megatron-Bridge provides an option to allocate one fewer Transformer layer in the first and last pipeline stages, which handle embedding lookup and projection, to better balance workloads.
    >    >
    >    >    > 1. `GPTProvider.account_for_embedding_in_pipeline_split=true`
    >    >    > 2. `GPTProvider.account_for_loss_in_pipeline_split=true`
@@ -93,7 +93,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Fully Sharded Data Parallelism
 
-   > 1. Megatron-Hub supports PyTorch-native FSDP. FSDP can be used in combination with per-tensor sharding methods.
+   > 1. Megatron-Bridge supports PyTorch-native FSDP. FSDP can be used in combination with per-tensor sharding methods.
    >
    >    > 1. To use PyTorch FSDP2:
    >    >
@@ -102,11 +102,11 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 2. FSDP can be preferred over TP+PP+DP mappings in the following scenarios:
    >
    >    > 1. Small models with a large sequence, thus the parameter AllGather and gradient ReduceScatter can effectively be hidden under computation and the short communication overlap causes minor interference to the computation under overlap.
-   >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Hub offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect.
+   >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Bridge offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect.
    >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size.
 
    <!-- TODO: support megatron custom fsdp -->
-   <!-- > 1. Megatron-Hub supports two Fully Sharded Data Parallelism (FSDP) implementations: PyTorch-native FSDP and a custom Megatron FSDP built within Megatron Core. While both follow the same sharding principles, the custom implementation is further optimized for performance. The performance gain of the custom FSDP comes primarily from minimizing the data movement to the communication tensors and reusing communication buffers. Both FSDP methods can be used in combination with per-tensor sharding methods. -->
+   <!-- > 1. Megatron-Bridge supports two Fully Sharded Data Parallelism (FSDP) implementations: PyTorch-native FSDP and a custom Megatron FSDP built within Megatron Core. While both follow the same sharding principles, the custom implementation is further optimized for performance. The performance gain of the custom FSDP comes primarily from minimizing the data movement to the communication tensors and reusing communication buffers. Both FSDP methods can be used in combination with per-tensor sharding methods. -->
    <!-- > -->
    <!-- >    > 1. To use PyTorch FSDP2: -->
    <!-- >    > -->
@@ -120,7 +120,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    <!-- > 2. FSDP can be preferred over TP+PP+DP mappings in the following scenarios: -->
    <!-- > -->
    <!-- >    > 1. Small models with a large sequence, thus the parameter AllGather and gradient ReduceScatter can effectively be hidden under computation and the short communication overlap causes minor interference to the computation under overlap. -->
-   <!-- >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Hub offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect. -->
+   <!-- >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Bridge offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect. -->
    <!-- >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size. -->
 
 4. Heterogeneous Encoder Parallelism
@@ -162,7 +162,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    > 1. `DistributedDataParallelConfig.overlap_param_gather=true`
    >    > 2. `DistributedDataParallelConfig.overlap_grad_reduce=true`
    >
-   > 2. When using the distributed optimizer with pipeline parallelism (PP) + virtual pipeline parallelism (VPP), DP communications overlap with multiple micro-batches, increasing the opportunity for effective overlap. Also, Megatron-Hub aligns the execution timing of DP communications across pipeline-parallel ranks to synchronize the computing kernel slowdown from the overlap.
+   > 2. When using the distributed optimizer with pipeline parallelism (PP) + virtual pipeline parallelism (VPP), DP communications overlap with multiple micro-batches, increasing the opportunity for effective overlap. Also, Megatron-Bridge aligns the execution timing of DP communications across pipeline-parallel ranks to synchronize the computing kernel slowdown from the overlap.
    >
    >    > 1. `DistributedDataParallelConfig.align_param_gather=true`
    >
@@ -189,11 +189,11 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Tensor-parallel (TP) communication (with sequence parallelism)
 
-   > 1. Megatron-Hub currently uses the userbuffer backend in Transformer Engine for TP communication overlaps. This offers the pipelined overlap of the TP communication with dependent computation.
+   > 1. Megatron-Bridge currently uses the userbuffer backend in Transformer Engine for TP communication overlaps. This offers the pipelined overlap of the TP communication with dependent computation.
    >
    >    > 1. `CommOverlapConfig.tp_comm_overlap`
    >
-   > 2. The overlap method, resource, and precision of the TP communication overlaps are configurable, and the most performant configurations are set in the Megatron-Hub training recipes by default. Also, you can set a custom TP communication overlap configuration via the below interface following the structure of TransformerLayerTPOverlapCfg class.
+   > 2. The overlap method, resource, and precision of the TP communication overlaps are configurable, and the most performant configurations are set in the Megatron-Bridge training recipes by default. Also, you can set a custom TP communication overlap configuration via the below interface following the structure of TransformerLayerTPOverlapCfg class.
    >
    >    > 1. `CommOverlapConfig.tp_comm_overlap_cfg=<TransformerLayerTPOverlapCfg>`
    >
@@ -225,7 +225,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 5. Expert-parallel communication
 
-   > 1. To hide the A2A/AG communication introduced by EP, pipeline split overlap or 1F1B overlap alongside Pipeline Parallelism could be possible. It will be added to Megatron-Hub in future releases.
+   > 1. To hide the A2A/AG communication introduced by EP, pipeline split overlap or 1F1B overlap alongside Pipeline Parallelism could be possible. It will be added to Megatron-Bridge in future releases.
 
 6. Pipeline-parallel (PP) send/receive communication
 
@@ -237,7 +237,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 1. FP8 data-parallel parameter AllGather in Distributed Optimizer and FSDP
 
-   > 1. Megatron-Hub supports FP8 parameter AllGather for per-tensor FP8 scaling recipes. This operation is lossless, enhancing performance while reducing memory usage.
+   > 1. Megatron-Bridge supports FP8 parameter AllGather for per-tensor FP8 scaling recipes. This operation is lossless, enhancing performance while reducing memory usage.
    >
    >    > 1. `MixedPrecisionConfig.fp8_param=true`
 
@@ -255,7 +255,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 4. FP8 A2A Dispatch for expert parallel communication
 
-   > 1. Megatron-Hub is working on supporting FP8 A2A dispatch (before expert FC1), but still keeps BF16 A2A combine (after expert FC2).
+   > 1. Megatron-Bridge is working on supporting FP8 A2A dispatch (before expert FC1), but still keeps BF16 A2A combine (after expert FC2).
 
 ## Performance at Scale
 
@@ -291,13 +291,13 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Manual garbage collection to align the host interruption across GPUs
 
-   > 1. Megatron-Hub manually aligns the timing of garbage collection across GPUs that significantly mitigate the host overhead compared to the baseline automatic garbage collection.
+   > 1. Megatron-Bridge manually aligns the timing of garbage collection across GPUs that significantly mitigate the host overhead compared to the baseline automatic garbage collection.
    >
    >    > 1. `TrainingConfig.manual_gc_interval=<int>`
 
 4. CUDA graph to eliminate repeated static host code execution
 
-   > 1. Megatron-Hub supports graph capture, significantly reducing host overhead. CUDA Graph is applicable only to LLMs with a static tensor shape across training steps. For example, it supports fixed-size packed sequences but does not handle sequences with varying lengths at each step. Also, MoE models with token-dropless propagation have limited CUDA graph support, restricted to the dense modules only.
+   > 1. Megatron-Bridge supports graph capture, significantly reducing host overhead. CUDA Graph is applicable only to LLMs with a static tensor shape across training steps. For example, it supports fixed-size packed sequences but does not handle sequences with varying lengths at each step. Also, MoE models with token-dropless propagation have limited CUDA graph support, restricted to the dense modules only.
    > 2. CUDA graph requires additional memory for static buffer management, typically adding a few gigabytes for static buffers, while models with PP size > 1 may consume over 10GB. We are actively working to reduce this memory overhead.
    > 3. `TransformerConfig.enable_cuda_graph=true`
 
@@ -312,9 +312,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 1. Activation recomputation
 
-   > 1. Megatron-Hub LLMs default to dot-product attention-only recomputation using Flash Attention, efficiently regenerating large intermediate activations from the attention operation with minimal computational overhead.
+   > 1. Megatron-Bridge LLMs default to dot-product attention-only recomputation using Flash Attention, efficiently regenerating large intermediate activations from the attention operation with minimal computational overhead.
    >
-   > 2. Megatron-Hub also supports recomputing the full intermediate activations of a Transformer block, significantly reducing activation memory usage at the cost of approximately 30% additional computation. The number of Transformer blocks to recompute can be adjusted using a configurable setting.
+   > 2. Megatron-Bridge also supports recomputing the full intermediate activations of a Transformer block, significantly reducing activation memory usage at the cost of approximately 30% additional computation. The number of Transformer blocks to recompute can be adjusted using a configurable setting.
    >
    >    > 1. `TransformerConfig.recompute_granuality=full`
    >    > 2. `TransformerConfig.recompute_method=block`
@@ -322,7 +322,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 2. Activation offloading to host memory
 
-   > 1. Megatron-Hub supports offloading activation memory to host memory, essential for training tasks constrained by activation memory. This is particularly useful for scenarios like (1) FSDP, where model state memory is minimized through sharding but activation memory remains high, (2) LoRA, which has frozen parameters but significant activation memory demands, and (3) the training with a large sequence length. The efficiency of activation offloading depends on both the interconnect bandwidth between the GPU and host and the host memory bandwidth. From this perspective, Grace-based systems like the GB200 enhance offloading performance by optimizing these bandwidths.
+   > 1. Megatron-Bridge supports offloading activation memory to host memory, essential for training tasks constrained by activation memory. This is particularly useful for scenarios like (1) FSDP, where model state memory is minimized through sharding but activation memory remains high, (2) LoRA, which has frozen parameters but significant activation memory demands, and (3) the training with a large sequence length. The efficiency of activation offloading depends on both the interconnect bandwidth between the GPU and host and the host memory bandwidth. From this perspective, Grace-based systems like the GB200 enhance offloading performance by optimizing these bandwidths.
    >
    > 2. The following knobs should be configured to enable offloading and specify the number of Transformer layers to offload to host memory. The maximum number of layers that can be offloaded depends on host memory capacity, which may be lower when the CPU is shared among multiple GPUs.
    >
@@ -341,7 +341,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Weight memory-optimized BF16 training
 
-   > 1. In BF16 training, Megatron-Hub optimizes memory usage by storing only the BF16 remainder of the master weight copies for the next optimizer update. This is possible because BF16 data can be represented using a subset of FP32 bits, allowing Megatron-Hub to avoid redundant storage of the FP32 portion used for BF16 representation. This is default enabled when using precision-aware optimizer in Megatron Core.
+   > 1. In BF16 training, Megatron-Bridge optimizes memory usage by storing only the BF16 remainder of the master weight copies for the next optimizer update. This is possible because BF16 data can be represented using a subset of FP32 bits, allowing Megatron-Bridge to avoid redundant storage of the FP32 portion used for BF16 representation. This is default enabled when using precision-aware optimizer in Megatron Core.
    >
    >    > 1. `OptimizerConfig.use_precision_aware_optimizer=True`
 
@@ -373,7 +373,7 @@ Additionally, because CP shards activations, it also partitions optimizer states
    > 5. `TransformerConfig.bias_dropout_fusion=true`
    > 6. `TransformerConfig.apply_rope_fusion=true`
 
-2. Megatron-Hub offers different Flash Attention options, which can be chosen through the model config:
+2. Megatron-Bridge offers different Flash Attention options, which can be chosen through the model config:
 
    > 1. Let Transformer Engine decide (default): `TransformerConfig.attention_backend=AttnBackend.auto`
    > 2. FlashAttention2: `TransformerConfig.attention_backend=AttnBackend.flash`
@@ -435,12 +435,12 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 1. Nsight system profile
 
-   > 1. Megatron-Hub provides an interface to enable the NVIDIA Nsight Systems profiler, which displays the GPU execution trace of all CUDA streams. You can check whether communication kernels overlap with computation kernels and adjust resource allocation to balance communication and computation. The Nsight Systems profile can be enabled using ProfilingConfig, as shown below.
+   > 1. Megatron-Bridge provides an interface to enable the NVIDIA Nsight Systems profiler, which displays the GPU execution trace of all CUDA streams. You can check whether communication kernels overlap with computation kernels and adjust resource allocation to balance communication and computation. The Nsight Systems profile can be enabled using ProfilingConfig, as shown below.
    > 2. `ProfilingConfig(use_nsys_profiler=True, profile_start_step=<int>, profile_end_step=<int>, profile_ranks=<[0,...]>)`
 
 2. Memory snapshot
 
-   > 1. Megatron-Hub provides an interface to extract the memory snapshot that shows the memory allocation bytes, the allocation lifespan, and the function call stack. Extracting the memory snapshot can be enabled by ProfilingConfig as shown below.
+   > 1. Megatron-Bridge provides an interface to extract the memory snapshot that shows the memory allocation bytes, the allocation lifespan, and the function call stack. Extracting the memory snapshot can be enabled by ProfilingConfig as shown below.
    > 2. `ProfilingConfig(record_memory_history=True, memory_snapshot_path=</path/to/store/the/output/file, profile_ranks=<[0,...]>)`
 
 ## Index - List of Tuning Knobs

@@ -23,8 +23,8 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 import torch
 
-from megatron.hub.core.utils.instantiate_utils import InstantiationMode
-from megatron.hub.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
 # Test functions for callable testing
@@ -124,7 +124,7 @@ class TestConfigContainer_Basic:
 class TestConfigContainer_FromDict:
     """Test ConfigContainer.from_dict method."""
 
-    @patch("megatron.hub.training.utils.config_utils.instantiate")
+    @patch("megatron.bridge.training.utils.config_utils.instantiate")
     def test_from_dict_basic(self, mock_instantiate):
         """Test basic from_dict functionality."""
         config_dict = {
@@ -142,7 +142,7 @@ class TestConfigContainer_FromDict:
         assert result.name == "from_dict"
         assert result.value == 300
 
-    @patch("megatron.hub.training.utils.config_utils.instantiate")
+    @patch("megatron.bridge.training.utils.config_utils.instantiate")
     def test_from_dict_with_mode(self, mock_instantiate):
         """Test from_dict with different instantiation modes."""
         config_dict = {
@@ -176,7 +176,7 @@ class TestConfigContainer_FromDict:
         with pytest.raises(ValueError, match="Dictionary contains extra keys"):
             TestConfigContainer.from_dict(config_dict, mode=InstantiationMode.STRICT)
 
-    @patch("megatron.hub.training.utils.config_utils.instantiate")
+    @patch("megatron.bridge.training.utils.config_utils.instantiate")
     def test_from_dict_extra_keys_lenient_mode(self, mock_instantiate):
         """Test from_dict removes extra keys in lenient mode."""
         config_dict = {
@@ -221,7 +221,7 @@ class TestConfigContainer_FromYaml:
         with pytest.raises(FileNotFoundError, match="YAML file not found"):
             TestConfigContainer.from_yaml("non_existent_file.yaml")
 
-    @patch("megatron.hub.training.utils.config_utils.OmegaConf")
+    @patch("megatron.bridge.training.utils.config_utils.OmegaConf")
     @patch("builtins.open", new_callable=mock_open)
     @patch("os.path.exists")
     def test_from_yaml_success(self, mock_exists, mock_file, mock_omegaconf):
@@ -272,7 +272,7 @@ class TestConfigContainer_FromYaml:
 
         with patch("builtins.open", mock_open()):
             with patch("yaml.safe_load", return_value={}):
-                with patch("megatron.hub.training.utils.config_utils.OmegaConf") as mock_omegaconf:
+                with patch("megatron.bridge.training.utils.config_utils.OmegaConf") as mock_omegaconf:
                     # Mock OmegaConf methods to return expected values
                     mock_conf = MagicMock()
                     mock_omegaconf.create.return_value = mock_conf
@@ -442,7 +442,7 @@ class TestConfigContainer_ConvertValueToDict:
 class TestConfigContainer_ToYaml:
     """Test ConfigContainer.to_yaml method."""
 
-    @patch("megatron.hub.training.utils.config_utils.safe_yaml_representers")
+    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
     @patch("yaml.safe_dump")
     @patch("builtins.print")
     def test_to_yaml_print_to_stdout(self, mock_print, mock_yaml_dump, mock_safe_representers):
@@ -458,7 +458,7 @@ class TestConfigContainer_ToYaml:
         mock_yaml_dump.assert_called_once()
         mock_print.assert_called_once_with("yaml_content")
 
-    @patch("megatron.hub.training.utils.config_utils.safe_yaml_representers")
+    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
     @patch("yaml.safe_dump")
     @patch("builtins.open", new_callable=mock_open)
     def test_to_yaml_save_to_file(self, mock_file, mock_yaml_dump, mock_safe_representers):
@@ -566,7 +566,7 @@ class TestConfigContainer_Integration:
         """Test YAML conversion produces expected structure."""
         config = TestConfigContainer(name="yaml_roundtrip", value=1234)
 
-        with patch("megatron.hub.training.utils.config_utils.safe_yaml_representers"):
+        with patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers"):
             with patch("yaml.safe_dump") as mock_dump:
                 config.to_yaml()
 

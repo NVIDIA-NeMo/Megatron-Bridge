@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.hub.training.state import TrainState
+from megatron.bridge.training.state import TrainState
 
 
 class TestTrainState:

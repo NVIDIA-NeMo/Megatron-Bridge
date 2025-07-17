@@ -19,9 +19,9 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
-from megatron.hub.models.t5_provider import T5ModelProvider
-from megatron.hub.training.config import (
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedInitConfig,
@@ -238,7 +238,7 @@ def create_test_config_container(
     )
 
     # Monkeypatch get_world_size_safe for this test
-    import megatron.hub.training.config as config_module
+    import megatron.bridge.training.config as config_module
 
     original_get_world_size = getattr(config_module, "get_world_size_safe", None)
     config_module.get_world_size_safe = mock_get_world_size_safe(world_size_override)
@@ -624,7 +624,7 @@ class TestConfigContainerValidation:
 
     def test_packed_sequence_micro_batch_size_validation_error(self, monkeypatch):
         """Test validation error when micro_batch_size > 1 with packed sequences."""
-        from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
         # Create config with micro_batch_size > 1 and packed sequences
         gpt_model_cfg = create_test_gpt_config()
@@ -650,7 +650,7 @@ class TestConfigContainerValidation:
 
     def test_packed_sequence_micro_batch_size_validation_passes(self, monkeypatch):
         """Test validation passes when micro_batch_size = 1 with packed sequences."""
-        from megatron.hub.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
         # Create config with micro_batch_size = 1 and packed sequences
         gpt_model_cfg = create_test_gpt_config()
@@ -797,7 +797,7 @@ class TestRerunConfigValidation:
             cfg.__post_init__()
 
     def test_mixed_precision_config(self):
-        from megatron.hub.training.mixed_precision import bf16_with_mxfp8_mixed
+        from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 
         self._check_post_init_idempotency(bf16_with_mxfp8_mixed)
         cfg = bf16_with_mxfp8_mixed()

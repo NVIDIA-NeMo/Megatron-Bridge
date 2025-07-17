@@ -46,7 +46,7 @@ def add(x: int, y: int) -> int:
 
     Examples:
     ```{doctest}
-    >>> from megatron.hub.made_up_package import add
+    >>> from megatron.bridge.made_up_package import add
     >>> add(1, 2)
     3
     ```

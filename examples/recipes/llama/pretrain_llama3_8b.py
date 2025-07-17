@@ -16,7 +16,7 @@
 """
 Llama3 8B Pretraining Script with YAML and CLI Configuration Overrides.
 
-This script provides a flexible way to pretrain Llama3 8B models using Megatron-Hub with support for
+This script provides a flexible way to pretrain Llama3 8B models using Megatron-Bridge with support for
 both YAML configuration files and command-line overrides using Hydra-style syntax.
 
 Examples:
@@ -57,11 +57,11 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.hub.recipes.llama.llama3_8b import pretrain_config
-from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.gpt_step import forward_step
-from megatron.hub.training.pretrain import pretrain
-from megatron.hub.training.utils.omegaconf_utils import (
+from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
@@ -72,7 +72,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 # Define paths relative to this script's location
-# Assumes this script (pretrain_llama3_8b.py) is in Megatron-Hub/examples/recipes/llama/
+# Assumes this script (pretrain_llama3_8b.py) is in Megatron-Bridge/examples/recipes/llama/
 # and the config is in a 'conf' subdirectory.
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "llama3_8b_pretrain_override_example.yaml"
@@ -82,7 +82,7 @@ DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
-        description="Pretrain Llama3 8B model using Megatron-Hub with YAML and CLI overrides",
+        description="Pretrain Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -126,7 +126,7 @@ def main() -> None:
     """
     args, cli_overrides = parse_cli_args()
 
-    logger.info("Megatron-Hub Llama3 8B Pretraining Script with YAML & CLI Overrides")
+    logger.info("Megatron-Bridge Llama3 8B Pretraining Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
 
     # Load base configuration from the recipe as a Python dataclass

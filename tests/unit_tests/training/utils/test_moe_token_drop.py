@@ -16,7 +16,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from megatron.hub.training.utils.moe_token_drop import apply_moe_token_drop
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 
 @pytest.mark.unit

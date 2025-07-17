@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
-from megatron.hub.models.t5_provider import T5ModelProvider
-from megatron.hub.training.comm_overlap import (
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
     TransformerLayerTPOverlapCfg,
     _CommOverlapConfig,
@@ -98,6 +98,22 @@ class TestMegatronCommOverlapConfig:
         assert result.overlap_p2p_comm is False
         assert result.batch_p2p_comm is False
 
+    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", False)
+    def test_get_model_comm_overlap_cfgs_no_te(self):
+        comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=True,
+            num_attention_heads=16,  # Must be divisible by TP size
+        )
+
+        with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+            assert result.tp_comm_overlap is False
+            mock_warning.assert_called_with("Disabling tensor parallel communication overlap due to TE not detected.")
+
     def test_get_model_comm_overlap_cfgs_tp_size_too_small(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
         model_cfg = create_gpt_config(
@@ -107,7 +123,7 @@ class TestMegatronCommOverlapConfig:
             sequence_parallel=False,  # Cannot use sequence_parallel with TP size 1
         )
 
-        with patch("megatron.hub.training.comm_overlap.logging.warning") as mock_warning:
+        with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
             result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
             assert result.tp_comm_overlap is False
             mock_warning.assert_called_with("Disabling tensor parallel communication overlap due to TP size < 2.")
@@ -122,7 +138,7 @@ class TestMegatronCommOverlapConfig:
             num_attention_heads=16,  # Must be divisible by TP size
         )
 
-        with patch("megatron.hub.training.comm_overlap.logging.warning") as mock_warning:
+        with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
             result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
             assert result.tp_comm_overlap is False
             mock_warning.assert_called_with(
@@ -296,6 +312,7 @@ class TestMegatronCommOverlapConfig:
             comm_cfg._set_num_cuda_device_max_connections(model_cfg)
             assert "CUDA_DEVICE_MAX_CONNECTIONS" not in os.environ
 
+    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
     def test_setup_method_complete(self):
         tp_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
         comm_cfg = CommOverlapConfig(
@@ -423,7 +440,8 @@ class TestMegatronCommOverlapConfig:
         ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
-            comm_cfg.setup(model_cfg, optimizer_cfg, ddp_cfg)
+            with patch("megatron.bridge.training.comm_overlap.HAVE_TE", True):
+                comm_cfg.setup(model_cfg, optimizer_cfg, ddp_cfg)
 
         # Check that tp_comm_overlap_cfg was converted to dict
         assert isinstance(model_cfg.tp_comm_overlap_cfg, dict)

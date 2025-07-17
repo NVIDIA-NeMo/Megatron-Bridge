@@ -15,7 +15,7 @@
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
-from megatron.hub.training.gpt_step import get_packed_seq_params
+from megatron.bridge.training.gpt_step import get_packed_seq_params
 
 
 class TestGetPackedSeqParams:

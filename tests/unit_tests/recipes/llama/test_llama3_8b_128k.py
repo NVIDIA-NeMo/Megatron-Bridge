@@ -18,9 +18,9 @@ import tempfile
 import pytest
 import torch
 
-from megatron.hub.models.llama import Llama3ModelProvider8B
-from megatron.hub.recipes.llama.llama3_8b_128k import SEQUENCE_LENGTH_128K, model_config, pretrain_config
-from megatron.hub.training.config import ConfigContainer
+from megatron.bridge.models.llama import Llama3ModelProvider8B
+from megatron.bridge.recipes.llama.llama3_8b_128k import SEQUENCE_LENGTH_128K, model_config, pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit

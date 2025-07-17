@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for megatron.hub.training.mixed_precision module."""
+"""Unit tests for megatron.bridge.training.mixed_precision module."""
 
 from dataclasses import dataclass, fields
 from unittest.mock import MagicMock, patch
@@ -22,9 +22,9 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
-from megatron.hub.models.t5_provider import T5ModelProvider
-from megatron.hub.training.mixed_precision import (
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.mixed_precision import (
     MixedPrecisionConfig,
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
@@ -670,7 +670,7 @@ class TestRegisterAndGetMixedPrecisionConfig:
         and that each invocation returns a fresh `MixedPrecisionConfig` instance.
         """
         # Local import to avoid polluting global namespace before test discovery.
-        from megatron.hub.training.mixed_precision import (
+        from megatron.bridge.training.mixed_precision import (
             MIXED_PRECISION_RECIPES,
             MixedPrecisionConfig,
             get_mixed_precision_config,

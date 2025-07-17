@@ -52,7 +52,7 @@ ddp:
 
 profiling:
   # For optional fields in the config, specify the target to instantiate the object.
-  _target_: megatron.hub.training.config.ProfilingConfig
+  _target_: megatron.bridge.training.config.ProfilingConfig
   use_nsys_profiler: false
   profile_step_start: 5
   profile_step_end: 10

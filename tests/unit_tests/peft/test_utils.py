@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 
-from megatron.hub.peft.utils import (
+from megatron.bridge.peft.utils import (
     ParallelLinearAdapter,
     all2all_hp2sp,
     get_adapter_attributes_from_linear,
@@ -240,7 +240,7 @@ class TestUtilityFunctions:
         assert torch.equal(unpadded, original)
 
 
-@patch("megatron.hub.peft.utils.parallel_state")
+@patch("megatron.bridge.peft.utils.parallel_state")
 class TestAll2AllCommunication:
     """Test All2All communication functions."""
 
@@ -338,8 +338,8 @@ class TestParallelLinearAdapter:
         """Create mock model parallel config."""
         return MockModelParallelConfig()
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_init_column_input(self, mock_row_linear, mock_col_linear, mock_config):
         """Test ParallelLinearAdapter initialization with column parallel input."""
         # Mock the linear layers
@@ -366,8 +366,8 @@ class TestParallelLinearAdapter:
         assert adapter.linear_in is mock_linear_in
         assert adapter.linear_out is mock_linear_out
 
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     def test_parallel_linear_adapter_init_row_input(self, mock_col_linear, mock_row_linear, mock_config):
         """Test ParallelLinearAdapter initialization with row parallel input."""
         mock_linear_in = Mock()
@@ -388,8 +388,8 @@ class TestParallelLinearAdapter:
         assert adapter.linear_in is mock_linear_in  # RowParallelLinear
         assert adapter.linear_out is mock_linear_out  # ColumnParallelLinear
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_get_activation_fn(self, mock_row_linear, mock_col_linear, mock_config):
         """Test activation function selection."""
         # Mock the linear layers
@@ -433,8 +433,8 @@ class TestParallelLinearAdapter:
             )
             assert isinstance(adapter.activation, expected_type)
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_get_init_fn(self, mock_row_linear, mock_col_linear, mock_config):
         """Test initialization function selection."""
         # Mock the linear layers
@@ -465,8 +465,8 @@ class TestParallelLinearAdapter:
         with pytest.raises(NotImplementedError):
             adapter._get_init_fn("invalid_method")
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_alpha_parameter(self, mock_row_linear, mock_col_linear, mock_config):
         """Test alpha parameter handling."""
         # Mock the linear layers
@@ -489,8 +489,8 @@ class TestParallelLinearAdapter:
         )
         assert adapter2.alpha == 16
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_dropout(self, mock_row_linear, mock_col_linear, mock_config):
         """Test dropout configuration."""
         # Mock the linear layers
@@ -523,8 +523,8 @@ class TestParallelLinearAdapter:
         )
         assert isinstance(adapter2.dropout, nn.Dropout)
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_forward_basic(self, mock_row_linear, mock_col_linear, mock_config):
         """Test basic forward pass."""
         # Mock the linear layers
@@ -554,8 +554,8 @@ class TestParallelLinearAdapter:
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_expert_mode(self, mock_row_linear, mock_col_linear, mock_config):
         """Test adapter in expert mode (MoE)."""
         # Set tensor_model_parallel_size to 4 so that sequence length 7 gets padded to 8
@@ -585,8 +585,8 @@ class TestParallelLinearAdapter:
         # Output should be unpadded back to original size
         assert output.shape == (7, 10)
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sharded_state_dict(self, mock_row_linear, mock_col_linear, mock_config):
         """Test sharded state dict functionality."""
         # Mock linear layers with sharded_state_dict methods
@@ -609,9 +609,9 @@ class TestParallelLinearAdapter:
         mock_linear_in.sharded_state_dict.assert_called_once_with("adapter.linear_in.", (), None)
         mock_linear_out.sharded_state_dict.assert_called_once_with("adapter.linear_out.", (), None)
 
-    @patch("megatron.hub.peft.utils.apply_swiglu_sharded_factory")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.apply_swiglu_sharded_factory")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sharded_state_dict_fc1_special_case(
         self, mock_row_linear, mock_col_linear, mock_swiglu_factory, mock_config
     ):

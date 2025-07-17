@@ -26,8 +26,8 @@ import torch
 import torch.nn as nn
 from megatron.core.dist_checkpointing.mapping import ShardedTensor
 
-from megatron.hub.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
-from megatron.hub.peft.utils import ParallelLinearAdapter
+from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.peft.utils import ParallelLinearAdapter
 from tests.unit_tests.peft.test_utils import MockModelParallelConfig
 
 
@@ -106,8 +106,8 @@ class TestParallelLinearDoRAAdapter:
         )
         return adapter
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_init_weight_magnitude(self, mock_row_linear, mock_col_linear, mock_config):
         """Test weight magnitude initialization."""
         dora_adapter = self.create_dora_adapter(mock_config, mock_col_linear, mock_row_linear)
@@ -123,10 +123,10 @@ class TestParallelLinearDoRAAdapter:
         assert torch.equal(retrieved_magnitude, magnitude_values)
         assert retrieved_magnitude is dora_adapter.weight_magnitude
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora_layers.make_sharded_tensor_for_checkpoint")
-    @patch("megatron.hub.peft.dora_layers.make_tp_sharded_tensor_for_checkpoint")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora_layers.make_sharded_tensor_for_checkpoint")
+    @patch("megatron.bridge.peft.dora_layers.make_tp_sharded_tensor_for_checkpoint")
     def test_sharded_state_dict_input_parallel(
         self, mock_tp_sharded, mock_sharded, mock_row_linear, mock_col_linear, mock_config
     ):
@@ -147,10 +147,10 @@ class TestParallelLinearDoRAAdapter:
             mock_tp_sharded.assert_not_called()
             assert "test_weight_magnitude" in result
 
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora_layers.make_sharded_tensor_for_checkpoint")
-    @patch("megatron.hub.peft.dora_layers.make_tp_sharded_tensor_for_checkpoint")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora_layers.make_sharded_tensor_for_checkpoint")
+    @patch("megatron.bridge.peft.dora_layers.make_tp_sharded_tensor_for_checkpoint")
     def test_sharded_state_dict_not_input_parallel(
         self, mock_tp_sharded, mock_sharded, mock_row_linear, mock_col_linear, mock_config
     ):
@@ -229,7 +229,7 @@ class TestDoRALinear:
         """Test weight norm calculation when input is not parallel."""
         mock_dora_adapter.input_is_parallel = False
 
-        with patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
+        with patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
             mock_gather.return_value = torch.randn(10, 4)
 
             with patch.object(mock_dora_adapter, "init_weight_magnitude"):
@@ -243,7 +243,7 @@ class TestDoRALinear:
         """Test weight norm calculation when input is parallel."""
         mock_dora_adapter.input_is_parallel = True
 
-        with patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
+        with patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
             mock_gather.return_value = torch.randn(4, 10)
 
             with patch.object(mock_dora_adapter, "init_weight_magnitude"):
@@ -327,6 +327,6 @@ class TestDoRALinear:
 
     def test_inheritance_from_adapter_wrapper(self):
         """Test that DoRALinear properly inherits from AdapterWrapper."""
-        from megatron.hub.peft.adapter_wrapper import AdapterWrapper
+        from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 
         assert issubclass(DoRALinear, AdapterWrapper)

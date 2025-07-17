@@ -1,12 +1,12 @@
-# Contributing To Megatron-Hub
+# Contributing To Megatron-Bridge
 
-Thanks for your interest in contributing to Megatron-Hub!
+Thanks for your interest in contributing to Megatron-Bridge!
 
 ## 🛠️ Setting Up Your Environment
 
 ### Local workstation
 
-Megatron-Hub uses [uv](https://docs.astral.sh/uv/) for package management.
+Megatron-Bridge uses [uv](https://docs.astral.sh/uv/) for package management.
 
 You can configure uv with the following commands:
 
@@ -28,7 +28,7 @@ For containerized development, use our Dockerfile for building your own containe
 ```bash
 docker build \
     -f docker/Dockerfile.ci \
-    -t megatron-hub \
+    -t megatron-bridge \
     .
 ```
 
@@ -38,7 +38,7 @@ Start your container:
 docker run --rm -it -w /workdir -v $(pwd):/workdir \
   --entrypoint bash \
   --gpus all \
-  megatron-hub
+  megatron-bridge
 ```
 
 ## 📦 Dependencies management
@@ -88,7 +88,7 @@ This ensures that all significant changes are well-thought-out and properly docu
 1. **User Adoption**: Helps users understand how to effectively use the library's features in their projects
 2. **Developer Extensibility**: Enables developers to understand the internal architecture and implementation details, making it easier to modify, extend, or adapt the code for their specific use cases
 
-Quality documentation is essential for both the usability of Megatron-Hub and its ability to be customized by the community.
+Quality documentation is essential for both the usability of Megatron-Bridge and its ability to be customized by the community.
 
 ## ✨ Code Quality
 

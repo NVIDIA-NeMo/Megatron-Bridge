@@ -19,11 +19,11 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.hub.models.llama import Llama32ModelProvider1B
-from megatron.hub.recipes.llama.llama32_1b import model_config, pretrain_config
-from megatron.hub.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.hub.training.comm_overlap import CommOverlapConfig
-from megatron.hub.training.config import ConfigContainer
+from megatron.bridge.models.llama import Llama32ModelProvider1B
+from megatron.bridge.recipes.llama.llama32_1b import model_config, pretrain_config
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit
@@ -233,7 +233,7 @@ class TestPretrainConfig:
         assert config.dataset.blend is not None
         assert config.dataset.blend_per_split is None
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
+    @patch("megatron.bridge.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
     def test_pretrain_config_fallback_to_mock_when_no_weights(self, mock_get_blend):
         """Test pretrain_config falls back to mock when no weights are returned."""
         # Mock function returns None for both weights

@@ -19,7 +19,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from megatron.hub.peft.module_matcher import ModuleMatcher
+from megatron.bridge.peft.module_matcher import ModuleMatcher
 
 
 class MockColumnParallelLinear(nn.Module):
@@ -141,8 +141,8 @@ class TestModuleMatcher:
 
         # In exclude mode, matching is based on both name and module type
         with (
-            patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear),
-            patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear),
+            patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear),
+            patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear),
         ):
             exclude_matcher = ModuleMatcher(target_modules=[], exclude_modules=[])
 
@@ -200,8 +200,8 @@ class TestModuleMatcher:
         assert pattern == "*.linear_qkv"
         assert full_name == "model.layers.0.self_attention.linear_qkv"
 
-    @patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
-    @patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
     def test_exclude_modules_mode_match(self):
         """Test exclude modules mode with matching linear layer."""
         matcher = ModuleMatcher(target_modules=[], exclude_modules=["linear_fc1"])
@@ -213,8 +213,8 @@ class TestModuleMatcher:
         assert pattern == "linear_qkv"
         assert full_name == "linear_qkv"
 
-    @patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
-    @patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
     def test_exclude_modules_mode_exclude(self):
         """Test exclude modules mode with excluded module."""
         matcher = ModuleMatcher(target_modules=[], exclude_modules=["linear_fc1"])
@@ -223,8 +223,8 @@ class TestModuleMatcher:
         result = matcher.match(module, name="linear_fc1")
         assert result is None
 
-    @patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
-    @patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
     def test_exclude_modules_wildcard_exclude(self):
         """Test exclude modules mode with wildcard exclusion."""
         matcher = ModuleMatcher(target_modules=[], exclude_modules=["*.linear_fc*"])
@@ -233,8 +233,8 @@ class TestModuleMatcher:
         result = matcher.match(module, name="linear_fc1", prefix="model.layers.0")
         assert result is None
 
-    @patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
-    @patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
     def test_exclude_modules_non_linear_no_match(self):
         """Test exclude modules mode with non-linear module."""
         matcher = ModuleMatcher(target_modules=[], exclude_modules=[])
@@ -243,8 +243,8 @@ class TestModuleMatcher:
         result = matcher.match(module, name="conv1")
         assert result is None
 
-    @patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
-    @patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear)
+    @patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear)
     def test_parallel_linear_types(self):
         """Test matching with parallel linear types."""
         matcher = ModuleMatcher(target_modules=[], exclude_modules=[])
@@ -259,8 +259,8 @@ class TestModuleMatcher:
         result = matcher.match(row_module, name="linear_proj")
         assert result is not None
 
-    @patch("megatron.hub.peft.module_matcher.HAVE_TE_COL_LINEAR", True)
-    @patch("megatron.hub.peft.module_matcher.TEColumnParallelLinear", MockTELinear)
+    @patch("megatron.bridge.peft.module_matcher.HAVE_TE_COL_LINEAR", True)
+    @patch("megatron.bridge.peft.module_matcher.TEColumnParallelLinear", MockTELinear)
     def test_transformer_engine_support(self):
         """Test matching with Transformer Engine modules when available."""
         matcher = ModuleMatcher(target_modules=[], exclude_modules=[])
@@ -329,8 +329,8 @@ class TestModuleMatcher:
 
         # Should fall back to exclude mode
         with (
-            patch("megatron.hub.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear),
-            patch("megatron.hub.peft.module_matcher.RowParallelLinear", MockRowParallelLinear),
+            patch("megatron.bridge.peft.module_matcher.ColumnParallelLinear", MockColumnParallelLinear),
+            patch("megatron.bridge.peft.module_matcher.RowParallelLinear", MockRowParallelLinear),
         ):
             result = matcher.match(module, name="linear_qkv")
             assert result is not None

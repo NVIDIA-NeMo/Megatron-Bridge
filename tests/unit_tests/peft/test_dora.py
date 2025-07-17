@@ -29,9 +29,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.hub.models.gpt_provider import GPTModelProvider
-from megatron.hub.peft.dora import DoRA
-from megatron.hub.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.peft.dora import DoRA
+from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from tests.unit_tests.peft.test_utils import MockModelParallelConfig
 
 
@@ -102,18 +102,18 @@ class TestDoRA:
 
     def test_inheritance(self):
         """Test that DoRA inherits from PEFT and ModuleMatcher."""
-        from megatron.hub.peft.base import PEFT
-        from megatron.hub.peft.module_matcher import ModuleMatcher
+        from megatron.bridge.peft.base import PEFT
+        from megatron.bridge.peft.module_matcher import ModuleMatcher
 
         dora = DoRA()
         assert isinstance(dora, PEFT)
         assert isinstance(dora, ModuleMatcher)
 
-    @patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear")
-    @patch("megatron.hub.peft.dora.logger")
+    @patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear")
+    @patch("megatron.bridge.peft.dora.logger")
     def test_transform_matched_module(
         self, mock_logger, mock_get_attributes, mock_row_linear, mock_col_linear, mock_gather
     ):
@@ -156,7 +156,7 @@ class TestDoRA:
         # Mock the match method to return a match
         with patch.object(dora, "match", return_value=("linear_test", "test.linear_test")):
             # Patch _get_weight_norm to avoid complex mock interactions
-            with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(256)):
+            with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(256)):
                 result = dora.transform(test_module, name="linear_test", prefix="test")
 
             # Verify DoRALinear was created
@@ -182,10 +182,10 @@ class TestDoRA:
             # Should return the original module unchanged
             assert result is test_module
 
-    @patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear")
+    @patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear")
     def test_transform_adapter_parameters(self, mock_get_attributes, mock_row_linear, mock_col_linear, mock_gather):
         """Test that transform creates adapter with correct parameters."""
         # Set up mocks for parallel linear layers with proper weight attributes
@@ -228,7 +228,7 @@ class TestDoRA:
 
         with patch.object(dora, "match", return_value=("linear_test", "test.linear_test")):
             # Patch _get_weight_norm to avoid complex mock interactions
-            with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(128)):
+            with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(128)):
                 result = dora.transform(test_module, name="linear_test", prefix="test")
 
                 adapter = result.adapter
@@ -239,10 +239,10 @@ class TestDoRA:
                 assert adapter.input_is_parallel == True
                 assert adapter.disable_sequence_parallel_comm == False
 
-    @patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear")
+    @patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear")
     def test_transform_with_simple_model(self, mock_get_attributes, mock_row_linear, mock_col_linear, mock_gather):
         """Test transform application to a simple model."""
         # Set up mocks for parallel linear layers
@@ -266,7 +266,7 @@ class TestDoRA:
         dora = DoRA(target_modules=["linear_qkv", "linear_proj"])
 
         # Patch _get_weight_norm to avoid complex mock interactions
-        with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
+        with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
             mock_norm.return_value = torch.randn(1536)  # Match QKV output features
 
             # Apply DoRA transform to specific modules
@@ -287,10 +287,10 @@ class TestDoRA:
         assert isinstance(model.linear_fc2, nn.Linear)
         assert isinstance(model.output_projection, nn.Linear)
 
-    @patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear")
+    @patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear")
     def test_full_model_application(self, mock_get_attributes, mock_row_linear, mock_col_linear, mock_gather):
         """Test applying DoRA to a full model using the PEFT interface."""
         # Set up mocks for parallel linear layers
@@ -314,7 +314,7 @@ class TestDoRA:
         dora = DoRA(target_modules=["linear_qkv", "linear_proj"])
 
         # Patch _get_weight_norm to avoid complex mock interactions
-        with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
+        with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
             mock_norm.return_value = torch.randn(1536)  # Will be updated per module
 
             # Apply DoRA to the entire model
@@ -326,10 +326,10 @@ class TestDoRA:
         # Check model is in training mode
         assert model.training
 
-    @patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region")
-    @patch("megatron.hub.peft.utils.ColumnParallelLinear")
-    @patch("megatron.hub.peft.utils.RowParallelLinear")
-    @patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear")
+    @patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear")
     def test_wildcard_matching(self, mock_get_attributes, mock_row_linear, mock_col_linear, mock_gather):
         """Test DoRA with wildcard pattern matching."""
         # Set up mocks for parallel linear layers
@@ -352,9 +352,9 @@ class TestDoRA:
 
         # Should match with wildcard
         with patch(
-            "megatron.hub.peft.dora.get_adapter_attributes_from_linear", return_value=(False, 10, 10, False, True)
+            "megatron.bridge.peft.dora.get_adapter_attributes_from_linear", return_value=(False, 10, 10, False, True)
         ):
-            with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(10)):
+            with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm", return_value=torch.randn(10)):
                 result = dora.transform(test_module, name="linear_qkv", prefix="layer.0.attention")
                 assert isinstance(result, DoRALinear)
 
@@ -375,10 +375,10 @@ class TestDoRA:
         dora = DoRA(target_modules=["linear_test"], dim=8, alpha=16)
 
         # Mock all the necessary functions for DoRA transform
-        with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
+        with patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
             mock_get_attrs.return_value = (False, 512, 256, False, True)
 
-            with patch("megatron.hub.peft.utils.ColumnParallelLinear") as mock_col_linear:
+            with patch("megatron.bridge.peft.utils.ColumnParallelLinear") as mock_col_linear:
                 # Create mocks for the adapters that will be created
                 mock_linear_in = Mock()
                 mock_linear_out = Mock()
@@ -386,10 +386,10 @@ class TestDoRA:
                 mock_linear_out.configure_mock(**{"weight": torch.randn(256, 8)})
                 mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
 
-                with patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
+                with patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
                     mock_gather.return_value = torch.randn(512, 8)
 
-                    with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
+                    with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
                         mock_norm.return_value = torch.randn(256)
 
                         with patch.object(dora, "match", return_value=("linear_test", "test.linear_test")):
@@ -413,14 +413,14 @@ class TestDoRA:
         dora = DoRA(target_modules=["linear_qkv", "linear_proj"], dim=8, alpha=16)
 
         # Mock all the necessary functions for DoRA transform
-        with patch("megatron.hub.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
+        with patch("megatron.bridge.peft.dora.get_adapter_attributes_from_linear") as mock_get_attrs:
 
             def mock_get_attributes_func(module):
                 return (False, module.in_features, module.out_features, False, True)
 
             mock_get_attrs.side_effect = mock_get_attributes_func
 
-            with patch("megatron.hub.peft.utils.ColumnParallelLinear") as mock_col_linear:
+            with patch("megatron.bridge.peft.utils.ColumnParallelLinear") as mock_col_linear:
                 # Create mocks for the adapters that will be created
                 mock_linear_in = Mock()
                 mock_linear_out = Mock()
@@ -428,10 +428,10 @@ class TestDoRA:
                 mock_linear_out.configure_mock(**{"weight": torch.randn(512, 8)})
                 mock_col_linear.side_effect = [mock_linear_in, mock_linear_out] * 10  # Multiple calls
 
-                with patch("megatron.hub.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
+                with patch("megatron.bridge.peft.dora_layers.gather_from_tensor_model_parallel_region") as mock_gather:
                     mock_gather.return_value = torch.randn(512, 8)
 
-                    with patch("megatron.hub.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
+                    with patch("megatron.bridge.peft.dora_layers.DoRALinear._get_weight_norm") as mock_norm:
                         mock_norm.return_value = torch.randn(512)  # Will be updated per module
 
                         # Apply DoRA first time
@@ -499,7 +499,7 @@ class TestDoRAMegatronIntegration:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
-        from megatron.hub.training.initialize import _set_random_seed
+        from megatron.bridge.training.initialize import _set_random_seed
 
         _set_random_seed(
             seed_=1234,

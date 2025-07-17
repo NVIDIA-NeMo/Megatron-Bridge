@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from megatron.hub.models import T5ModelProvider
+from megatron.bridge.models import T5ModelProvider
 
 
 class TestT5ModelProvider:

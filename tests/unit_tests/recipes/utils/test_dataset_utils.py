@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megatron.hub.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 
 
 @pytest.mark.unit
@@ -155,7 +155,7 @@ class TestGetBlendFieldsFromDataPaths:
         assert blend_per_split is None
         assert split == "9999,8,2"
 
-    @patch("megatron.hub.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
+    @patch("megatron.bridge.recipes.utils.dataset_utils.get_blend_and_blend_per_split")
     def test_fallback_to_mock_when_no_weights(self, mock_get_blend):
         """Test function falls back to mock mode when no weights are returned."""
         mock_get_blend.return_value = (None, None)

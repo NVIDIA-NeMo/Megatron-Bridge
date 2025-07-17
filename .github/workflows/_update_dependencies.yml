@@ -83,7 +83,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-hub .
+          docker build -f docker/Dockerfile.ci --secret id=GH_TOKEN -t megatron-bridge .
 
       - name: Create bump branch if not exists
         run: |
@@ -105,7 +105,7 @@ jobs:
           -v $(pwd):/workspace \
           -w /workspace \
           -e GH_TOKEN=${{ secrets.PAT }} \
-          megatron-hub \
+          megatron-bridge \
           bash -c 'source /opt/venv/env.sh && uv lock --upgrade'
 
       - name: Upload lock file

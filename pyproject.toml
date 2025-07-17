@@ -16,11 +16,11 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["megatron.hub", "megatron.hub.*"]
+include = ["megatron.bridge", "megatron.bridge.*"]
 
 [project]
-name = "megatron-hub"
-description = "Megatron Hub: Training Recipes for Megatron-based LLM and VLM models"
+name = "megatron-bridge"
+description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM models"
 readme = "README.md"
 dynamic = ["version"]
 license = {file = "LICENSE"}
@@ -87,13 +87,13 @@ dependencies = [
 ]
 
 [tool.setuptools.dynamic]
-version = { attr = "megatron.hub.package_info.__version__" }
+version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
 # Currently, TE must be built with no build-isolation b/c it requires torch
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
 override-dependencies = [
-    "tiktoken>=0.9.0",                      # because nemo-toolkit and megatron-hub disagree on tiktoken, we need to pin it here
+    "tiktoken>=0.9.0",                      # because nemo-toolkit and megatron-bridge disagree on tiktoken, we need to pin it here
     "megatron-core[dev]",
     "nvidia-modelopt[torch]; sys_platform != 'darwin'"
 ]
@@ -139,11 +139,11 @@ nemo-legacy = [
 ]
 
 [project.entry-points."nemo_run.cli"]
-lm = "megatron.hub"
+lm = "megatron.bridge"
 
 [project.urls]
-Download = "https://github.com/NVIDIA-NeMo/Megatron-Hub/releases"
-Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Hub"
+Download = "https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases"
+Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Bridge"
 
 [tool.pytest.ini_options]
 # durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.
@@ -192,5 +192,5 @@ omit = [
 source = [
     ".",
     "/workspace/",
-    "/home/runner/work/Megatron-Hub/Megatron-Hub",
+    "/home/runner/work/Megatron-Bridge/Megatron-Bridge",
 ]
