@@ -112,8 +112,6 @@ class LoRA(PEFT, ModuleMatcher):
                 ):
                     lora_cls = patch_linear_module
                 elif module.__class__ == te.Linear:
-                    if TELinearAdapter is None:
-                        raise ImportError("TELinearAdapter is not available")
                     lora_cls = TELinearAdapter
                 else:
                     lora_cls = LinearAdapter
