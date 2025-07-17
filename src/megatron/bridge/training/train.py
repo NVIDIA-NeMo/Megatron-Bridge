@@ -315,6 +315,8 @@ def train(
         learning_rate = None
         decoupled_learning_rate = None
         for param_group in optimizer.param_groups:
+            if len(param_group) == 0:
+                continue
             if param_group["is_decoupled_lr"]:
                 decoupled_learning_rate = param_group["lr"]
             else:
