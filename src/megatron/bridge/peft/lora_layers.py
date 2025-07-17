@@ -19,14 +19,7 @@ import torch
 import torch.nn as nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
-from megatron.bridge.utils.import_utils import safe_import
 
-
-if torch.cuda.is_available():
-    bitsandbytes, HAVE_BNB = safe_import("bitsandbytes")
-else:
-    bitsandbytes = None
-    HAVE_BNB = False
 
 try:
     import transformer_engine.pytorch as te
@@ -394,14 +387,6 @@ def patch_linear_module(
         new_cls = type("PatchedTELinearAdapter", (TELinearAdapter, cls), {})
     else:
         raise NotImplementedError("Expected isinstance(orig_linear, (nn.Linear, te.Linear))")
-
-    # If the model uses quantized weights, we want to use orig_linear's forward
-    if (
-        HAVE_BNB
-        and getattr(orig_linear, "quant_state", None) is not None
-        and orig_linear.quant_state.__class__ == bitsandbytes.functional.QuantState
-    ):
-        orig_linear.super_fwd = orig_linear.forward
 
     orig_linear.__class__ = new_cls
     return orig_linear
