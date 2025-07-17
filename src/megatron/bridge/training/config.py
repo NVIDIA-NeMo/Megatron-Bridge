@@ -460,7 +460,7 @@ class CheckpointConfig:
         """Post-initialization checks for checkpoint config."""
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
-        
+
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
 

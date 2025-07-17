@@ -795,8 +795,10 @@ class TestRerunConfigValidation:
             cfg.load_main_params_from_ckpt = True
             cfg.load_optim = True
             cfg.__post_init__()
-        
-        with pytest.raises(AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."):
+
+        with pytest.raises(
+            AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
+        ):
             cfg.async_save = True
             cfg.save = None
             cfg.__post_init__()
@@ -873,12 +875,13 @@ class TestCheckpointConfig:
                 )
         else:
             create_test_checkpoint_config(load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim)
-    
 
     def test_async_save_validation_error(self):
         """Test that async_save is not allowed without a save path."""
-        with pytest.raises(AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."):
+        with pytest.raises(
+            AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
+        ):
             create_test_checkpoint_config(async_save=True, save=None)
-        
+
         # should not raise an error
         create_test_checkpoint_config(async_save=True, save="/tmp/test_checkpoint_config")
