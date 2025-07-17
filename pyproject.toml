@@ -93,6 +93,11 @@ version = { attr = "megatron.bridge.package_info.__version__" }
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
 prerelease = "allow"
 
+# uv.sources allows us to override dependencies with VCS commits. 
+# Lets use this only for debugging purposes, but not for production (main).
+# [tool.uv.sources]
+# megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "44fa0ea40d872da798a0d34ed152806652b960b8" } 
+
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
