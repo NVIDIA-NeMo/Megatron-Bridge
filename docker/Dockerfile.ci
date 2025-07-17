@@ -19,7 +19,4 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
 ENV UV_LINK_MODE=copy
 COPY . .
-RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
-    export PAT=$(cat /run/secrets/GH_TOKEN)
-    bash docker/common/install.sh --base-image cuda
-EOF
+RUN bash docker/common/install.sh --base-image cuda
