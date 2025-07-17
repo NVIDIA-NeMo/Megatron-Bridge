@@ -72,7 +72,7 @@ dependencies = [
     "typing-extensions",
     "rich",
     "wandb>=0.19.10",
-    "megatron-core",
+    "megatron-core[dev]",
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
@@ -91,15 +91,7 @@ version = { attr = "megatron.bridge.package_info.__version__" }
 [tool.uv]
 # Currently, TE must be built with no build-isolation b/c it requires torch
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
-override-dependencies = [
-    "tiktoken>=0.9.0",                      # because nemo-toolkit and megatron-bridge disagree on tiktoken, we need to pin it here
-    "megatron-core[dev]",
-    "nvidia-modelopt[torch]; sys_platform != 'darwin'"
-]
-
-[tool.uv.sources]
-nemo-toolkit = { git = "https://github.com/NVIDIA/NeMo.git", rev = "5e63ca3c1631bb156187705f9c4cf643a67f9c05" }
-megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "44fa0ea40d872da798a0d34ed152806652b960b8" }
+prerelease = "allow"
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
