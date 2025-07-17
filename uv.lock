@@ -1428,7 +1428,7 @@ dependencies = [
     { name = "hydra-core" },
     { name = "megatron-core", extra = ["dev"] },
     { name = "numpy" },
-    { name = "nvidia-modelopt", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-modelopt", extra = ["torch"], marker = "sys_platform != 'darwin'" },
     { name = "nvidia-resiliency-ext", marker = "sys_platform != 'darwin'" },
     { name = "omegaconf" },
     { name = "packaging" },
@@ -1493,7 +1493,7 @@ requires-dist = [
     { name = "megatron-core", extras = ["dev"] },
     { name = "nemo-run", marker = "extra == 'recipes'" },
     { name = "numpy", specifier = "<2" },
-    { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin'", specifier = "~=0.31.0" },
     { name = "nvidia-resiliency-ext", marker = "sys_platform != 'darwin'" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "packaging" },
@@ -1563,7 +1563,7 @@ dev = [
     { name = "einops" },
     { name = "megatron-energon" },
     { name = "multi-storage-client" },
-    { name = "nvidia-modelopt", marker = "sys_platform != 'darwin'" },
+    { name = "nvidia-modelopt", extra = ["torch"], marker = "sys_platform != 'darwin'" },
     { name = "nvtx" },
     { name = "setuptools" },
     { name = "tensorstore" },
@@ -2071,42 +2071,46 @@ wheels = [
 
 [[package]]
 name = "nvidia-modelopt"
-version = "0.33.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ninja" },
     { name = "numpy" },
-    { name = "nvidia-ml-py" },
     { name = "nvidia-modelopt-core" },
     { name = "packaging" },
-    { name = "pulp" },
     { name = "pydantic" },
-    { name = "regex" },
     { name = "rich" },
-    { name = "safetensors" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "torch" },
-    { name = "torchprofile" },
-    { name = "torchvision" },
     { name = "tqdm" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/6b/3cefcb961d3038d1e33587b7e999a484e2f602397093774672bc635f2dc0/nvidia_modelopt-0.33.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:25b528a23441f645fe2592cbe82a607aded2c5c1b653d9d249db6da4d646c2ff", size = 751292, upload-time = "2025-07-14T17:43:39.043Z" },
-    { url = "https://files.pythonhosted.org/packages/39/27/e527c204f383928b0970f52f3bdb80d9510215ec128cf65eeac27b42bc08/nvidia_modelopt-0.33.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:c53b3714cdc56c5913a7a5c4c90251c319c12e0eebca94fa181c39acd032fd98", size = 751290, upload-time = "2025-07-14T17:53:14.992Z" },
+    { url = "https://files.pythonhosted.org/packages/94/d7/9201b1618ccf6babea08b07fb3f3266f319f1993afc5f1812f4bf9603080/nvidia_modelopt-0.31.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:77495c50700ef9ed1782f4999e17265751a0f4002a7f1185dee7bb46d5d05039", size = 717204, upload-time = "2025-06-05T19:35:29.397Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/6a/db5b41905cccc3f1d36b12cbb3f84dc40d0c352935d88f164047c6059f4d/nvidia_modelopt-0.31.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:8b1905122b0615aeff78f65aa39920c3971d6ebd1966b7ac57ee8da271d49913", size = 717202, upload-time = "2025-06-05T19:35:53.512Z" },
+]
+
+[package.optional-dependencies]
+torch = [
+    { name = "nvidia-ml-py" },
+    { name = "pulp" },
+    { name = "regex" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "torchprofile" },
+    { name = "torchvision" },
 ]
 
 [[package]]
 name = "nvidia-modelopt-core"
-version = "0.33.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/dd/e226bd30d1f37e9b3f4fbfd117bbc0df6a4b6414714cbb514f551f4cf90c/nvidia_modelopt_core-0.33.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:7eafb684a8ea3ca215233543e82e250fed89472f433824754714a291d4ad2deb", size = 1307715, upload-time = "2025-07-14T17:51:53.708Z" },
-    { url = "https://files.pythonhosted.org/packages/a2/22/6fb154eafd898fe3ff4b03d6ee801529bccc1aa1e531386be7b457debd10/nvidia_modelopt_core-0.33.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:546264b8c74d19c8f3fa32fa12fe9ede17fe2e212049e3c9e4271fea4c2a6e90", size = 1326897, upload-time = "2025-07-14T17:54:05.656Z" },
-    { url = "https://files.pythonhosted.org/packages/ad/4c/4abf70558354d21a4d4034953785a238cbc45d20e6e6311b4c90ed9db720/nvidia_modelopt_core-0.33.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:d488a88e2030ed6c405886af2008116fa8e18538d78739ca7ce56f6f264327c5", size = 1376104, upload-time = "2025-07-14T17:43:38.412Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/48/21a94284d545f2ef4a3f239c9611af2da714f59a4d8be4b6ae499861c248/nvidia_modelopt_core-0.33.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c0589a35571ee34ad1adb87b1f6029d712f984f4d26d658ab7564d80d5814ea7", size = 1393736, upload-time = "2025-07-14T17:54:28.217Z" },
-    { url = "https://files.pythonhosted.org/packages/9d/53/110b7575ec81000b347c86b3830303a7640cf07afd26219f2eb689b1beae/nvidia_modelopt_core-0.33.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:4cf3058fdccd4ff2c3256b2e8a042624e017dec2a592bd659a140fc24d19ccd1", size = 1338080, upload-time = "2025-07-14T17:53:28.164Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/9b/a92ba579c04642356796f687c5a4d879c62503c44119fd8d601ec2eb805c/nvidia_modelopt_core-0.33.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:fe7906900883bccce32fea1b8411273a6fb4ea83ed2ae7c750a08ee0a37c9611", size = 1363367, upload-time = "2025-07-14T17:54:50.289Z" },
+    { url = "https://files.pythonhosted.org/packages/07/dc/7c09c5c8557989fd557a3b23b19e5d035de55d4358bbd0e7973efc11d1ee/nvidia_modelopt_core-0.31.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:18edfe34b325464709bf9cc8a9e4d6eca724adfbfa80bb0b41c4c9699ca7852c", size = 1302594, upload-time = "2025-06-05T19:40:24.959Z" },
+    { url = "https://files.pythonhosted.org/packages/88/e1/c811276498dd8672248950bd3903cf190c760813dcd1e937754813e00342/nvidia_modelopt_core-0.31.0-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:e1381a66e4e6b2282dbde0103b9706e6639480a6ac773b6c23611a8346ed8fca", size = 1322911, upload-time = "2025-06-05T19:41:22.02Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/8a/a0efe14d67b23820767d57e6c0490946250e1716d7718c4a742d919f7308/nvidia_modelopt_core-0.31.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:8b95bb4b6d005d661ddaf2e65b9628cba1d45d46bb5a4d041629bda57cec45ea", size = 1372403, upload-time = "2025-06-05T19:39:56.726Z" },
+    { url = "https://files.pythonhosted.org/packages/38/5e/ea5ee74aa20af1ddc29129b72546c7b9db98d7aba7e78e923ea5703e9d8f/nvidia_modelopt_core-0.31.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:b1d43f3ddf9c598f7579a13d1ef133029b54b2a833cbbad53a486cf56cee0c5f", size = 1388386, upload-time = "2025-06-05T19:40:48.016Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/9f/4114d67eeb2cb3abd8b955ebb73c654d73994f16b7bec0d12884764f5807/nvidia_modelopt_core-0.31.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:3a03f3b081322bdad71982de37898e5407c6a85c65d02a26470b735d8a454e74", size = 1335144, upload-time = "2025-06-05T19:39:28.776Z" },
+    { url = "https://files.pythonhosted.org/packages/60/0b/81540db9bac816fa814baec0a7df976101d756e154764494dad8850035cb/nvidia_modelopt_core-0.31.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4739f00f1797699fe4b9c256a5b75114b66e22749250dc87128491a8bdb2ce5a", size = 1359154, upload-time = "2025-06-05T19:41:04.928Z" },
 ]
 
 [[package]]
