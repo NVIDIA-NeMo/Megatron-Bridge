@@ -85,6 +85,7 @@ dependencies = [
     "nvidia-resiliency-ext>=0.3.0a0,<0.4.0; sys_platform != 'darwin'",
 ]
 
+
 [tool.setuptools.dynamic]
 version = { attr = "megatron.bridge.package_info.__version__" }
 
