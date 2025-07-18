@@ -153,7 +153,7 @@ runs:
           --env TRANSFORMERS_OFFLINE=0 \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
-          --env NEMO_HOME=/home/TestData/NEMO_HOME \
+          --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
           --workdir /workspace \
           --volume $(pwd)/Megatron-Bridge:/workspace \
