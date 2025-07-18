@@ -46,6 +46,9 @@ if __name__ == "__main__":
     cfg.model = model_provider
     cfg.train.train_iters = 10
 
+    cfg.dataset.sequence_length = cfg.model.seq_length
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
+
     pretrain(cfg, forward_step)
 ```
 
