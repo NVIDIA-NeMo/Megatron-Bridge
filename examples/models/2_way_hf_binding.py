@@ -29,9 +29,9 @@ The process is as follows:
 """
 
 import argparse
+from pathlib import Path
 
 from rich.console import Console
-from pathlib import Path
 
 from megatron.bridge import CausalLMBridge
 from megatron.bridge.models.utils import weights_verification_table
