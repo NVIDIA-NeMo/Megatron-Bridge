@@ -49,6 +49,17 @@ from megatron.bridge.models.param_mapping import (
     RowParallelMapping,
     TPAwareMapping,
 )
+from megatron.bridge.models.phi import (
+    Phi3ModelProvider,
+    Phi3ModelProviderMedium,
+    Phi3ModelProviderMedium128K,
+    Phi3ModelProviderMini,
+    Phi3ModelProviderMini128K,
+    Phi3ModelProviderSmall,
+    Phi3ModelProviderSmall128K,
+    Phi4ModelProvider,
+    Phi4ModelProviderMini,
+)
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
 
@@ -87,4 +98,13 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "Phi3ModelProvider",
+    "Phi3ModelProviderMini",
+    "Phi3ModelProviderMini128K",
+    "Phi3ModelProviderSmall",
+    "Phi3ModelProviderSmall128K",
+    "Phi3ModelProviderMedium",
+    "Phi3ModelProviderMedium128K",
+    "Phi4ModelProvider",
+    "Phi4ModelProviderMini",
 ]
