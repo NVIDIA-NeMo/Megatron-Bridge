@@ -39,6 +39,13 @@ from megatron.bridge.models.llama import (
     LlamaModelProvider,
 )
 from megatron.bridge.models.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.mistral import (
+    MistralLargeModelProvider,
+    MistralModelProvider,
+    MistralModelProvider7B,
+    MistralModelProvider7BInstruct,
+    MistralNemoModelProvider,
+)
 from megatron.bridge.models.model_bridge import MegatronModelBridge, WeightDistributionMode
 from megatron.bridge.models.param_mapping import (
     ColumnParallelMapping,
@@ -87,4 +94,9 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "MistralModelProvider",
+    "MistralModelProvider7B",
+    "MistralModelProvider7BInstruct",
+    "MistralNemoModelProvider",
+    "MistralLargeModelProvider",
 ]
