@@ -26,7 +26,7 @@ env:
   UV_PROJECT_ENVIRONMENT: "./venv"
 
 jobs:
-  pip-test-no-cuda:
+  pip-test-bare-metal:
     runs-on: ${{ matrix.arch }}
     name: Pip - Python${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
@@ -199,7 +199,7 @@ jobs:
           package-name: megatron.bridge
           python-binary: ./venv/bin/python
 
-  uv-test-no-cuda:
+  uv-test-bare-metal:
     runs-on: ${{ matrix.arch }}
     name: UV - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
@@ -269,7 +269,7 @@ jobs:
           python-binary: ./venv/bin/python
 
   install-test-summary:
-    needs: [pip-test-no-cuda, pip-test-cuda, uv-test-no-cuda, uv-test-cuda]
+    needs: [pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]
     runs-on: ubuntu-latest
     name: Install test summary
     steps:
