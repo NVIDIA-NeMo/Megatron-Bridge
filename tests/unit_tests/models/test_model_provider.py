@@ -299,7 +299,7 @@ class TestPrintNumParams:
         # Check print was not called
         mock_print.assert_not_called()
 
-    @patch("megatron.bridge.core.models.model_provider.parallel_state")
+    @patch("megatron.bridge.models.model_provider.parallel_state")
     @patch("builtins.print")
     def test_print_num_params_non_zero_context_rank(self, mock_print, mock_parallel_state):
         """Test that nothing is printed when not on context parallel rank 0."""
