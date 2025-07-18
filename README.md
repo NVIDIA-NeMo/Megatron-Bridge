@@ -16,6 +16,44 @@ Megatron Bridge is an extension of NVIDIA's Megatron Core library that enables p
 
 Megatron Bridge is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
+## ⚡ Quickstart
+
+To get started, first install Megatron Bridge:
+```sh
+pip install megatron-bridge
+```
+
+Log in to HuggingFace Hub:
+```sh
+huggingface-cli login --token <your token>
+```
+
+You can then run the following to import a model from HuggingFace and start training with mock data:
+```python
+if __name__ == "__main__":
+    from megatron.bridge import AutoBridge
+
+    import megatron.bridge.recipes.llama.llama32_1b as llama32_1b
+    from megatron.bridge.training.gpt_step import forward_step
+    from megatron.bridge.training.pretrain import pretrain
+
+    # Load Llama from HuggingFace Hub and convert to Megatron
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+    model_provider = bridge.to_megatron_provider()
+
+    # Get defaults for other configuration from an existing Llama 3.2 recipe
+    cfg = llama32_1b.pretrain_config()
+    cfg.model = model_provider
+    cfg.train.train_iters = 10
+
+    pretrain(cfg, forward_step)
+```
+
+You can launch the above script with:
+```sh
+torchrun --nproc-per-node=<num devices> /path/to/script.py
+```
+
 ## 🔧 Installation
 
 For quick exploration of Megatron-Bridge, we recommend installing our pip package:
