@@ -21,7 +21,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.llama import Llama32ModelProvider1B
-from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -34,8 +33,6 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from megatron.hub.training.gpt_step import forward_step
-from megatron.hub.training.pretrain import pretrain
 from tests.functional_tests.utils import broadcast_path, initialize_distributed
 
 

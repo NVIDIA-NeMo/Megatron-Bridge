@@ -21,11 +21,11 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.hub.data.builders.hf_dataset import HFDatasetConfig
-from megatron.hub.data.hf_processors.squad import process_squad_example
-from megatron.hub.models.llama import Llama3ModelProvider
-from megatron.hub.peft.dora import DoRA
-from megatron.hub.training.config import (
+from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
+from megatron.bridge.data.hf_processors.squad import process_squad_example
+from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.peft.dora import DoRA
+from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     LoggerConfig,
@@ -35,9 +35,9 @@ from megatron.hub.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.hub.training.finetune import finetune
-from megatron.hub.training.gpt_step import forward_step
-from megatron.hub.training.pretrain import pretrain
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 from tests.functional_tests.utils import broadcast_path, initialize_distributed
 
 
