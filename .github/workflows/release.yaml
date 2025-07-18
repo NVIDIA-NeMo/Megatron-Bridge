@@ -41,7 +41,7 @@ jobs:
     with:
       release-ref: ${{ inputs.release-ref }}
       python-package: nemo_export_deploy_common
-      library-name: NeMo-Export-Deploy
+      library-name: Megatron-Bridge
       dry-run: ${{ inputs.dry-run }}
       version-bump-branch: ${{ inputs.version-bump-branch }}
       create-gh-release: ${{ inputs.create-gh-release }}
