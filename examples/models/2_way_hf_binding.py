@@ -29,9 +29,9 @@ The process is as follows:
 """
 
 import argparse
-import os
 
 from rich.console import Console
+from pathlib import Path
 
 from megatron.bridge import CausalLMBridge
 from megatron.bridge.models.utils import weights_verification_table
@@ -45,9 +45,9 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models."""
     model_name = hf_model_id.split("/")[-1]
     if output_dir:
-        save_path = os.path.join(output_dir, model_name)
+        save_path = Path(output_dir, model_name)
     else:
-        save_path = model_name
+        save_path = Path(__file__).resolve().parent.parent.parent / "models" / model_name
 
     bridge = CausalLMBridge.from_hf_pretrained(hf_model_id)
     megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
