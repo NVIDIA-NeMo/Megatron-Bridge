@@ -15,7 +15,7 @@
 import dataclasses
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, Literal, Type, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Iterable, Literal, Optional, Type, TypeVar, Union, overload
 
 import torch.distributed
 import transformers
@@ -28,13 +28,13 @@ from typing_extensions import Unpack
 from megatron.bridge.models import model_bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.model_bridge import WeightDistributionMode
+from megatron.bridge.models.model_bridge import MegatronModelBridge, WeightDistributionMode
 from megatron.bridge.models.model_provider_mixin import GetModelKwargs, ModelProviderMixin
-from megatron.bridge.models.state import SafeTensorsStateSource
+from megatron.bridge.models.state import PyTorchStateSource, SafeTensorsStateSource
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.model_bridge import HFWeightTuple, MegatronModelBridge
+    from megatron.bridge.models.model_bridge import HFWeightTuple
 
 
 MegatronModelT = TypeVar("ModelT", bound=MegatronModule)
@@ -81,10 +81,23 @@ class CausalLMBridge(Generic[MegatronModelT]):
         a MegatronModelBridge subclass.
     """
 
-    def __init__(self, hf_pretrained: PreTrainedCausalLM | PretrainedConfig):
+    def __init__(
+        self,
+        hf_pretrained: PreTrainedCausalLM | PretrainedConfig,
+        bridge_class: Optional[Type[MegatronModelBridge]] = None,
+    ):
         if not isinstance(hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
             raise ValueError("hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance")
+
+        # Validate bridge_class if provided
+        if bridge_class is not None:
+            if not (isinstance(bridge_class, type) and issubclass(bridge_class, MegatronModelBridge)):
+                raise ValueError(
+                    f"bridge_class must be a subclass of MegatronModelBridge, got {type(bridge_class).__name__}"
+                )
+
         self.hf_pretrained: PreTrainedCausalLM | PretrainedConfig = hf_pretrained
+        self._manual_bridge_class: Optional[Type[MegatronModelBridge]] = bridge_class
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -126,7 +139,9 @@ class CausalLMBridge(Generic[MegatronModelT]):
         return any(arch.endswith("ForCausalLM") for arch in architectures)
 
     @classmethod
-    def from_hf_config(cls, config: PretrainedConfig) -> "CausalLMBridge":
+    def from_hf_config(
+        cls, config: PretrainedConfig, bridge_class: Optional[Type[MegatronModelBridge]] = None
+    ) -> "CausalLMBridge":
         """
         Create a CausalLMBridge from a HuggingFace configuration.
 
@@ -139,12 +154,15 @@ class CausalLMBridge(Generic[MegatronModelT]):
         Args:
             config: HuggingFace PretrainedConfig instance containing model
                 architecture information
+            bridge_class: Optional MegatronModelBridge subclass to use for conversion.
+                If not provided, will attempt to auto-detect based on architecture.
 
         Returns:
             CausalLMBridge: Bridge instance configured for the architecture
 
         Raises:
             ValueError: If the configuration is not for a supported CausalLM model
+                and no bridge_class is provided
 
         Example:
             >>> from transformers import AutoConfig
@@ -164,15 +182,22 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> print(f"Hidden size: {transformer_config.hidden_size}")
             >>> print(f"Num layers: {transformer_config.num_layers}")
 
+            >>> # For models requiring manual bridge specification
+            >>> from megatron.bridge.models.baichuan import BaichuanCausalBridge
+            >>> bridge = CausalLMBridge.from_hf_config(config, bridge_class=BaichuanCausalBridge)
+
         See Also:
             from_hf_pretrained: Create bridge with loaded weights
             transformer_config: Access the Megatron TransformerConfig
         """
-        cls._validate_config(config)
-        return cls(config)
+        if bridge_class is None:
+            cls._validate_config(config)
+        return cls(config, bridge_class=bridge_class)
 
     @classmethod
-    def from_hf_pretrained(cls, path: str | Path, **kwargs) -> "CausalLMBridge":
+    def from_hf_pretrained(
+        cls, path: str | Path, bridge_class: Optional[Type[MegatronModelBridge]] = None, **kwargs
+    ) -> "CausalLMBridge":
         """
         Load a CausalLMBridge from a pretrained model.
 
@@ -183,7 +208,10 @@ class CausalLMBridge(Generic[MegatronModelT]):
         Args:
             path: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Llama-3-8B", "./my_model"
-            **kwargs: Additional arguments passed to HuggingFace from_hf_pretrained
+            bridge_class: Optional MegatronModelBridge subclass to use for conversion.
+                If not provided, will attempt to auto-detect based on architecture.
+                Use this for models with custom code (trust_remote_code=True).
+            **kwargs: Additional arguments passed to HuggingFace from_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
                 - device_map: Device placement strategy ("auto", "cuda:0", etc.)
@@ -194,7 +222,8 @@ class CausalLMBridge(Generic[MegatronModelT]):
             CausalLMBridge: Bridge instance with loaded model
 
         Raises:
-            ValueError: If the model architecture is not supported
+            ValueError: If the model architecture is not supported and no
+                bridge_class is provided
 
         Example:
             >>> # Basic loading
@@ -206,12 +235,23 @@ class CausalLMBridge(Generic[MegatronModelT]):
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
             ... )
+
+            >>> # For models requiring trust_remote_code
+            >>> from megatron.bridge.models.baichuan import BaichuanCausalBridge
+            >>> bridge = CausalLMBridge.from_hf_pretrained(
+            ...     "baichuan-inc/Baichuan2-7B-Base",
+            ...     bridge_class=BaichuanCausalBridge,
+            ...     trust_remote_code=True
+            ... )
         """
         # First load just the config to check architecture support
-        config = AutoConfig.from_pretrained(path)
-        cls._validate_config(config, path)
+        trust_remote = kwargs.get("trust_remote_code", False)
+        config = AutoConfig.from_pretrained(path, trust_remote_code=trust_remote)
 
-        return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
+        if bridge_class is None:
+            cls._validate_config(config, path)
+
+        return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs), bridge_class=bridge_class)
 
     @overload
     def __call__(
@@ -325,6 +365,14 @@ class CausalLMBridge(Generic[MegatronModelT]):
             ...     mode="replicate"  # All ranks get full weights
             ... ))
         """
+        # When using a manual bridge, call the bridge directly
+        if self._manual_bridge_class is not None:
+            bridge = self._model_bridge
+            return bridge.stream_weights_megatron_to_hf(
+                model, self.hf_pretrained, order=order, cpu=cpu, show_progress=show_progress, mode=mode
+            )
+
+        # Otherwise use the dispatch system
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, order=order, cpu=cpu, show_progress=show_progress, mode=mode
@@ -407,20 +455,37 @@ class CausalLMBridge(Generic[MegatronModelT]):
         """
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
-        dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
-        generator = model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance, model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
-        )
 
-        # Check if the state source is SafeTensorsStateSource for streaming save.
-        if (
-            hasattr(self.hf_pretrained, "state")
-            and hasattr(self.hf_pretrained.state, "source")
-            and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
-        ):
-            self.hf_pretrained.state.source.save_generator(generator, path)
+        # When using a manual bridge, call the bridge directly
+        if self._manual_bridge_class is not None:
+            bridge = self._model_bridge
+            generator = bridge.stream_weights_megatron_to_hf(
+                model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
+            )
         else:
-            raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
+            # Otherwise use the dispatch system
+            dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
+            generator = model_bridge.stream_weights_megatron_to_hf(
+                dispatch_instance,
+                model,
+                self.hf_pretrained,
+                order="safetensors",
+                cpu=True,
+                show_progress=show_progress,
+            )
+
+        # Check if the state source supports streaming save
+        if hasattr(self.hf_pretrained, "state") and hasattr(self.hf_pretrained.state, "source"):
+            source = self.hf_pretrained.state.source
+            if isinstance(source, (SafeTensorsStateSource, PyTorchStateSource)):
+                source.save_generator(generator, path)
+            else:
+                raise ValueError(
+                    f"The state source {type(source).__name__} does not support streaming save. "
+                    "Only SafeTensorsStateSource and PyTorchStateSource are supported."
+                )
+        else:
+            raise ValueError("No state source available for streaming save.")
 
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
@@ -501,7 +566,12 @@ class CausalLMBridge(Generic[MegatronModelT]):
         return self._create_config_from_provider(_model_provider, MLATransformerConfig)
 
     @property
-    def _model_bridge(self) -> "MegatronModelBridge":
+    def _model_bridge(self) -> MegatronModelBridge:
+        # Use manually specified bridge if provided
+        if self._manual_bridge_class is not None:
+            return self._manual_bridge_class()
+
+        # Otherwise, auto-detect based on architecture
         return model_bridge.get_model_bridge(self._get_causal_lm_architecture())
 
     def _get_causal_lm_architecture(self):
@@ -545,12 +615,37 @@ class CausalLMBridge(Generic[MegatronModelT]):
         try:
             return getattr(transformers, causal_lm_arch)
         except AttributeError:
+            # For models with trust_remote_code, try to get the class from the loaded model
+            if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+                # Force model loading to get the actual class
+                try:
+                    model = self.hf_pretrained.model
+                    model_class = type(model)
+                    if model_class.__name__ == causal_lm_arch:
+                        return model_class
+                except Exception:
+                    pass
+
+            # If we have a manual bridge class specified, we can use a placeholder
+            # since the dispatch won't actually be used
+            if self._manual_bridge_class is not None:
+                # Return AutoModelForCausalLM as a placeholder
+                return transformers.AutoModelForCausalLM
+
             raise ValueError(
                 f"\n✗ Architecture class '{causal_lm_arch}' not found in transformers\n\n"
                 f"This could mean:\n"
                 f"1. The model requires a newer version of transformers\n"
                 f"2. The model uses a custom modeling file not in the standard library\n"
                 f"3. There's a typo in the architecture name\n\n"
+                f"For models with custom code (trust_remote_code=True), you can manually\n"
+                f"specify the bridge to use:\n\n"
+                f"    from megatron.bridge.models.your_model import YourModelBridge\n"
+                f"    bridge = CausalLMBridge.from_hf_pretrained(\n"
+                f"        'model-name',\n"
+                f"        bridge_class=YourModelBridge,\n"
+                f"        trust_remote_code=True\n"
+                f"    )\n\n"
                 f"Please verify your transformers installation and the model requirements."
             )
 
@@ -596,7 +691,14 @@ class CausalLMBridge(Generic[MegatronModelT]):
                         f"Architecture: {architecture}\n\n"
                         f"Currently supported architectures:\n"
                         + "\n".join(f"  • {model}" for model in supported_models)
-                        + f"\n\nTo add support for {architecture}, you need to:\n"
+                        + f"\n\nYou have two options:\n\n"
+                        f"Option 1: If you have a bridge implementation, specify it manually:\n"
+                        f"    from megatron.bridge.models.your_model import YourModelBridge\n"
+                        f"    bridge = CausalLMBridge.from_hf_pretrained(\n"
+                        f"        '{path or 'model-name'}',\n"
+                        f"        bridge_class=YourModelBridge\n"
+                        f"    )\n\n"
+                        f"Option 2: Create and register a new bridge:\n"
                         f"1. Create a new bridge class that inherits from MegatronModelBridge\n"
                         f"2. Implement the required methods (provider_bridge, mapping_registry)\n"
                         f"3. Register it with @MegatronModelBridge.register_bridge decorator\n\n"
@@ -621,8 +723,15 @@ class CausalLMBridge(Generic[MegatronModelT]):
                     f"\n✗ Could not find architecture class '{architecture}' in transformers\n\n"
                     f"This might be because:\n"
                     f"1. The transformers library version is too old\n"
-                    f"2. The model requires a custom modeling file\n"
+                    f"2. The model requires a custom modeling file (trust_remote_code=True)\n"
                     f"3. The architecture name is incorrect\n\n"
+                    f"For models with custom code, specify the bridge manually:\n"
+                    f"    from megatron.bridge.models.your_model import YourModelBridge\n"
+                    f"    bridge = CausalLMBridge.from_hf_pretrained(\n"
+                    f"        '{path or 'model-name'}',\n"
+                    f"        bridge_class=YourModelBridge,\n"
+                    f"        trust_remote_code=True\n"
+                    f"    )\n\n"
                     f"Please check your transformers installation and model requirements."
                 )
 

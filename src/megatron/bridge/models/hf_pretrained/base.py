@@ -20,7 +20,7 @@ from typing import ClassVar, Dict, List, Optional, Union
 import torch
 from transformers import AutoConfig, PreTrainedModel
 
-from megatron.bridge.models.state import SafeTensorsStateSource, StateDict, StateSource
+from megatron.bridge.models.state import PyTorchStateSource, SafeTensorsStateSource, StateDict, StateSource
 
 
 class PreTrainedBase(ABC):
@@ -140,7 +140,8 @@ class PreTrainedBase(ABC):
             if hasattr(self, "_model") and self._model is not None:
                 source = self.model.state_dict()
             elif hasattr(self, "model_name_or_path") and self.model_name_or_path:
-                source = SafeTensorsStateSource(self.model_name_or_path)
+                # Auto-detect checkpoint format
+                source = self._create_state_source(self.model_name_or_path)
 
             if source is None:
                 raise ValueError(
@@ -148,3 +149,83 @@ class PreTrainedBase(ABC):
                 )
             self._state_dict_accessor = StateDict(source)
         return self._state_dict_accessor
+
+    def _create_state_source(self, model_name_or_path: Union[str, Path]) -> StateSource:
+        """
+        Auto-detect checkpoint format and create appropriate StateSource.
+
+        Checks for both local files and handles HuggingFace Hub models.
+        Prefers SafeTensors format when available.
+        """
+        from glob import glob as file_glob
+
+        model_path = Path(model_name_or_path)
+
+        # For local directories, check what files exist
+        if model_path.is_dir():
+            # Check for safetensors
+            safetensor_files = file_glob(str(model_path / "*.safetensors"))
+            safetensor_index = model_path / "model.safetensors.index.json"
+
+            # Check for pytorch files
+            pytorch_files = file_glob(str(model_path / "*.bin")) + file_glob(str(model_path / "*.pt"))
+            pytorch_index = model_path / "pytorch_model.bin.index.json"
+
+            # Prefer safetensors if available
+            if safetensor_files or safetensor_index.exists():
+                return SafeTensorsStateSource(model_name_or_path)
+            elif pytorch_files or pytorch_index.exists():
+                return PyTorchStateSource(model_name_or_path)
+            else:
+                # No checkpoint files found
+                raise FileNotFoundError(
+                    f"No checkpoint files found in {model_name_or_path}. Expected .safetensors or .bin/.pt files."
+                )
+        else:
+            # For HuggingFace Hub models, we need to probe what format is available
+            # First try to get config to understand the model better
+            try:
+                from huggingface_hub import HfFileSystem
+
+                # Use HfFileSystem to list files without downloading
+                fs = HfFileSystem()
+                try:
+                    files = fs.ls(model_name_or_path, detail=False)
+                    # Extract just the filenames
+                    filenames = [f.split("/")[-1] for f in files]
+
+                    # Check what's available
+                    has_safetensors = any(f.endswith(".safetensors") for f in filenames)
+                    has_safetensors_index = "model.safetensors.index.json" in filenames
+                    has_pytorch = any(f.endswith(".bin") or f.endswith(".pt") for f in filenames)
+                    has_pytorch_index = "pytorch_model.bin.index.json" in filenames
+
+                    if has_safetensors or has_safetensors_index:
+                        return SafeTensorsStateSource(model_name_or_path)
+                    elif has_pytorch or has_pytorch_index:
+                        return PyTorchStateSource(model_name_or_path)
+                    else:
+                        raise FileNotFoundError(f"No checkpoint files found in HuggingFace model {model_name_or_path}")
+                except Exception:
+                    # If we can't list files, fall back to trying both
+                    pass
+            except ImportError:
+                # huggingface_hub not available
+                pass
+
+            # Fall back to trying SafeTensors first (preferred format)
+            # The sources will handle downloading if the model exists
+            try:
+                # Try to create SafeTensorsStateSource
+                # If it fails during initialization, fall back to PyTorch
+                source = SafeTensorsStateSource(model_name_or_path)
+                # Do a quick check if it can access keys
+                try:
+                    source.get_all_keys()
+                    return source
+                except FileNotFoundError:
+                    # SafeTensors not available, try PyTorch format
+                    return PyTorchStateSource(model_name_or_path)
+            except Exception:
+                # If SafeTensors fails, try PyTorch format
+                return PyTorchStateSource(model_name_or_path)

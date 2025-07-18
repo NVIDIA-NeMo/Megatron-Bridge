@@ -430,6 +430,408 @@ class DictStateSource(StateSource):
         return {key: self._dict[key] for key in keys if key in self._dict}
 
 
+class PyTorchStateSource(StateSource):
+    """
+    A state source backed by a directory of PyTorch .bin/.pt checkpoint files.
+
+    This source is designed for loading tensors from checkpoints saved
+    in the PyTorch format, which is common for models that don't use
+    safetensors yet.
+
+    It can handle two common scenarios:
+    1. A directory containing multiple `.bin` or `.pt` files.
+    2. A directory containing a `pytorch_model.bin.index.json` file, which maps
+       tensor names to the specific `.bin` file they reside in. This is
+       the standard format used by Hugging Face Transformers for sharded models.
+
+    Using this source allows `StateDict` to query for tensor keys and load only
+    the necessary files and tensors from disk, avoiding high memory usage.
+
+    Args:
+        path: The path to the directory containing the PyTorch checkpoint files
+              and/or the index file. Can also be a Hugging Face Hub model ID.
+    """
+
+    def __init__(self, path: Union[str, Path]):
+        self.model_name_or_path = path
+        self._resolved_path_cache: Optional[Path] = None
+        self._keys_cache: Optional[List[str]] = None
+        self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
+
+    @property
+    def path(self) -> Path:
+        """
+        The local path to the checkpoint files.
+        If the initial path is a Hugging Face Hub model ID, this property
+        will handle downloading the necessary files and return the local
+        cache path.
+        """
+        if self._resolved_path_cache is None:
+            self._resolved_path_cache = self._resolve_path(self.model_name_or_path)
+        return self._resolved_path_cache
+
+    @property
+    def key_to_filename_map(self) -> Dict[str, str]:
+        """
+        Provides a mapping from tensor keys to the PyTorch filename they
+        are stored in.
+
+        This map is constructed either from `pytorch_model.bin.index.json` if
+        it exists, or by scanning all `.bin` and `.pt` files in the directory.
+        The result is cached for efficiency.
+        """
+        if self._key_to_filename_map_cache is not None:
+            return self._key_to_filename_map_cache
+
+        # First, try to load from the index file.
+        key_map = self._cached_get_key_to_filename_map(self.path)
+        if key_map:
+            self._key_to_filename_map_cache = key_map
+            return key_map
+
+        # If no index, scan the directory.
+        import os
+        from glob import glob as file_glob
+
+        key_map = {}
+        bin_files = file_glob(str(self.path / "*.bin"))
+        pt_files = file_glob(str(self.path / "*.pt"))
+        pytorch_files = bin_files + pt_files
+
+        for file_path in pytorch_files:
+            filename = os.path.basename(file_path)
+            try:
+                checkpoint = torch.load(file_path, map_location="cpu", weights_only=True)
+                if isinstance(checkpoint, dict):
+                    for key in checkpoint.keys():
+                        if key in key_map:
+                            # This is an issue. Same key in multiple files, and no index.
+                            # How to resolve ambiguity? Let's just warn and overwrite. Last one wins.
+                            print(
+                                f"Warning: duplicate key '{key}' found in '{filename}' and '{key_map[key]}'. Using '{filename}'."
+                            )
+                        key_map[key] = filename
+            except Exception as e:
+                # Can be not a PyTorch file, etc.
+                print(f"Warning: could not open {filename} as a PyTorch checkpoint: {e}")
+
+        self._key_to_filename_map_cache = key_map
+        return key_map
+
+    @staticmethod
+    def _resolve_path(model_name_or_path: Union[str, Path]) -> Path:
+        """
+        Resolves a model name or path to a local directory.
+        If the path is not a local directory, it is treated as a Hugging
+        Face Hub model ID, and the corresponding files are downloaded.
+        """
+        local_path = Path(model_name_or_path)
+        if local_path.is_dir():
+            return local_path
+
+        try:
+            from huggingface_hub import snapshot_download
+            from huggingface_hub.utils import HfHubHTTPError
+
+            # Not a local directory, so we assume it's a model ID
+            # on the Hugging Face Hub.
+            return Path(
+                snapshot_download(
+                    repo_id=str(model_name_or_path),
+                    allow_patterns=[
+                        "*.bin",
+                        "*.pt",
+                        "pytorch_model.bin.index.json",
+                    ],
+                    # Ignore other large files.
+                    ignore_patterns=["*.safetensors"],
+                )
+            )
+        except (ImportError, HfHubHTTPError, ValueError):
+            # If huggingface_hub is not installed, or if it's not a
+            # valid model ID, we return the original path and let the
+            # subsequent logic handle the file not found error.
+            return local_path
+
+    def get_all_keys(self) -> List[str]:
+        if self._keys_cache is not None:
+            return self._keys_cache
+
+        from glob import glob as file_glob
+
+        all_keys = set()
+        key_to_filename_map = self.key_to_filename_map
+        if key_to_filename_map:
+            all_keys.update(key_to_filename_map.keys())
+
+        if not all_keys:
+            bin_files = file_glob(str(self.path / "*.bin"))
+            pt_files = file_glob(str(self.path / "*.pt"))
+            pytorch_files = bin_files + pt_files
+            if not pytorch_files and not key_to_filename_map:
+                raise FileNotFoundError(f"No .bin or .pt files or index found in {self.model_name_or_path}")
+            for pytorch_file in pytorch_files:
+                checkpoint = torch.load(pytorch_file, map_location="cpu", weights_only=True)
+                if isinstance(checkpoint, dict):
+                    all_keys.update(checkpoint.keys())
+
+        self._keys_cache = sorted(list(all_keys))
+        return self._keys_cache
+
+    def load_tensors(self, keys_to_load: List[str]) -> Dict[str, torch.Tensor]:
+        if not keys_to_load:
+            return {}
+
+        from glob import glob as file_glob
+
+        loaded_tensors = {}
+        remaining_keys = set(keys_to_load)
+        key_to_filename_map = self.key_to_filename_map
+
+        if key_to_filename_map:
+            file_to_keys_map = defaultdict(list)
+            for key in list(remaining_keys):
+                if key in key_to_filename_map:
+                    filename = key_to_filename_map[key]
+                    file_to_keys_map[filename].append(key)
+
+            for filename, keys_in_file in file_to_keys_map.items():
+                file_path = self.path / filename
+                if file_path.exists():
+                    checkpoint = torch.load(file_path, map_location="cpu", weights_only=True)
+                    if isinstance(checkpoint, dict):
+                        for key in keys_in_file:
+                            if key in checkpoint:
+                                loaded_tensors[key] = checkpoint[key]
+                                remaining_keys.discard(key)
+
+        if remaining_keys:
+            bin_files = file_glob(str(self.path / "*.bin"))
+            pt_files = file_glob(str(self.path / "*.pt"))
+            pytorch_files = bin_files + pt_files
+            if not pytorch_files and not key_to_filename_map and not loaded_tensors:
+                raise FileNotFoundError(
+                    f"No .bin or .pt files found in {self.model_name_or_path} to load keys: {remaining_keys}"
+                )
+            for pytorch_file_path in pytorch_files:
+                if not remaining_keys:
+                    break
+                checkpoint = torch.load(pytorch_file_path, map_location="cpu", weights_only=True)
+                if isinstance(checkpoint, dict):
+                    for key in list(remaining_keys):
+                        if key in checkpoint:
+                            loaded_tensors[key] = checkpoint[key]
+                            remaining_keys.remove(key)
+
+        if remaining_keys:
+            raise KeyError(f"Keys not found in PyTorch checkpoints from {self.model_name_or_path}: {remaining_keys}")
+
+        return loaded_tensors
+
+    def has_glob(self, pattern: str) -> bool:
+        """
+        Efficiently checks if any tensor key matches the given glob pattern.
+
+        This method avoids loading all tensor keys into memory at once. It scans
+        the checkpoint index or file headers and returns as soon as a match is
+        found.
+
+        Args:
+            pattern: The glob pattern to match against tensor keys.
+
+        Returns:
+            True if a matching key is found, False otherwise.
+        """
+        import fnmatch
+        from glob import glob as file_glob
+
+        key_to_filename_map = self.key_to_filename_map
+        if key_to_filename_map:
+            for key in key_to_filename_map.keys():
+                if fnmatch.fnmatch(key, pattern):
+                    return True
+            return False
+
+        # If no index map, scan the files directly.
+        bin_files = file_glob(str(self.path / "*.bin"))
+        pt_files = file_glob(str(self.path / "*.pt"))
+        pytorch_files = bin_files + pt_files
+        if not pytorch_files:
+            return False
+
+        for pytorch_file in pytorch_files:
+            try:
+                checkpoint = torch.load(pytorch_file, map_location="cpu", weights_only=True)
+                if isinstance(checkpoint, dict):
+                    for key in checkpoint.keys():
+                        if fnmatch.fnmatch(key, pattern):
+                            return True
+            except Exception:
+                # Ignore files that are not valid PyTorch checkpoints
+                continue
+
+        return False
+
+    def save_generator(
+        self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True
+    ):
+        """
+        Saves tensors from a generator to PyTorch checkpoint files, preserving the
+        original sharding structure in a memory-efficient, streaming fashion.
+
+        This method reads the sharding information (which tensor belongs to which
+        file) from the source checkpoint. It then consumes a generator of tensors,
+        buffering them in memory only until a complete file shard can be written to
+        disk. This approach minimizes peak memory usage compared to collecting all
+        tensors first.
+
+        If the original checkpoint had a `pytorch_model.bin.index.json` file, a new
+        one will be created for the saved tensors.
+
+        Args:
+            generator: An iterable of (tensor_name, tensor) tuples.
+            output_path: The directory where the new checkpoint files and index
+                         will be saved.
+            strict: If True (default), raises a KeyError if the generator
+                    yields a tensor name not found in the original model's
+                    sharding structure. If False, it prints a warning and
+                    skips the tensor.
+        """
+        # In a distributed environment, only rank 0 should write to disk.
+        # Other ranks must still exhaust the generator to participate in collectives.
+        is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
+        rank = torch.distributed.get_rank() if is_distributed else 0
+
+        if rank != 0:
+            # Other ranks must exhaust the generator to avoid hangs in collectives.
+            for _ in generator:
+                pass
+            return
+
+        # Rank 0 proceeds with saving.
+        output_path = Path(output_path)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        key_to_filename_map = self.key_to_filename_map
+        all_expected_keys = set(key_to_filename_map.keys())
+
+        if not key_to_filename_map:
+            buffered_tensors = dict(generator)
+            if buffered_tensors:
+                torch.save(buffered_tensors, output_path / "pytorch_model.bin")
+            return
+
+        filename_to_keys_map = defaultdict(set)
+        for key, filename in key_to_filename_map.items():
+            filename_to_keys_map[filename].add(key)
+
+        files_to_save = dict(filename_to_keys_map)
+        buffered_tensors = {}
+        all_yielded_keys = set()
+        all_saved_keys = set()
+
+        for name, tensor in generator:
+            all_yielded_keys.add(name)
+            if name not in all_expected_keys:
+                if strict:
+                    raise KeyError(
+                        f"Tensor '{name}' from generator not found in the original model structure. "
+                        "To ignore, set strict=False."
+                    )
+                else:
+                    print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
+                    continue
+
+            buffered_tensors[name] = tensor
+
+            # Check if any file is complete and can be saved.
+            # Iterate over a copy of keys since we might modify the dict.
+            for filename in list(files_to_save.keys()):
+                keys_for_file = files_to_save[filename]
+                if keys_for_file.issubset(buffered_tensors.keys()):
+                    # This shard is complete, save it.
+                    tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
+
+                    output_file_path = output_path / filename
+                    torch.save(tensors_to_save, output_file_path)
+
+                    # Free memory by removing saved tensors from the buffer.
+                    for key in keys_for_file:
+                        del buffered_tensors[key]
+
+                    all_saved_keys.update(keys_for_file)
+                    del files_to_save[filename]
+
+        # --- Final Reporting ---
+        if files_to_save:
+            print(
+                "Warning: The following files could not be saved because the generator did not yield all of their tensors:"
+            )
+            for filename, keys_for_file in files_to_save.items():
+                missing_for_file = keys_for_file - all_yielded_keys
+                if missing_for_file:
+                    print(f"  - {filename}: missing {len(missing_for_file)} tensors:")
+                    for key in sorted(list(missing_for_file)):
+                        print(f"    - {key}")
+
+        if buffered_tensors:
+            print(
+                f"Warning: {len(buffered_tensors)} tensors were yielded but not saved because their corresponding file shards were incomplete."
+            )
+
+        # Final check on whether all original tensors were written.
+        unsaved_keys = all_expected_keys - all_saved_keys
+        if not unsaved_keys:
+            extra_keys = all_yielded_keys - all_expected_keys
+            if extra_keys:
+                print(
+                    f"\nSuccess: All tensors from the original checkpoint were written. "
+                    f"({len(extra_keys)} extra tensors from generator were ignored as per strict=False)."
+                )
+            else:
+                print("\nSuccess: All tensors from the original checkpoint were written.")
+        else:
+            print(
+                f"\nError: {len(unsaved_keys)} tensors from the original checkpoint were not written. See warnings above for details."
+            )
+
+        # Create index file for the saved shards.
+        original_index_file = self.path / "pytorch_model.bin.index.json"
+        if original_index_file.exists():
+            with open(original_index_file, "r") as f:
+                original_index_data = json.load(f)
+
+            new_weight_map = {key: key_to_filename_map[key] for key in all_saved_keys}
+
+            new_index_data = {
+                "metadata": original_index_data.get("metadata", {}),
+                "weight_map": new_weight_map,
+            }
+
+            output_index_file = output_path / "pytorch_model.bin.index.json"
+            if new_weight_map:
+                with open(output_index_file, "w") as f:
+                    json.dump(new_index_data, f, indent=4)
+
+    def _get_key_to_filename_map(self) -> Optional[Dict[str, str]]:
+        return self._cached_get_key_to_filename_map(self.path)
+
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def _cached_get_key_to_filename_map(model_name_or_path: Union[str, Path]) -> Optional[Dict[str, str]]:
+        """Static, cached method to get the key-to-filename map."""
+        index_file = Path(model_name_or_path) / "pytorch_model.bin.index.json"
+        if index_file.exists():
+            with open(index_file, "r") as f:
+                try:
+                    index_data = json.load(f)
+                    if "weight_map" in index_data and isinstance(index_data["weight_map"], dict):
+                        return index_data["weight_map"]
+                except json.JSONDecodeError:
+                    return None
+        return None
+
+
 class SafeTensorsStateSource(StateSource):
     """
     A state source backed by a directory of .safetensors files.
@@ -541,7 +943,7 @@ class SafeTensorsStateSource(StateSource):
                         "model.safetensors.index.json",
                     ],
                     # Ignore other large files.
-                    ignore_patterns=["*.bin", "*.pt", "*.pth"],
+                    ignore_patterns=["*.bin", "*.pt", "*.pth", "*.ckpt"],
                 )
             )
         except (ImportError, HfHubHTTPError, ValueError):

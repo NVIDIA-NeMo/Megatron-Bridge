@@ -14,6 +14,11 @@
 
 # Import model providers for easy access
 from megatron.bridge.models.auto_bridge import AutoBridge
+from megatron.bridge.models.baichuan import (
+    Baichuan2ModelProvider7B,
+    Baichuan2ModelProvider13B,
+    BaichuanModelProvider,
+)
 from megatron.bridge.models.causal_bridge import CausalLMBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
@@ -87,4 +92,7 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "BaichuanModelProvider",
+    "Baichuan2ModelProvider7B",
+    "Baichuan2ModelProvider13B",
 ]
