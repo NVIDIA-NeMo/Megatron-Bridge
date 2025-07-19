@@ -55,7 +55,7 @@ pip install --no-build-isolation megatron-bridge
 
 ### uv
 
-For installing Megatron-Bridge with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
+For installing Megatron Bridge with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
 
 ## ⚡ Quickstart
 
