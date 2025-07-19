@@ -744,7 +744,6 @@ class TestPEFTCheckpointLoading:
             mock_model[1].load_state_dict.assert_called_once_with(filtered_sharded_state_dict["model1"], strict=False)
 
 
-@pytest.mark.run_only_on("GPU")
 class TestPEFTCheckpointingIntegration:
     """Integration tests using real GPT models and LoRA PEFT configurations."""
 

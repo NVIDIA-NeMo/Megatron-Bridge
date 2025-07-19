@@ -1460,6 +1460,7 @@ dependencies = [
     { name = "tiktoken" },
     { name = "torch" },
     { name = "tqdm" },
+    { name = "transformer-engine", extra = ["pytorch"], marker = "sys_platform != 'darwin'" },
     { name = "transformers" },
     { name = "typing-extensions" },
     { name = "wandb" },
@@ -1468,9 +1469,6 @@ dependencies = [
 [package.optional-dependencies]
 recipes = [
     { name = "nemo-run" },
-]
-te = [
-    { name = "transformer-engine", extra = ["pytorch"], marker = "sys_platform != 'darwin'" },
 ]
 
 [package.dev-dependencies]
@@ -1530,7 +1528,7 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.19.10" },
 ]
-provides-extras = ["te", "recipes"]
+provides-extras = ["recipes"]
 
 [package.metadata.requires-dev]
 build = [

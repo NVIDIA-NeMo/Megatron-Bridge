@@ -263,7 +263,7 @@ def _print_num_params(model: list[MegatronModule]) -> None:
     Args:
         model: List of model modules to count parameters from
     """
-    if parallel_state.get_data_parallel_rank() == 0:
+    if parallel_state.get_data_parallel_rank() == 0 and parallel_state.get_context_parallel_rank() == 0:
         print(
             " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
                 parallel_state.get_tensor_model_parallel_rank(),

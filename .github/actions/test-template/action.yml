@@ -30,10 +30,6 @@ inputs:
     description: "Upload coverage as unit test"
     required: false
     default: "false"
-  cpu-only:
-    description: "Run tests on CPU only"
-    required: false
-    default: "false"
   azure-client-id:
     description: "Azure Client ID"
     required: true
@@ -142,21 +138,17 @@ runs:
 
     - name: Start container
       shell: bash
+      env:
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
       run: |
-        MNT_PATH=${{ steps.azure-fileshare.outputs.mnt_path }}
-
-        ARG=("")
-        if [[ "${{ inputs.cpu-only }}" == "false" ]]; then
-          ARG=("--runtime=nvidia --gpus all")
-        fi
-
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
         docker run \
           --rm \
           -d \
-          --name nemo_container_${{ github.run_id }} ${ARG[@]} \
+          --name nemo_container_${{ github.run_id }} \
+          --runtime=nvidia --gpus all \
           --shm-size=64g \
           --env TRANSFORMERS_OFFLINE=0 \
           --env HYDRA_FULL_ERROR=1 \
