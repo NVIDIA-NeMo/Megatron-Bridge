@@ -19,6 +19,7 @@ megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
 ```
 
 ### Advanced Loading Options
+You can also load models with specific settings like precision, device placement, or custom parameters:
 
 ```python
 # Load with specific settings
@@ -69,7 +70,7 @@ The provider pattern is especially useful when you need to:
 
 Before loading a model, you can check if it's supported by Megatron Bridge.
 
-### List All Supported Models
+You can list all supported HuggingFace model architectures with the following:
 
 ```python
 from megatron.bridge import CausalLMBridge
@@ -82,12 +83,11 @@ for i, model in enumerate(supported_models, 1):
     print(f"  {i:2d}. {model}")
 ```
 
-### Check Specific Model Compatibility
+Alternatively, check if a specific model is supported:
 
 ```python
 from megatron.bridge import AutoBridge
 
-# Check if a specific model is supported
 if AutoBridge.can_handle("microsoft/phi-2"):
     print("✅ Model is supported!")
     bridge = AutoBridge.from_hf_pretrained("microsoft/phi-2")
@@ -99,21 +99,11 @@ if AutoBridge.can_handle("custom/model", trust_remote_code=True):
     bridge = AutoBridge.from_hf_pretrained("custom/model", trust_remote_code=True)
 ```
 
-### Get Supported Bridge Types
-
-```python
-from megatron.bridge import AutoBridge
-
-# See which bridge types are available
-bridges = AutoBridge.get_supported_bridges()
-print(f"Available bridges: {bridges}")
-```
-
 ## Converting back to HuggingFace
 
-After training or modifying a Megatron model, you can convert it back to HuggingFace format for deployment or sharing.
+After training or modifying a Megatron model, you can convert it back to HuggingFace format for deployment or sharing. The bridge provides several methods for this conversion depending on your needs.
 
-### Save Complete Model
+To save the complete model including configuration, tokenizer, and weights:
 
 ```python
 # Save the complete model (config, tokenizer, weights)
@@ -124,7 +114,7 @@ from transformers import AutoModelForCausalLM
 hf_model = AutoModelForCausalLM.from_pretrained("./my-fine-tuned-llama")
 ```
 
-### Save Only Weights
+For faster and smaller exports, you can save just the model weights:
 
 ```python
 # Save just the model weights (faster, smaller)
@@ -134,7 +124,7 @@ bridge.save_hf_weights(megatron_model, "./model_weights")
 bridge.save_hf_weights(megatron_model, "./weights", show_progress=False)
 ```
 
-### Stream Weights for Large Models
+For large models, you can stream weights during conversion to save memory:
 
 ```python
 # Stream weights during conversion (memory efficient)
@@ -158,6 +148,7 @@ for name, weight in bridge.export_hf_weights(
 ```
 
 ### Weight Distribution Modes
+The export method supports different distribution modes for distributed models. The default "consolidate" mode gathers weights to rank 0, while "replicate" gives all ranks full tensors, and "distribute" keeps each rank's shard (experimental).
 
 ```python
 # Different export modes for distributed models
@@ -175,8 +166,10 @@ for name, weight in bridge.export_hf_weights(model, mode="distribute"):
 ```
 
 ## Common Patterns and Best Practices
+When working with Megatron Bridge, there are several patterns that will help you use the API effectively and avoid common pitfalls.
 
 ### 1. Always Use High-Level APIs
+Always prefer high-level APIs like `AutoBridge` for automatic model detection, or `CausalLMBridge` for causal language models. Avoid direct bridge usage unless you know the specific type required:
 
 ```python
 # ✅ Preferred: Use AutoBridge for automatic detection
@@ -189,6 +182,7 @@ bridge = CausalLMBridge.from_hf_pretrained("gpt2")
 ```
 
 ### 2. Configure Before Creating Models
+When using the provider pattern, always configure parallelism and other settings before creating the model. Creating the model first will use default settings that may not be optimal:
 
 ```python
 # ✅ Correct: Configure provider before creating model
@@ -201,6 +195,7 @@ model = bridge.to_megatron_model()  # Uses default settings
 ```
 
 ### 3. Handle Large Models Efficiently
+For large models, use streaming APIs to avoid memory issues. You can also use config-only loading for architecture exploration without loading weights:
 
 ```python
 # ✅ Use streaming for large models
@@ -215,6 +210,7 @@ print(f"Hidden size: {transformer_config.hidden_size}")
 ```
 
 ### 4. Error Handling
+Implement proper error handling to gracefully handle unsupported models:
 
 ```python
 from megatron.bridge import AutoBridge
@@ -237,7 +233,8 @@ except ValueError as e:
 3. **Shape Mismatches**: Check parallelism configuration matches your hardware
 4. **Missing Weights**: Ensure the model architecture is properly registered
 
-### Debug Tips
+## Debugging Tips
+For debugging, you can enable verbose logging and inspect bridge configurations:
 
 ```python
 # Enable verbose logging
