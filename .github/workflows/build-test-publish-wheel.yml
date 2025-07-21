@@ -25,6 +25,10 @@ defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   build-container:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@ko3n1g/feat/custom-image
