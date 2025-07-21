@@ -44,6 +44,7 @@ jobs:
 
   fetch-credentials:
     runs-on: ubuntu-latest
+    environment: nemo-ci
     steps:
       - name: Install Azure CLI
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
