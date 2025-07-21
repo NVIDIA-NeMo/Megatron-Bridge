@@ -1474,6 +1474,7 @@ recipes = [
 [package.dev-dependencies]
 build = [
     { name = "cython" },
+    { name = "numpy" },
     { name = "pybind11" },
     { name = "setuptools" },
     { name = "torch" },
@@ -1533,6 +1534,7 @@ provides-extras = ["recipes"]
 [package.metadata.requires-dev]
 build = [
     { name = "cython", specifier = ">=3.0.0" },
+    { name = "numpy", specifier = "<2.0.0" },
     { name = "pybind11" },
     { name = "setuptools" },
     { name = "torch" },
