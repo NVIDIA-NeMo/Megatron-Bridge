@@ -32,6 +32,7 @@ jobs:
       image-name: megatron-bridge-ci
       dockerfile: docker/Dockerfile.ci
       runner: linux-amd64-cpu16
+      has-azure-credentials: true
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
