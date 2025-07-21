@@ -49,7 +49,7 @@ jobs:
       no-publish: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) }}
       has-src-dir: true
       skip-test-wheel: true
-      custom-container: ${{ inputs.custom-container }}
+      custom-container: ${{ nneds.build-container.outputs.container-uri }}
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
