@@ -39,7 +39,6 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   fetch-credentials:
-    needs: build-container
     runs-on: ubuntu-latest
     steps:
       - name: Install Azure CLI
