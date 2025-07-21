@@ -26,8 +26,20 @@ defaults:
     shell: bash -x -e -u -o pipefail {0}
 
 jobs:
+  build-container:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@ko3n1g/feat/custom-image
+    with:
+      image-name: megatron-bridge-ci
+      dockerfile: docker/Dockerfile.ci
+      runner: linux-amd64-cpu16
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
   build-test-publish-wheel:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.47.0
+    needs: build-container
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@ko3n1g/feat/custom-image
     with:
       dry-run: true
       python-package: megatron.bridge
@@ -36,6 +48,7 @@ jobs:
       no-publish: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) }}
       has-src-dir: true
       skip-test-wheel: true
+      custom-container: ${{ inputs.custom-container }}
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
