@@ -13,7 +13,7 @@
 # limitations under the License.
 
 [build-system]
-requires = ["setuptools<80.0.0", "pybind11", "torch"]
+requires = ["setuptools<80.0.0", "pybind11", "torch", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -105,9 +105,7 @@ prerelease = "allow"
 # [tool.uv.sources]
 # megatron-core = { git = "https://github.com/NVIDIA/Megatron-LM.git", rev = "44fa0ea40d872da798a0d34ed152806652b960b8" } 
 
-[build-system]
-requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
+
 
 [project.optional-dependencies]
 recipes = [
