@@ -33,9 +33,9 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 
 TransformerEngine is a required dependency for Megatron Bridge. To install on bare metal (without any container), the following system requirements need to be fulfilled:
 
-- PyTorch
-- CUDA
-- cuDNN
+- PyTorch >= 2.7
+- CUDA >= 12.8
+- cuDNN >= 9.3
 
 We recommend installing the same versions that are present in the latest NGC PyTorch containers. The versions of these components for each container release can be found in the [PyTorch](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html) and [CUDA](https://docs.nvidia.com/deeplearning/frameworks/cuda-dl-release-notes/index.html) container release notes.
 
