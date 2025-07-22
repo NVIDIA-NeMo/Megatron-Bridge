@@ -19,8 +19,8 @@ import subprocess
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 
 from megatron.bridge.data.utils import (
-    pretrain_train_valid_test_datasets_provider,
     finetuning_train_valid_test_datasets_provider,
+    pretrain_train_valid_test_datasets_provider,
 )
 from megatron.bridge.training.config import FinetuningDatasetConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -108,9 +108,7 @@ class TestDataUtils:
 
         # Build tokenizer
         tokenizer = build_tokenizer(
-            tokenizer_config=TokenizerConfig(
-                tokenizer_type="NullTokenizer", vocab_size=131072
-            ),
+            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
         )

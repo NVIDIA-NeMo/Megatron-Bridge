@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.data.samplers import (
-    build_pretraining_data_loader,
-    RandomSeedDataset,
-)
 from megatron.bridge.data.loaders import build_train_valid_test_datasets
+from megatron.bridge.data.samplers import (
+    RandomSeedDataset,
+    build_pretraining_data_loader,
+)
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
 
