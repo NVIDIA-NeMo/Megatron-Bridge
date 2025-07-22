@@ -16,15 +16,20 @@ import os
 import json
 import subprocess
 
-from megatron.bridge.data.loaders import get_blend_and_blend_per_split, setup_data_iterators
+from megatron.bridge.data.loaders import (
+    get_blend_and_blend_per_split,
+    setup_data_iterators,
+)
 from megatron.bridge.data.utils import get_dataset_provider
 
 DATA_PATH = "/workspace/test_data/test_text_document"
 
 
-class TestDataLoaders():
+class TestDataLoaders:
     def test_get_blend_and_blend_per_split_data_paths(self):
-        blend, blend_per_split = get_blend_and_blend_per_split(data_paths=[1.0, DATA_PATH])
+        blend, blend_per_split = get_blend_and_blend_per_split(
+            data_paths=[1.0, DATA_PATH]
+        )
 
         assert blend == ([DATA_PATH], [1.0])
         assert blend_per_split == None
@@ -35,11 +40,13 @@ class TestDataLoaders():
         data_args_path = "/workspace/data_args.txt"
         with open(data_args_path, "w") as data_args_file:
             data_args_file.write(f"0.5 {DATA_PATH} 0.5 {DATA_PATH}")
-        blend, blend_per_split = get_blend_and_blend_per_split(data_args_path=data_args_path)
+        blend, blend_per_split = get_blend_and_blend_per_split(
+            data_args_path=data_args_path
+        )
 
         assert blend == ([DATA_PATH, DATA_PATH], [0.5, 0.5])
         assert blend_per_split == None
-        
+
     def test_get_blend_and_blend_per_split_per_split_data_args_path(self):
         blend, blend_per_split = get_blend_and_blend_per_split(
             train_data_paths=[0.5, DATA_PATH, 0.5, DATA_PATH],
@@ -51,7 +58,7 @@ class TestDataLoaders():
         assert blend_per_split == [
             ([DATA_PATH, DATA_PATH], [0.5, 0.5]),
             ([DATA_PATH], [1.0]),
-            ([DATA_PATH], [1.0])
+            ([DATA_PATH], [1.0]),
         ]
 
         split_data = {
@@ -63,11 +70,13 @@ class TestDataLoaders():
         with open(split_data_path, "w") as f:
             json.dump(split_data, f)
 
-        blend, blend_per_split = get_blend_and_blend_per_split(per_split_data_args_path=split_data_path)
+        blend, blend_per_split = get_blend_and_blend_per_split(
+            per_split_data_args_path=split_data_path
+        )
 
         assert blend == None
         assert blend_per_split == [
             ([DATA_PATH], None),
             ([DATA_PATH], None),
-            ([DATA_PATH], None)
+            ([DATA_PATH], None),
         ]

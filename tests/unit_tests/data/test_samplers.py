@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.data.samplers import build_pretraining_data_loader, RandomSeedDataset
+from megatron.bridge.data.samplers import (
+    build_pretraining_data_loader,
+    RandomSeedDataset,
+)
 from megatron.bridge.data.loaders import build_train_valid_test_datasets
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
 
 
-class TestDataSamplers():
+class TestDataSamplers:
     def test_build_pretraining_data_loader(self):
         dataloader = build_pretraining_data_loader(
             dataset=None,
@@ -36,7 +39,9 @@ class TestDataSamplers():
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider
+        )
 
         # Build dataloader with drop_last=True
         dataloader = build_pretraining_data_loader(
@@ -59,13 +64,15 @@ class TestDataSamplers():
             data_sharding=False,
             drop_last=False,
         )
-    
+
     def test_build_pretraining_data_loader_cyclic(self):
         # Setup dataloader params
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider
+        )
 
         # Build dataloader with data_sharding=True
         dataloader = build_pretraining_data_loader(
@@ -99,12 +106,14 @@ class TestDataSamplers():
         )
 
         assert dataloader.num_workers == 0
-    
+
     def test_build_pretraining_data_loader_external(self):
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
         dataset_provider = get_dataset_provider(cfg.dataset)
-        dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
+        dataset = build_train_valid_test_datasets(
+            cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider
+        )
 
         # Build dataloader with dataloader_type="external"
         dataloader = build_pretraining_data_loader(

@@ -31,7 +31,7 @@ from megatron.bridge.training.config import FinetuningDatasetConfig
 DATA_PATH = "/workspace/test_data/test_text_document"
 
 
-class TestDataUtils():
+class TestDataUtils:
     def test_data_prepropcesing(self):
 
         # Generate .jsonl fine
@@ -44,26 +44,35 @@ class TestDataUtils():
             for sample in samples:
                 json.dump(sample, jsonl_data)
                 jsonl_data.write("\n")
-        
+
         # Generate bin/idx files
         subprocess.run(
             [
-                "python", "/opt/megatron-lm/tools/preprocess_data.py",
-                "--input", test_data_jsonl,
-                "--output-prefix", os.path.join(test_data_dir, "test"),
-                "--tokenizer-type", "NullTokenizer",
-                "--vocab-size", "131072",
-                "--workers", "2",
-                "--log-interval", "1000",
+                "python",
+                "/opt/megatron-lm/tools/preprocess_data.py",
+                "--input",
+                test_data_jsonl,
+                "--output-prefix",
+                os.path.join(test_data_dir, "test"),
+                "--tokenizer-type",
+                "NullTokenizer",
+                "--vocab-size",
+                "131072",
+                "--workers",
+                "2",
+                "--log-interval",
+                "1000",
                 "--append-eod",
             ]
         )
 
     def test_pretrain_train_valid_test_datasets_provider(self):
-        
+
         # Build tokenizer
         tokenizer = build_tokenizer(
-            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
+            tokenizer_config=TokenizerConfig(
+                tokenizer_type="NullTokenizer", vocab_size=131072
+            ),
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
         )
@@ -90,10 +99,12 @@ class TestDataUtils():
         assert (train_ds.size, valid_ds.size, test_ds.size) == (1000, 100, 10)
 
     def test_finetuning_train_valid_test_datasets_provider(self):
-        
+
         dataset_root = "/workspace/test_data/finetune"
         os.makedirs(dataset_root, exist_ok=True)
-        os.system('cp /workspace/test_data/test.jsonl /workspace/test_data/finetune/training.jsonl')
+        os.system(
+            "cp /workspace/test_data/test.jsonl /workspace/test_data/finetune/training.jsonl"
+        )
 
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
@@ -103,7 +114,9 @@ class TestDataUtils():
 
         # Build tokenizer
         tokenizer = build_tokenizer(
-            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
+            tokenizer_config=TokenizerConfig(
+                tokenizer_type="NullTokenizer", vocab_size=131072
+            ),
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
         )
@@ -118,8 +131,12 @@ class TestDataUtils():
         assert (valid_ds, test_ds) == (None, None)
 
         # Generate validation and test data
-        os.system('cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/validation.jsonl')
-        os.system('cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/test.jsonl')
+        os.system(
+            "cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/validation.jsonl"
+        )
+        os.system(
+            "cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/test.jsonl"
+        )
 
         # Get datasets
         train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
