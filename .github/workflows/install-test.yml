@@ -200,12 +200,11 @@ jobs:
           python-binary: ./venv/bin/python
 
   uv-test-bare-metal:
-    runs-on: ${{ matrix.arch }}
-    name: UV - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
+    runs-on: linux-amd64-cpu16
+    name: UV - Python ${{ matrix.python-version }} - 'AMD64/Linux' - No CUDA
     strategy:
       fail-fast: false
       matrix:
-        arch: ["ubuntu-latest"]
         python-version: ["3.12"]
     steps:
       - name: Checkout repository
