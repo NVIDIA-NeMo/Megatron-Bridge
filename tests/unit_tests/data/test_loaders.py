@@ -16,39 +16,13 @@ import os
 import json
 import subprocess
 
-from megatron.bridge.data.loaders import get_blend_and_blend_per_split
+from megatron.bridge.data.loaders import get_blend_and_blend_per_split, setup_data_iterators
+from megatron.bridge.data.utils import get_dataset_provider
 
 DATA_PATH = "/workspace/test_data/test_text_document"
 
 
 class TestDataLoaders():
-    # def test_data_prepropcesing(self):
-
-    #     # Generate .jsonl fine
-    #     sample = {"text": "111214 343 54365900 77"}
-    #     samples = [sample for i in range(1000)]
-    #     test_data_dir = "/workspace/test_data"
-    #     os.makedirs(test_data_dir, exist_ok=True)
-    #     test_data_jsonl = os.path.join(test_data_dir, "test.jsonl")
-    #     with open(test_data_jsonl, "w") as jsonl_data:
-    #         for sample in samples:
-    #             json.dump(sample, jsonl_data)
-    #             jsonl_data.write("\n")
-        
-    #     # Generate bin/idx files
-    #     subprocess.run(
-    #         [
-    #             "python", "/opt/megatron-lm/tools/preprocess_data.py",
-    #             "--input", test_data_jsonl,
-    #             "--output-prefix", os.path.join(test_data_dir, "test"),
-    #             "--tokenizer-type", "NullTokenizer",
-    #             "--vocab-size", "131072",
-    #             "--workers", "2",
-    #             "--log-interval", "1000",
-    #             "--append-eod",
-    #         ]
-    #     )
-
     def test_get_blend_and_blend_per_split_data_paths(self):
         blend, blend_per_split = get_blend_and_blend_per_split(data_paths=[1.0, DATA_PATH])
 
@@ -58,7 +32,7 @@ class TestDataLoaders():
     def test_get_blend_and_blend_per_split_data_args_path(self):
 
         # Generate data args file
-        data_args_path = "/workspace/test_data/data_args.txt"
+        data_args_path = "/workspace/data_args.txt"
         with open(data_args_path, "w") as data_args_file:
             data_args_file.write(f"0.5 {DATA_PATH} 0.5 {DATA_PATH}")
         blend, blend_per_split = get_blend_and_blend_per_split(data_args_path=data_args_path)
@@ -85,7 +59,7 @@ class TestDataLoaders():
             "valid": [DATA_PATH],
             "test": [DATA_PATH],
         }
-        split_data_path = "/workspace/test_data/split_data.json"
+        split_data_path = "/workspace/split_data.json"
         with open(split_data_path, "w") as f:
             json.dump(split_data, f)
 

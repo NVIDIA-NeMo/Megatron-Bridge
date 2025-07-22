@@ -1,0 +1,132 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import subprocess
+import json
+import os
+
+from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
+
+from megatron.bridge.data.utils import (
+    pretrain_train_valid_test_datasets_provider,
+    finetuning_train_valid_test_datasets_provider,
+)
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
+from megatron.bridge.training.config import FinetuningDatasetConfig
+
+
+DATA_PATH = "/workspace/test_data/test_text_document"
+
+
+class TestDataUtils():
+    def test_data_prepropcesing(self):
+
+        # Generate .jsonl fine
+        sample = {"text": "111214 343 54365900 77"}
+        samples = [sample for i in range(1000)]
+        test_data_dir = "/workspace/test_data"
+        os.makedirs(test_data_dir, exist_ok=True)
+        test_data_jsonl = os.path.join(test_data_dir, "test.jsonl")
+        with open(test_data_jsonl, "w") as jsonl_data:
+            for sample in samples:
+                json.dump(sample, jsonl_data)
+                jsonl_data.write("\n")
+        
+        # Generate bin/idx files
+        subprocess.run(
+            [
+                "python", "/opt/megatron-lm/tools/preprocess_data.py",
+                "--input", test_data_jsonl,
+                "--output-prefix", os.path.join(test_data_dir, "test"),
+                "--tokenizer-type", "NullTokenizer",
+                "--vocab-size", "131072",
+                "--workers", "2",
+                "--log-interval", "1000",
+                "--append-eod",
+            ]
+        )
+
+    def test_pretrain_train_valid_test_datasets_provider(self):
+        
+        # Build tokenizer
+        tokenizer = build_tokenizer(
+            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+        )
+
+        # Configure dataset
+        dataset_config = GPTDatasetConfig(
+            random_seed=1234,
+            sequence_length=8192,
+            split="950,45,5",
+            tokenizer=tokenizer,
+            reset_position_ids=False,
+            reset_attention_mask=False,
+            eod_mask_loss=False,
+            blend=[[DATA_PATH, DATA_PATH], [0.3, 0.7]],
+        )
+
+        # Get datasets
+        train_ds, valid_ds, test_ds = pretrain_train_valid_test_datasets_provider(
+            train_val_test_num_samples=[1000, 100, 10],
+            dataset_config=dataset_config,
+        )
+
+        assert train_ds.weights == [0.3, 0.7]
+        assert (train_ds.size, valid_ds.size, test_ds.size) == (1000, 100, 10)
+
+    def test_finetuning_train_valid_test_datasets_provider(self):
+        
+        dataset_root = "/workspace/test_data/finetune"
+        os.makedirs(dataset_root, exist_ok=True)
+        os.system('cp /workspace/test_data/test.jsonl /workspace/test_data/finetune/training.jsonl')
+
+        # Configure dataset
+        dataset_config = FinetuningDatasetConfig(
+            dataset_root=dataset_root,
+            seq_length=8192,
+        )
+
+        # Build tokenizer
+        tokenizer = build_tokenizer(
+            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+        )
+
+        # Get datasets
+        train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
+            train_val_test_num_samples=[1000, 100, 10],
+            dataset_config=dataset_config,
+            tokenizer=tokenizer,
+        )
+
+        assert (valid_ds, test_ds) == (None, None)
+
+        # Generate validation and test data
+        os.system('cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/validation.jsonl')
+        os.system('cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/test.jsonl')
+
+        # Get datasets
+        train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
+            train_val_test_num_samples=[1000, 100, 10],
+            dataset_config=dataset_config,
+            tokenizer=tokenizer,
+        )
+
+        assert (valid_ds, test_ds) != (None, None)
+        assert train_ds.max_seq_length == 8192
