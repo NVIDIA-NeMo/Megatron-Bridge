@@ -30,38 +30,7 @@ permissions:
   contents: read
 
 jobs:
-  build-container:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@ko3n1g/feat/custom-image
-    with:
-      image-name: megatron-bridge-ci
-      dockerfile: docker/Dockerfile.ci
-      runner: linux-amd64-cpu16
-      has-azure-credentials: true
-    secrets:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-  fetch-credentials:
-    runs-on: ubuntu-latest
-    environment: nemo-ci
-    steps:
-      - name: Install Azure CLI
-        run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Fetch credentials
-        run: |
-          az acr credential show --name nemoci
-
   build-test-publish-wheel:
-    needs: build-container
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@ko3n1g/feat/custom-image
     with:
       dry-run: true
@@ -71,7 +40,8 @@ jobs:
       no-publish: ${{ !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/r')) }}
       has-src-dir: true
       skip-test-wheel: true
-      custom-container: ${{ needs.build-container.outputs.container-uri }}
+      custom-container: nvcr.io/nvidia/pytorch:25.05-py3
+      runner: linux-amd64-cpu16
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
