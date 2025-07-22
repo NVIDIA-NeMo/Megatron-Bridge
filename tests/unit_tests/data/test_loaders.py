@@ -29,7 +29,6 @@ class TestDataLoaders:
         assert blend_per_split == None
 
     def test_get_blend_and_blend_per_split_data_args_path(self):
-
         # Generate data args file
         data_args_path = "/workspace/data_args.txt"
         with open(data_args_path, "w") as data_args_file:
