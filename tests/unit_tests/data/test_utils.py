@@ -26,6 +26,7 @@ from megatron.bridge.training.config import FinetuningDatasetConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
+
 DATA_PATH = "/workspace/test_data/test_text_document"
 
 
