@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
 import json
 import os
+import subprocess
 
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 
@@ -22,11 +22,9 @@ from megatron.bridge.data.utils import (
     pretrain_train_valid_test_datasets_provider,
     finetuning_train_valid_test_datasets_provider,
 )
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.training.config import FinetuningDatasetConfig
-
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 DATA_PATH = "/workspace/test_data/test_text_document"
 
@@ -70,9 +68,7 @@ class TestDataUtils:
 
         # Build tokenizer
         tokenizer = build_tokenizer(
-            tokenizer_config=TokenizerConfig(
-                tokenizer_type="NullTokenizer", vocab_size=131072
-            ),
+            tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
             make_vocab_size_divisible_by=128,
             tensor_model_parallel_size=1,
         )
@@ -102,9 +98,7 @@ class TestDataUtils:
 
         dataset_root = "/workspace/test_data/finetune"
         os.makedirs(dataset_root, exist_ok=True)
-        os.system(
-            "cp /workspace/test_data/test.jsonl /workspace/test_data/finetune/training.jsonl"
-        )
+        os.system("cp /workspace/test_data/test.jsonl /workspace/test_data/finetune/training.jsonl")
 
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
@@ -131,12 +125,8 @@ class TestDataUtils:
         assert (valid_ds, test_ds) == (None, None)
 
         # Generate validation and test data
-        os.system(
-            "cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/validation.jsonl"
-        )
-        os.system(
-            "cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/test.jsonl"
-        )
+        os.system("cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/validation.jsonl")
+        os.system("cp /workspace/test_data/finetune/training.jsonl /workspace/test_data/finetune/test.jsonl")
 
         # Get datasets
         train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
