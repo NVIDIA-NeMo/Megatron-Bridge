@@ -63,6 +63,8 @@ class TestDataSamplers:
             drop_last=False,
         )
 
+        assert dataloader.num_workers == 0
+
     def test_build_pretraining_data_loader_cyclic(self):
         # Setup dataloader params
         cfg = pretrain_config()
