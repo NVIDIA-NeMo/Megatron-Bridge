@@ -23,6 +23,7 @@ from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
 from megatron.bridge.training.config import ConfigContainer
@@ -155,11 +156,6 @@ def calc_params_l2_norm(
         )
         norm_2 += sharded_norm_2
 
-    # Sum across all model-parallel GPUs (tensor + pipeline).
-    torch.distributed.all_reduce(
-        norm_2, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_model_parallel_group()
-    )
-
     # Add norm contribution from expert layers in MoEs.
     if len(moe_params_data) > 0:
         moe_norm, _ = multi_tensor_applier(
@@ -169,12 +165,29 @@ def calc_params_l2_norm(
             False,  # no per-parameter norm.
         )
         moe_norm_2 = moe_norm * moe_norm
-        # Sum across expert tensor, model and pipeline parallel GPUs.
-        torch.distributed.all_reduce(
-            moe_norm_2,
-            op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_expert_tensor_model_pipeline_parallel_group(),
-        )
+
+    # Account for MoE norm even if current rank doesn't have any expert params to prevent
+    # hang in models with un-even numbers of MoE layers.
+    # See details in https://gitlab-master.nvidia.com/ADLR/megatron-lm/-/issues/409
+    else:
+        moe_norm_2 = torch.zeros_like(norm_2)
+
+    # Reduce norm across model parallel groups (dense and expert).
+    # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
+    dense_reduce_group = parallel_state.get_model_parallel_group()
+    ranks_in_dense_reduce_group = torch.distributed.get_process_group_ranks(dense_reduce_group)
+    # Expert params should sum across all model-parallel GPUs (expert + tensor + pipeline).
+    expert_reduce_group = parallel_state.get_expert_tensor_model_pipeline_parallel_group()
+    ranks_in_expert_reduce_group = torch.distributed.get_process_group_ranks(expert_reduce_group)
+
+    # If dense and expert reduce groups are the same, sum then reduce.
+    if ranks_in_dense_reduce_group == ranks_in_expert_reduce_group:
+        norm_2 += moe_norm_2
+        torch.distributed.all_reduce(norm_2, op=torch.distributed.ReduceOp.SUM, group=dense_reduce_group)
+    # If dense and expert reduce groups are different, reduce then sum.
+    else:
+        torch.distributed.all_reduce(norm_2, op=torch.distributed.ReduceOp.SUM, group=dense_reduce_group)
+        torch.distributed.all_reduce(moe_norm_2, op=torch.distributed.ReduceOp.SUM, group=expert_reduce_group)
         norm_2 += moe_norm_2
 
     return norm_2.item() ** 0.5
@@ -429,13 +442,28 @@ def training_log(
             )
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
+        track_names = []
+        if config.model.moe_router_load_balancing_type in ("aux_loss", "seq_aux_loss"):
+            track_names.append("load_balancing_loss")
+        if config.model.moe_z_loss_coeff is not None:
+            track_names.append("z_loss")
         track_moe_metrics(
-            moe_loss_scale,
-            train_state.step,
-            tb_logger,
-            wandb_logger,
-            total_loss_dict,
-            config.model.moe_per_layer_logging,
+            loss_scale=moe_loss_scale,
+            iteration=train_state.step,
+            writer=tb_logger,
+            wandb_writer=wandb_logger,
+            total_loss_dict=total_loss_dict,
+            per_layer_logging=config.model.moe_per_layer_logging,
+            force_initialize=True,
+            track_names=track_names,
+            num_layers=config.model.num_layers,
+            moe_layer_freq=config.model.moe_layer_freq,
+            mtp_num_layers=config.model.mtp_num_layers,
+        )
+    if config.model.mtp_num_layers is not None:
+        mtp_loss_scale = 1 / get_num_microbatches()
+        MTPLossLoggingHelper.track_mtp_metrics(
+            mtp_loss_scale, train_state.step, tb_logger, wandb_logger, total_loss_dict
         )
 
     if train_state.step % logger_config.log_interval == 0:
