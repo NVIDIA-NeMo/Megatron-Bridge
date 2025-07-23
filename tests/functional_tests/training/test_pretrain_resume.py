@@ -106,7 +106,7 @@ class TestPretrainResume:
 
             # First training run - train for 10 iterations and save checkpoint
             cfg_first = ConfigContainer(
-                model=Llama3ModelProvider145M(),
+                model=Llama3ModelProvider145M(seq_length=seq_length),
                 train=TrainingConfig(
                     train_iters=checkpoint_iters,
                     eval_interval=5,
@@ -187,7 +187,7 @@ class TestPretrainResume:
 
             # Second training run - resume from checkpoint and train for remaining 10 iterations
             cfg_second = ConfigContainer(
-                model=Llama3ModelProvider145M(),
+                model=Llama3ModelProvider145M(seq_length=seq_length),
                 train=TrainingConfig(
                     train_iters=total_iters,
                     eval_interval=5,
