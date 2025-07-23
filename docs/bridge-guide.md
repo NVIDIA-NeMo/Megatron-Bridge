@@ -2,9 +2,9 @@
 
 Megatron Bridge provides seamless bidirectional conversion between HuggingFace Transformers and Megatron Core model formats. This guide covers the main APIs for loading models, checking compatibility, and converting between formats.
 
-## Automatically Loading a HuggingFace Model
+## Loading a HuggingFace Model into Megatron Implementation
 
-The easiest way to load a HuggingFace model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge. You can then initialize the model with `AutoBridge.to_megatron_model()`.
+The easiest way to load a HuggingFace model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge. You can then use `AutoBridge.to_megatron_model()` to initialize the Megatron model from the HuggingFace configuration and load HuggingFace weights.
 
 ### Basic Usage
 
@@ -14,7 +14,7 @@ from megatron.bridge import AutoBridge
 # Load any supported model automatically
 bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
 
-# Initialize Megatron model
+# Initialize Megatron model and load HF weights
 megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
 ```
 
