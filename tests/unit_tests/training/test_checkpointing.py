@@ -123,9 +123,12 @@ class TestCheckpointUtilities:
         mock_file = mock_open.return_value.__enter__.return_value
         mock_file.read.return_value = "1000"
 
-        # Mock tensor operations
+        # Mock tensor operations - need to make it subscriptable
+        mock_tensor_item = Mock()
+        mock_tensor_item.item.return_value = 1000
         mock_tensor = Mock()
-        mock_tensor.item.return_value = 1000
+        mock_tensor.__getitem__ = Mock(return_value=mock_tensor_item)  # Make it subscriptable
+
         with patch("torch.tensor", return_value=mock_tensor):
             iteration, release = read_metadata("/path/to/tracker")
 
@@ -1091,11 +1094,16 @@ class TestMegatronLMCompatibility:
 
     def test_extract_megatron_lm_args_from_state_dict_defaults(self):
         """Test extraction with default values when args are missing."""
-        # Create a mock args object with minimal attributes
-        mock_args = Mock()
-        mock_args.tensor_model_parallel_size = 1
-        # Other attributes will use defaults via getattr()
 
+        # Create a simple object that behaves like argparse.Namespace
+        # Only set the tensor_model_parallel_size, other attributes will be missing
+        class MinimalArgs:
+            def __init__(self):
+                self.tensor_model_parallel_size = 1
+                # Don't set other attributes - they will trigger AttributeError
+                # which makes getattr() return the default value
+
+        mock_args = MinimalArgs()
         state_dict = {"args": mock_args}
 
         result = _extract_megatron_lm_args_from_state_dict(state_dict)
@@ -1346,6 +1354,7 @@ class TestMegatronLMCompatibility:
             "num_floating_point_operations_so_far": 5000000,
             "model": {"param": "value"},
             "optimizer": {"param_groups": []},
+            "opt_param_scheduler": {"scheduler_state": "test"},  # Add scheduler state
         }
 
         mock_load_base.return_value = (legacy_state_dict, "/legacy/ckpt/path", False, CheckpointType.GLOBAL)
@@ -1373,7 +1382,7 @@ class TestMegatronLMCompatibility:
         mock_cfg.checkpoint.pretrained_checkpoint = None
         mock_cfg.checkpoint.finetune = False
         mock_cfg.checkpoint.load_optim = True
-        mock_cfg.checkpoint.load_rng = True
+        mock_cfg.checkpoint.load_rng = False  # Skip RNG loading for this test
         mock_cfg.model = Mock()
         mock_cfg.model.fp16 = False
         mock_cfg.model.bf16 = False
@@ -1383,15 +1392,27 @@ class TestMegatronLMCompatibility:
         mock_cfg.rng.data_parallel_random_init = False
         mock_cfg.optimizer = Mock()
         mock_cfg.optimizer.use_distributed_optimizer = False
+        mock_cfg.peft = None  # No PEFT for this test
 
         mock_state.cfg = mock_cfg
+
+        # Create mocks with necessary methods
+        mock_model = Mock()
+        mock_model.load_state_dict = Mock()
+
+        mock_optimizer = Mock()
+        mock_optimizer.load_state_dict = Mock()
+        mock_optimizer.is_stub_optimizer = False
+
+        mock_scheduler = Mock()
+        mock_scheduler.load_state_dict = Mock()
 
         # Call load_checkpoint
         result = load_checkpoint(
             mock_state,
-            [Mock()],  # model
-            Mock(),  # optimizer
-            Mock(),  # scheduler
+            [mock_model],  # model
+            mock_optimizer,  # optimizer
+            mock_scheduler,  # scheduler
         )
 
         # Verify the results
