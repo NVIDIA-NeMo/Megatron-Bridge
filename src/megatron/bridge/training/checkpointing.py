@@ -25,7 +25,7 @@ from functools import lru_cache
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -42,7 +42,9 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelSaveStrategyWrapper,
 )
 from megatron.core.num_microbatches_calculator import update_num_microbatches
+from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
+from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
@@ -395,8 +397,8 @@ class CheckpointType(Enum):
 
 def save_checkpoint(
     state: GlobalState,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     num_floating_point_operations_so_far: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -764,8 +766,8 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
 
 def generate_state_dict(
     cfg: ConfigContainer,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     rng_state: ShardedObject,
     iteration: Optional[int] = None,
@@ -819,8 +821,8 @@ def generate_state_dict(
 
 def load_checkpoint(
     state: GlobalState,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -870,8 +872,8 @@ def load_checkpoint(
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
