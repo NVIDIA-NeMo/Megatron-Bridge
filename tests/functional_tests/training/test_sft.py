@@ -41,7 +41,6 @@ from tests.functional_tests.utils import broadcast_path, initialize_distributed
 @dataclass
 class Llama3ModelProvider145M(Llama3ModelProvider):
     rotary_base: int = 500_000
-    seq_length: int = 8192
     num_layers: int = 2
     hidden_size: int = 768
     ffn_hidden_size: int = 2688
@@ -133,7 +132,7 @@ class TestSupervisedFinetuning:
     ):
         """Create training configuration with customizable parameters."""
         return ConfigContainer(
-            model=Llama3ModelProvider145M(),
+            model=Llama3ModelProvider145M(seq_length=seq_length),
             train=TrainingConfig(
                 train_iters=train_iters,
                 eval_interval=5,
