@@ -19,11 +19,8 @@ from typing import TYPE_CHECKING, Any, Generic, Iterable, Literal, Type, TypeVar
 
 import torch.distributed
 import transformers
-import yaml
-from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
-from megatron.core.utils import get_model_config
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
@@ -418,124 +415,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
     def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
         raise NotImplementedError
-
-    @overload
-    def save_megatron_model(self, model: list[MegatronModelT], path: str | Path) -> None: ...
-
-    def save_megatron_model(self, model, path: str | Path, ckpt_format: str = "torch_dist") -> None:
-        """
-        Save a Megatron model in native Megatron checkpoint format without optimizer
-        state.
-
-        This method saves the model in Megatron's native checkpoint format, which
-        can be loaded directly by Megatron for training or inference. The checkpoint
-        includes the model configuration and weights, NO optimizer state or other
-        artifacts.
-
-        Args:
-            model: Megatron model instance or list of instances
-            path: Directory path where the checkpoint will be saved
-            ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats)
-
-        Example:
-            >>> # Save model checkpoint after conversion
-            >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
-
-        Note:
-            - This method is collective and must be called by all ranks
-            - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
-            - The checkpoint format follows Megatron's standard structure for compatibility
-        """
-        try:
-            from megatron.hub.training.checkpointing import save_checkpoint
-            from megatron.hub.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
-            from megatron.hub.training.state import GlobalState
-        except ImportError:
-            raise ImportError("megatron.hub.training is not installed.")
-        # Get model config from the first model instance
-        model_config = get_model_config(model[0])
-
-        # Create global state for checkpointing
-        state = GlobalState()
-        state.cfg = ConfigContainer(
-            model=model_config,
-            train=None,
-            optimizer=OptimizerConfig(use_distributed_optimizer=False),
-            ddp=None,
-            scheduler=None,
-            dataset=None,
-            logger=LoggerConfig(),
-            tokenizer=None,
-            checkpoint=CheckpointConfig(async_save=False, save=str(path), save_optim=False, ckpt_format=ckpt_format),
-            dist=None,
-        )
-
-        # Save the checkpoint
-        save_checkpoint(
-            state=state,
-            model=model,
-            optimizer=None,
-            opt_param_scheduler=None,
-            num_floating_point_operations_so_far=0,
-        )
-
-    def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
-        """
-        Load a Megatron model from a native Megatron checkpoint.
-
-        This method loads a model from a Megatron checkpoint that was saved using
-        the save_megatron_model method. It reads the checkpoint configuration,
-        creates the appropriate model provider, and loads the weights.
-
-        Args:
-            path: Directory path where the Megatron checkpoint is stored
-            **kwargs: Additional arguments passed to the model provider
-
-        Returns:
-            List of Megatron model instances loaded from the checkpoint
-
-        Example:
-            >>> # Load a previously saved Megatron model
-            >>> bridge = CausalLMBridge.from_hf_config(config)
-            >>> model = bridge.load_megatron_model("./megatron_checkpoint")
-
-            >>> # Load and specify model configuration
-            >>> model = bridge.load_megatron_model(
-            ...     "./megatron_checkpoint",
-            ...     wrap_with_ddp=False
-            ... )
-
-        Note:
-            - This method is collective and must be called by all ranks
-            - The checkpoint must have been saved with save_megatron_model
-            - The model architecture must match the bridge configuration
-        """
-        try:
-            from megatron.hub.core.utils.instantiate_utils import instantiate
-            from megatron.hub.training.converters.common import load_mcore_model
-        except ImportError:
-            raise ImportError("megatron.hub.training is not installed.")
-
-        checkpoint_path = Path(path) / "iter_0000000"
-        config_file = checkpoint_path / "run_config.yaml"
-
-        if not config_file.exists():
-            raise FileNotFoundError(f"Checkpoint config file {config_file} does not exist")
-
-        # Load the configuration
-        with open(config_file, "r") as stream:
-            config = yaml.safe_load(stream)
-
-        model_config = config["model"]
-        model_config = instantiate(model_config)
-
-        # Load the state dict
-        model = load_mcore_model(
-            checkpoint_path,
-            model_cfg=model_config,
-            use_cpu_init=True,
-        )
-        return model if isinstance(model, list) else [model]
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
