@@ -57,6 +57,13 @@ def get_world_size_safe() -> int:
         return int(os.getenv("WORLD_SIZE", "1"))
 
 
+def get_last_rank() -> int:
+    """Get the last rank in the distributed group"""
+    if not torch.distributed.is_initialized():
+        return 0
+    return torch.distributed.get_world_size() - 1
+
+
 def get_local_rank_preinit() -> int:
     """Get the local rank from the environment variable, intended for use before full init.
 

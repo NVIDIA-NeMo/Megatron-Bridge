@@ -27,10 +27,10 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from nemo.utils.get_rank import get_last_rank
 from transformers import AutoTokenizer
 
 from megatron.bridge import CausalLMBridge
+from megatron.bridge.utils.common_utils import get_last_rank
 
 
 class SingleBatchIterator:

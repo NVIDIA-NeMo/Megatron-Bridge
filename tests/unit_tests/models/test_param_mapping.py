@@ -26,10 +26,8 @@ from megatron.bridge.models.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
     TPAwareMapping,
-    merge_gated_mlp_weights,
     merge_qkv_biases,
     merge_qkv_weights,
-    split_gated_mlp_weights,
     split_qkv_biases,
     split_qkv_weights,
 )
@@ -257,17 +255,6 @@ class TestHelperFunctions:
         assert torch.equal(q, q_s)
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
-
-    def test_gated_mlp_merge_split(self, transformer_config):
-        gate = torch.randn(64, 32)
-        up = torch.randn(64, 32)
-
-        merged = merge_gated_mlp_weights(transformer_config, gate, up)
-        assert merged.shape == (128, 32)
-
-        gate_s, up_s = split_gated_mlp_weights(transformer_config, merged)
-        assert torch.equal(gate, gate_s)
-        assert torch.equal(up, up_s)
 
 
 class TestQKVMapping:

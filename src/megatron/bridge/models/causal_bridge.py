@@ -413,6 +413,12 @@ class CausalLMBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
 
+    def save_megatron_model(self, model, path: str | Path, ckpt_format: str = "torch_dist") -> None:
+        raise NotImplementedError
+
+    def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
+        raise NotImplementedError
+
     @overload
     def save_megatron_model(self, model: list[MegatronModelT], path: str | Path) -> None: ...
 
