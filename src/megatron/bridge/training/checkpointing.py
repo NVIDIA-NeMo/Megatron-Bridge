@@ -841,6 +841,75 @@ def generate_state_dict(
     return state_dict
 
 
+def load_model_for_inference(
+    load_dir: str, ckpt_cfg: CheckpointConfig, model: list[MegatronModule], strict: bool = True
+):
+    """Load model weights for inference."""  # TODO: make docstring better
+    # TODO: i don't think we even need this, user can provide path to specific ckpt, rather than load_dir
+    tracker_filename = get_checkpoint_train_state_filename(load_dir)
+    if os.path.isfile(tracker_filename):
+        train_state = read_train_state(tracker_filename)
+        iteration = train_state.step
+    # TODO: if that fails, try MLM tracker file to support MLM checkpoints
+    else:
+        raise RuntimeError("No iteration tracker found in checkpoint dir.")
+
+    state_dict, _, _, _ = _load_global_dist_base_checkpoint(
+        load_dir, ckpt_cfg, rank0=True, sharded_state_dict=None, iteration=iteration, release=False
+    )
+
+    assert state_dict is not None
+
+    # get ckpt_tp_pp from ckpt ?
+    # RNG state does not need to be loaded
+
+    sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
+    print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
+
+    # optimizer state does not need to be loaded
+    # rerun state does not need to be loaded
+
+    optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
+    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
+
+    # TODO: restore modelopt state, hide_loss_modules()
+
+    model = unwrap_model(model)
+    sharded_state_dict = generate_state_dict(
+        ckpt_cfg,
+        model,
+        optimizer=None,
+        opt_param_scheduler=None,
+        rng_state=None,
+        optim_sd_kwargs=optim_sd_kwargs,
+        model_sd_kwargs=model_sd_kwargs,
+    )
+
+    state_dict, _, _, _ = _load_global_dist_base_checkpoint(
+        load_dir, ckpt_cfg, rank0=False, sharded_state_dict=sharded_state_dict, iteration=iteration, release=False
+    )
+
+    # train state does not need to be loaded
+    # microbatch calc does not need to be updated ?
+
+    if len(model) == 1:
+        load_model_state_dict(model[0], state_dict["model"], strict)
+    else:
+        for i in range(len(model)):
+            # If there is no corresponding model in the state_dict, it will be ignored.
+            # It means that this is an empty stage.
+            model_key = "model%d" % i
+            if model_key not in state_dict:
+                continue
+            load_model_state_dict(model[i], state_dict[model_key], strict)
+
+    # optimizer state does not need to be loaded
+    # rerun state does not need to be loaded
+    # RNG state does not need to be loaded
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
 def load_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
