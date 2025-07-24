@@ -666,7 +666,6 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         return {str(self.hf_param): merged}
 
 
-
 class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
     """Mapping for weights that are **fully replicated** across TP ranks.
 
@@ -1170,7 +1169,6 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
             # Concatenate gate and up to get the full tensor
             fused_mlp = torch.cat([full_gate, full_up], dim=0)
-
 
         # Split the concatenated tensor in half along dim 0
         # This works for both bias (1D) and weight (2D) tensors

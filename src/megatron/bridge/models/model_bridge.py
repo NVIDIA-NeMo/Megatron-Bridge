@@ -17,14 +17,12 @@ import abc
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from enum import Enum
 from typing import (
     Callable,
     Dict,
     Generic,
     Iterable,
     List,
-    Literal,
     Mapping,
     NamedTuple,
     Optional,
@@ -46,6 +44,7 @@ from megatron.bridge.models.model_provider import ModelProviderProtocol
 from megatron.bridge.models.param_mapping import MegatronParamMapping
 from megatron.bridge.models.utils import get_transformer_layer_offset
 from megatron.bridge.utils.common_utils import unwrap_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -511,14 +510,18 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             TextColumn("{task.fields[bridge]}"),
             disable=not (is_main_rank and show_progress),
         ) as progress:
-            task_id = progress.add_task("Converting to HuggingFace", total=len(megatron_to_hf_plans), bridge=bridge_name)
+            task_id = progress.add_task(
+                "Converting to HuggingFace", total=len(megatron_to_hf_plans), bridge=bridge_name
+            )
 
             for task in megatron_to_hf_plans:
                 # Owns param? fetch weight & module; otherwise None (bridge will broadcast)
                 local_weight = None
                 local_module = None
                 if task.pp_rank == mpu.get_pipeline_model_parallel_rank():
-                    local_module, local_weight = self._get_param_and_module_from_vp(megatron_model, task.vp_stage, task.param_name)
+                    local_module, local_weight = self._get_param_and_module_from_vp(
+                        megatron_model, task.vp_stage, task.param_name
+                    )
 
                 kv_pairs = task.megatron_to_hf(local_weight, local_module)
 
@@ -773,9 +776,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         model_config = unwrap_model(megatron_model)[0].config
         pp_rank = mpu.get_pipeline_model_parallel_rank()
         for vp_stage, model in enumerate(megatron_model):
-            layer_offset = get_transformer_layer_offset(
-                model_config, pipeline_rank=pp_rank, vp_stage=vp_stage
-            )
+            layer_offset = get_transformer_layer_offset(model_config, pipeline_rank=pp_rank, vp_stage=vp_stage)
             for local_name, _ in model.named_parameters():
                 if "_extra_state" in local_name:
                     continue

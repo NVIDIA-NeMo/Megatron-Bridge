@@ -15,7 +15,7 @@
 import dataclasses
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, Literal, Type, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Iterable, Type, TypeVar, overload
 
 import torch.distributed
 import transformers
