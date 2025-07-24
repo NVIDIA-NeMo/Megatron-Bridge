@@ -1199,89 +1199,6 @@ class TestMegatronLMCompatibility:
             mock_extract_args.assert_called_once_with(state_dict)
             mock_read_config.assert_not_called()
 
-    def test_legacy_train_state_creation(self):
-        """Test creating TrainState from legacy Megatron-LM checkpoint data."""
-        # Mock checkpoint args object
-        mock_args = Mock()
-        mock_args.consumed_train_samples = 50000
-        mock_args.skipped_train_samples = 100
-        mock_args.consumed_valid_samples = 5000
-
-        state_dict = {
-            "iteration": 1000,
-            "args": mock_args,
-            "num_floating_point_operations_so_far": 2500000,
-        }
-
-        # Simulate the legacy train state creation logic
-        from megatron.bridge.training.state import TrainState
-
-        legacy_train_state = TrainState()
-        legacy_train_state.step = state_dict.get("iteration", 0)
-
-        # Extract training progress from checkpoint args
-        checkpoint_args = state_dict.get("args", None)
-        if checkpoint_args is not None:
-            legacy_train_state.consumed_train_samples = getattr(checkpoint_args, "consumed_train_samples", 0)
-            legacy_train_state.skipped_train_samples = getattr(checkpoint_args, "skipped_train_samples", 0)
-            legacy_train_state.consumed_valid_samples = getattr(checkpoint_args, "consumed_valid_samples", 0)
-        else:
-            legacy_train_state.consumed_train_samples = 0
-            legacy_train_state.skipped_train_samples = 0
-            legacy_train_state.consumed_valid_samples = 0
-
-        # Extract floating point operations count
-        legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
-        legacy_train_state.do_train = True
-        legacy_train_state.do_valid = True
-        legacy_train_state.do_test = True
-
-        # Verify the state was created correctly
-        assert legacy_train_state.step == 1000
-        assert legacy_train_state.consumed_train_samples == 50000
-        assert legacy_train_state.skipped_train_samples == 100
-        assert legacy_train_state.consumed_valid_samples == 5000
-        assert legacy_train_state.floating_point_operations_so_far == 2500000
-        assert legacy_train_state.do_train is True
-        assert legacy_train_state.do_valid is True
-        assert legacy_train_state.do_test is True
-
-    def test_legacy_train_state_creation_no_args(self):
-        """Test creating TrainState when args are missing from legacy checkpoint."""
-        state_dict = {
-            "iteration": 1000,
-            "num_floating_point_operations_so_far": 2500000,
-            # No 'args' key
-        }
-
-        # Simulate the legacy train state creation logic
-        from megatron.bridge.training.state import TrainState
-
-        legacy_train_state = TrainState()
-        legacy_train_state.step = state_dict.get("iteration", 0)
-
-        # Extract training progress from checkpoint args
-        checkpoint_args = state_dict.get("args", None)
-        if checkpoint_args is not None:
-            legacy_train_state.consumed_train_samples = getattr(checkpoint_args, "consumed_train_samples", 0)
-            legacy_train_state.skipped_train_samples = getattr(checkpoint_args, "skipped_train_samples", 0)
-            legacy_train_state.consumed_valid_samples = getattr(checkpoint_args, "consumed_valid_samples", 0)
-        else:
-            # Fallback if args not found
-            legacy_train_state.consumed_train_samples = 0
-            legacy_train_state.skipped_train_samples = 0
-            legacy_train_state.consumed_valid_samples = 0
-
-        # Extract floating point operations count
-        legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
-
-        # Verify fallback values were used
-        assert legacy_train_state.step == 1000
-        assert legacy_train_state.consumed_train_samples == 0  # fallback
-        assert legacy_train_state.skipped_train_samples == 0  # fallback
-        assert legacy_train_state.consumed_valid_samples == 0  # fallback
-        assert legacy_train_state.floating_point_operations_so_far == 2500000
-
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
@@ -1433,3 +1350,239 @@ class TestMegatronLMCompatibility:
 
         # Verify checkpoint version was set
         mock_set_version.assert_called_with(3.0)
+
+
+class TestGetTrainStateFromStateDict:
+    """Test _get_train_state_from_state_dict function."""
+
+    def test_get_train_state_complete_state_dict(self):
+        """Test creating TrainState from a complete state_dict."""
+        # Create a mock args object
+        mock_args = Mock()
+        mock_args.consumed_train_samples = 150000
+        mock_args.skipped_train_samples = 250
+        mock_args.consumed_valid_samples = 12000
+
+        state_dict = {
+            "iteration": 3000,
+            "args": mock_args,
+            "num_floating_point_operations_so_far": 7500000,
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Verify all fields are set correctly
+        assert result.step == 3000
+        assert result.consumed_train_samples == 150000
+        assert result.skipped_train_samples == 250
+        assert result.consumed_valid_samples == 12000
+        assert result.floating_point_operations_so_far == 7500000
+        assert result.do_train is True
+        assert result.do_valid is True
+        assert result.do_test is True
+
+    def test_get_train_state_missing_iteration(self):
+        """Test creating TrainState when iteration is missing."""
+        mock_args = Mock()
+        mock_args.consumed_train_samples = 100000
+        mock_args.skipped_train_samples = 50
+        mock_args.consumed_valid_samples = 8000
+
+        state_dict = {
+            "args": mock_args,
+            "num_floating_point_operations_so_far": 5000000,
+            # No 'iteration' key
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should use default value of 0 for missing iteration
+        assert result.step == 0
+        assert result.consumed_train_samples == 100000
+        assert result.skipped_train_samples == 50
+        assert result.consumed_valid_samples == 8000
+        assert result.floating_point_operations_so_far == 5000000
+
+    def test_get_train_state_missing_args(self):
+        """Test creating TrainState when args is missing."""
+        state_dict = {
+            "iteration": 2000,
+            "num_floating_point_operations_so_far": 4000000,
+            # No 'args' key
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should use fallback default values for sample counts
+        assert result.step == 2000
+        assert result.consumed_train_samples == 0  # fallback
+        assert result.skipped_train_samples == 0  # fallback
+        assert result.consumed_valid_samples == 0  # fallback
+        assert result.floating_point_operations_so_far == 4000000
+
+    def test_get_train_state_missing_flops(self):
+        """Test creating TrainState when floating point operations count is missing."""
+        mock_args = Mock()
+        mock_args.consumed_train_samples = 75000
+        mock_args.skipped_train_samples = 30
+        mock_args.consumed_valid_samples = 6000
+
+        state_dict = {
+            "iteration": 1500,
+            "args": mock_args,
+            # No 'num_floating_point_operations_so_far' key
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should use default value of 0 for missing FLOPS
+        assert result.step == 1500
+        assert result.consumed_train_samples == 75000
+        assert result.skipped_train_samples == 30
+        assert result.consumed_valid_samples == 6000
+        assert result.floating_point_operations_so_far == 0  # default
+
+    def test_get_train_state_partial_args(self):
+        """Test creating TrainState when args has only some attributes."""
+
+        # Create args object with only some attributes set
+        class PartialArgs:
+            def __init__(self):
+                self.consumed_train_samples = 200000
+                # Don't set skipped_train_samples or consumed_valid_samples
+                # getattr() will return default values
+
+        partial_args = PartialArgs()
+
+        state_dict = {
+            "iteration": 4000,
+            "args": partial_args,
+            "num_floating_point_operations_so_far": 9000000,
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should use available attribute and defaults for missing ones
+        assert result.step == 4000
+        assert result.consumed_train_samples == 200000  # from args
+        assert result.skipped_train_samples == 0  # default from getattr
+        assert result.consumed_valid_samples == 0  # default from getattr
+        assert result.floating_point_operations_so_far == 9000000
+
+    def test_get_train_state_empty_state_dict(self):
+        """Test creating TrainState from an empty state_dict."""
+        state_dict = {}
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should use all default values
+        assert result.step == 0
+        assert result.consumed_train_samples == 0
+        assert result.skipped_train_samples == 0
+        assert result.consumed_valid_samples == 0
+        assert result.floating_point_operations_so_far == 0
+        assert result.do_train is True
+        assert result.do_valid is True
+        assert result.do_test is True
+
+    def test_get_train_state_args_none(self):
+        """Test creating TrainState when args is explicitly None."""
+        state_dict = {
+            "iteration": 500,
+            "args": None,
+            "num_floating_point_operations_so_far": 1000000,
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should trigger the fallback branch (args is None)
+        assert result.step == 500
+        assert result.consumed_train_samples == 0  # fallback
+        assert result.skipped_train_samples == 0  # fallback
+        assert result.consumed_valid_samples == 0  # fallback
+        assert result.floating_point_operations_so_far == 1000000
+
+    def test_get_train_state_large_values(self):
+        """Test creating TrainState with large numerical values."""
+        mock_args = Mock()
+        mock_args.consumed_train_samples = 999999999
+        mock_args.skipped_train_samples = 1000000
+        mock_args.consumed_valid_samples = 50000000
+
+        state_dict = {
+            "iteration": 100000,
+            "args": mock_args,
+            "num_floating_point_operations_so_far": 999999999999,
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should handle large values correctly
+        assert result.step == 100000
+        assert result.consumed_train_samples == 999999999
+        assert result.skipped_train_samples == 1000000
+        assert result.consumed_valid_samples == 50000000
+        assert result.floating_point_operations_so_far == 999999999999
+
+    def test_get_train_state_zero_values(self):
+        """Test creating TrainState with zero values."""
+        mock_args = Mock()
+        mock_args.consumed_train_samples = 0
+        mock_args.skipped_train_samples = 0
+        mock_args.consumed_valid_samples = 0
+
+        state_dict = {
+            "iteration": 0,
+            "args": mock_args,
+            "num_floating_point_operations_so_far": 0,
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Should handle zero values correctly
+        assert result.step == 0
+        assert result.consumed_train_samples == 0
+        assert result.skipped_train_samples == 0
+        assert result.consumed_valid_samples == 0
+        assert result.floating_point_operations_so_far == 0
+        # Boolean flags should still be True
+        assert result.do_train is True
+        assert result.do_valid is True
+        assert result.do_test is True
+
+    def test_get_train_state_boolean_flags_always_true(self):
+        """Test that boolean flags are always set to True regardless of input."""
+        # Even with different inputs, the boolean flags should always be True
+        state_dict = {
+            "iteration": 1000,
+            "do_train": False,  # This should be ignored
+            "do_valid": False,  # This should be ignored
+            "do_test": False,  # This should be ignored
+        }
+
+        from megatron.bridge.training.checkpointing import _get_train_state_from_state_dict
+
+        result = _get_train_state_from_state_dict(state_dict)
+
+        # Boolean flags should always be True (hardcoded in the function)
+        assert result.do_train is True
+        assert result.do_valid is True
+        assert result.do_test is True

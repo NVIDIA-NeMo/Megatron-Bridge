@@ -1276,28 +1276,8 @@ def _load_checkpoint_from_path(
             state.train_state = read_train_state(train_state_filename)
         else:
             # Legacy Megatron-LM checkpoint - create TrainState from checkpoint iteration
-            print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint iteration")
-            legacy_train_state = TrainState()
-            legacy_train_state.step = state_dict.get("iteration", 0)
-
-            # Extract training progress from checkpoint args (like Megatron-LM does)
-            checkpoint_args = state_dict.get("args", None)
-            if checkpoint_args is not None:
-                legacy_train_state.consumed_train_samples = getattr(checkpoint_args, "consumed_train_samples", 0)
-                legacy_train_state.skipped_train_samples = getattr(checkpoint_args, "skipped_train_samples", 0)
-                legacy_train_state.consumed_valid_samples = getattr(checkpoint_args, "consumed_valid_samples", 0)
-            else:
-                # Fallback if args not found
-                legacy_train_state.consumed_train_samples = 0
-                legacy_train_state.skipped_train_samples = 0
-                legacy_train_state.consumed_valid_samples = 0
-
-            # Extract floating point operations count from state_dict (like Megatron-LM does)
-            legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
-            legacy_train_state.do_train = True
-            legacy_train_state.do_valid = True
-            legacy_train_state.do_test = True
-            state.train_state = legacy_train_state
+            print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint state dict")
+            state.train_state = _get_train_state_from_state_dict(state_dict)
 
     # Set iteration.
     if cfg.checkpoint.finetune or release:
@@ -1810,3 +1790,28 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, ckpt_ful
         else:
             metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
     return metadata
+
+
+def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
+    """Create a TrainState from the state dict from a Megatron-LM checkpoint."""
+    legacy_train_state = TrainState()
+    legacy_train_state.step = state_dict.get("iteration", 0)
+
+    # Extract training progress from checkpoint args (like Megatron-LM does)
+    checkpoint_args = state_dict.get("args", None)
+    if checkpoint_args is not None:
+        legacy_train_state.consumed_train_samples = getattr(checkpoint_args, "consumed_train_samples", 0)
+        legacy_train_state.skipped_train_samples = getattr(checkpoint_args, "skipped_train_samples", 0)
+        legacy_train_state.consumed_valid_samples = getattr(checkpoint_args, "consumed_valid_samples", 0)
+    else:
+        # Fallback if args not found
+        legacy_train_state.consumed_train_samples = 0
+        legacy_train_state.skipped_train_samples = 0
+        legacy_train_state.consumed_valid_samples = 0
+
+    # Extract floating point operations count from state_dict (like Megatron-LM does)
+    legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
+    legacy_train_state.do_train = True
+    legacy_train_state.do_valid = True
+    legacy_train_state.do_test = True
+    return legacy_train_state
