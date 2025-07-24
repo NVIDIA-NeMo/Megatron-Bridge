@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import shutil
 
 import pytest
 import torch
@@ -33,40 +32,18 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from tests.functional_tests.utils import broadcast_path, initialize_distributed
+from tests.functional_tests.utils import (
+    broadcast_path,
+    clear_directories,
+    initialize_distributed,
+    verify_checkpoint_files,
+)
 
 
 class TestPretrain:
     """
     Test end to end training with checkpoint functionality.
     """
-
-    def clear_directories(self, tmp_path):
-        """Teardown method called after each test method."""
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-            if torch.distributed.get_rank() == 0:
-                if os.path.exists(tmp_path):
-                    shutil.rmtree(tmp_path)
-            torch.distributed.barrier()
-
-    def _verify_checkpoint_files(self, checkpoint_dir, total_iters):
-        """Verify that checkpoint files were created correctly."""
-        if torch.distributed.get_rank() == 0:
-            latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
-            assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
-
-            final_iter_dir = os.path.join(checkpoint_dir, f"iter_{total_iters:07d}")
-            assert os.path.exists(final_iter_dir), f"Final checkpoint directory not found at {final_iter_dir}"
-
-            metadata_file = os.path.join(final_iter_dir, ".metadata")
-            assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
-
-            distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
-            num_expected_files = 2 * torch.distributed.get_world_size()
-            assert len(distcp_files) == num_expected_files, (
-                f"Expected {num_expected_files} .distcp files, found {len(distcp_files)}: {distcp_files}"
-            )
 
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_with_checkpoint(self, tmp_path):
@@ -179,12 +156,12 @@ class TestPretrain:
 
             # Verify checkpoint files
             torch.distributed.barrier()
-            self._verify_checkpoint_files(checkpoint_dir, total_iters)
+            verify_checkpoint_files(checkpoint_dir, total_iters)
 
         finally:
             # pytest's tmp_path fixture doesn't clean up immediately.
             # Clean up manually.
-            self.clear_directories(tmp_path)
+            clear_directories(tmp_path)
 
     @pytest.mark.run_only_on("GPU")
     def test_pretrain_vpp(self, tmp_path):
@@ -317,9 +294,9 @@ class TestPretrain:
 
             # Verify checkpoint files
             torch.distributed.barrier()
-            self._verify_checkpoint_files(checkpoint_dir, total_iters)
+            verify_checkpoint_files(checkpoint_dir, total_iters)
 
         finally:
             # pytest's tmp_path fixture doesn't clean up immediately.
             # Clean up manually.
-            self.clear_directories(tmp_path)
+            clear_directories(tmp_path)
