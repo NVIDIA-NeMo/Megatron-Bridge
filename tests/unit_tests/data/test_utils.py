@@ -27,7 +27,7 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
-DATA_PATH = "test_text_document"
+DATA_PATH = "/home/data/datasets/train/test_text_document"
 
 
 class TestDataUtils:
@@ -38,7 +38,7 @@ class TestDataUtils:
         # test_data_dir = "/workspace/test_data"
         # os.makedirs(test_data_dir, exist_ok=True)
         # test_data_jsonl = os.path.join(test_data_dir, "test.jsonl")
-        with open("test.jsonl", "w") as jsonl_data:
+        with open("/home/data/datasets/train/test.jsonl", "w") as jsonl_data:
             for sample in samples:
                 json.dump(sample, jsonl_data)
                 jsonl_data.write("\n")
@@ -49,15 +49,15 @@ class TestDataUtils:
                 "python",
                 "/opt/megatron-lm/tools/preprocess_data.py",
                 "--input",
-                "test.jsonl",
+                "/home/data/datasets/train/test.jsonl",
                 "--output-prefix",
-                "test",
+                "/home/data/datasets/train/test",
                 "--tokenizer-type",
                 "NullTokenizer",
                 "--vocab-size",
                 "131072",
                 "--workers",
-                "1",
+                "2",
                 "--log-interval",
                 "1000",
                 "--append-eod",
@@ -94,13 +94,9 @@ class TestDataUtils:
         assert (train_ds.size, valid_ds.size, test_ds.size) == (1000, 100, 10)
 
     def test_finetuning_train_valid_test_datasets_provider(self):
-        dataset_root = "finetune"
-        os.makedirs(dataset_root, exist_ok=True)
-        os.system("cp test.jsonl finetune/training.jsonl")
-
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root=dataset_root,
+            dataset_root="/home/data/datasets/finetune_train",
             seq_length=8192,
         )
 
@@ -120,9 +116,11 @@ class TestDataUtils:
 
         assert (valid_ds, test_ds) == (None, None)
 
-        # Generate validation and test data
-        os.system("cp finetune/training.jsonl finetune/validation.jsonl")
-        os.system("cp finetune/training.jsonl finetune/test.jsonl")
+        # Configure dataset
+        dataset_config = FinetuningDatasetConfig(
+            dataset_root="/home/data/datasets/finetune",
+            seq_length=8192,
+        )
 
         # Get datasets
         train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
