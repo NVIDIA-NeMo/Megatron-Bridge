@@ -14,13 +14,14 @@
 
 import os
 import shutil
+from dataclasses import dataclass
 
 import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
-from megatron.bridge.models.llama import Llama32ModelProvider1B
+from megatron.bridge.models.llama import Llama3ModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -36,7 +37,17 @@ from megatron.bridge.training.pretrain import pretrain
 from tests.functional_tests.utils import broadcast_path, initialize_distributed
 
 
-class TestPretrain:
+@dataclass
+class Llama3ModelProvider145M(Llama3ModelProvider):
+    rotary_base: int = 500_000
+    seq_length: int = 8192
+    num_layers: int = 2
+    hidden_size: int = 768
+    ffn_hidden_size: int = 2688
+    num_attention_heads: int = 16
+
+
+class TestPretrainResume:
     """
     Test end to end training with checkpoint functionality.
     """
@@ -69,10 +80,11 @@ class TestPretrain:
             )
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_checkpoint(self, tmp_path):
+    def test_pretrain_save_load(self, tmp_path):
         """
-        Test end to end training with checkpoint functionality.
+        Test end to end training with checkpoint saving and resuming functionality.
         """
+
         initialize_distributed()
         shared_base_dir = broadcast_path(tmp_path)
 
@@ -89,26 +101,15 @@ class TestPretrain:
             global_batch_size = 8
             micro_batch_size = 1
             seq_length = 512
-            total_iters = 100
+            total_iters = 20
+            checkpoint_iters = 10
 
-            model_cfg = Llama32ModelProvider1B(
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                sequence_parallel=False,
-                attention_softmax_in_fp32=True,
-                pipeline_dtype=torch.bfloat16,
-                bf16=True,
-                seq_length=seq_length,
-                make_vocab_size_divisible_by=128,
-            )
-
-            # Config Container
-            cfg = ConfigContainer(
-                model=model_cfg,
+            # First training run - train for 10 iterations and save checkpoint
+            cfg_first = ConfigContainer(
+                model=Llama3ModelProvider145M(seq_length=seq_length),
                 train=TrainingConfig(
-                    train_iters=total_iters,
-                    eval_interval=50,
+                    train_iters=checkpoint_iters,
+                    eval_interval=5,
                     eval_iters=2,
                     global_batch_size=global_batch_size,
                     micro_batch_size=micro_batch_size,
@@ -165,7 +166,7 @@ class TestPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
-                    save_interval=40,
+                    save_interval=checkpoint_iters,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
@@ -174,105 +175,40 @@ class TestPretrain:
                 rng=RNGConfig(seed=1234),
             )
 
-            # Run training
-            pretrain(cfg, forward_step)
+            # Run first training job
+            pretrain(cfg_first, forward_step)
 
-            # Verify checkpoint files
             torch.distributed.barrier()
-            self._verify_checkpoint_files(checkpoint_dir, total_iters)
 
-        finally:
-            # pytest's tmp_path fixture doesn't clean up immediately.
-            # Clean up manually.
-            self.clear_directories(tmp_path)
+            # Verify checkpoint files from first run
+            self._verify_checkpoint_files(checkpoint_dir, checkpoint_iters)
 
-    @pytest.mark.run_only_on("GPU")
-    def test_pretrain_vpp(self, tmp_path):
-        """
-        Test end to end training with virtual pipeline parallelism.
-        """
-        initialize_distributed()
-        shared_base_dir = broadcast_path(tmp_path)
+            torch.distributed.barrier()
 
-        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
-        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
-
-        if torch.distributed.get_rank() == 0:
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            os.makedirs(tensorboard_dir, exist_ok=True)
-
-        torch.distributed.barrier()
-
-        try:
-            global_batch_size = 8
-            micro_batch_size = 1
-            seq_length = 512
-            total_iters = 100
-
-            # Create model config with VPP
-            model_cfg = Llama32ModelProvider1B(
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=2,
-                virtual_pipeline_model_parallel_size=2,
-                context_parallel_size=1,
-                sequence_parallel=False,
-                attention_softmax_in_fp32=True,
-                pipeline_dtype=torch.bfloat16,
-                bf16=True,
-                seq_length=seq_length,
-                make_vocab_size_divisible_by=128,
-            )
-
-            # Create other configurations
-            optimizer_cfg = OptimizerConfig(
-                optimizer="adam",
-                bf16=True,
-                fp16=False,
-                adam_beta1=0.9,
-                adam_beta2=0.95,
-                adam_eps=1e-5,
-                use_distributed_optimizer=True,
-                clip_grad=1.0,
-                lr=3e-3,
-                weight_decay=0.01,
-                min_lr=1e-6,
-            )
-
-            ddp_cfg = DistributedDataParallelConfig(
-                check_for_nan_in_grad=True,
-                grad_reduce_in_fp32=True,
-                overlap_grad_reduce=True,
-                overlap_param_gather=True,
-                average_in_collective=True,
-                use_distributed_optimizer=True,
-            )
-
-            # Setup communication overlap for VPP
-            from megatron.bridge.training.comm_overlap import CommOverlapConfig
-
-            comm_overlap = CommOverlapConfig(
-                data_parallel_size=1,
-                tp_comm_overlap=False,
-            )
-
-            comm_overlap.setup(
-                model_config=model_cfg,
-                optimizer_config=optimizer_cfg,
-                ddp_config=ddp_cfg,
-            )
-
-            # Create config container
-            cfg = ConfigContainer(
-                model=model_cfg,
+            # Second training run - resume from checkpoint and train for remaining 10 iterations
+            cfg_second = ConfigContainer(
+                model=Llama3ModelProvider145M(seq_length=seq_length),
                 train=TrainingConfig(
                     train_iters=total_iters,
-                    eval_interval=50,
+                    eval_interval=5,
                     eval_iters=2,
                     global_batch_size=global_batch_size,
                     micro_batch_size=micro_batch_size,
                     exit_signal_handler=True,
                 ),
-                optimizer=optimizer_cfg,
+                optimizer=OptimizerConfig(
+                    optimizer="adam",
+                    bf16=True,
+                    fp16=False,
+                    adam_beta1=0.9,
+                    adam_beta2=0.95,
+                    adam_eps=1e-5,
+                    use_distributed_optimizer=True,
+                    clip_grad=1.0,
+                    lr=3e-3,
+                    weight_decay=0.01,
+                    min_lr=1e-6,
+                ),
                 scheduler=SchedulerConfig(
                     start_weight_decay=0.033,
                     end_weight_decay=0.033,
@@ -283,7 +219,14 @@ class TestPretrain:
                     lr_decay_iters=total_iters,
                     override_opt_param_scheduler=True,
                 ),
-                ddp=ddp_cfg,
+                ddp=DistributedDataParallelConfig(
+                    check_for_nan_in_grad=True,
+                    grad_reduce_in_fp32=True,
+                    overlap_grad_reduce=True,
+                    overlap_param_gather=True,
+                    average_in_collective=True,
+                    use_distributed_optimizer=True,
+                ),
                 dataset=MockGPTDatasetConfig(
                     random_seed=1234,
                     reset_attention_mask=False,
@@ -304,7 +247,9 @@ class TestPretrain:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
+                    save_interval=checkpoint_iters,
                     save=checkpoint_dir,
+                    load=checkpoint_dir,
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
@@ -312,14 +257,13 @@ class TestPretrain:
                 rng=RNGConfig(seed=1234),
             )
 
-            # Run training
-            pretrain(cfg, forward_step)
+            # Run second training job (resume from checkpoint)
+            pretrain(cfg_second, forward_step)
 
-            # Verify checkpoint files
             torch.distributed.barrier()
+
+            # Verify checkpoint files from second run
             self._verify_checkpoint_files(checkpoint_dir, total_iters)
 
         finally:
-            # pytest's tmp_path fixture doesn't clean up immediately.
-            # Clean up manually.
-            self.clear_directories(tmp_path)
+            self.clear_directories(shared_base_dir)

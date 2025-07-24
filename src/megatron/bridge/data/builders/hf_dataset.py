@@ -70,6 +70,7 @@ class HFDatasetConfig(FinetuningDatasetConfig):
         split_val_from_train: If True, creates validation set from training set.
                               If False, uses test set to create validation set.
         delete_raw: If True, delete the raw downloaded dataset files after processing.
+        rewrite: If True, rewrite existing processed files.
         hf_kwargs: Additional keyword arguments to pass to `load_dataset`.
         hf_filter_lambda: Optional function to filter the loaded dataset.
         hf_filter_lambda_kwargs: Optional keyword arguments for `hf_filter_lambda`.
@@ -84,6 +85,7 @@ class HFDatasetConfig(FinetuningDatasetConfig):
     val_proportion: Optional[float] = 0.05
     split_val_from_train: bool = True
     delete_raw: bool = False
+    rewrite: bool = True
     hf_kwargs: Optional[dict[str, Any]] = None
     hf_filter_lambda: Optional[Callable] = None
     hf_filter_lambda_kwargs: Optional[dict[str, Any]] = None
@@ -190,7 +192,8 @@ def preprocess_and_split_data(
                 logger.info(f"{output_file} exists, deleting and rewriting...")
                 os.remove(output_file)
                 for p in glob.glob(str(output_file) + "*"):
-                    os.remove(p)
+                    if os.path.exists(p):
+                        os.remove(p)
 
         with output_file.open("w", encoding="utf-8") as f:
             for example in tqdm(dataset, desc=f"Processing {split_name} split"):
@@ -238,6 +241,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         download_mode: Optional[str] = None,
         val_proportion: Optional[float] = 0.05,
         split_val_from_train: bool = True,
+        rewrite: bool = True,
         delete_raw: bool = False,
         hf_kwargs: Optional[dict[str, Any]] = None,
         dataset_kwargs: Optional[dict[str, Any]] = None,
@@ -265,6 +269,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             download_mode: Download mode for `load_dataset`.
             val_proportion: Proportion for validation split.
             split_val_from_train: Whether to split validation from train set.
+            rewrite: Whether to rewrite existing processed files.
             delete_raw: Whether to delete raw downloaded files.
             hf_kwargs: Additional kwargs for `load_dataset`.
             dataset_kwargs: Additional kwargs for the underlying dataset constructor.
@@ -302,6 +307,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         self.process_example_fn = process_example_fn
         self.hf_filter_lambda = hf_filter_lambda
         self.hf_filter_lambda_kwargs = hf_filter_lambda_kwargs or {}
+        self.rewrite = rewrite
 
         if not val_proportion:
             self.do_validation = False
@@ -332,7 +338,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             val_proportion=self.val_proportion,
             delete_raw=self.delete_raw,
             seed=self.seed,
-            rewrite=True,
+            rewrite=self.rewrite,
             do_test=self.do_test,
             do_validation=self.do_validation,
         )

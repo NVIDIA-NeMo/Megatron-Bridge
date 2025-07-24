@@ -13,7 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: nemo-ci
     outputs:
-      mcore: ${{ steps.get-branch.outputs.mcore_release_branch }}
       megatron-bridge: ${{ steps.get-branch.outputs.megatron_bridge_release_branch }}
     steps:
       - name: Get release branch names
@@ -21,12 +20,6 @@ jobs:
         env:
           PAT: ${{ secrets.PAT }}
         run: |
-          latest_branch=$(git ls-remote --heads https://github.com/NVIDIA/Megatron-LM.git 'refs/heads/core_r*' | 
-            grep -o 'core_r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
-            sort -V | 
-            tail -n1)
-          echo "mcore_release_branch=$latest_branch" >> $GITHUB_OUTPUT
-
           latest_branch=$(git ls-remote --heads https://token:${PAT}@github.com/NVIDIA-NeMo/megatron-bridge.git 'refs/heads/r*' | 
             grep -o 'r[0-9]\+\.[0-9]\+\.[0-9]\+' | 
             sort -V | 
@@ -39,13 +32,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - mcore-target-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
-            target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
-          - mcore-target-branch: main
-            target-branch: main
+          - target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
+          - target-branch: main
     uses: ./.github/workflows/_update_dependencies.yml
     with:
-      mcore-target-branch: ${{ matrix.mcore-target-branch }}
       target-branch: ${{ matrix.target-branch }}
     secrets:
       PAT: ${{ secrets.PAT }}

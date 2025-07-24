@@ -15,4 +15,4 @@
 #!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
-CUDA_VISIBLE_DEVICES="" coverage run -a --data-file=/workspace/.coverage --source=/workspace/ -m pytest tests/unit_tests -m "not pleasefixme" --cpu --with_downloads
+CUDA_VISIBLE_DEVICES="0,1" coverage run -a --data-file=/workspace/.coverage --source=/workspace/ -m pytest tests/unit_tests -m "not pleasefixme"
