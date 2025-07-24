@@ -48,7 +48,7 @@ from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
-from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.config import CheckpointConfig
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils import wandb_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
@@ -507,7 +507,7 @@ def save_checkpoint(
         )
 
     state_dict = generate_state_dict(
-        cfg,
+        cfg.checkpoint,
         model,
         optimizer,
         opt_param_scheduler,
@@ -765,11 +765,11 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
 
 
 def generate_state_dict(
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     model: list[MegatronModule],
     optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
-    rng_state: ShardedObject,
+    rng_state: Optional[ShardedObject],
     iteration: Optional[int] = None,
     optim_sd_kwargs: Optional[dict[str, Any]] = None,
     model_sd_kwargs: Optional[dict[str, Any]] = None,
@@ -804,7 +804,7 @@ def generate_state_dict(
             state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
 
     # Optimizer stuff.
-    if cfg.checkpoint.save_optim:
+    if ckpt_cfg.save_optim:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
             state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
         if opt_param_scheduler is not None:
@@ -814,7 +814,7 @@ def generate_state_dict(
     state_dict["rerun_state_machine"] = rerun_state
 
     # RNG states.
-    if cfg.checkpoint.save_rng:
+    if ckpt_cfg.save_rng:
         state_dict["rng_state"] = rng_state
     return state_dict
 
@@ -1015,7 +1015,7 @@ def _load_checkpoint_from_path(
             for m in model:
                 stack.enter_context(m.hide_loss_modules())
         load_kwargs["sharded_state_dict"] = generate_state_dict(
-            cfg,
+            cfg.checkpoint,
             model,
             gen_sd_optim,
             gen_sd_opt_param_scheduler,
