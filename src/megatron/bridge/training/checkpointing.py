@@ -869,6 +869,17 @@ def load_checkpoint(
     )
 
 
+def load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
+    """Helper function to load state dict with fallback for missing extra states."""
+    try:
+        module.load_state_dict(state_dict, strict=strict)
+    except Exception:
+        if strict:
+            # Fallback support for backward compatibility breaking changes in TransformerEngine
+            load_return = module.load_state_dict(state_dict, strict=False)
+            print(f"load_return: {load_return}")
+
+
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -1065,16 +1076,6 @@ def _load_checkpoint_from_path(
     if not cfg.checkpoint.finetune:
         # check_checkpoint_args(checkpoint_args)
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
-
-    def load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
-        """Helper function to load state dict with fallback for missing extra states."""
-        try:
-            module.load_state_dict(state_dict, strict=strict)
-        except Exception:
-            if strict:
-                # Fallback support for backward compatibility breaking changes in TransformerEngine
-                load_return = module.load_state_dict(state_dict, strict=False)
-                print(f"load_return: {load_return}")
 
     # Model.
     if not skip_load_to_model_and_opt:
