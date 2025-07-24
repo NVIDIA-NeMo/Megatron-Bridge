@@ -49,7 +49,7 @@ class TestDataUtils:
                 "python",
                 "/opt/megatron-lm/tools/preprocess_data.py",
                 "--input",
-                test_data_jsonl,
+                "test.jsonl",
                 "--output-prefix",
                 "test",
                 "--tokenizer-type",
