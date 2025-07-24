@@ -109,7 +109,7 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
         releases.sort(key=lambda x: x.created_at)
         oldest_release = releases[0]
 
-        print(f"Oldest Release:")
+        print("Oldest Release:")
         print(f"  Tag: {oldest_release.tag_name}")
         print(f"  Title: {oldest_release.title}")
         print(f"  Created: {oldest_release.created_at}")
@@ -147,7 +147,7 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
         total_size = sum(asset.size for asset in assets)
         total_downloads = sum(asset.download_count for asset in assets)
 
-        print(f"Summary:")
+        print("Summary:")
         print(f"  Total assets: {len(assets)}")
         print(f"  Total size: {total_size} bytes ({total_size / 1024 / 1024:.2f} MB)")
         print(f"  Total downloads: {total_downloads}")
@@ -168,7 +168,7 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
                 if download_and_extract_asset(asset.browser_download_url, asset.name, assets_path):
                     successful_downloads += 1
 
-            print(f"\nDownload Summary:")
+            print("\nDownload Summary:")
             print(f"  Successfully downloaded and extracted: {successful_downloads}/{len(assets)} assets")
             print(f"  Assets directory: {assets_path.absolute()}")
 
