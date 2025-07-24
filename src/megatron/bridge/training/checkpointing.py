@@ -25,7 +25,7 @@ from functools import lru_cache
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 import numpy as np
 import torch
@@ -904,7 +904,7 @@ def _load_checkpoint_from_path(
     load_kwargs = {}
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir,
-        cfg,
+        cfg.checkpoint,
         rank0=True,
         checkpointing_context=checkpointing_context,
     )
@@ -1044,7 +1044,7 @@ def _load_checkpoint_from_path(
         )
 
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
-        load_dir, cfg, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
+        load_dir, cfg.checkpoint, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
     )
 
     # Set checkpoint version.
@@ -1376,13 +1376,13 @@ def _transpose_first_dim(
 
 def _get_non_persistent_iteration(
     non_persistent_global_dir: str,
-    cfg: ConfigContainer,
+    non_persistent_ckpt_type: Optional[Literal["global", "local"]],
     checkpointing_context: Optional[dict[str, Any]] = None,
 ) -> int:
     """Get iteration number from non-persistent checkpoint."""
-    if cfg.checkpoint.non_persistent_ckpt_type is None:
+    if non_persistent_ckpt_type is None:
         return -1
-    elif cfg.checkpoint.non_persistent_ckpt_type == "global":
+    elif non_persistent_ckpt_type == "global":
         train_state_filename = get_checkpoint_train_state_filename(non_persistent_global_dir, prefix=TRACKER_PREFIX)
         if os.path.isfile(train_state_filename):
             train_state = read_train_state(train_state_filename)
@@ -1394,53 +1394,51 @@ def _get_non_persistent_iteration(
             print_rank_0("WARNING: could not find the metadata file {}".format(train_state_filename))
             print_rank_0("    will not load any non-persistent checkpoint")
         return iteration
-    elif cfg.checkpoint.non_persistent_ckpt_type == "local":
+    elif non_persistent_ckpt_type == "local":
         return checkpointing_context["local_checkpoint_manager"].find_latest()
     else:
-        raise ValueError(
-            f"Please use local or global non-persistent checkpoints. Got: {cfg.checkpoint.non_persistent_ckpt_type})"
-        )
+        raise ValueError(f"Please use local or global non-persistent checkpoints. Got: {non_persistent_ckpt_type})")
 
 
 def _load_non_persistent_base_checkpoint(
     non_persistent_global_dir: str,
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
     non_persistent_iteration: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
     """Load the base state_dict from a non-persistent distributed checkpoint."""
-    assert cfg.checkpoint.non_persistent_ckpt_type is not None
-    if cfg.checkpoint.non_persistent_ckpt_type == "global":
+    assert ckpt_cfg.non_persistent_ckpt_type is not None
+    if ckpt_cfg.non_persistent_ckpt_type == "global":
         if not rank0:
             print_rank_0(f"Loading from a non-persistent checkpoint (non-persistent iter {non_persistent_iteration})")
         return _load_global_dist_base_checkpoint(
             non_persistent_global_dir,
-            cfg,
+            ckpt_cfg,
             rank0,
             sharded_state_dict,
             non_persistent_iteration,
             False,
             checkpointing_context=checkpointing_context,
         )
-    elif cfg.checkpoint.non_persistent_ckpt_type == "local":
+    elif ckpt_cfg.non_persistent_ckpt_type == "local":
         intermediate_state_dict, checkpoint_name = checkpointing_context["local_checkpoint_manager"].load()
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
-            algo=cfg.checkpoint.non_persistent_local_ckpt_algo,
+            algo=ckpt_cfg.non_persistent_local_ckpt_algo,
             parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
         raise ValueError(
-            f"Please use local or global non-persistent checkpoints. Got: {cfg.checkpoint.non_persistent_ckpt_type})"
+            f"Please use local or global non-persistent checkpoints. Got: {ckpt_cfg.non_persistent_ckpt_type})"
         )
 
 
 def _load_global_dist_base_checkpoint(
     load_dir: str,
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
     iteration: int,
@@ -1458,21 +1456,21 @@ def _load_global_dist_base_checkpoint(
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
-    if cfg.checkpoint.fully_parallel_load:
+    if ckpt_cfg.fully_parallel_load:
         load_strategy = FullyParallelLoadStrategyWrapper(
             load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
         )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     state_dict = dist_checkpointing.load(
-        sharded_state_dict, checkpoint_name, load_strategy, strict=cfg.checkpoint.dist_ckpt_strictness
+        sharded_state_dict, checkpoint_name, load_strategy, strict=ckpt_cfg.dist_ckpt_strictness
     )
     return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
 
 def _load_base_checkpoint(
     load_dir: Optional[str],
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     rank0: bool = False,
     sharded_state_dict: Optional[dict[str, Any]] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -1480,11 +1478,13 @@ def _load_base_checkpoint(
     """Load the base state_dict from the given directory."""
     # Try to load non-persistent checkpoint first
     non_persistent_global_dir = (
-        cfg.checkpoint.non_persistent_global_ckpt_dir
-        if cfg.checkpoint.non_persistent_global_ckpt_dir or load_dir is None
+        ckpt_cfg.non_persistent_global_ckpt_dir
+        if ckpt_cfg.non_persistent_global_ckpt_dir or load_dir is None
         else os.path.join(load_dir, _NON_PERSISTENT_CKPT_SUBDIR)
     )
-    non_persistent_iteration = _get_non_persistent_iteration(non_persistent_global_dir, cfg, checkpointing_context)
+    non_persistent_iteration = _get_non_persistent_iteration(
+        non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
+    )
     iteration, release = -1, False
     tracker_filename = "because load directory is not defined"
     if load_dir is not None:
@@ -1497,7 +1497,7 @@ def _load_base_checkpoint(
         if non_persistent_iteration >= iteration:
             return _load_non_persistent_base_checkpoint(
                 non_persistent_global_dir,
-                cfg,
+                ckpt_cfg,
                 rank0,
                 sharded_state_dict,
                 non_persistent_iteration,
@@ -1513,7 +1513,7 @@ def _load_base_checkpoint(
             print_rank_0("WARNING: could not find the metadata file {}".format(tracker_filename))
             print_rank_0("    will not load any checkpoints and will start from random")
         # Conditionally exit if checkpoint not found.
-        if cfg.checkpoint.exit_on_missing_checkpoint:
+        if ckpt_cfg.exit_on_missing_checkpoint:
             print_rank_0(">> '--exit-on-missing-checkpoint' set ... exiting. <<")
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
@@ -1534,7 +1534,13 @@ def _load_base_checkpoint(
     # Handle global distributed checkpoint
     if is_dist_ckpt:
         return _load_global_dist_base_checkpoint(
-            load_dir, cfg, rank0, sharded_state_dict, iteration, release, checkpointing_context=checkpointing_context
+            load_dir,
+            ckpt_cfg,
+            rank0,
+            sharded_state_dict,
+            iteration,
+            release,
+            checkpointing_context=checkpointing_context,
         )
     else:
         # This path implies a non-distributed checkpoint, which is no longer supported.
