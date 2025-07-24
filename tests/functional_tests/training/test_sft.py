@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import shutil
 from dataclasses import dataclass
 
 import pytest
@@ -35,7 +34,12 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from tests.functional_tests.utils import broadcast_path, initialize_distributed
+from tests.functional_tests.utils import (
+    broadcast_path,
+    clear_directories,
+    initialize_distributed,
+    verify_checkpoint_files,
+)
 
 
 @dataclass
@@ -73,7 +77,7 @@ class TestSupervisedFinetuning:
                 pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
             pretrain(pretrain_cfg, forward_step)
-            self._verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
 
             # Create finetune config and run (lower LR, different seed, use pretrained checkpoint)
             finetune_cfg = self._create_config(
@@ -86,39 +90,10 @@ class TestSupervisedFinetuning:
                 pretrained_checkpoint=pretrain_checkpoint_dir,
             )
             finetune(finetune_cfg, forward_step)
-            self._verify_checkpoint_files(finetune_checkpoint_dir, finetune_iters)
+            verify_checkpoint_files(finetune_checkpoint_dir, finetune_iters)
 
         finally:
-            self.clear_directories(shared_base_dir)
-
-    def clear_directories(self, tmp_path):
-        """Teardown method called after each test method."""
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-            if torch.distributed.get_rank() == 0:
-                if os.path.exists(tmp_path):
-                    shutil.rmtree(tmp_path)
-            torch.distributed.barrier()
-
-    def _verify_checkpoint_files(self, checkpoint_dir, total_iters):
-        """Verify that checkpoint files were created correctly."""
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-        if torch.distributed.get_rank() == 0:
-            latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
-            assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
-
-            final_iter_dir = os.path.join(checkpoint_dir, f"iter_{total_iters:07d}")
-            assert os.path.exists(final_iter_dir), f"Final checkpoint directory not found at {final_iter_dir}"
-
-            metadata_file = os.path.join(final_iter_dir, ".metadata")
-            assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
-
-            distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
-            num_expected_files = 2 * torch.distributed.get_world_size()
-            assert len(distcp_files) == num_expected_files, (
-                f"Expected {num_expected_files} .distcp files, found {len(distcp_files)}: {distcp_files}"
-            )
+            clear_directories(shared_base_dir)
 
     def _create_config(
         self,

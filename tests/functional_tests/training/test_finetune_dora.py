@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import shutil
 from dataclasses import dataclass
 
 import pytest
@@ -38,7 +37,13 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from tests.functional_tests.utils import broadcast_path, initialize_distributed
+from tests.functional_tests.utils import (
+    broadcast_path,
+    clear_directories,
+    initialize_distributed,
+    verify_checkpoint_files,
+    verify_peft_checkpoint_smaller,
+)
 
 
 @dataclass
@@ -78,7 +83,7 @@ class TestDoRAFinetune:
 
             # Run pretrain
             pretrain(pretrain_cfg, forward_step)
-            self._verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
 
             # Finetune with DoRA
             dora_cfg = self._create_dora_config(
@@ -91,72 +96,11 @@ class TestDoRAFinetune:
 
             # Run DoRA finetuning
             finetune(dora_cfg, forward_step)
-            self._verify_checkpoint_files(dora_checkpoint_dir, dora_iters)
-            self._verify_dora_checkpoint_smaller(
-                pretrain_checkpoint_dir, dora_checkpoint_dir, pretrain_iters, dora_iters
-            )
+            verify_checkpoint_files(dora_checkpoint_dir, dora_iters)
+            verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, dora_checkpoint_dir, pretrain_iters, dora_iters)
 
         finally:
-            self.clear_directories(shared_base_dir)
-
-    def clear_directories(self, tmp_path):
-        """Teardown method called after each test method."""
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-            if torch.distributed.get_rank() == 0:
-                if os.path.exists(tmp_path):
-                    shutil.rmtree(tmp_path)
-            torch.distributed.barrier()
-
-    def _verify_checkpoint_files(self, checkpoint_dir, total_iters):
-        """Verify that checkpoint files were created correctly."""
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-
-        if torch.distributed.get_rank() == 0:
-            latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
-            assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
-
-            final_iter_dir = os.path.join(checkpoint_dir, f"iter_{total_iters:07d}")
-            assert os.path.exists(final_iter_dir), f"Final checkpoint directory not found at {final_iter_dir}"
-
-            metadata_file = os.path.join(final_iter_dir, ".metadata")
-            assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
-
-            distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
-            num_expected_files = 2 * torch.distributed.get_world_size()
-            assert len(distcp_files) == num_expected_files, (
-                f"Expected {num_expected_files} .distcp files, found {len(distcp_files)}: {distcp_files}"
-            )
-
-    def _get_directory_size(self, path):
-        """Calculate the total size of a directory in bytes."""
-        total_size = 0
-        for dirpath, dirnames, filenames in os.walk(path):
-            for filename in filenames:
-                filepath = os.path.join(dirpath, filename)
-                if os.path.exists(filepath):
-                    total_size += os.path.getsize(filepath)
-        return total_size
-
-    def _verify_dora_checkpoint_smaller(
-        self, pretrain_checkpoint_dir, dora_checkpoint_dir, pretrain_iters, dora_iters
-    ):
-        """Verify that DoRA checkpoint is smaller than pretrained checkpoint (adapter weights only)."""
-        if torch.distributed.get_rank() == 0:
-            pretrain_iter_dir = os.path.join(pretrain_checkpoint_dir, f"iter_{pretrain_iters:07d}")
-            dora_iter_dir = os.path.join(dora_checkpoint_dir, f"iter_{dora_iters:07d}")
-
-            assert os.path.exists(pretrain_iter_dir), f"Pretrain checkpoint directory not found at {pretrain_iter_dir}"
-            assert os.path.exists(dora_iter_dir), f"DoRA checkpoint directory not found at {dora_iter_dir}"
-
-            pretrain_size = self._get_directory_size(pretrain_iter_dir)
-            dora_size = self._get_directory_size(dora_iter_dir)
-
-            # DoRA checkpoint should be significantly smaller (only adapter weights)
-            assert dora_size < pretrain_size * 0.6, (
-                f"DoRA checkpoint ({dora_size}) should be smaller than 60% of pretrain checkpoint ({pretrain_size})"
-            )
+            clear_directories(shared_base_dir)
 
     def _create_model_provider(self, seq_length=512):
         """Create a model provider with specified configuration."""
@@ -245,10 +189,6 @@ class TestDoRAFinetune:
     def _create_logger_config(self, tensorboard_dir):
         """Create a logger configuration."""
         return LoggerConfig(log_interval=5, tensorboard_dir=tensorboard_dir)
-
-    def _create_tokenizer_config(self):
-        """Create a tokenizer configuration."""
-        return
 
     def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None):
         """Create a checkpoint configuration."""
