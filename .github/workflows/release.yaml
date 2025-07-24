@@ -37,7 +37,7 @@ on:
 
 jobs:
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.47.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.49.0
     with:
       release-ref: ${{ inputs.release-ref }}
       python-package: nemo_export_deploy_common
@@ -48,6 +48,9 @@ jobs:
       packaging: uv
       has-src-dir: true
       skip-test-wheel: true
+      custom-container: nvcr.io/nvidia/pytorch:25.05-py3
+      runner: linux-amd64-cpu16
+      no-build-isolation: true
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
