@@ -131,6 +131,7 @@ class TestLoRAFinetune:
                 pretrain_checkpoint_dir,
                 finetune_seq_length,
                 packed_sequences=True,
+                target_modules=["linear_proj", "linear_fc1", "linear_fc2"],
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
@@ -235,7 +236,7 @@ class TestLoRAFinetune:
             micro_batch_size=micro_batch_size,
         )
 
-    def _create_optimizer_config(self, lr=3e-3):
+    def _create_optimizer_config(self, lr=3e-3, use_distributed_optimizer=True):
         """Create an optimizer configuration."""
         return OptimizerConfig(
             optimizer="adam",
@@ -244,7 +245,7 @@ class TestLoRAFinetune:
             adam_beta1=0.9,
             adam_beta2=0.95,
             adam_eps=1e-5,
-            use_distributed_optimizer=True,
+            use_distributed_optimizer=use_distributed_optimizer,
             clip_grad=1.0,
             lr=lr,
             weight_decay=0.01,
@@ -351,10 +352,11 @@ class TestLoRAFinetune:
         """Create an RNG configuration."""
         return RNGConfig(seed=seed)
 
-    def _create_lora_peft(self, dim=16, alpha=32, dropout=0.1):
+    def _create_lora_peft(self, dim=16, alpha=32, dropout=0.1, target_modules=None):
         """Create a LoRA PEFT configuration."""
+        target_modules = target_modules or ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
         return LoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+            target_modules=target_modules,
             dim=dim,
             alpha=alpha,
             dropout=dropout,
@@ -397,10 +399,12 @@ class TestLoRAFinetune:
         packed_sequences=False,
         load_checkpoint=None,
         scheduler_total_iters=None,
+        target_modules=None,
     ):
         """Create complete LoRA finetuning configuration with model and PEFT."""
         model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
-        lora_peft = self._create_lora_peft()
+        model.cross_entropy_loss_fusion = False
+        lora_peft = self._create_lora_peft(target_modules=target_modules)
 
         # Use scheduler_total_iters if provided, otherwise use train_iters
         scheduler_iters = scheduler_total_iters if scheduler_total_iters is not None else train_iters
@@ -408,7 +412,9 @@ class TestLoRAFinetune:
         return ConfigContainer(
             model=model,
             train=self._create_training_config(train_iters),
-            optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
+            optimizer=self._create_optimizer_config(
+                lr=1e-4, use_distributed_optimizer=False
+            ),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(scheduler_iters),
             ddp=self._create_ddp_config(),
             dataset=self._create_squad_dataset_config(seq_length, packed_sequences=packed_sequences),
