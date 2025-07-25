@@ -108,7 +108,6 @@ class TestReplicatedMapping:
         assert "hf.weight" in result
         assert torch.equal(result["hf.weight"], megatron_weight)
 
-
     def test_hf_to_megatron_broadcast(self, mock_distributed_env, transformer_config):
         mock_mpu, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
         mapping = ReplicatedMapping("rep.weight", "hf.weight")
