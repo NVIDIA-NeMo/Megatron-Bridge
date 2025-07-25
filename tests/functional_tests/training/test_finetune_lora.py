@@ -87,6 +87,45 @@ class TestLoRAFinetune:
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+                packed_sequences=True,
+            )
+            finetune(lora_cfg, forward_step)
+            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+            verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
+
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_pretrain_then_lora_finetune_with_packed_sequences(self, tmp_path):
+        """Test end to end LoRA finetuning: pretrain -> save checkpoint -> finetune with LoRA using packed sequences."""
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+        pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir = (
+            self._setup_directories(shared_base_dir)
+        )
+
+        torch.distributed.barrier()
+
+        try:
+            seq_length = 4096
+            pretrain_iters = 10
+            lora_iters = 5
+
+            # Create pretrain config and run
+            pretrain_cfg = self._create_pretrain_config(
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+            )
+            pretrain(pretrain_cfg, forward_step)
+            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+
+            # Create LoRA config and run finetuning
+            lora_cfg = self._create_lora_config(
                 lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
             )
             finetune(lora_cfg, forward_step)
