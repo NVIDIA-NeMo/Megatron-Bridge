@@ -31,7 +31,7 @@ import numpy as np
 import torch
 import yaml
 from megatron.core import dist_checkpointing, mpu, tensor_parallel
-from megatron.core.dist_checkpointing.mapping import ShardedObject
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict
 from megatron.core.dist_checkpointing.serialization import (
     get_default_load_sharded_strategy,
     get_default_save_sharded_strategy,
@@ -764,6 +764,32 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     torch.save(dataloader_save_dict, data_state_save_path)
 
 
+def generate_model_state_dict(
+    model: list[MegatronModule],
+    model_sd_kwargs: Optional[dict[str, Any]] = None,
+) -> dict[str, ShardedStateDict]:
+    """Generate the model subset of the state dictionary to be saved in a checkpoint.
+
+    Can be added to the full checkpoint state dictionary with dict.update().
+
+    Args:
+        model: The model module(s).
+        model_sd_kwargs: Metadata for model state dict generation.
+
+    Returns:
+        A dictionary containing the model state to be saved.
+    """
+    state_dict = {}
+
+    if len(model) == 1:
+        state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
+    else:
+        for i in range(len(model)):
+            state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
+
+    return state_dict
+
+
 def generate_state_dict(
     ckpt_cfg: CheckpointConfig,
     model: list[MegatronModule],
@@ -797,11 +823,7 @@ def generate_state_dict(
     if iteration is not None:
         state_dict["iteration"] = iteration
 
-    if len(model) == 1:
-        state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
-    else:
-        for i in range(len(model)):
-            state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
+    state_dict.update(generate_model_state_dict(model, model_sd_kwargs))
 
     # Optimizer stuff.
     if ckpt_cfg.save_optim:
