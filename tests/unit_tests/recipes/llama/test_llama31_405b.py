@@ -329,11 +329,11 @@ class TestPretrainConfig:
         with patch("megatron.bridge.training.comm_overlap.HAVE_TE", True):
             config = pretrain_config(tensor_parallelism=8, sequence_parallelism=True)
 
-            # With TP > 1 and sequence parallelism, comm_overlap should be configured
-            assert config.comm_overlap is not None
-            assert config.comm_overlap.tp_comm_overlap is True
-            assert config.comm_overlap.defer_embedding_wgrad_compute is True
-            assert config.model.wgrad_deferral_limit == 0
+        # With TP > 1 and sequence parallelism, comm_overlap should be configured
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.defer_embedding_wgrad_compute is True
+        assert config.model.wgrad_deferral_limit == 0
 
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""

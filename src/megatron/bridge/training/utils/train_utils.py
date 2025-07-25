@@ -146,9 +146,12 @@ def calc_params_l2_norm(
             False,  # no per-parameter norm.
         )
         sharded_norm_2 = sharded_norm * sharded_norm
-        # Sum over all DP groups.
+        # Sum over all DP groups, including CP since distributed optimizer state is
+        # sharded jointly over DP+CP.
         torch.distributed.all_reduce(
-            sharded_norm_2, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_data_parallel_group()
+            sharded_norm_2,
+            op=torch.distributed.ReduceOp.SUM,
+            group=parallel_state.get_data_parallel_group(with_context_parallel=True),
         )
         norm_2 += sharded_norm_2
 
