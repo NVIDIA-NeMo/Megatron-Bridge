@@ -92,7 +92,6 @@ class TestLoRAFinetune:
                 lora_tensorboard_dir,
                 pretrain_checkpoint_dir,
                 seq_length,
-                packed_sequences=True,
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
@@ -113,20 +112,25 @@ class TestLoRAFinetune:
         torch.distributed.barrier()
 
         try:
-            seq_length = 4096
             pretrain_iters = 10
             lora_iters = 5
 
             # Create pretrain config and run
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length=512
             )
             pretrain(pretrain_cfg, forward_step)
             verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
 
             # Create LoRA config and run finetuning
+            finetune_seq_length = 4096
             lora_cfg = self._create_lora_config(
-                lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                finetune_seq_length,
+                packed_sequences=True,
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
