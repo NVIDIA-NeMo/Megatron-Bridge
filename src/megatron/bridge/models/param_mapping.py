@@ -1175,7 +1175,6 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         gate, up = torch.chunk(fused_mlp, 2, dim=0)
         return {self.hf_param["gate"]: gate, self.hf_param["up"]: up}
 
-
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* GatedMLPMapping instance."""
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
