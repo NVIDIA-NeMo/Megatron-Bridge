@@ -134,9 +134,7 @@ for name, weight in bridge.export_hf_weights(megatron_model):
 # Stream with specific settings
 for name, weight in bridge.export_hf_weights(
     megatron_model,
-    order="safetensors",  # Group by safetensors file
     cpu=True,             # Move to CPU before yielding
-    mode="consolidate"    # Gather to rank 0
 ):
     print(f"Exported {name}: {weight.shape}")
 ```

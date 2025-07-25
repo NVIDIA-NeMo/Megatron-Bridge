@@ -105,11 +105,9 @@ class TestReplicatedMapping:
         megatron_weight = torch.randn(16, 16)
         result = mapping.megatron_to_hf(megatron_weight, None)
 
-        if tp_rank == 0:
-            assert "hf.weight" in result
-            assert torch.equal(result["hf.weight"], megatron_weight)
-        else:
-            assert not result
+        assert "hf.weight" in result
+        assert torch.equal(result["hf.weight"], megatron_weight)
+
 
     def test_hf_to_megatron_broadcast(self, mock_distributed_env, transformer_config):
         mock_mpu, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
@@ -165,11 +163,8 @@ class TestColumnParallelMapping:
             mock_gather.return_value = list(torch.chunk(full_weight, 2, dim=0))
             result = mapping.megatron_to_hf(megatron_shard, None)
 
-            if tp_rank == 0:
-                assert "hf.weight" in result
-                assert torch.equal(result["hf.weight"], full_weight)
-            else:
-                assert not result
+            assert "hf.weight" in result
+            assert torch.equal(result["hf.weight"], full_weight)
 
 
 class TestRowParallelMapping:
@@ -203,11 +198,8 @@ class TestRowParallelMapping:
             mock_gather.return_value = list(torch.chunk(full_weight, 2, dim=1))
             result = mapping.megatron_to_hf(megatron_shard, None)
 
-            if tp_rank == 0:
-                assert "hf.weight" in result
-                assert torch.equal(result["hf.weight"], full_weight)
-            else:
-                assert not result
+            assert "hf.weight" in result
+            assert torch.equal(result["hf.weight"], full_weight)
 
 
 class TestTPAwareMapping:

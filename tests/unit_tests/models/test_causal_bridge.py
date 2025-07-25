@@ -449,7 +449,7 @@ class TestCausalLMBridgeEdgeCases:
 
                 # Mock _get_causal_lm_architecture to avoid accessing transformers
                 with patch.object(bridge, "_get_causal_lm_architecture", return_value=mock_arch_class):
-                    weights = list(bridge.export_hf_weights(mock_megatron_model, order="safetensors", cpu=True))
+                    weights = list(bridge.export_hf_weights(mock_megatron_model, cpu=True))
 
                     assert len(weights) == 2
                     assert weights[0][0] == "weight1"
