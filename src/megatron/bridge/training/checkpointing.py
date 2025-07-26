@@ -764,7 +764,7 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     torch.save(dataloader_save_dict, data_state_save_path)
 
 
-def generate_model_state_dict(
+def _generate_model_state_dict(
     model: list[MegatronModule],
     model_sd_kwargs: Optional[dict[str, Any]] = None,
 ) -> dict[str, ShardedStateDict]:
@@ -823,7 +823,7 @@ def generate_state_dict(
     if iteration is not None:
         state_dict["iteration"] = iteration
 
-    state_dict.update(generate_model_state_dict(model, model_sd_kwargs))
+    state_dict.update(_generate_model_state_dict(model, model_sd_kwargs))
 
     # Optimizer stuff.
     if ckpt_cfg.save_optim:
@@ -891,7 +891,7 @@ def load_checkpoint(
     )
 
 
-def load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
+def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
     """Helper function to load state dict with fallback for missing extra states."""
     try:
         module.load_state_dict(state_dict, strict=strict)
@@ -1103,7 +1103,7 @@ def _load_checkpoint_from_path(
     if not skip_load_to_model_and_opt:
         load_strict = False if is_peft_resume else strict
         if len(model) == 1:
-            load_model_state_dict(model[0], state_dict["model"], load_strict)
+            _load_model_state_dict(model[0], state_dict["model"], load_strict)
         else:
             for i in range(len(model)):
                 # If there is no corresponding model in the state_dict, it will be ignored.
@@ -1111,7 +1111,7 @@ def _load_checkpoint_from_path(
                 model_key = "model%d" % i
                 if model_key not in state_dict:
                     continue
-                load_model_state_dict(model[i], state_dict[model_key], load_strict)
+                _load_model_state_dict(model[i], state_dict[model_key], load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
