@@ -632,7 +632,6 @@ class TestCanonicalLoRAHelperClasses:
             assert bias is None
 
 
-@pytest.mark.run_only_on("GPU")
 class TestCanonicalLoRAMegatronIntegration:
     """Integration tests for CanonicalLoRA with real Megatron models."""
 

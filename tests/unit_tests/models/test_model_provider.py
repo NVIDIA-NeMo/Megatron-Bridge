@@ -269,6 +269,7 @@ class TestPrintNumParams:
         """Test printing parameters when on data parallel rank 0."""
         # Setup mocks
         mock_parallel_state.get_data_parallel_rank.return_value = 0
+        mock_parallel_state.get_context_parallel_rank.return_value = 0
         mock_parallel_state.get_tensor_model_parallel_rank.return_value = 1
         mock_parallel_state.get_pipeline_model_parallel_rank.return_value = 2
 
@@ -289,6 +290,22 @@ class TestPrintNumParams:
         """Test that nothing is printed when not on data parallel rank 0."""
         # Setup mocks
         mock_parallel_state.get_data_parallel_rank.return_value = 1
+        mock_parallel_state.get_context_parallel_rank.return_value = 0
+
+        models = [MockMegatronModule()]
+
+        _print_num_params(models)
+
+        # Check print was not called
+        mock_print.assert_not_called()
+
+    @patch("megatron.bridge.models.model_provider.parallel_state")
+    @patch("builtins.print")
+    def test_print_num_params_non_zero_context_rank(self, mock_print, mock_parallel_state):
+        """Test that nothing is printed when not on context parallel rank 0."""
+        # Setup mocks
+        mock_parallel_state.get_data_parallel_rank.return_value = 0
+        mock_parallel_state.get_context_parallel_rank.return_value = 1
 
         models = [MockMegatronModule()]
 

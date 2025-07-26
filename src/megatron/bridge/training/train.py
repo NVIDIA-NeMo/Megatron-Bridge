@@ -315,6 +315,8 @@ def train(
         learning_rate = None
         decoupled_learning_rate = None
         for param_group in optimizer.param_groups:
+            if len(param_group) == 0:
+                continue
             if param_group["is_decoupled_lr"]:
                 decoupled_learning_rate = param_group["lr"]
             else:
@@ -517,26 +519,35 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if parallel_state.is_pipeline_last_stage():
+    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
         # Average loss across microbatches.
         loss_reduced = {}
+
         for key in losses_reduced[0].keys():
-            numerator = 0
-            denominator = 0
-            for x in losses_reduced:
-                val = x[key]
+            val = [x[key].view(-1) for x in losses_reduced]
+            if val[0].numel() == 2:
                 # there is one dict per microbatch. in new reporting, we average
                 # over the total number of tokens across the global batch.
-                if isinstance(val, tuple) or isinstance(val, list):
-                    numerator += val[0]
-                    denominator += val[1]
-                else:
-                    # legacy behavior. we average over the number of microbatches,
-                    # and so the denominator is 1.
-                    numerator += val
-                    denominator += 1
-            loss_reduced[key] = numerator / denominator
-        return loss_reduced, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
+                val = torch.vstack(val).sum(dim=0)
+                torch.distributed.all_reduce(
+                    val, group=parallel_state.get_data_parallel_group(with_context_parallel=True)
+                )
+                loss_reduced[key] = val[0] / val[1]
+            elif val[0].numel() == 1:
+                # legacy behavior, we average over the number of microbatches
+                val = torch.cat(val).mean()
+                loss_reduced[key] = val
+            else:
+                raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+        return (
+            loss_reduced,
+            skipped_iter,
+            should_checkpoint,
+            should_exit,
+            exit_code,
+            grad_norm,
+            num_zeros_in_grad,
+        )
     return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
 
 

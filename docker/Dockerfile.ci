@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
 WORKDIR /workspace
+ENV PATH="/root/.local/bin:$PATH"
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+ENV UV_LINK_MODE=copy
 COPY . .
-RUN --mount=type=secret,id=GH_TOKEN bash -ex <<"EOF"
-    export PAT=$(cat /run/secrets/GH_TOKEN)
-    bash docker/common/install.sh --base-image cuda
-EOF
+RUN bash docker/common/install.sh --base-image cuda

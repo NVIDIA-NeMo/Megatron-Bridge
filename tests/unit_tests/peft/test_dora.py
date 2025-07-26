@@ -461,7 +461,6 @@ class TestDoRA:
                         assert isinstance(second_transform.linear_fc1, nn.Linear)
 
 
-@pytest.mark.run_only_on("GPU")
 class TestDoRAMegatronIntegration:
     """Test DoRA integration with Megatron models (requires GPU)."""
 

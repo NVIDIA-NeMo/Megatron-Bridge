@@ -284,7 +284,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
     def export_hf_weights(
         self,
         model,
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
+        order: Literal["megatron", "hf", "safetensors"] = "safetensors",
         cpu: bool = False,
         show_progress: bool = True,
         mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
@@ -424,6 +424,12 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
+
+    def save_megatron_model(self, model, path: str | Path, ckpt_format: str = "torch_dist") -> None:
+        raise NotImplementedError
+
+    def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
+        raise NotImplementedError
 
     def push_to_hub(self, path: str | Path) -> None: ...
 

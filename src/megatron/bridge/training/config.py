@@ -106,6 +106,13 @@ class DistributedInitConfig:
     overlapped with other computation kernels.
     """
 
+    external_gpu_device_mapping: bool = False
+    """If True, indicates that GPU device mapping has been externally managed
+    (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
+    instead of local rank for CUDA device selection. This is useful when launching
+    with external process managers that handle GPU visibility.
+    """
+
 
 @dataclass
 class RerunStateMachineConfig:
@@ -454,8 +461,12 @@ class CheckpointConfig:
     """Number of machines storing the replica of a given rank's data."""
 
     def __post_init__(self) -> None:
+        """Post-initialization checks for checkpoint config."""
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
+
+        if self.async_save:
+            assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
 
 
 @dataclass(kw_only=True)

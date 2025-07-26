@@ -18,28 +18,6 @@ Megatron Bridge is designed for researchers and engineers who need to train larg
 
 ## 🔧 Installation
 
-For quick exploration of Megatron-Bridge, we recommend installing our pip package:
-
-```bash
-pip install megatron-bridge
-```
-
-### 📦 Pip install with TransformerEngine support
-
-For TransformerEngine support, the following system requirements need to be fulfilled:
-
-- Python 3.12
-- PyTorch 2.7
-- CUDA 12.8
-- Ubuntu 24.04
-
-Use the following to install Megatron-Bridge with TransformerEngine:
-
-```bash
-pip install torch setuptools pybind11 wheel_stub  # Required for TE
-pip install --no-build-isolation megatron-bridge[te]
-```
-
 ### 🐳 NeMo-FW container
 
 Best experience, highest performance and full feature support is guaranteed by the [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags). Please fetch the most recent $TAG and run the following command to start a container:
@@ -51,9 +29,71 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
   nvcr.io/nvidia/nemo:${TAG}
 ```
 
+### 📦 Bare metal install with TransformerEngine
+
+TransformerEngine is a required dependency for Megatron Bridge. To install on bare metal (without any container), the following system requirements need to be fulfilled:
+
+- PyTorch >= 2.7
+- CUDA >= 12.8
+- cuDNN >= 9.3
+
+We recommend installing the same versions that are present in the latest NGC PyTorch containers. The versions of these components for each container release can be found in the [PyTorch](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html) and [CUDA](https://docs.nvidia.com/deeplearning/frameworks/cuda-dl-release-notes/index.html) container release notes.
+
+Please see these [instructions](https://developer.nvidia.com/cudnn-downloads) for installing cuDNN for your target platform. You can check if CUDA toolkit and cuDNN are installed with:
+
+```bash
+dpkg -l | grep 'cuda-toolkit'
+dpkg -l | grep 'cudnn.*cuda'
+```
+
+You can then run the following to install Megatron Bridge:
+
+```bash
+pip install torch setuptools pybind11 wheel_stub  # Required for TE
+pip install --no-build-isolation megatron-bridge
+```
+
 ### uv
 
-For installing Megatron-Bridge with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
+For installing Megatron Bridge with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
+
+## ⚡ Quickstart
+
+To get started, first install Megatron Bridge or download a NeMo Framework container as described [above](#-installation).
+
+Log in to HuggingFace Hub:
+```sh
+huggingface-cli login --token <your token>
+```
+
+You can then run the following to import a model from HuggingFace and start training with mock data:
+```python
+from megatron.bridge import AutoBridge
+
+import megatron.bridge.recipes.llama.llama32_1b as llama32_1b
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
+
+if __name__ == "__main__":
+    # Load Llama from HuggingFace Hub and convert to Megatron
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+    model_provider = bridge.to_megatron_provider()
+
+    # Get defaults for other configuration from an existing Llama 3.2 recipe
+    cfg = llama32_1b.pretrain_config()
+    cfg.model = model_provider
+    cfg.train.train_iters = 10
+
+    cfg.dataset.sequence_length = cfg.model.seq_length
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
+
+    pretrain(cfg, forward_step)
+```
+
+You can launch the above script with:
+```sh
+torchrun --nproc-per-node=<num devices> /path/to/script.py
+```
 
 ## 🚀 Key Features
 

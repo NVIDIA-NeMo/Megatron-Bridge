@@ -25,7 +25,7 @@ from functools import lru_cache
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -42,7 +42,9 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelSaveStrategyWrapper,
 )
 from megatron.core.num_microbatches_calculator import update_num_microbatches
+from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
+from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
@@ -395,8 +397,8 @@ class CheckpointType(Enum):
 
 def save_checkpoint(
     state: GlobalState,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     num_floating_point_operations_so_far: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -764,8 +766,8 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
 
 def generate_state_dict(
     cfg: ConfigContainer,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     rng_state: ShardedObject,
     iteration: Optional[int] = None,
@@ -819,8 +821,8 @@ def generate_state_dict(
 
 def load_checkpoint(
     state: GlobalState,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -870,8 +872,8 @@ def load_checkpoint(
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    optimizer: Optional[torch.optim.Optimizer],
+    model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
     strict: bool = True,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -1053,7 +1055,9 @@ def _load_checkpoint_from_path(
     assert state.train_state.skipped_train_samples == 0
     assert state.train_state.consumed_valid_samples == 0
 
-    state.train_state = read_train_state(get_checkpoint_train_state_filename(checkpoint_name))
+    if not cfg.checkpoint.finetune:
+        state.train_state = read_train_state(get_checkpoint_train_state_filename(checkpoint_name))
+
     # Set iteration.
     if cfg.checkpoint.finetune or release:
         state.train_state.step = 0
@@ -1062,14 +1066,29 @@ def _load_checkpoint_from_path(
         # check_checkpoint_args(checkpoint_args)
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
+    def load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
+        """Helper function to load state dict with fallback for missing extra states."""
+        try:
+            module.load_state_dict(state_dict, strict=strict)
+        except Exception:
+            if strict:
+                # Fallback support for backward compatibility breaking changes in TransformerEngine
+                load_return = module.load_state_dict(state_dict, strict=False)
+                print(f"load_return: {load_return}")
+
     # Model.
     if not skip_load_to_model_and_opt:
         load_strict = False if is_peft_resume else strict
         if len(model) == 1:
-            model[0].load_state_dict(state_dict["model"], strict=load_strict)
+            load_model_state_dict(model[0], state_dict["model"], load_strict)
         else:
             for i in range(len(model)):
-                model[i].load_state_dict(state_dict["model%d" % i], strict=load_strict)
+                # If there is no corresponding model in the state_dict, it will be ignored.
+                # It means that this is an empty stage.
+                model_key = "model%d" % i
+                if model_key not in state_dict:
+                    continue
+                load_model_state_dict(model[i], state_dict[model_key], load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()

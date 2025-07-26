@@ -24,14 +24,17 @@ The process is as follows:
 4. The model provider is used to instantiate the Megatron-LM model.
 5. The weights of the converted Megatron-LM model are verified against the original
     Hugging Face model.
-6. Finally, the `save_hf_pretrained` method is used to save the Megatron-LM
+6. The `save_hf_pretrained` method is used to save the Megatron-LM
     model back into the Hugging Face format. A new directory, named after the
     model, will be created for the converted model files. By default, this
     directory is created in the current working directory, but a different
     parent directory can be specified via the `--output-dir` argument.
+7. Optionally, the `save_megatron_model` method can be used to save the model
+    in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
 torchrun --nproc_per_node 2 examples/multi_gpu_hf.py
+torchrun --nproc_per_node 2 examples/multi_gpu_hf.py --megatron-save-path ./megatron_checkpoint
 """
 
 import argparse
@@ -46,12 +49,18 @@ from megatron.bridge import CausalLMBridge
 from megatron.bridge.models.decorators import torchrun_main
 
 
-HF_MODEL_ID = "meta-llama/Llama-3.1-8B"
+HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 console = Console()
 
 
 @torchrun_main
-def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
+def main(
+    hf_model_id: str = HF_MODEL_ID,
+    output_dir: str = None,
+    tp: int = 1,
+    pp: int = 1,
+    megatron_save_path: str | None = None,
+) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
         console.print("This script must be launched with torchrun. Please run:")
@@ -66,8 +75,9 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
 
     bridge = CausalLMBridge.from_hf_pretrained(hf_model_id)
 
-    model_provider = bridge.to_megatron_provider()
-    model_provider.tensor_model_parallel_size = int(os.environ.get("WORLD_SIZE", "1"))
+    model_provider = bridge.to_megatron_provider(load_weights=True)
+    model_provider.tensor_model_parallel_size = tp
+    model_provider.pipeline_model_parallel_size = pp
     model_provider.initialize_model_parallel(seed=0)
 
     # Now we can check for rank
@@ -109,6 +119,12 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
 
     bridge.save_hf_pretrained(megatron_model, save_path)
 
+    # Save in Megatron format if path is provided
+    if megatron_save_path:
+        if is_rank_0:
+            console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
+        bridge.save_megatron_model(megatron_model, megatron_save_path)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -121,6 +137,14 @@ if __name__ == "__main__":
         default=None,
         help="The directory where the converted model directory will be created. Defaults to the current working directory.",
     )
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument(
+        "--megatron-save-path",
+        type=str,
+        default=None,
+        help="Path to save the model in Megatron checkpoint format. If not provided, model will not be saved in Megatron format.",
+    )
 
     args = parser.parse_args()
-    main(args.hf_model_id, args.output_dir)
+    main(args.hf_model_id, args.output_dir, args.tp, args.pp, args.megatron_save_path)

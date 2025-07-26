@@ -66,16 +66,16 @@ class PreTrainedBase(ABC):
         save_path = Path(save_directory)
         save_path.mkdir(parents=True, exist_ok=True)
 
-        # Save the config if it's already loaded
+        _ = getattr(self, "config")  # trigger lazy loading of config
         if hasattr(self, "_config") and self._config is not None:
             self._config.save_pretrained(save_path)
 
         # Iterate over required artifacts to save them in a predictable order
         for name in self.ARTIFACTS:
-            # Check if the artifact is already loaded (has the private attribute)
+            # Access the public property to trigger lazy loading if needed
+            artifact = getattr(self, name)
             attr_name = f"_{name}"
             if hasattr(self, attr_name):
-                artifact = getattr(self, attr_name)
                 if artifact is not None and hasattr(artifact, "save_pretrained"):
                     artifact.save_pretrained(save_path)
 
