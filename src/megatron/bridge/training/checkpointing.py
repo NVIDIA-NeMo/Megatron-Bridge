@@ -1399,7 +1399,7 @@ def _transpose_first_dim(
 
 def _get_non_persistent_iteration(
     non_persistent_global_dir: str,
-    non_persistent_ckpt_type: Optional[Literal["global", "local"]],
+    non_persistent_ckpt_type: Optional[Literal["global", "local"]] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
 ) -> int:
     """Get iteration number from non-persistent checkpoint."""

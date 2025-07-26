@@ -577,44 +577,44 @@ class TestNonPersistentCheckpoints:
 
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("os.path.isfile")
-    def test_get_non_persistent_iteration_global(self, mock_isfile, mock_read_state, mock_config):
+    def test_get_non_persistent_iteration_global(self, mock_isfile, mock_read_state):
         """Test getting iteration from global non-persistent checkpoint."""
-        mock_config.checkpoint.non_persistent_ckpt_type = "global"
+        non_persistent_ckpt_type = "global"
         mock_isfile.return_value = True
 
         mock_train_state = Mock()
         mock_train_state.step = 1500
         mock_read_state.return_value = mock_train_state
 
-        result = _get_non_persistent_iteration("/np_dir", mock_config)
+        result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
 
         assert result == 1500
         mock_read_state.assert_called_once()
 
-    def test_get_non_persistent_iteration_none(self, mock_config):
+    def test_get_non_persistent_iteration_none(self):
         """Test when non_persistent_ckpt_type is None."""
-        mock_config.checkpoint.non_persistent_ckpt_type = None
+        non_persistent_ckpt_type = None
 
-        result = _get_non_persistent_iteration("/np_dir", mock_config)
+        result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
 
         assert result == -1
 
-    def test_get_non_persistent_iteration_local(self, mock_config):
+    def test_get_non_persistent_iteration_local(self):
         """Test getting iteration from local non-persistent checkpoint."""
-        mock_config.checkpoint.non_persistent_ckpt_type = "local"
+        non_persistent_ckpt_type = "local"
         mock_context = {"local_checkpoint_manager": Mock()}
         mock_context["local_checkpoint_manager"].find_latest.return_value = 2000
 
-        result = _get_non_persistent_iteration("/np_dir", mock_config, mock_context)
+        result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type, mock_context)
 
         assert result == 2000
 
-    def test_get_non_persistent_iteration_invalid_type(self, mock_config):
+    def test_get_non_persistent_iteration_invalid_type(self):
         """Test error for invalid non_persistent_ckpt_type."""
-        mock_config.checkpoint.non_persistent_ckpt_type = "invalid"
+        non_persistent_ckpt_type = "invalid"
 
         with pytest.raises(ValueError):
-            _get_non_persistent_iteration("/np_dir", mock_config)
+            _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
 
 
 class TestCheckpointingContext:
