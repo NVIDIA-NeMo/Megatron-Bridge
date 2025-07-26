@@ -707,9 +707,8 @@ class TestLoadBaseCheckpoint:
     @pytest.fixture
     def base_config(self):
         """Fixture for base checkpoint tests."""
-        mock_cfg = Mock(spec=ConfigContainer)
-        mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
-        mock_cfg.checkpoint.exit_on_missing_checkpoint = False
+        mock_cfg = Mock(spec=CheckpointConfig)
+        mock_cfg.exit_on_missing_checkpoint = False
         return mock_cfg
 
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
