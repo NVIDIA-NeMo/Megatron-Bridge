@@ -116,13 +116,9 @@ jobs:
         include:
           - script: L2_Launch_training
             timeout: 60
-          - script: L2_Multi_GPU_Conversion_TP
+          - script: L2_Multi_GPU_Conversion_Combined
             timeout: 30
-          - script: L2_Multi_GPU_Conversion_PP
-            timeout: 30
-          - script: L2_Generate_From_HF_TP
-            timeout: 30
-          - script: L2_Generate_From_HF_PP
+          - script: L2_Generate_From_HF_Combined
             timeout: 30
     needs: [cicd-unit-tests]
     runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
