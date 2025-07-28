@@ -33,6 +33,7 @@ Usage examples:
 
   # Export a Megatron checkpoint to HuggingFace format
   python examples/models/checkpoint_conversion.py export \
+    --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b \
     --hf-path ./exports/llama3_2_1b_hf
 
@@ -45,6 +46,7 @@ Usage examples:
 
   # Export without progress bar (useful for scripting)
   python examples/models/checkpoint_conversion.py export \
+    --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --hf-path ./exports/custom_model_hf \
     --no-progress
