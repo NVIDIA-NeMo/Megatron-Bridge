@@ -852,21 +852,12 @@ def load_model_for_inference(
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
 
-    optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
     # TODO: restore modelopt state, hide_loss_modules()
 
     model = unwrap_model(model)
-    sharded_state_dict = generate_state_dict(
-        ckpt_cfg,
-        model,
-        optimizer=None,
-        opt_param_scheduler=None,
-        rng_state=None,
-        optim_sd_kwargs=optim_sd_kwargs,
-        model_sd_kwargs=model_sd_kwargs,
-    )
+    sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
 
     load_strategy = get_default_load_sharded_strategy(checkpoint_path)
     if ckpt_cfg.fully_parallel_load:
