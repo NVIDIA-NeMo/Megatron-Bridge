@@ -839,7 +839,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_unwrap_model.assert_called_once_with(mock_model)
         mock_generate_state_dict.assert_called_once()
         call_args = mock_generate_state_dict.call_args
-        assert call_args[1]["model_sd_kwargs"] == {"metadata": mock_metadata}
+        assert call_args[0][1] == {"metadata": mock_metadata}
         mock_get_strategy.assert_called_once_with("/test/checkpoint")
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
 
