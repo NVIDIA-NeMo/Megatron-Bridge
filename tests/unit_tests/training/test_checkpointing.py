@@ -818,6 +818,7 @@ class TestLoadModelWeightsFromCheckpoint:
         # Setup mocks
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.return_value = mock_full_state_dict
         mock_get_strategy.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
@@ -868,6 +869,7 @@ class TestLoadModelWeightsFromCheckpoint:
         # Setup mocks
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.return_value = mock_full_state_dict
         mock_get_strategy.return_value = Mock()
         mock_generate_state_dict.return_value = {
             "model0": {"weight1": torch.randn(10, 10)},
