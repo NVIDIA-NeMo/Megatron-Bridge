@@ -842,22 +842,11 @@ def generate_state_dict(
 
 
 def load_model_for_inference(
-    load_dir: str, ckpt_cfg: CheckpointConfig, model: list[MegatronModule], strict: bool = True
+    checkpoint_path: str, ckpt_cfg: CheckpointConfig, model: list[MegatronModule], strict: bool = True
 ):
-    """Load model weights for inference."""  # TODO: make docstring better
-    # TODO: i don't think we even need this, user can provide path to specific ckpt, rather than load_dir
-    tracker_filename = get_checkpoint_train_state_filename(load_dir)
-    if os.path.isfile(tracker_filename):
-        train_state = read_train_state(tracker_filename)
-        iteration = train_state.step
-    # TODO: if that fails, try MLM tracker file to support MLM checkpoints
-    else:
-        raise RuntimeError("No iteration tracker found in checkpoint dir.")
+    """Load model weights for inference. Support MCore distributed checkpoints."""  # TODO: make docstring better
 
-    state_dict, _, _, _ = _load_global_dist_base_checkpoint(
-        load_dir, ckpt_cfg, rank0=True, sharded_state_dict=None, iteration=iteration, release=False
-    )
-
+    state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
     assert state_dict is not None
 
     # get ckpt_tp_pp from ckpt ?
@@ -885,15 +874,20 @@ def load_model_for_inference(
         model_sd_kwargs=model_sd_kwargs,
     )
 
-    state_dict, _, _, _ = _load_global_dist_base_checkpoint(
-        load_dir, ckpt_cfg, rank0=False, sharded_state_dict=sharded_state_dict, iteration=iteration, release=False
+    load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+    if ckpt_cfg.fully_parallel_load:
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
+        )
+    state_dict = dist_checkpointing.load(
+        sharded_state_dict, checkpoint_path, load_strategy, strict=ckpt_cfg.dist_ckpt_strictness
     )
 
     # train state does not need to be loaded
     # microbatch calc does not need to be updated ?
 
     if len(model) == 1:
-        load_model_state_dict(model[0], state_dict["model"], strict)
+        _load_model_state_dict(model[0], state_dict["model"], strict)
     else:
         for i in range(len(model)):
             # If there is no corresponding model in the state_dict, it will be ignored.
@@ -901,7 +895,7 @@ def load_model_for_inference(
             model_key = "model%d" % i
             if model_key not in state_dict:
                 continue
-            load_model_state_dict(model[i], state_dict[model_key], strict)
+            _load_model_state_dict(model[i], state_dict[model_key], strict)
 
     # optimizer state does not need to be loaded
     # rerun state does not need to be loaded
