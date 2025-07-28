@@ -567,10 +567,10 @@ class CausalLMBridge(Generic[MegatronModelT]):
         """
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
-        
+
         # Convert to Megatron model
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
-        
+
         # Save as Megatron checkpoint
         bridge.save_megatron_model(megatron_model, megatron_path)
 
@@ -619,7 +619,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
         with temporary_distributed_context(backend="gloo"):
             # Load the Megatron model
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
-            
+
             # Save in HuggingFace format
             self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
 

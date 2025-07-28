@@ -555,16 +555,13 @@ class TestCausalLMBridgeEdgeCases:
         # Setup mocks
         mock_bridge = Mock(spec=CausalLMBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
-        
+
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt
-        CausalLMBridge.import_ckpt(
-            "meta-llama/Llama-3-8B",
-            "./megatron_checkpoint"
-        )
+        CausalLMBridge.import_ckpt("meta-llama/Llama-3-8B", "./megatron_checkpoint")
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Llama-3-8B")
@@ -579,17 +576,14 @@ class TestCausalLMBridgeEdgeCases:
         # Setup mocks
         mock_bridge = Mock(spec=CausalLMBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
-        
+
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt with kwargs
         CausalLMBridge.import_ckpt(
-            "./local_model",
-            "./megatron_checkpoint",
-            torch_dtype=torch.float16,
-            device_map="auto"
+            "./local_model", "./megatron_checkpoint", torch_dtype=torch.float16, device_map="auto"
         )
 
         # Assertions
@@ -614,10 +608,7 @@ class TestCausalLMBridgeEdgeCases:
                 mock_load_megatron_model.return_value = mock_megatron_model
 
                 # Test export_ckpt
-                bridge.export_ckpt(
-                    "./megatron_checkpoint",
-                    "./hf_export"
-                )
+                bridge.export_ckpt("./megatron_checkpoint", "./hf_export")
 
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
@@ -640,15 +631,13 @@ class TestCausalLMBridgeEdgeCases:
                 mock_load_megatron_model.return_value = mock_megatron_model
 
                 # Test export_ckpt with kwargs
-                bridge.export_ckpt(
-                    "./megatron_checkpoint",
-                    "./hf_export",
-                    show_progress=False
-                )
+                bridge.export_ckpt("./megatron_checkpoint", "./hf_export", show_progress=False)
 
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
-                mock_save_hf_pretrained.assert_called_once_with(mock_megatron_model, "./hf_export", show_progress=False)
+                mock_save_hf_pretrained.assert_called_once_with(
+                    mock_megatron_model, "./hf_export", show_progress=False
+                )
 
     def test_save_megatron_model_basic(self):
         """Test save_megatron_model method."""
@@ -663,7 +652,7 @@ class TestCausalLMBridgeEdgeCases:
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
-            
+
             mock_save_megatron_model.assert_called_once_with(mock_megatron_model, "./checkpoint_path")
 
     def test_save_megatron_model_import_error(self):
@@ -673,11 +662,11 @@ class TestCausalLMBridgeEdgeCases:
 
         # Create a mock that raises ImportError when accessed
         def mock_import(*args, **kwargs):
-            if 'megatron.bridge.training.model_load_save' in args[0]:
+            if "megatron.bridge.training.model_load_save" in args[0]:
                 raise ImportError("No module named 'megatron.bridge.training.model_load_save'")
             return __import__(*args, **kwargs)
-        
-        with patch('builtins.__import__', side_effect=mock_import):
+
+        with patch("builtins.__import__", side_effect=mock_import):
             with pytest.raises(ImportError, match="megatron.bridge.training is not available"):
                 bridge.save_megatron_model([Mock()], "./path")
 
@@ -698,26 +687,26 @@ class TestCausalLMBridgeEdgeCases:
                             # Setup mocks
                             mock_model = Mock()
                             mock_load_megatron_model.return_value = mock_model
-                            
+
                             mock_config_file = Mock()
                             mock_config_file.exists.return_value = True
                             mock_path.return_value = mock_checkpoint_path = Mock()
                             mock_checkpoint_path.iterdir.return_value = []  # No iter_ folders
-                            
+
                             # Handle Path division operations
                             def path_division(self, other):
                                 if other == "run_config.yaml":
                                     return mock_config_file
                                 return Mock()
-                            
+
                             mock_checkpoint_path.__truediv__ = path_division
-                            
+
                             mock_yaml_config = {"model": {"_target_": "some.model"}}
                             mock_yaml_load.return_value = mock_yaml_config
                             mock_instantiate.return_value = Mock()
 
                             result = bridge.load_megatron_model("./checkpoint_path")
-                            
+
                             assert result == [mock_model]
                             mock_load_megatron_model.assert_called_once()
 
@@ -735,21 +724,21 @@ class TestCausalLMBridgeEdgeCases:
                             mock_iter_folder_1 = Mock()
                             mock_iter_folder_1.is_dir.return_value = True
                             mock_iter_folder_1.name = "iter_0000010"
-                            
+
                             mock_iter_folder_2 = Mock()
                             mock_iter_folder_2.is_dir.return_value = True
                             mock_iter_folder_2.name = "iter_0000020"
-                            
+
                             mock_config_file = Mock()
                             mock_config_file.exists.return_value = True
-                            
+
                             # Create a mock checkpoint path that supports / operator
                             mock_checkpoint_path = Mock()
                             mock_checkpoint_path.iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
-                            
+
                             # Mock updated checkpoint path after finding latest iter
                             mock_updated_checkpoint_path = Mock()
-                            
+
                             # Handle Path division operations
                             def path_division(self, other):
                                 if other == "iter_0000020":
@@ -757,21 +746,23 @@ class TestCausalLMBridgeEdgeCases:
                                 elif other == "run_config.yaml":
                                     return mock_config_file
                                 return Mock()
-                            
+
                             mock_checkpoint_path.__truediv__ = path_division
-                            mock_updated_checkpoint_path.__truediv__ = lambda self, other: mock_config_file if other == "run_config.yaml" else Mock()
-                            
+                            mock_updated_checkpoint_path.__truediv__ = (
+                                lambda self, other: mock_config_file if other == "run_config.yaml" else Mock()
+                            )
+
                             mock_path_class.return_value = mock_checkpoint_path
-                            
+
                             mock_yaml_config = {"model": {"_target_": "some.model"}}
                             mock_yaml_load.return_value = mock_yaml_config
                             mock_instantiate.return_value = Mock()
-                            
+
                             mock_model = Mock()
                             mock_load_megatron_model.return_value = mock_model
 
                             result = bridge.load_megatron_model("./checkpoint_path")
-                            
+
                             assert result == [mock_model]
                             # Should use the latest iteration (iter_0000020)
 
@@ -786,7 +777,9 @@ class TestCausalLMBridgeEdgeCases:
             mock_checkpoint_path = Mock()
             mock_checkpoint_path.iterdir.return_value = []  # No iter_ folders
             # Handle Path division to return config file when accessing "run_config.yaml"
-            mock_checkpoint_path.__truediv__ = lambda self, other: mock_config_file if other == "run_config.yaml" else Mock()
+            mock_checkpoint_path.__truediv__ = (
+                lambda self, other: mock_config_file if other == "run_config.yaml" else Mock()
+            )
             mock_path_class.return_value = mock_checkpoint_path
 
             with pytest.raises(FileNotFoundError, match="Checkpoint config file .* does not exist"):
