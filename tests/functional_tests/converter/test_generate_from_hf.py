@@ -18,9 +18,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-import torch
-
-from tests.functional_tests.utils import initialize_distributed
 
 
 class TestGenerateFromHF:

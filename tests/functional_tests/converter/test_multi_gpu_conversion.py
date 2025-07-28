@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
-import torch
-
-from tests.functional_tests.utils import initialize_distributed
 
 
 class TestMultiGPUConversion:
