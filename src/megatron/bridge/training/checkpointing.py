@@ -841,7 +841,7 @@ def generate_state_dict(
     return state_dict
 
 
-def load_model_for_inference(
+def _load_model_weights_from_checkpoint(
     checkpoint_path: str,
     model: list[MegatronModule],
     fully_parallel_load: bool = False,
@@ -857,7 +857,19 @@ def load_model_for_inference(
     ] = "assume_ok_unexpected",
     strict: bool = True,
 ):
-    """Load model weights for inference. Support MCore distributed checkpoints."""  # TODO: make docstring better
+    """Load model weights from a checkpoint.
+
+    MCore distributed checkpoints from both Megatron Bridge and MegatronLM are supported.
+    This function duplicates some logic from load_checkpoint() to simplify model
+    loading for inference.
+
+    Args:
+        checkpoint_path: path to a distributed checkpoint.
+        model: The model module(s) to load weights into.
+        fully_parallel_load: Apply full load parallelization across DP.
+        dist_ckpt_strictness: Determine handling of key mismatch during checkpoint load.
+        strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+    """
 
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
     assert state_dict is not None
