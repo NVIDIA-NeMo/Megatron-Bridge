@@ -546,3 +546,235 @@ class TestCausalLMBridgeEdgeCases:
             # These operations should work on CPU
             arch = bridge._get_causal_lm_architecture()
             assert arch is not None
+
+    @patch.object(CausalLMBridge, "save_megatron_model")
+    @patch.object(CausalLMBridge, "to_megatron_model")
+    @patch.object(CausalLMBridge, "from_hf_pretrained")
+    def test_import_ckpt_basic(self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model):
+        """Test basic import_ckpt functionality."""
+        # Setup mocks
+        mock_bridge = Mock(spec=CausalLMBridge)
+        mock_from_hf_pretrained.return_value = mock_bridge
+        
+        mock_megatron_model = [Mock()]
+        mock_bridge.to_megatron_model.return_value = mock_megatron_model
+        mock_bridge.save_megatron_model = Mock()
+
+        # Test import_ckpt
+        CausalLMBridge.import_ckpt(
+            "meta-llama/Llama-3-8B",
+            "./megatron_checkpoint"
+        )
+
+        # Assertions
+        mock_from_hf_pretrained.assert_called_once_with("meta-llama/Llama-3-8B")
+        mock_bridge.to_megatron_model.assert_called_once_with()
+        mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
+
+    @patch.object(CausalLMBridge, "save_megatron_model")
+    @patch.object(CausalLMBridge, "to_megatron_model")
+    @patch.object(CausalLMBridge, "from_hf_pretrained")
+    def test_import_ckpt_with_kwargs(self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model):
+        """Test import_ckpt with custom kwargs."""
+        # Setup mocks
+        mock_bridge = Mock(spec=CausalLMBridge)
+        mock_from_hf_pretrained.return_value = mock_bridge
+        
+        mock_megatron_model = [Mock()]
+        mock_bridge.to_megatron_model.return_value = mock_megatron_model
+        mock_bridge.save_megatron_model = Mock()
+
+        # Test import_ckpt with kwargs
+        hf_kwargs = {"torch_dtype": torch.float16, "device_map": "auto"}
+        model_kwargs = {"wrap_with_ddp": False}
+        
+        CausalLMBridge.import_ckpt(
+            "./local_model",
+            "./megatron_checkpoint",
+            hf_kwargs=hf_kwargs,
+            model_kwargs=model_kwargs
+        )
+
+        # Assertions
+        mock_from_hf_pretrained.assert_called_once_with("./local_model", **hf_kwargs)
+        mock_bridge.to_megatron_model.assert_called_once_with(**model_kwargs)
+        mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
+
+    def test_export_ckpt_basic(self):
+        """Test basic export_ckpt functionality."""
+        # Setup mocks
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch.object(bridge, "load_megatron_model") as mock_load_megatron_model:
+            with patch.object(bridge, "save_hf_pretrained") as mock_save_hf_pretrained:
+                mock_load_megatron_model.return_value = mock_megatron_model
+
+                # Test export_ckpt
+                bridge.export_ckpt(
+                    "./megatron_checkpoint",
+                    "./hf_export"
+                )
+
+                # Assertions
+                mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint")
+                mock_save_hf_pretrained.assert_called_once_with(mock_megatron_model, "./hf_export", show_progress=True)
+
+    def test_export_ckpt_with_kwargs(self):
+        """Test export_ckpt with custom kwargs."""
+        # Setup mocks
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch.object(bridge, "load_megatron_model") as mock_load_megatron_model:
+            with patch.object(bridge, "save_hf_pretrained") as mock_save_hf_pretrained:
+                mock_load_megatron_model.return_value = mock_megatron_model
+
+                # Test export_ckpt with kwargs
+                model_kwargs = {"wrap_with_ddp": False}
+                
+                bridge.export_ckpt(
+                    "./megatron_checkpoint",
+                    "./hf_export",
+                    model_kwargs=model_kwargs,
+                    show_progress=False
+                )
+
+                # Assertions
+                mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", **model_kwargs)
+                mock_save_hf_pretrained.assert_called_once_with(mock_megatron_model, "./hf_export", show_progress=False)
+
+    def test_save_megatron_model_basic(self):
+        """Test save_megatron_model method."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch("megatron.bridge.models.causal_bridge.save_megatron_model") as mock_save_megatron_model:
+            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
+            
+            mock_save_megatron_model.assert_called_once_with(mock_megatron_model, "./checkpoint_path")
+
+    def test_save_megatron_model_import_error(self):
+        """Test save_megatron_model import error handling."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch("megatron.bridge.models.causal_bridge.save_megatron_model", side_effect=ImportError):
+            with pytest.raises(ImportError, match="megatron.bridge.training is not available"):
+                bridge.save_megatron_model([Mock()], "./path")
+
+    def test_load_megatron_model_basic(self):
+        """Test load_megatron_model method."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch("megatron.bridge.models.causal_bridge.load_megatron_model") as mock_load_megatron_model:
+            with patch("megatron.bridge.models.causal_bridge.instantiate") as mock_instantiate:
+                with patch("builtins.open", create=True) as mock_open:
+                    with patch("yaml.safe_load") as mock_yaml_load:
+                        with patch("pathlib.Path") as mock_path:
+                            # Setup mocks
+                            mock_model = Mock()
+                            mock_load_megatron_model.return_value = mock_model
+                            
+                            mock_config_file = Mock()
+                            mock_config_file.exists.return_value = True
+                            mock_path.return_value = mock_checkpoint_path = Mock()
+                            mock_checkpoint_path.iterdir.return_value = []  # No iter_ folders
+                            mock_checkpoint_path.__truediv__.return_value = mock_config_file
+                            
+                            mock_yaml_config = {"model": {"_target_": "some.model"}}
+                            mock_yaml_load.return_value = mock_yaml_config
+                            mock_instantiate.return_value = Mock()
+
+                            result = bridge.load_megatron_model("./checkpoint_path")
+                            
+                            assert result == [mock_model]
+                            mock_load_megatron_model.assert_called_once()
+
+    def test_load_megatron_model_with_iter_folder(self):
+        """Test load_megatron_model with iter_ folders."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch("megatron.bridge.models.causal_bridge.load_megatron_model") as mock_load_megatron_model:
+            with patch("megatron.bridge.models.causal_bridge.instantiate") as mock_instantiate:
+                with patch("builtins.open", create=True) as mock_open:
+                    with patch("yaml.safe_load") as mock_yaml_load:
+                        with patch("pathlib.Path") as mock_path:
+                            # Setup mocks for iter folders
+                            mock_iter_folder_1 = Mock()
+                            mock_iter_folder_1.is_dir.return_value = True
+                            mock_iter_folder_1.name = "iter_0000010"
+                            
+                            mock_iter_folder_2 = Mock()
+                            mock_iter_folder_2.is_dir.return_value = True
+                            mock_iter_folder_2.name = "iter_0000020"
+                            
+                            mock_checkpoint_path = Mock()
+                            mock_checkpoint_path.iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
+                            
+                            mock_config_file = Mock()
+                            mock_config_file.exists.return_value = True
+                            mock_checkpoint_path.__truediv__.return_value = mock_config_file
+                            
+                            mock_path.return_value = mock_checkpoint_path
+                            
+                            mock_yaml_config = {"model": {"_target_": "some.model"}}
+                            mock_yaml_load.return_value = mock_yaml_config
+                            mock_instantiate.return_value = Mock()
+                            
+                            mock_model = Mock()
+                            mock_load_megatron_model.return_value = mock_model
+
+                            result = bridge.load_megatron_model("./checkpoint_path")
+                            
+                            assert result == [mock_model]
+                            # Should use the latest iteration (iter_0000020)
+
+    def test_load_megatron_model_missing_config(self):
+        """Test load_megatron_model with missing config file."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch("pathlib.Path") as mock_path:
+            mock_config_file = Mock()
+            mock_config_file.exists.return_value = False
+            mock_checkpoint_path = Mock()
+            mock_checkpoint_path.iterdir.return_value = []  # No iter_ folders
+            mock_checkpoint_path.__truediv__.return_value = mock_config_file
+            mock_path.return_value = mock_checkpoint_path
+
+            with pytest.raises(FileNotFoundError, match="Checkpoint config file .* does not exist"):
+                bridge.load_megatron_model("./checkpoint_path")
+
+    def test_load_megatron_model_import_error(self):
+        """Test load_megatron_model import error handling."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = CausalLMBridge(mock_hf_model)
+
+        with patch("megatron.bridge.models.causal_bridge.load_megatron_model", side_effect=ImportError):
+            with pytest.raises(ImportError, match="megatron.bridge.training is not available"):
+                bridge.load_megatron_model("./path")
