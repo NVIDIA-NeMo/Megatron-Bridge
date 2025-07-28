@@ -46,7 +46,6 @@ class TestMultiGPUConversion:
             pp: Pipeline parallelism size
             test_name: Name of the test for identification
         """
-        initialize_distributed()
 
         # Create temporary output directory
         test_output_dir = tmp_path / test_name

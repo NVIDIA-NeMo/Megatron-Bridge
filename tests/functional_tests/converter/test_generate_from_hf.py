@@ -46,8 +46,6 @@ class TestGenerateFromHF:
             pp: Pipeline parallelism size
             test_name: Name of the test for identification
         """
-        initialize_distributed()
-
         # Create temporary output file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp_file:
             output_file = tmp_file.name
