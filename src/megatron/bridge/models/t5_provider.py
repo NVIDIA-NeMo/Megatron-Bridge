@@ -79,7 +79,6 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     persist_layer_norm: bool = True
     bias_dropout_fusion: bool = True
     deallocate_pipeline_outputs: bool = True
-    pipeline_model_parallel_split_rank: int = 0
     num_moe_experts: Optional[int] = None
     recompute_num_layers: int = 1
     distribute_saved_activations: bool = False

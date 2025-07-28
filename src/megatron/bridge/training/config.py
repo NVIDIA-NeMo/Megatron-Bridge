@@ -724,19 +724,13 @@ class ConfigContainer(Container):
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
         model_cfg = self.model
-        encoder_model_size = (
-            getattr(model_cfg, "encoder_tensor_model_parallel_size", 0)
-            * getattr(model_cfg, "encoder_pipeline_model_parallel_size", 0)
-            * model_cfg.context_parallel_size
-        )
-        decoder_model_size = (
+        total_model_size = (
             model_cfg.tensor_model_parallel_size
             * model_cfg.pipeline_model_parallel_size
             * model_cfg.context_parallel_size
         )
-        total_model_size = encoder_model_size + decoder_model_size
         assert world_size % total_model_size == 0, f"""
-        world size ({world_size}) is not divisible by total_model_size ({encoder_model_size=} + {decoder_model_size=})
+        world size ({world_size}) is not divisible by total_model_size ({model_cfg.tensor_model_parallel_size=} * {model_cfg.pipeline_model_parallel_size=} * {model_cfg.context_parallel_size=})
         """
         return world_size // total_model_size
 
