@@ -849,14 +849,8 @@ def load_model_for_inference(
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
     assert state_dict is not None
 
-    # get ckpt_tp_pp from ckpt ?
-    # RNG state does not need to be loaded
-
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
-
-    # optimizer state does not need to be loaded
-    # rerun state does not need to be loaded
 
     optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
@@ -883,9 +877,6 @@ def load_model_for_inference(
         sharded_state_dict, checkpoint_path, load_strategy, strict=ckpt_cfg.dist_ckpt_strictness
     )
 
-    # train state does not need to be loaded
-    # microbatch calc does not need to be updated ?
-
     if len(model) == 1:
         _load_model_state_dict(model[0], state_dict["model"], strict)
     else:
@@ -897,9 +888,6 @@ def load_model_for_inference(
                 continue
             _load_model_state_dict(model[i], state_dict[model_key], strict)
 
-    # optimizer state does not need to be loaded
-    # rerun state does not need to be loaded
-    # RNG state does not need to be loaded
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
