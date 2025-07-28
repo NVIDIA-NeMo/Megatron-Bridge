@@ -89,7 +89,7 @@ class TestCheckpointConversion:
     def test_export_megatron_to_hf(self, tmp_path):
         """
         Test exporting a Megatron checkpoint to HuggingFace format.
-        
+
         This test first imports a model to create a Megatron checkpoint, then exports it back.
 
         Args:
@@ -262,4 +262,4 @@ class TestCheckpointConversion:
 
         except Exception as e:
             print(f"Error during {test_name} settings test: {e}")
-            raise 
+            raise

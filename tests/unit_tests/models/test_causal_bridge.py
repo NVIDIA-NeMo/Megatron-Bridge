@@ -681,34 +681,33 @@ class TestCausalLMBridgeEdgeCases:
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             with patch("megatron.bridge.utils.instantiate_utils.instantiate") as mock_instantiate:
-                with patch("builtins.open", create=True) as mock_open:
-                    with patch("yaml.safe_load") as mock_yaml_load:
-                        with patch("megatron.bridge.models.causal_bridge.Path") as mock_path:
-                            # Setup mocks
-                            mock_model = Mock()
-                            mock_load_megatron_model.return_value = mock_model
+                with patch("yaml.safe_load") as mock_yaml_load:
+                    with patch("megatron.bridge.models.causal_bridge.Path") as mock_path:
+                        # Setup mocks
+                        mock_model = Mock()
+                        mock_load_megatron_model.return_value = mock_model
 
-                            mock_config_file = Mock()
-                            mock_config_file.exists.return_value = True
-                            mock_path.return_value = mock_checkpoint_path = Mock()
-                            mock_checkpoint_path.iterdir.return_value = []  # No iter_ folders
+                        mock_config_file = Mock()
+                        mock_config_file.exists.return_value = True
+                        mock_path.return_value = mock_checkpoint_path = Mock()
+                        mock_checkpoint_path.iterdir.return_value = []  # No iter_ folders
 
-                            # Handle Path division operations
-                            def path_division(self, other):
-                                if other == "run_config.yaml":
-                                    return mock_config_file
-                                return Mock()
+                        # Handle Path division operations
+                        def path_division(self, other):
+                            if other == "run_config.yaml":
+                                return mock_config_file
+                            return Mock()
 
-                            mock_checkpoint_path.__truediv__ = path_division
+                        mock_checkpoint_path.__truediv__ = path_division
 
-                            mock_yaml_config = {"model": {"_target_": "some.model"}}
-                            mock_yaml_load.return_value = mock_yaml_config
-                            mock_instantiate.return_value = Mock()
+                        mock_yaml_config = {"model": {"_target_": "some.model"}}
+                        mock_yaml_load.return_value = mock_yaml_config
+                        mock_instantiate.return_value = Mock()
 
-                            result = bridge.load_megatron_model("./checkpoint_path")
+                        result = bridge.load_megatron_model("./checkpoint_path")
 
-                            assert result == [mock_model]
-                            mock_load_megatron_model.assert_called_once()
+                        assert result == [mock_model]
+                        mock_load_megatron_model.assert_called_once()
 
     def test_load_megatron_model_with_iter_folder(self):
         """Test load_megatron_model with iter_ folders."""
@@ -717,54 +716,53 @@ class TestCausalLMBridgeEdgeCases:
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             with patch("megatron.bridge.utils.instantiate_utils.instantiate") as mock_instantiate:
-                with patch("builtins.open", create=True) as mock_open:
-                    with patch("yaml.safe_load") as mock_yaml_load:
-                        with patch("megatron.bridge.models.causal_bridge.Path") as mock_path_class:
-                            # Setup mocks for iter folders
-                            mock_iter_folder_1 = Mock()
-                            mock_iter_folder_1.is_dir.return_value = True
-                            mock_iter_folder_1.name = "iter_0000010"
+                with patch("yaml.safe_load") as mock_yaml_load:
+                    with patch("megatron.bridge.models.causal_bridge.Path") as mock_path_class:
+                        # Setup mocks for iter folders
+                        mock_iter_folder_1 = Mock()
+                        mock_iter_folder_1.is_dir.return_value = True
+                        mock_iter_folder_1.name = "iter_0000010"
 
-                            mock_iter_folder_2 = Mock()
-                            mock_iter_folder_2.is_dir.return_value = True
-                            mock_iter_folder_2.name = "iter_0000020"
+                        mock_iter_folder_2 = Mock()
+                        mock_iter_folder_2.is_dir.return_value = True
+                        mock_iter_folder_2.name = "iter_0000020"
 
-                            mock_config_file = Mock()
-                            mock_config_file.exists.return_value = True
+                        mock_config_file = Mock()
+                        mock_config_file.exists.return_value = True
 
-                            # Create a mock checkpoint path that supports / operator
-                            mock_checkpoint_path = Mock()
-                            mock_checkpoint_path.iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
+                        # Create a mock checkpoint path that supports / operator
+                        mock_checkpoint_path = Mock()
+                        mock_checkpoint_path.iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
 
-                            # Mock updated checkpoint path after finding latest iter
-                            mock_updated_checkpoint_path = Mock()
+                        # Mock updated checkpoint path after finding latest iter
+                        mock_updated_checkpoint_path = Mock()
 
-                            # Handle Path division operations
-                            def path_division(self, other):
-                                if other == "iter_0000020":
-                                    return mock_updated_checkpoint_path
-                                elif other == "run_config.yaml":
-                                    return mock_config_file
-                                return Mock()
+                        # Handle Path division operations
+                        def path_division(self, other):
+                            if other == "iter_0000020":
+                                return mock_updated_checkpoint_path
+                            elif other == "run_config.yaml":
+                                return mock_config_file
+                            return Mock()
 
-                            mock_checkpoint_path.__truediv__ = path_division
-                            mock_updated_checkpoint_path.__truediv__ = (
-                                lambda self, other: mock_config_file if other == "run_config.yaml" else Mock()
-                            )
+                        mock_checkpoint_path.__truediv__ = path_division
+                        mock_updated_checkpoint_path.__truediv__ = (
+                            lambda self, other: mock_config_file if other == "run_config.yaml" else Mock()
+                        )
 
-                            mock_path_class.return_value = mock_checkpoint_path
+                        mock_path_class.return_value = mock_checkpoint_path
 
-                            mock_yaml_config = {"model": {"_target_": "some.model"}}
-                            mock_yaml_load.return_value = mock_yaml_config
-                            mock_instantiate.return_value = Mock()
+                        mock_yaml_config = {"model": {"_target_": "some.model"}}
+                        mock_yaml_load.return_value = mock_yaml_config
+                        mock_instantiate.return_value = Mock()
 
-                            mock_model = Mock()
-                            mock_load_megatron_model.return_value = mock_model
+                        mock_model = Mock()
+                        mock_load_megatron_model.return_value = mock_model
 
-                            result = bridge.load_megatron_model("./checkpoint_path")
+                        result = bridge.load_megatron_model("./checkpoint_path")
 
-                            assert result == [mock_model]
-                            # Should use the latest iteration (iter_0000020)
+                        assert result == [mock_model]
+                        # Should use the latest iteration (iter_0000020)
 
     def test_load_megatron_model_missing_config(self):
         """Test load_megatron_model with missing config file."""
