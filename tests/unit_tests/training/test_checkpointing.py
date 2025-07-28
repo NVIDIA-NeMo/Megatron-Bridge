@@ -766,13 +766,26 @@ class TestLoadModelWeightsFromCheckpoint:
         return [model1, model2]
 
     @pytest.fixture
-    def mock_state_dict(self):
+    def mock_common_state_dict(self):
         """Create a mock state dict for testing."""
         return {
             "checkpoint_version": 3.0,
             "iteration": 1000,
             "optimizer": {"optimizer": {"param_groups": []}},
             "opt_param_scheduler": {"max_lr": 0.001},
+        }
+
+    @pytest.fixture
+    def mock_full_state_dict(self):
+        """Create a mock state dict for testing."""
+        return {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "optimizer": {"optimizer": {"param_groups": []}},
+            "opt_param_scheduler": {"max_lr": 0.001},
+            "model": {"weight": torch.randn(10, 10)},
+            "model0": {"weight1": torch.randn(10, 10)},
+            "model1": {"weight2": torch.randn(5, 5)},
         }
 
     @pytest.fixture
@@ -797,12 +810,13 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_unwrap_model,
         mock_dist_ckpt,
         mock_model,
-        mock_state_dict,
+        mock_common_state_dict,
+        mock_full_state_dict,
         mock_metadata,
     ):
         """Test successful loading of weights for a single model."""
         # Setup mocks
-        mock_dist_ckpt.load_common_state_dict.return_value = mock_state_dict
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_get_strategy.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
@@ -821,13 +835,13 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Verify calls
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
-        mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_state_dict)
+        mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_common_state_dict)
         mock_unwrap_model.assert_called_once_with(mock_model)
         mock_generate_state_dict.assert_called_once()
         call_args = mock_generate_state_dict.call_args
         assert call_args[1]["model_sd_kwargs"] == {"metadata": mock_metadata}
         mock_get_strategy.assert_called_once_with("/test/checkpoint")
-        mock_load_state_dict.assert_called_once_with(mock_model[0], mock_state_dict["model"], True)
+        mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
 
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
@@ -846,12 +860,13 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_unwrap_model,
         mock_dist_ckpt,
         mock_multiple_models,
-        mock_state_dict,
+        mock_common_state_dict,
+        mock_full_state_dict,
         mock_metadata,
     ):
         """Test successful loading of weights for multiple models."""
         # Setup mocks
-        mock_dist_ckpt.load_common_state_dict.return_value = mock_state_dict
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_get_strategy.return_value = Mock()
         mock_generate_state_dict.return_value = {
@@ -873,15 +888,15 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Verify calls
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
-        mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_state_dict)
+        mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_common_state_dict)
         mock_unwrap_model.assert_called_once_with(mock_multiple_models)
         mock_generate_state_dict.assert_called_once()
         mock_get_strategy.assert_called_once_with("/test/checkpoint")
 
         # Verify both models were loaded
         assert mock_load_state_dict.call_count == 2
-        mock_load_state_dict.assert_any_call(mock_multiple_models[0], mock_state_dict["model0"], True)
-        mock_load_state_dict.assert_any_call(mock_multiple_models[1], mock_state_dict["model1"], True)
+        mock_load_state_dict.assert_any_call(mock_multiple_models[0], mock_full_state_dict["model0"], True)
+        mock_load_state_dict.assert_any_call(mock_multiple_models[1], mock_full_state_dict["model1"], True)
 
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
@@ -900,12 +915,12 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_unwrap_model,
         mock_dist_ckpt,
         mock_model,
-        mock_state_dict,
+        mock_common_state_dict,
         mock_metadata,
     ):
         """Test loading with fully parallel load enabled."""
         # Setup mocks
-        mock_dist_ckpt.load_common_state_dict.return_value = mock_state_dict
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_strategy = Mock()
         mock_get_strategy.return_value = mock_strategy
