@@ -27,24 +27,24 @@ Features:
 
 Usage examples:
   # Import a HuggingFace model to Megatron format
-  python examples/bridge/checkpoint_conversion.py import \
+  python examples/models/checkpoint_conversion.py import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama3_2_1b
 
   # Export a Megatron checkpoint to HuggingFace format
-  python examples/bridge/checkpoint_conversion.py export \
+  python examples/models/checkpoint_conversion.py export \
     --megatron-path ./checkpoints/llama3_2_1b \
     --hf-path ./exports/llama3_2_1b_hf
 
   # Import with custom settings
-  python examples/bridge/checkpoint_conversion.py import \
+  python examples/models/checkpoint_conversion.py import \
     --hf-model ./local_model \
     --megatron-path ./checkpoints/custom_model \
     --torch-dtype bfloat16 \
     --device-map auto
 
   # Export without progress bar (useful for scripting)
-  python examples/bridge/checkpoint_conversion.py export \
+  python examples/models/checkpoint_conversion.py export \
     --megatron-path ./checkpoints/custom_model \
     --hf-path ./exports/custom_model_hf \
     --no-progress
@@ -86,7 +86,6 @@ def import_hf_to_megatron(
     torch_dtype: Optional[str] = None,
     device_map: Optional[str] = None,
     trust_remote_code: bool = False,
-    wrap_with_ddp: bool = True,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -97,59 +96,49 @@ def import_hf_to_megatron(
         torch_dtype: Model precision ("float32", "float16", "bfloat16")
         device_map: Device placement strategy ("auto", "cuda:0", etc.)
         trust_remote_code: Allow custom model code execution
-        wrap_with_ddp: Whether to wrap with DistributedDataParallel
     """
     print(f"🔄 Starting import: {hf_model} -> {megatron_path}")
     
     # Prepare kwargs
-    hf_kwargs = {}
+    kwargs = {}
     if torch_dtype:
-        hf_kwargs["torch_dtype"] = get_torch_dtype(torch_dtype)
+        kwargs["torch_dtype"] = get_torch_dtype(torch_dtype)
         print(f"   Using torch_dtype: {torch_dtype}")
     
     if device_map:
-        hf_kwargs["device_map"] = device_map
+        kwargs["device_map"] = device_map
         print(f"   Using device_map: {device_map}")
     
     if trust_remote_code:
-        hf_kwargs["trust_remote_code"] = trust_remote_code
+        kwargs["trust_remote_code"] = trust_remote_code
         print(f"   Trust remote code: {trust_remote_code}")
-    
-    model_kwargs = {"wrap_with_ddp": wrap_with_ddp}
-    if not wrap_with_ddp:
-        print(f"   DDP wrapping disabled")
-    
-    try:
-        # Import using the convenience method
-        print(f"📥 Loading HuggingFace model: {hf_model}")
-        CausalLMBridge.import_ckpt(
-            hf_model_id=hf_model,
-            megatron_path=megatron_path,
-            hf_kwargs=hf_kwargs if hf_kwargs else None,
-            model_kwargs=model_kwargs,
-        )
-        
-        print(f"✅ Successfully imported model to: {megatron_path}")
-        
-        # Verify the checkpoint was created
-        checkpoint_path = Path(megatron_path)
-        if checkpoint_path.exists():
-            print(f"📁 Checkpoint structure:")
-            for item in checkpoint_path.iterdir():
-                if item.is_dir():
-                    print(f"   📂 {item.name}/")
-                else:
-                    print(f"   📄 {item.name}")
-        
-    except Exception as e:
-        print(f"❌ Import failed: {e}")
-        raise
+
+
+    # Import using the convenience method
+    print(f"📥 Loading HuggingFace model: {hf_model}")
+    CausalLMBridge.import_ckpt(
+        hf_model_id=hf_model,
+        megatron_path=megatron_path,
+        **kwargs,
+    )
+
+    print(f"✅ Successfully imported model to: {megatron_path}")
+
+    # Verify the checkpoint was created
+    checkpoint_path = Path(megatron_path)
+    if checkpoint_path.exists():
+        print(f"📁 Checkpoint structure:")
+        for item in checkpoint_path.iterdir():
+            if item.is_dir():
+                print(f"   📂 {item.name}/")
+            else:
+                print(f"   📄 {item.name}")
 
 
 def export_megatron_to_hf(
+    hf_model: str,
     megatron_path: str,
     hf_path: str,
-    wrap_with_ddp: bool = True,
     show_progress: bool = True,
 ) -> None:
     """
@@ -158,7 +147,6 @@ def export_megatron_to_hf(
     Args:
         megatron_path: Directory path where the Megatron checkpoint is stored
         hf_path: Directory path where the HuggingFace model will be saved
-        wrap_with_ddp: Whether to wrap with DistributedDataParallel
         show_progress: Display progress bar during weight export
     """
     print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
@@ -166,81 +154,54 @@ def export_megatron_to_hf(
     # Validate megatron checkpoint exists
     checkpoint_path = validate_path(megatron_path, must_exist=True)
     print(f"📂 Found Megatron checkpoint: {checkpoint_path}")
-    
-    try:
-        # We need to create a bridge instance from the checkpoint
-        # For this, we need to know the model architecture
-        # We'll try to load the configuration from the checkpoint
+
         
-        # Look for configuration files to determine the model type
-        config_files = list(checkpoint_path.glob("**/run_config.yaml"))
-        if not config_files:
-            # Look in iter_ subdirectories
-            iter_dirs = [d for d in checkpoint_path.iterdir() if d.is_dir() and d.name.startswith("iter_")]
-            if iter_dirs:
-                # Use the latest iteration
-                latest_iter = max(iter_dirs, key=lambda d: int(d.name.replace("iter_", "")))
-                config_files = list(latest_iter.glob("run_config.yaml"))
-        
-        if not config_files:
-            raise FileNotFoundError(
-                f"Could not find run_config.yaml in {checkpoint_path}. "
-                "Please ensure this is a valid Megatron checkpoint."
-            )
-        
-        print(f"📋 Found configuration: {config_files[0]}")
-        
-        # For this example, we'll assume we can create a bridge from the saved HF model info
-        # In practice, you would extract the model type from the checkpoint config
-        # and create the appropriate bridge. For simplicity, we'll use a generic approach.
-        
-        # Create a bridge instance (this is a simplified approach)
-        # In a real scenario, you'd extract the HF model info from the checkpoint
-        print("⚠️  Note: This example assumes you know the original HF model architecture")
-        print("   In practice, the checkpoint should contain metadata about the original model")
-        
-        # For demonstration, we'll create a bridge from a known config
-        # This would typically be extracted from the checkpoint metadata
-        from transformers import AutoConfig
-        
-        # This is a placeholder - in reality you'd extract this from the checkpoint
-        print("⚠️  Using placeholder config - replace with actual checkpoint metadata")
-        config = AutoConfig.from_pretrained("meta-llama/Llama-3.2-1B")  # Example config
-        bridge = CausalLMBridge.from_hf_config(config)
-        
-        # Prepare model kwargs
-        model_kwargs = {"wrap_with_ddp": wrap_with_ddp}
-        if not wrap_with_ddp:
-            print(f"   DDP wrapping disabled")
-        
-        # Export using the convenience method
-        print(f"📤 Exporting to HuggingFace format...")
-        bridge.export_ckpt(
-            megatron_path=megatron_path,
-            hf_path=hf_path,
-            model_kwargs=model_kwargs,
-            show_progress=show_progress,
+    # Look for configuration files to determine the model type
+    config_files = list(checkpoint_path.glob("**/run_config.yaml"))
+    if not config_files:
+        # Look in iter_ subdirectories
+        iter_dirs = [d for d in checkpoint_path.iterdir() if d.is_dir() and d.name.startswith("iter_")]
+        if iter_dirs:
+            # Use the latest iteration
+            latest_iter = max(iter_dirs, key=lambda d: int(d.name.replace("iter_", "")))
+            config_files = list(latest_iter.glob("run_config.yaml"))
+
+    if not config_files:
+        raise FileNotFoundError(
+            f"Could not find run_config.yaml in {checkpoint_path}. "
+            "Please ensure this is a valid Megatron checkpoint."
         )
-        
-        print(f"✅ Successfully exported model to: {hf_path}")
-        
-        # Verify the export was created
-        export_path = Path(hf_path)
-        if export_path.exists():
-            print(f"📁 Export structure:")
-            for item in export_path.iterdir():
-                if item.is_dir():
-                    print(f"   📂 {item.name}/")
-                else:
-                    print(f"   📄 {item.name}")
-        
-        print(f"🔍 You can now load this model with:")
-        print(f"   from transformers import AutoModelForCausalLM")
-        print(f"   model = AutoModelForCausalLM.from_pretrained('{hf_path}')")
-        
-    except Exception as e:
-        print(f"❌ Export failed: {e}")
-        raise
+
+    print(f"📋 Found configuration: {config_files[0]}")
+
+    # For demonstration, we'll create a bridge from a known config
+    # This would typically be extracted from the checkpoint metadata
+    bridge = CausalLMBridge.from_hf_pretrained(hf_model)
+
+
+    # Export using the convenience method
+    print(f"📤 Exporting to HuggingFace format...")
+    bridge.export_ckpt(
+        megatron_path=megatron_path,
+        hf_path=hf_path,
+        show_progress=show_progress,
+    )
+
+    print(f"✅ Successfully exported model to: {hf_path}")
+
+    # Verify the export was created
+    export_path = Path(hf_path)
+    if export_path.exists():
+        print(f"📁 Export structure:")
+        for item in export_path.iterdir():
+            if item.is_dir():
+                print(f"   📂 {item.name}/")
+            else:
+                print(f"   📄 {item.name}")
+
+    print(f"🔍 You can now load this model with:")
+    print(f"   from transformers import AutoModelForCausalLM")
+    print(f"   model = AutoModelForCausalLM.from_pretrained('{hf_path}')")
 
 
 def main():
@@ -282,16 +243,16 @@ def main():
         action="store_true",
         help="Allow custom model code execution"
     )
-    import_parser.add_argument(
-        "--no-ddp",
-        action="store_true",
-        help="Disable DistributedDataParallel wrapping"
-    )
     
     # Export subcommand (Megatron -> HF)
     export_parser = subparsers.add_parser(
         "export",
         help="Export Megatron checkpoint to HuggingFace format"
+    )
+    export_parser.add_argument(
+        "--hf-model",
+        required=True,
+        help="HuggingFace model ID or path to model directory"
     )
     export_parser.add_argument(
         "--megatron-path",
@@ -304,46 +265,36 @@ def main():
         help="Directory path where the HuggingFace model will be saved"
     )
     export_parser.add_argument(
-        "--no-ddp",
-        action="store_true",
-        help="Disable DistributedDataParallel wrapping"
-    )
-    export_parser.add_argument(
         "--no-progress",
         action="store_true",
         help="Disable progress bar during export"
     )
-    
+
     args = parser.parse_args()
     
     if not args.command:
         parser.print_help()
         return 1
-    
-    try:
-        if args.command == "import":
-            import_hf_to_megatron(
-                hf_model=args.hf_model,
-                megatron_path=args.megatron_path,
-                torch_dtype=args.torch_dtype,
-                device_map=args.device_map,
-                trust_remote_code=args.trust_remote_code,
-                wrap_with_ddp=not args.no_ddp,
-            )
-        
-        elif args.command == "export":
-            export_megatron_to_hf(
-                megatron_path=args.megatron_path,
-                hf_path=args.hf_path,
-                wrap_with_ddp=not args.no_ddp,
-                show_progress=not args.no_progress,
-            )
-        
-        return 0
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return 1
+
+    if args.command == "import":
+        import_hf_to_megatron(
+            hf_model=args.hf_model,
+            megatron_path=args.megatron_path,
+            torch_dtype=args.torch_dtype,
+            device_map=args.device_map,
+            trust_remote_code=args.trust_remote_code,
+        )
+
+    elif args.command == "export":
+        export_megatron_to_hf(
+            hf_model=args.hf_model,
+            megatron_path=args.megatron_path,
+            hf_path=args.hf_path,
+            show_progress=not args.no_progress,
+        )
+    else:
+        raise RuntimeError(f"Unknown command: {args.command}")
+
 
 
 if __name__ == "__main__":

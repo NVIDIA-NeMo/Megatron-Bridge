@@ -535,8 +535,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
-        hf_kwargs: dict | None = None,
-        model_kwargs: dict | None = None,
+        **kwargs,
     ) -> None:
         """
         Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -550,15 +549,12 @@ class CausalLMBridge(Generic[MegatronModelT]):
             hf_model_id: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
-            hf_kwargs: Optional dictionary of arguments passed to from_hf_pretrained
+            **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
                 - device_map: Device placement strategy ("auto", "cuda:0", etc.)
                 - trust_remote_code: Allow custom model code execution
                 - attn_implementation: Attention implementation ("flash_attention_2", etc.)
-            model_kwargs: Optional dictionary of arguments passed to the model provider
-                Common options include:
-                - wrap_with_ddp: Whether to wrap with DistributedDataParallel
 
         Example:
             >>> # Basic import
@@ -571,26 +567,16 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> CausalLMBridge.import_ckpt(
             ...     "meta-llama/Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b",
-            ...     hf_kwargs={"torch_dtype": torch.float16, "device_map": "auto"},
-            ...     model_kwargs={"wrap_with_ddp": False}
+            ...     torch_dtype=torch.float16,
+            ...     device_map="auto"
             ... )
-
-        Note:
-            - This method is collective and must be called by all ranks in distributed training
-            - The saved checkpoint can be loaded with load_megatron_model
-            - Large models may require appropriate device_map settings in hf_kwargs
         """
-        if hf_kwargs is None:
-            hf_kwargs = {}
-        if model_kwargs is None:
-            model_kwargs = {}
-
         # Load the HuggingFace model
-        bridge = cls.from_hf_pretrained(hf_model_id, **hf_kwargs)
-
+        bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
+        
         # Convert to Megatron model
-        megatron_model = bridge.to_megatron_model(**model_kwargs)
-
+        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+        
         # Save as Megatron checkpoint
         bridge.save_megatron_model(megatron_model, megatron_path)
 
@@ -598,7 +584,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
         self,
         megatron_path: str | Path,
         hf_path: str | Path,
-        model_kwargs: dict | None = None,
         show_progress: bool = True,
     ) -> None:
         """
@@ -611,9 +596,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
         Args:
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_path: Directory path where the HuggingFace model will be saved
-            model_kwargs: Optional dictionary of arguments passed to load_megatron_model
-                Common options include:
-                - wrap_with_ddp: Whether to wrap with DistributedDataParallel
             show_progress: Display progress bar during weight export
 
         Example:
@@ -628,26 +610,16 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> bridge.export_ckpt(
             ...     "./megatron_checkpoints/my_model",
             ...     "./hf_exports/my_model",
-            ...     model_kwargs={"wrap_with_ddp": False},
             ...     show_progress=False
             ... )
 
             >>> # Load the exported model with HuggingFace
             >>> from transformers import AutoModelForCausalLM
             >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
-
-        Note:
-            - This method is collective and must be called by all ranks in distributed training
-            - The bridge must be created with the same configuration as the original model
-            - The exported model includes configuration, tokenizer, and weights
-            - Exported models can be loaded with standard HuggingFace from_pretrained methods
         """
-        if model_kwargs is None:
-            model_kwargs = {}
-
         # Load the Megatron model
-        megatron_model = self.load_megatron_model(megatron_path, **model_kwargs)
-
+        megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
+        
         # Save in HuggingFace format
         self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
 

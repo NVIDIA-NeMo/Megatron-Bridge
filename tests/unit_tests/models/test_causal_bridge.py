@@ -568,7 +568,7 @@ class TestCausalLMBridgeEdgeCases:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Llama-3-8B")
-        mock_bridge.to_megatron_model.assert_called_once_with()
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False)
         mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
 
     @patch.object(CausalLMBridge, "save_megatron_model")
@@ -585,19 +585,16 @@ class TestCausalLMBridgeEdgeCases:
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt with kwargs
-        hf_kwargs = {"torch_dtype": torch.float16, "device_map": "auto"}
-        model_kwargs = {"wrap_with_ddp": False}
-        
         CausalLMBridge.import_ckpt(
             "./local_model",
             "./megatron_checkpoint",
-            hf_kwargs=hf_kwargs,
-            model_kwargs=model_kwargs
+            torch_dtype=torch.float16,
+            device_map="auto"
         )
 
         # Assertions
-        mock_from_hf_pretrained.assert_called_once_with("./local_model", **hf_kwargs)
-        mock_bridge.to_megatron_model.assert_called_once_with(**model_kwargs)
+        mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False)
         mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
 
     def test_export_ckpt_basic(self):
@@ -623,7 +620,7 @@ class TestCausalLMBridgeEdgeCases:
                 )
 
                 # Assertions
-                mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint")
+                mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(mock_megatron_model, "./hf_export", show_progress=True)
 
     def test_export_ckpt_with_kwargs(self):
@@ -643,17 +640,14 @@ class TestCausalLMBridgeEdgeCases:
                 mock_load_megatron_model.return_value = mock_megatron_model
 
                 # Test export_ckpt with kwargs
-                model_kwargs = {"wrap_with_ddp": False}
-                
                 bridge.export_ckpt(
                     "./megatron_checkpoint",
                     "./hf_export",
-                    model_kwargs=model_kwargs,
                     show_progress=False
                 )
 
                 # Assertions
-                mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", **model_kwargs)
+                mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(mock_megatron_model, "./hf_export", show_progress=False)
 
     def test_save_megatron_model_basic(self):
