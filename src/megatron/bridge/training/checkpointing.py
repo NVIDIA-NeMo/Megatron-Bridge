@@ -842,7 +842,20 @@ def generate_state_dict(
 
 
 def load_model_for_inference(
-    checkpoint_path: str, ckpt_cfg: CheckpointConfig, model: list[MegatronModule], strict: bool = True
+    checkpoint_path: str,
+    model: list[MegatronModule],
+    fully_parallel_load: bool = False,
+    dist_ckpt_strictness: Literal[
+        "assume_ok_unexpected",
+        "log_unexpected",
+        "log_all",
+        "raise_unexpected",
+        "raise_all",
+        "return_unexpected",
+        "return_all",
+        "ignore_all",
+    ] = "assume_ok_unexpected",
+    strict: bool = True,
 ):
     """Load model weights for inference. Support MCore distributed checkpoints."""  # TODO: make docstring better
 
@@ -851,7 +864,6 @@ def load_model_for_inference(
 
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
-
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
     # TODO: restore modelopt state, hide_loss_modules()
@@ -860,12 +872,12 @@ def load_model_for_inference(
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
 
     load_strategy = get_default_load_sharded_strategy(checkpoint_path)
-    if ckpt_cfg.fully_parallel_load:
+    if fully_parallel_load:
         load_strategy = FullyParallelLoadStrategyWrapper(
             load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
         )
     state_dict = dist_checkpointing.load(
-        sharded_state_dict, checkpoint_path, load_strategy, strict=ckpt_cfg.dist_ckpt_strictness
+        sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
 
     if len(model) == 1:
