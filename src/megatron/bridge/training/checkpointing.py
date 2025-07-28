@@ -878,7 +878,8 @@ def _load_model_weights_from_checkpoint(
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
-    # TODO: restore modelopt state, hide_loss_modules()
+    if has_nvidia_modelopt:
+        restore_modelopt_state(model, state_dict)
 
     model = unwrap_model(model)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
