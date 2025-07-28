@@ -41,6 +41,15 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
   megatron-bridge
 ```
 
+## 📝 Writing tests
+
+We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and functional tests.
+
+Unit tests aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.  
+Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if no one matches.
+
+Functional tests are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.Run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the automation team for consultation.
+
 ## 📦 Dependencies management
 
 We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.  
