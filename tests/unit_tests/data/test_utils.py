@@ -23,7 +23,7 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
-DATA_PATH = "/home/data/datasets/train/test_text_document"
+DATA_PATH = "/opt/data/datasets/train/test_text_document"
 
 
 class TestDataUtils:
@@ -59,7 +59,7 @@ class TestDataUtils:
     def test_finetuning_train_valid_test_datasets_provider(self):
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/opt/data/finetune_train",
+            dataset_root="/opt/data/datasets/finetune_train",
             seq_length=8192,
         )
 
@@ -81,7 +81,7 @@ class TestDataUtils:
 
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/opt/data/finetune",
+            dataset_root="/opt/data/datasets/finetune",
             seq_length=8192,
         )
 
