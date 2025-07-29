@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import os
+import sys
 from pathlib import Path
 from shutil import rmtree
 from unittest.mock import patch
@@ -19,6 +21,10 @@ from unittest.mock import patch
 import pytest
 
 from tests.unit_tests.download_unit_tests_dataset import get_oldest_release_and_assets
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(autouse=True)
@@ -37,28 +43,33 @@ def cleanup_local_folder():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_test_data():
-    """Ensure test data is available at /opt/data by downloading if necessary."""
-    data_path = Path("/opt/data")
+def ensure_test_data(tmp_path_factory):
+    """Ensure test data is available in a temporary directory by downloading if necessary."""
+    data_path = tmp_path_factory.mktemp("test_data")
 
     # Check if data directory exists and has content
-    if not data_path.exists() or not any(data_path.iterdir()):
-        print("Test data not found at /opt/data. Downloading...")
+    if not any(data_path.iterdir()):
+        logger.info(f"Test data not found at {data_path}. Downloading...")
 
         try:
-            # Download assets to /opt/data
+            # Download assets to data_path
             get_oldest_release_and_assets(assets_dir=str(data_path))
 
-            print("Test data downloaded successfully.")
+            logger.info("Test data downloaded successfully.")
 
         except ImportError as e:
-            print(f"Failed to import download function: {e}")
+            logger.info(f"Failed to import download function: {e}")
+        except ValueError as e:
+            logger.error(e)
+            pytest.exit(f"Failed to download test data: {e}", returncode=1)
             # Don't fail the tests, just warn
         except Exception as e:
-            print(f"Failed to download test data: {e}")
+            logger.info(f"Failed to download test data: {e}")
             # Don't fail the tests, just warn
     else:
-        print("Test data already available at /opt/data")
+        logger.info(f"Test data already available at {data_path}")
+
+    yield data_path
 
 
 @pytest.fixture(autouse=True)

@@ -89,7 +89,11 @@ def get_oldest_release_and_assets(repo_name: str = "NVIDIA/Megatron-LM", assets_
     """
     try:
         # Initialize GitHub client
-        g = Github(login_or_token=os.getenv("GH_TOKEN", None))
+        token = os.getenv("GH_TOKEN", None)
+        if token is None:
+            raise ValueError("GH_TOKEN environment variable is not set")
+
+        g = Github(login_or_token=token)
 
         # Get the repository
         repo = g.get_repo(repo_name)
