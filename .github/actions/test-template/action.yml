@@ -162,7 +162,7 @@ runs:
         MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       run: |
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume $MNT_PATH-cached/TestData"
+          VOLUME_ARGS="--volume $MNT_PATH-cached/TestData:/home/TestData"
         else
           VOLUME_ARGS=""
         fi
