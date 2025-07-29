@@ -117,7 +117,7 @@ class TestDoRAFinetune:
             exit_signal_handler=True,
         )
 
-    def _create_optimizer_config(self, lr=3e-3, use_distributed_optimizer=True):
+    def _create_optimizer_config(self, lr=3e-3):
         """Create an optimizer configuration."""
         return OptimizerConfig(
             optimizer="adam",
@@ -126,7 +126,7 @@ class TestDoRAFinetune:
             adam_beta1=0.9,
             adam_beta2=0.95,
             adam_eps=1e-5,
-            use_distributed_optimizer=use_distributed_optimizer,
+            use_distributed_optimizer=True,
             clip_grad=1.0,
             lr=lr,
             weight_decay=0.01,
@@ -259,9 +259,7 @@ class TestDoRAFinetune:
         return ConfigContainer(
             model=model,
             train=self._create_training_config(train_iters),
-            optimizer=self._create_optimizer_config(
-                lr=1e-4, use_distributed_optimizer=False
-            ),  # Lower LR for finetuning
+            optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(train_iters),
             ddp=self._create_ddp_config(),
             dataset=self._create_squad_dataset_config(seq_length, seed),

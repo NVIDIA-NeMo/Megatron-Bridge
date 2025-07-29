@@ -236,7 +236,7 @@ class TestLoRAFinetune:
             micro_batch_size=micro_batch_size,
         )
 
-    def _create_optimizer_config(self, lr=3e-3, use_distributed_optimizer=True):
+    def _create_optimizer_config(self, lr=3e-3):
         """Create an optimizer configuration."""
         return OptimizerConfig(
             optimizer="adam",
@@ -245,7 +245,7 @@ class TestLoRAFinetune:
             adam_beta1=0.9,
             adam_beta2=0.95,
             adam_eps=1e-5,
-            use_distributed_optimizer=use_distributed_optimizer,
+            use_distributed_optimizer=True,
             clip_grad=1.0,
             lr=lr,
             weight_decay=0.01,
@@ -412,9 +412,7 @@ class TestLoRAFinetune:
         return ConfigContainer(
             model=model,
             train=self._create_training_config(train_iters),
-            optimizer=self._create_optimizer_config(
-                lr=1e-4, use_distributed_optimizer=False
-            ),  # Lower LR for finetuning
+            optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(scheduler_iters),
             ddp=self._create_ddp_config(),
             dataset=self._create_squad_dataset_config(seq_length, packed_sequences=packed_sequences),
