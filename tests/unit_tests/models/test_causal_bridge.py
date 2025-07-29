@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import Mock, mock_open, patch
 
 import pytest
 import torch
@@ -682,9 +682,9 @@ class TestCausalLMBridgeEdgeCases:
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             with patch("megatron.bridge.utils.instantiate_utils.instantiate") as mock_instantiate:
                 with patch("yaml.safe_load") as mock_yaml_load:
-                    with patch("builtins.open", mock_open(read_data="model:\n  _target_: some.model")) as mock_file:
+                    with patch("builtins.open", mock_open(read_data="model:\n  _target_: some.model")):
                         from pathlib import Path
-                        
+
                         # Mock path.exists() to return True for the config file
                         with patch.object(Path, "exists") as mock_exists:
                             with patch.object(Path, "iterdir") as mock_iterdir:
@@ -694,7 +694,7 @@ class TestCausalLMBridgeEdgeCases:
 
                                 # Mock iterdir to return empty list (no iter_ folders)
                                 mock_iterdir.return_value = []
-                                
+
                                 # Mock exists to return True for config file
                                 mock_exists.return_value = True
 
@@ -717,9 +717,9 @@ class TestCausalLMBridgeEdgeCases:
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             with patch("megatron.bridge.utils.instantiate_utils.instantiate") as mock_instantiate:
                 with patch("yaml.safe_load") as mock_yaml_load:
-                    with patch("builtins.open", mock_open(read_data="model:\n  _target_: some.model")) as mock_file:
+                    with patch("builtins.open", mock_open(read_data="model:\n  _target_: some.model")):
                         from pathlib import Path
-                        
+
                         # Create mock folder objects
                         mock_iter_folder_1 = Mock()
                         mock_iter_folder_1.is_dir.return_value = True
@@ -738,7 +738,7 @@ class TestCausalLMBridgeEdgeCases:
 
                                 # Mock iterdir to return the iter folders
                                 mock_iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
-                                
+
                                 # Mock exists to return True for config file
                                 mock_exists.return_value = True
 
@@ -760,13 +760,13 @@ class TestCausalLMBridgeEdgeCases:
         bridge = CausalLMBridge(mock_hf_model)
 
         from pathlib import Path
-        
+
         # Mock path.exists() to return False for the config file and iterdir() to return empty list
         with patch.object(Path, "exists") as mock_exists:
             with patch.object(Path, "iterdir") as mock_iterdir:
                 # Mock iterdir to return empty list (no iter_ folders)
                 mock_iterdir.return_value = []
-                
+
                 # Mock exists to return False for config file (missing)
                 mock_exists.return_value = False
 
