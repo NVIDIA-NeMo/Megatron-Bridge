@@ -71,7 +71,7 @@ runs:
         az acr login --name nemoci
 
     - name: Azure Fileshare
-      if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
+      # if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       shell: bash
       id: azure-fileshare
       run: |
@@ -126,6 +126,7 @@ runs:
 
     - name: Configure local file cache
       shell: bash
+      # if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       env:
         MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
       run: |
