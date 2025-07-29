@@ -132,7 +132,7 @@ runs:
       run: |
         sudo apt install -y rclone fuse3
 
-        sudo mkdir -p /media/datadrive-cached
+        sudo mkdir -p $MNT_PATH-cached
 
         sudo rclone config create local-smb local nounc=true
 
