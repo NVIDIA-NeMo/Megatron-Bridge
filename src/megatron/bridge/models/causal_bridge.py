@@ -69,7 +69,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
         >>> # Convert weights with custom settings
         >>> for name, weight in bridge.export_hf_weights(
         ...     megatron_model,
-            ...     cpu=True
+        ...     cpu=True
         ... ):
         ...     print(f"Exported {name}: {weight.shape}")
 
