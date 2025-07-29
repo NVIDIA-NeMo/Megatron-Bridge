@@ -775,6 +775,11 @@ def save_checkpoint_and_time(
         non_persistent_ckpt=non_persistent_ckpt,
         train_data_iterator=train_data_iterator,
     )
+    if state.cfg.model.fp8 is not None:
+        # Run garbage collection after checkpoint saving to free memory from
+        # dequantized bf16 tensors that were temporarily created during fp8
+        # model checkpoint saving.
+        gc.collect()
     if state.cfg.optimizer.use_distributed_optimizer and state.cfg.ddp.overlap_param_gather:
         enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
