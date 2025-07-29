@@ -126,6 +126,8 @@ runs:
 
     - name: Configure local file cache
       shell: bash
+      env:
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
       run: |
         sudo apt install -y rclone fuse3
 
@@ -138,7 +140,7 @@ runs:
           --vfs-read-chunk-size 64M \
           --allow-other \
           --daemon \
-          local-smb:$MNT_PATH/ $MNT_PATH-cached
+          local-smb:$MNT_PATH/ "$MNT_PATH-cached"
 
     - name: Checkout repository
       uses: actions/checkout@v2
