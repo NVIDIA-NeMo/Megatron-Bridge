@@ -142,7 +142,6 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout }}
           is_unit_test: "false"
-          cpu-only: false
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
