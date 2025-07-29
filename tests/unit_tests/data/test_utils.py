@@ -31,39 +31,6 @@ DATA_PATH = "/home/data/datasets/train/test_text_document"
 
 
 class TestDataUtils:
-    def test_data_prepropcesing(self):
-        # Generate .jsonl fine
-        sample = {"text": "111214 343 54365900 77"}
-        samples = [sample for i in range(1000)]
-        # test_data_dir = "/workspace/test_data"
-        # os.makedirs(test_data_dir, exist_ok=True)
-        # test_data_jsonl = os.path.join(test_data_dir, "test.jsonl")
-        with open("/home/data/datasets/train/test.jsonl", "w") as jsonl_data:
-            for sample in samples:
-                json.dump(sample, jsonl_data)
-                jsonl_data.write("\n")
-
-        # Generate bin/idx files
-        subprocess.run(
-            [
-                "python",
-                "/opt/megatron-lm/tools/preprocess_data.py",
-                "--input",
-                "/home/data/datasets/train/test.jsonl",
-                "--output-prefix",
-                "/home/data/datasets/train/test",
-                "--tokenizer-type",
-                "NullTokenizer",
-                "--vocab-size",
-                "131072",
-                "--workers",
-                "2",
-                "--log-interval",
-                "1000",
-                "--append-eod",
-            ]
-        )
-
     def test_pretrain_train_valid_test_datasets_provider(self):
         # Build tokenizer
         tokenizer = build_tokenizer(
@@ -96,7 +63,7 @@ class TestDataUtils:
     def test_finetuning_train_valid_test_datasets_provider(self):
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/home/data/datasets/finetune_train",
+            dataset_root="/opt/data/datasets/finetune_train",
             seq_length=8192,
         )
 
@@ -118,7 +85,7 @@ class TestDataUtils:
 
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/home/data/datasets/finetune",
+            dataset_root="/opt/data/datasets/finetune",
             seq_length=8192,
         )
 
