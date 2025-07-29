@@ -112,7 +112,7 @@ class DistributedInitConfig:
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
     """
-    
+
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
