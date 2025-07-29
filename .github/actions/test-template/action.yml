@@ -124,6 +124,18 @@ runs:
 
         ls -al $MNT_PATH/TestData
 
+    - name: Configure local file cache
+      shell: bash
+      run: |
+        sudo apt install -y fuse rclone
+
+        sudo usermod -aG fuse $USER
+
+        rclone mount --vfs-cache-mode full \
+          --vfs-cache-max-size 50G \
+          --vfs-read-chunk-size 64M \
+          local-smb:$MNT_PATH/ $MNT_PATH-cached
+
     - name: Checkout repository
       uses: actions/checkout@v2
       with:
@@ -157,7 +169,7 @@ runs:
           --env RUN_ID=${{ github.run_id }} \
           --workdir /workspace \
           --volume $(pwd)/Megatron-Bridge:/workspace \
-          --volume $MNT_PATH/TestData:/home/TestData \
+          --volume $MNT_PATH-cached/TestData:/home/TestData \
           megatron-bridge \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
         RUN_TEST_EOF
