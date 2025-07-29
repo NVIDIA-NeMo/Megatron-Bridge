@@ -13,7 +13,6 @@
 # limitations under the License.
 import logging
 import os
-import sys
 from pathlib import Path
 from shutil import rmtree
 from unittest.mock import patch
