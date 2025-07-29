@@ -127,7 +127,7 @@ runs:
     - name: Configure local file cache
       shell: bash
       env:
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
       run: |
         sudo apt install -y rclone fuse3
 
@@ -157,7 +157,7 @@ runs:
     - name: Start container
       shell: bash
       env:
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.mnt_path }}
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
       run: |
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
