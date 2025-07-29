@@ -1493,9 +1493,9 @@ class TestGetTrainStateFromStateDict:
         assert result.skipped_train_samples == 0
         assert result.consumed_valid_samples == 0
         assert result.floating_point_operations_so_far == 0
-        assert result.do_train is True
-        assert result.do_valid is True
-        assert result.do_test is True
+        assert result.do_train is False
+        assert result.do_valid is False
+        assert result.do_test is False
 
     def test_get_train_state_args_none(self):
         """Test creating TrainState when args is explicitly None."""
@@ -1563,14 +1563,14 @@ class TestGetTrainStateFromStateDict:
         assert result.skipped_train_samples == 0
         assert result.consumed_valid_samples == 0
         assert result.floating_point_operations_so_far == 0
-        # Boolean flags should still be True
-        assert result.do_train is True
-        assert result.do_valid is True
-        assert result.do_test is True
+        # Boolean flags should still be False
+        assert result.do_train is False
+        assert result.do_valid is False
+        assert result.do_test is False
 
     def test_get_train_state_boolean_flags_always_true(self):
-        """Test that boolean flags are always set to True regardless of input."""
-        # Even with different inputs, the boolean flags should always be True
+        """Test that boolean flags are always set to False regardless of input."""
+        # Even with different inputs, the boolean flags should always be False
         state_dict = {
             "iteration": 1000,
             "do_train": False,  # This should be ignored
@@ -1582,7 +1582,7 @@ class TestGetTrainStateFromStateDict:
 
         result = _get_train_state_from_state_dict(state_dict)
 
-        # Boolean flags should always be True (hardcoded in the function)
-        assert result.do_train is True
-        assert result.do_valid is True
-        assert result.do_test is True
+        # Boolean flags should always be False (hardcoded in the function)
+        assert result.do_train is False
+        assert result.do_valid is False
+        assert result.do_test is False

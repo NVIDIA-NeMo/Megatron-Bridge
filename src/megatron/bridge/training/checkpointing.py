@@ -353,13 +353,13 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
 
 
 def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
-    """Extract and convert legacy Megatron-LM args from checkpoint state_dict to NeMo-LM config format.
+    """Extract and convert legacy Megatron-LM args from checkpoint state_dict to Megatron-Bridge config format.
 
     Args:
         state_dict: The loaded checkpoint state dictionary.
 
     Returns:
-        A dictionary in NeMo-LM config format with the essential fields.
+        A dictionary in Megatron-Bridge config format with the essential fields.
 
     Raises:
         RuntimeError: If args are not found in the state_dict.
@@ -1811,7 +1811,7 @@ def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
 
     # Extract floating point operations count from state_dict (like Megatron-LM does)
     legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
-    legacy_train_state.do_train = True
-    legacy_train_state.do_valid = True
-    legacy_train_state.do_test = True
+    legacy_train_state.do_train = False
+    legacy_train_state.do_valid = False
+    legacy_train_state.do_test = False
     return legacy_train_state
