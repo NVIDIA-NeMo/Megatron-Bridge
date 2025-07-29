@@ -24,10 +24,8 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
-from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
@@ -41,8 +39,9 @@ from megatron.bridge.training.initialize import initialize_megatron, set_jit_fus
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-
+from megatron.bridge.utils.common_utils import print_rank_0
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel  # noqa: F401 pylint: disable=unused-import
@@ -193,7 +192,7 @@ def setup(
         cfg.model.register_pre_wrap_hook(peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
-    model = cfg.model(
+    model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
@@ -280,7 +279,7 @@ def _update_model_config_funcs(
     model: MegatronModule,
     model_config: GPTModelProvider | T5ModelProvider,
     ddp_config: DistributedDataParallelConfig,
-    optimizer: MegatronOptimizer,
+    optimizer: Optional[MegatronOptimizer],
     *,
     align_grad_reduce: bool = True,
 ) -> None:
@@ -301,8 +300,9 @@ def _update_model_config_funcs(
         model_config.param_sync_func = [model_chunk.start_param_sync for model_chunk in model]
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
-    model_config.finalize_model_grads_func = finalize_model_grads
-    model_config.grad_scale_func = optimizer.scale_loss
+    if optimizer is not None:
+        model_config.finalize_model_grads_func = finalize_model_grads
+        model_config.grad_scale_func = optimizer.scale_loss
 
 
 def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Callable[[list[MegatronModule]], list[MegatronModule]]:

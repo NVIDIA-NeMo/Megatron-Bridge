@@ -53,8 +53,10 @@ def ddp_config():
 @patch("megatron.bridge.models.model_provider_mixin.get_model")
 @patch("megatron.bridge.models.model_provider_mixin.parallel_state")
 @patch("megatron.bridge.models.model_provider_mixin.torch.distributed")
-def test_provide_models_with_hooks_as_args(mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config):
-    """Test that provide_models calls hooks passed as arguments."""
+def test_provide_distributed_model_with_hooks_as_args(
+    mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config
+):
+    """Test that provide_distributed_model calls hooks passed as arguments."""
     mock_parallel_state.is_initialized.return_value = True
     mock_dist.is_initialized.return_value = True
     mock_model = [MockMegatronModule()]
@@ -63,7 +65,7 @@ def test_provide_models_with_hooks_as_args(mock_dist, mock_parallel_state, mock_
     pre_hook = Mock(return_value=mock_model)
     post_hook = Mock(return_value=mock_model)
 
-    provider.provide_models(ddp_config=ddp_config, pre_wrap_hook=pre_hook, post_wrap_hook=post_hook)
+    provider.provide_distributed_model(ddp_config=ddp_config, pre_wrap_hook=pre_hook, post_wrap_hook=post_hook)
 
     mock_get_model.assert_called_once()
     # Check that the argument hook is passed directly to get_model
@@ -75,8 +77,10 @@ def test_provide_models_with_hooks_as_args(mock_dist, mock_parallel_state, mock_
 @patch("megatron.bridge.models.model_provider_mixin.get_model")
 @patch("megatron.bridge.models.model_provider_mixin.parallel_state")
 @patch("megatron.bridge.models.model_provider_mixin.torch.distributed")
-def test_provide_models_with_registered_hooks(mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config):
-    """Test that provide_models uses hooks registered on the instance."""
+def test_provide_distributed_model_with_registered_hooks(
+    mock_dist, mock_parallel_state, mock_get_model, provider, ddp_config
+):
+    """Test that provide_distributed_model uses hooks registered on the instance."""
     mock_parallel_state.is_initialized.return_value = True
     mock_dist.is_initialized.return_value = True
     mock_model = [MockMegatronModule()]
@@ -88,7 +92,7 @@ def test_provide_models_with_registered_hooks(mock_dist, mock_parallel_state, mo
     provider.register_pre_wrap_hook(pre_hook)
     provider.register_post_wrap_hook(post_hook)
 
-    provider.provide_models(ddp_config=ddp_config)
+    provider.provide_distributed_model(ddp_config=ddp_config)
 
     mock_get_model.assert_called_once()
 
@@ -124,7 +128,7 @@ def test_arg_hook_overrides_registered_hook(mock_dist, mock_parallel_state, mock
     arg_pre_hook = Mock(return_value=mock_model)
     arg_post_hook = Mock(return_value=mock_model)
 
-    provider.provide_models(ddp_config=ddp_config, pre_wrap_hook=arg_pre_hook, post_wrap_hook=arg_post_hook)
+    provider.provide_distributed_model(ddp_config=ddp_config, pre_wrap_hook=arg_pre_hook, post_wrap_hook=arg_post_hook)
 
     mock_get_model.assert_called_once()
 

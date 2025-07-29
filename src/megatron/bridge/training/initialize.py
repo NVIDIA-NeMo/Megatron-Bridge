@@ -334,7 +334,10 @@ def _initialize_distributed(
 
         # Manually set the device ids.
         if device_count > 0:
-            torch.cuda.set_device(get_local_rank_preinit())
+            if dist_config.external_gpu_device_mapping:
+                torch.cuda.set_device(0)
+            else:
+                torch.cuda.set_device(get_local_rank_preinit())
 
         # Call the init process
         init_process_group_kwargs = {
@@ -345,7 +348,10 @@ def _initialize_distributed(
         }
 
         torch.distributed.init_process_group(**init_process_group_kwargs)
-        torch.distributed.barrier(device_ids=[get_local_rank_preinit()])
+        if dist_config.external_gpu_device_mapping:
+            torch.distributed.barrier(device_ids=[0])
+        else:
+            torch.distributed.barrier(device_ids=[get_local_rank_preinit()])
 
     # Set the tensor model-parallel, pipeline model-parallel, and
     # data-parallel communicators.

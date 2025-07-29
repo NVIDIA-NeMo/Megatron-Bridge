@@ -6,10 +6,6 @@ on:
         required: true
         type: string
         description: "The target branch to bump"
-      mcore-target-branch:
-        required: true
-        type: string
-        description: "The target branch to bump"
     secrets:
       PAT:
         required: true
@@ -35,28 +31,10 @@ jobs:
         id: ref
         run: echo "date=$(date +%F)" | tee -a "$GITHUB_OUTPUT"
 
-  mcore:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_bump_tomlfile.yml@v0.40.0
-    needs: [pre-flight]
-    name: Bump Megatron-LM
-    with:
-      source-repository: NVIDIA/Megatron-LM
-      source-ref: ${{ inputs.mcore-target-branch }}
-      toml-path: tool.uv.sources.megatron-core.rev
-      file: pyproject.toml
-      base-branch: ${{ inputs.target-branch }}
-      pr-branch: ${{ needs.pre-flight.outputs.bump-branch }}
-      pr-title: "chore(🤖): Bump dependencies (${{ needs.pre-flight.outputs.date }})"
-      use-gpgkey: true
-    secrets:
-      PAT: ${{ secrets.PAT }}
-      GPG_KEY: ${{ secrets.SSH_KEY }}
-      GPG_PASSPHRASE: ${{ secrets.SSH_PWD }}
-
   update-lockfile:
     environment: nemo-ci
     runs-on: linux-amd64-cpu16
-    needs: [mcore, pre-flight]
+    needs: [pre-flight]
     env:
       SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
       TARGET_BRANCH: ${{ inputs.target-branch }}
@@ -89,6 +67,7 @@ jobs:
         run: |
           if ! git ls-remote --exit-code origin $SOURCE_BRANCH; then
             git checkout -b $SOURCE_BRANCH $TARGET_BRANCH
+            git push origin $SOURCE_BRANCH
           fi
 
       - name: Checkout repo
@@ -106,7 +85,7 @@ jobs:
           -w /workspace \
           -e GH_TOKEN=${{ secrets.PAT }} \
           megatron-bridge \
-          bash -c 'source /opt/venv/env.sh && uv lock --upgrade'
+          bash -c 'uv lock --upgrade'
 
       - name: Upload lock file
         uses: actions/upload-artifact@v4

@@ -25,50 +25,11 @@ import pytest
 import torch
 
 from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
-    ApexGuardDefaults,
+    AutocastTransformerLayer,
+    TETransformerLayerAutocast,
     get_gpt_full_te_layer_autocast_spec,
     torch_dtype_from_precision,
 )
-
-
-# Test if Transformer Engine is available
-try:
-    import transformer_engine.pytorch as te  # noqa: F401
-
-    from megatron.bridge.models.gpt_full_te_layer_autocast_spec import (
-        AutocastTransformerLayer,
-        TETransformerLayerAutocast,
-    )
-
-    HAVE_TE = True
-except ImportError:
-    HAVE_TE = False
-
-
-class TestApexGuardDefaults:
-    """Test the ApexGuardDefaults class."""
-
-    def test_apex_guard_defaults_init(self):
-        """Test ApexGuardDefaults initialization."""
-        guard = ApexGuardDefaults()
-        assert isinstance(guard, ApexGuardDefaults)
-
-    def test_apex_guard_defaults_getattr(self):
-        """Test that any attribute access returns None."""
-        guard = ApexGuardDefaults()
-        assert guard.any_attribute is None
-        assert guard.another_attribute is None
-        assert guard.method is None
-
-    def test_apex_guard_defaults_multiple_accesses(self):
-        """Test that ApexGuardDefaults consistently returns None."""
-        guard = ApexGuardDefaults()
-
-        # Multiple accesses should all return None
-        assert guard.attr1 is None
-        assert guard.attr2 is None
-        assert guard.method1 is None
-        assert guard.method2 is None
 
 
 class TestTorchDtypeFromPrecision:
@@ -119,7 +80,6 @@ class TestTorchDtypeFromPrecision:
         assert torch_dtype_from_precision(32) == torch_dtype_from_precision("32")
 
 
-@pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
 class TestAutocastTransformerLayer:
     """Test the AutocastTransformerLayer class."""
 
@@ -221,7 +181,6 @@ class TestAutocastTransformerLayer:
             mock_forward.assert_called_once()
 
 
-@pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
 class TestTETransformerLayerAutocast:
     """Test the TETransformerLayerAutocast class."""
 
@@ -410,7 +369,6 @@ class TestTETransformerLayerAutocast:
                 mock_make_sharded.assert_called_once()
 
 
-@pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
 class TestGetGPTFullTELayerAutocastSpec:
     """Test the get_gpt_full_te_layer_autocast_spec function."""
 
@@ -455,48 +413,9 @@ class TestGetGPTFullTELayerAutocastSpec:
         assert len(spec.layer_specs) == 24
 
 
-class TestWithoutTransformerEngine:
-    """Test behavior when Transformer Engine is not available."""
-
-    @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False)
-    def test_get_gpt_full_te_layer_autocast_spec_without_te(self):
-        """Test that get_gpt_full_te_layer_autocast_spec raises assertion when TE is not available."""
-        mock_config = Mock()
-
-        with pytest.raises(AssertionError, match="Please ensure Transformer Engine is installed"):
-            get_gpt_full_te_layer_autocast_spec(mock_config)
-
-    def test_autocast_transformer_layer_without_te(self):
-        """Test that AutocastTransformerLayer raises assertion when TE is not available."""
-        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
-            with pytest.raises(AssertionError, match="AutocastTransformerLayer requires Transformer Engine"):
-                # Try to create an instance with some dummy config
-                basic_config = {
-                    "hidden_size": 512,
-                    "ffn_hidden_size": 2048,
-                    "layernorm_epsilon": 1e-5,
-                    "num_attention_heads": 8,
-                    "init_method": lambda x: x,
-                    "output_layer_init_method": lambda x: x,
-                    "hidden_dropout": 0.1,
-                    "attention_dropout": 0.1,
-                    "tp_size": 1,
-                    "params_dtype": torch.float32,
-                }
-                AutocastTransformerLayer(**basic_config)
-
-    def test_te_transformer_layer_autocast_without_te(self):
-        """Test that TETransformerLayerAutocast raises assertion when TE is not available."""
-        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.HAVE_TE", False):
-            with pytest.raises(AssertionError, match="TETransformerLayerAutocast requires Transformer Engine"):
-                mock_config = Mock()
-                TETransformerLayerAutocast(mock_config, layer_number=0)
-
-
 class TestVersionCompatibility:
     """Test version compatibility handling."""
 
-    @pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
     @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.version")
     def test_te_version_compatibility_old_version(self, mock_version):
         """Test handling of older TE versions."""
@@ -524,7 +443,6 @@ class TestVersionCompatibility:
             assert "ub_split_ag" in kwargs
             assert "ub_split_rs" in kwargs
 
-    @pytest.mark.skipif(not HAVE_TE, reason="Transformer Engine not available")
     @patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.version")
     def test_te_version_compatibility_new_version(self, mock_version):
         """Test handling of newer TE versions."""

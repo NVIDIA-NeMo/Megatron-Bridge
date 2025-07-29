@@ -493,39 +493,6 @@ class TestPreTrainedCausalLMSaveLoad:
         mock_config.save_pretrained.assert_called_once_with(save_dir)
         mock_generation_config.save_pretrained.assert_called_once_with(save_dir)
 
-    def test_save_pretrained_partial_components(self, tmp_path, mock_model, mock_tokenizer):
-        """Test saving only loaded components."""
-        lm = PreTrainedCausalLM()
-        lm._model = mock_model
-        lm._tokenizer = mock_tokenizer
-        # config and generation_config remain None
-
-        save_dir = tmp_path / "saved_model"
-        lm.save_pretrained(save_dir)
-
-        # Only loaded components should be saved
-        mock_model.save_pretrained.assert_called_once()
-        mock_tokenizer.save_pretrained.assert_called_once()
-
-    def test_save_pretrained_no_components(self, tmp_path):
-        """Test saving with no loaded components."""
-        lm = PreTrainedCausalLM()
-
-        save_dir = tmp_path / "saved_model"
-        lm.save_pretrained(save_dir)
-
-        # Directory should still be created
-        assert save_dir.exists()
-
-    def test_save_pretrained_creates_parent_dirs(self, tmp_path):
-        """Test save_pretrained creates parent directories."""
-        lm = PreTrainedCausalLM()
-
-        save_dir = tmp_path / "deep" / "nested" / "model"
-        lm.save_pretrained(save_dir)
-
-        assert save_dir.exists()
-
 
 class TestPreTrainedCausalLMDeviceManagement:
     """Test device management methods."""

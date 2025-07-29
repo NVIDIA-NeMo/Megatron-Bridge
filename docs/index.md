@@ -6,6 +6,7 @@
 :caption: Guides
 :hidden:
 
+bridge-guide.md
 performance-guide.md
 ```
 

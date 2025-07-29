@@ -23,10 +23,6 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.gpt_provider import get_vocab_size
 from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
-from megatron.bridge.utils.import_utils import safe_import
-
-
-_, HAVE_TE = safe_import("transformer_engine")
 
 
 logger = logging.getLogger(__name__)
@@ -58,19 +54,11 @@ def local_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5Model
     return [en_block_spec, de_block_spec]
 
 
-def default_layer_spec(encoder_config: "T5ModelProvider", decoder_config: "T5ModelProvider") -> ModuleSpec:
-    """Set layer spec conditioning on whether transformer_engine is available"""
-    if HAVE_TE:
-        return transformer_engine_layer_spec(encoder_config, decoder_config)
-    else:
-        return local_layer_spec(encoder_config, decoder_config)
-
-
 @dataclass
 class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     """Model config for T5 model. Adpated from megatron.core.models.t5.t5_model.T5Model"""
 
-    encoder_num_layers: int = None
+    encoder_num_layers: int | None = None
     fp16_lm_cross_entropy: bool = False
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
@@ -97,7 +85,9 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     distribute_saved_activations: bool = False
     enable_autocast: bool = False
 
-    transformer_layer_spec: Union[ModuleSpec, Callable[["T5ModelProvider"], ModuleSpec]] = default_layer_spec
+    transformer_layer_spec: Union[ModuleSpec, Callable[["T5ModelProvider"], ModuleSpec]] = (
+        transformer_engine_layer_spec
+    )
 
     vocab_size: Optional[int] = None
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
