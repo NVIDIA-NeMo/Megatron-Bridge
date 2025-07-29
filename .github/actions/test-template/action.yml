@@ -159,10 +159,12 @@ runs:
       shell: bash
       env:
         MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
+        MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       run: |
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
         docker container rm -f nemo_container_${{ github.run_id }} || true
+        VOLUME=($([[ "$MOUNT_FS" == "true" ]] && echo "--volume $MNT_PATH-cached/TestData" || echo ""))
         docker run \
           --rm \
           -d \
@@ -176,7 +178,7 @@ runs:
           --env RUN_ID=${{ github.run_id }} \
           --workdir /workspace \
           --volume $(pwd)/Megatron-Bridge:/workspace \
-          --volume $MNT_PATH-cached/TestData:/home/TestData \
+          ${VOLUME[@]} \
           megatron-bridge \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
         RUN_TEST_EOF
