@@ -379,6 +379,7 @@ def _initialize_distributed(
                 create_gloo_process_groups=dist_config.use_gloo_process_groups,
                 use_sharp=dist_config.use_sharp,
                 high_priority_stream_groups=dist_config.high_priority_stream_groups,
+                foo=0,
             )
             if get_rank_safe() == 0:
                 print(
