@@ -288,10 +288,6 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         Args:
             model: Megatron model instance or list of instances
-            order: Export order for weights
-                - "megatron": Follow Megatron's parameter order
-                - "hf": Follow HuggingFace state dict order
-                - "safetensors": Group by safetensors file, then by key
             cpu: Whether to move tensors to CPU before yielding
             show_progress: Display progress bar during export
 
