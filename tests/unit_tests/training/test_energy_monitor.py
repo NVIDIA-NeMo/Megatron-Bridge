@@ -14,8 +14,8 @@
 
 from unittest.mock import Mock, patch
 
-from megatron.hub.training.config import ConfigContainer
-from megatron.hub.training.state import GlobalState
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.state import GlobalState
 
 
 class TestEnergyMonitorIntegration:
