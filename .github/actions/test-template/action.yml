@@ -129,11 +129,11 @@ runs:
       run: |
         sudo apt install -y rclone fuse3
 
-        mkdir -p /media/datadrive-cached
+        sudo mkdir -p /media/datadrive-cached
 
-        rclone config create local-smb local nounc=true
+        sudo rclone config create local-smb local nounc=true
 
-        rclone mount --vfs-cache-mode full \
+        sudo rclone mount --vfs-cache-mode full \
           --vfs-cache-max-size 50G \
           --vfs-read-chunk-size 64M \
           --allow-other \
