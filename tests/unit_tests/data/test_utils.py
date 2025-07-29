@@ -59,7 +59,7 @@ class TestDataUtils:
     def test_finetuning_train_valid_test_datasets_provider(self):
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/opt/data/datasets/finetune_train",
+            dataset_root="/opt/data/finetune_train",
             seq_length=8192,
         )
 
@@ -81,7 +81,7 @@ class TestDataUtils:
 
         # Configure dataset
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/opt/data/datasets/finetune",
+            dataset_root="/opt/data/finetune",
             seq_length=8192,
         )
 

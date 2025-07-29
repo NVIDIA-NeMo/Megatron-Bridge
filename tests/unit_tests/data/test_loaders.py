@@ -31,7 +31,7 @@ class TestDataLoaders:
 
     def test_get_blend_and_blend_per_split_data_args_path(self):
         # Generate data args file
-        data_args_path = "/opt/data/datasets/input/data_args.txt"
+        data_args_path = "/opt/data/input/data_args.txt"
         with open(data_args_path, "w") as data_args_file:
             data_args_file.write(f"0.5 {DATA_PATH} 0.5 {DATA_PATH}")
         blend, blend_per_split = get_blend_and_blend_per_split(data_args_path=data_args_path)
@@ -58,7 +58,7 @@ class TestDataLoaders:
             "valid": [DATA_PATH],
             "test": [DATA_PATH],
         }
-        split_data_path = "/opt/data/datasets/input/split_data.json"
+        split_data_path = "/opt/data/input/split_data.json"
         with open(split_data_path, "w") as f:
             json.dump(split_data, f)
 
