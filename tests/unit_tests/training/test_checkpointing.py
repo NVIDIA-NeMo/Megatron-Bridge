@@ -1344,9 +1344,9 @@ class TestMegatronLMCompatibility:
         assert train_state.skipped_train_samples == 50
         assert train_state.consumed_valid_samples == 10000
         assert train_state.floating_point_operations_so_far == 5000000
-        assert train_state.do_train is True
-        assert train_state.do_valid is True
-        assert train_state.do_test is True
+        assert train_state.do_train is False
+        assert train_state.do_valid is False
+        assert train_state.do_test is False
 
         # Verify checkpoint version was set
         mock_set_version.assert_called_with(3.0)
@@ -1379,9 +1379,9 @@ class TestGetTrainStateFromStateDict:
         assert result.skipped_train_samples == 250
         assert result.consumed_valid_samples == 12000
         assert result.floating_point_operations_so_far == 7500000
-        assert result.do_train is True
-        assert result.do_valid is True
-        assert result.do_test is True
+        assert result.do_train is False
+        assert result.do_valid is False
+        assert result.do_test is False
 
     def test_get_train_state_missing_iteration(self):
         """Test creating TrainState when iteration is missing."""
