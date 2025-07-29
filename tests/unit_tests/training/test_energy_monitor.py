@@ -74,7 +74,7 @@ class TestEnergyMonitorIntegration:
         """Test that energy monitor is created when log_energy is True."""
         self.config.logger.log_energy = True
 
-        with patch("megatron.hub.training.state.EnergyMonitor") as mock_energy_monitor:
+        with patch("megatron.bridge.training.state.EnergyMonitor") as mock_energy_monitor:
             global_state = GlobalState()
             global_state.cfg = self.config
 
@@ -89,7 +89,7 @@ class TestEnergyMonitorIntegration:
         """Test that energy monitor is only created once."""
         self.config.logger.log_energy = True
 
-        with patch("megatron.hub.training.state.EnergyMonitor") as mock_energy_monitor:
+        with patch("megatron.bridge.training.state.EnergyMonitor") as mock_energy_monitor:
             global_state = GlobalState()
             global_state.cfg = self.config
 
@@ -119,7 +119,7 @@ class TestEnergyMonitorIntegration:
         # Change to enabled
         self.config.logger.log_energy = True
 
-        with patch("megatron.hub.training.state.EnergyMonitor") as mock_energy_monitor:
+        with patch("megatron.bridge.training.state.EnergyMonitor") as mock_energy_monitor:
             # Access after config change
             energy_monitor = global_state.energy_monitor
 
