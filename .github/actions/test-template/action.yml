@@ -127,18 +127,18 @@ runs:
     - name: Configure local file cache
       shell: bash
       run: |
-        sudo apt install -y rclone
+        sudo apt install -y rclone fuse3
 
         mkdir -p /media/datadrive-cached
 
-        rclone config create local-smb local
+        rclone config create local-smb local nounc=true
 
         rclone mount --vfs-cache-mode full \
           --vfs-cache-max-size 50G \
           --vfs-read-chunk-size 64M \
-          local-smb:$MNT_PATH/ $MNT_PATH-cached \
           --allow-other \
-          --daemon
+          --daemon \
+          local-smb:$MNT_PATH/ $MNT_PATH-cached
 
     - name: Checkout repository
       uses: actions/checkout@v2
