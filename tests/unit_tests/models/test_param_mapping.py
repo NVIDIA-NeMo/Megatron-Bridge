@@ -26,10 +26,8 @@ from megatron.bridge.models.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
     TPAwareMapping,
-    merge_gated_mlp_weights,
     merge_qkv_biases,
     merge_qkv_weights,
-    split_gated_mlp_weights,
     split_qkv_biases,
     split_qkv_weights,
 )
@@ -258,17 +256,6 @@ class TestHelperFunctions:
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
 
-    def test_gated_mlp_merge_split(self, transformer_config):
-        gate = torch.randn(64, 32)
-        up = torch.randn(64, 32)
-
-        merged = merge_gated_mlp_weights(transformer_config, gate, up)
-        assert merged.shape == (128, 32)
-
-        gate_s, up_s = split_gated_mlp_weights(transformer_config, merged)
-        assert torch.equal(gate, gate_s)
-        assert torch.equal(up, up_s)
-
 
 class TestQKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
@@ -289,7 +276,8 @@ class TestQKVMapping:
 
 
 class TestGatedMLPMapping:
-    def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
+    def test_hf_to_megatron_single_tp(self, mock_distributed_env, transformer_config):
+        """Test gate+up merging with single TP rank."""
         mock_distributed_env()
         mapping = GatedMLPMapping(megatron_param="gated.weight", gate="gate.weight", up="up.weight")
         weights = {
@@ -298,26 +286,107 @@ class TestGatedMLPMapping:
         }
         megatron_module = MockModule(transformer_config, weight_shape=(256, 32))
 
-        with patch.object(mapping._tp_mapping, "hf_to_megatron") as mock_hf_to_megatron:
-            mapping.hf_to_megatron(weights, megatron_module)
-            mock_hf_to_megatron.assert_called_once()
-            merged_weight = mock_hf_to_megatron.call_args[0][0]
-            assert merged_weight.shape == (256, 32)
+        # Test single TP case
+        result = mapping.hf_to_megatron(weights, megatron_module)
+        assert result.shape == (256, 32)
 
-    def test_megatron_to_hf(self, mock_distributed_env, transformer_config):
+        # Verify that gate and up are properly concatenated
+        expected = torch.cat([weights["gate"], weights["up"]], dim=0)
+        assert torch.equal(result, expected)
+
+    def test_hf_to_megatron_multi_tp(self, mock_distributed_env, transformer_config):
+        """Test gate+up merging with multiple TP ranks."""
+        # Test with TP size = 2, rank 0
+        mock_mpu, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = GatedMLPMapping(megatron_param="gated.weight", gate="gate.weight", up="up.weight")
+
+        # Create test weights - each component 128x32, so full concat will be 256x32
+        # Each TP rank should get 128x32 (half of each component concatenated)
+        weights = {
+            "gate": torch.randn(128, 32),
+            "up": torch.randn(128, 32),
+        }
+        megatron_module = MockModule(transformer_config, weight_shape=(128, 32))  # Each rank gets half
+
+        with patch.object(mapping, "scatter_to_tp_ranks") as mock_scatter:
+            mock_scatter.return_value = torch.randn(128, 32)
+            mapping.hf_to_megatron(weights, megatron_module)
+
+            # Verify scatter was called with proper splits
+            mock_scatter.assert_called_once()
+            call_args = mock_scatter.call_args[0]
+            splits = call_args[0]  # First argument should be the splits
+
+            # Should have 2 splits (one per TP rank)
+            assert len(splits) == 2
+            # Each split should be concatenated [gate_shard; up_shard]
+            assert splits[0].shape == (128, 32)  # Half of 128 gate + half of 128 up = 64 + 64 = 128
+            assert splits[1].shape == (128, 32)
+
+    def test_megatron_to_hf_single_tp(self, mock_distributed_env, transformer_config):
+        """Test splitting concatenated weights back to gate+up with single TP."""
         mock_distributed_env()
         mapping = GatedMLPMapping(megatron_param="gated.weight", gate="gate.weight", up="up.weight")
-        merged_weight = torch.randn(256, 32)
+
+        # Create a concatenated tensor [gate; up]
+        gate = torch.randn(128, 32)
+        up = torch.randn(128, 32)
+        merged_weight = torch.cat([gate, up], dim=0)
         megatron_module = MockModule(transformer_config, weight_shape=(256, 32))
 
-        with patch.object(mapping._tp_mapping, "megatron_to_hf") as mock_megatron_to_hf:
-            mock_megatron_to_hf.return_value = {"gated.weight": merged_weight}
-            result = mapping.megatron_to_hf(merged_weight, megatron_module)
+        result = mapping.megatron_to_hf(merged_weight, megatron_module)
 
-            assert "gate.weight" in result
-            assert "up.weight" in result
-            assert result["gate.weight"].shape == (128, 32)
-            assert result["up.weight"].shape == (128, 32)
+        assert "gate.weight" in result
+        assert "up.weight" in result
+        assert result["gate.weight"].shape == (128, 32)
+        assert result["up.weight"].shape == (128, 32)
+
+        # Verify the split is correct
+        assert torch.equal(result["gate.weight"], gate)
+        assert torch.equal(result["up.weight"], up)
+
+    def test_hf_to_megatron_bias_single_tp(self, mock_distributed_env, transformer_config):
+        """Test gate+up bias merging with single TP rank."""
+        mock_distributed_env()
+        mapping = GatedMLPMapping(megatron_param="gated.bias", gate="gate.bias", up="up.bias")
+        weights = {
+            "gate": torch.randn(128),  # 1D bias tensors
+            "up": torch.randn(128),
+        }
+        megatron_module = MockModule(transformer_config, weight_shape=(256, 32), has_bias=True)
+        # Override bias shape to match expected concatenated size
+        megatron_module.bias = torch.nn.Parameter(torch.randn(256))
+
+        # Test single TP case for bias
+        result = mapping.hf_to_megatron(weights, megatron_module)
+        assert result.shape == (256,)  # Concatenated bias shape
+
+        # Verify that gate and up biases are properly concatenated
+        expected = torch.cat([weights["gate"], weights["up"]], dim=0)
+        assert torch.equal(result, expected)
+
+    def test_megatron_to_hf_bias_single_tp(self, mock_distributed_env, transformer_config):
+        """Test splitting concatenated bias back to gate+up with single TP."""
+        mock_distributed_env()
+        mapping = GatedMLPMapping(megatron_param="gated.bias", gate="gate.bias", up="up.bias")
+
+        # Create concatenated bias tensor [gate_bias; up_bias]
+        gate_bias = torch.randn(128)
+        up_bias = torch.randn(128)
+        merged_bias = torch.cat([gate_bias, up_bias], dim=0)
+        megatron_module = MockModule(transformer_config, weight_shape=(256, 32), has_bias=True)
+        megatron_module.bias = torch.nn.Parameter(torch.randn(256))
+
+        result = mapping.megatron_to_hf(merged_bias, megatron_module)
+
+        assert "gate.bias" in result
+        assert "up.bias" in result
+        assert result["gate.bias"].shape == (128,)
+        assert result["up.bias"].shape == (128,)
+
+        # Verify the split is correct
+        assert torch.equal(result["gate.bias"], gate_bias)
+        assert torch.equal(result["up.bias"], up_bias)
 
 
 class TestMappingEdgeCases:

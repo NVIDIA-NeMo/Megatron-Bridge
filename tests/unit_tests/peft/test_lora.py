@@ -26,10 +26,6 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA, LoRAMerge
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
-from megatron.bridge.utils.import_utils import safe_import
-
-
-te, HAVE_TE = safe_import("transformer_engine.pytorch")
 
 
 class SimpleModel(nn.Module):
@@ -265,7 +261,6 @@ class TestLoRA:
         inference_model = lora(model, training=False)
         assert not inference_model.training
 
-    @patch("megatron.bridge.peft.lora.HAVE_TE", True)
     @patch("megatron.bridge.peft.lora.te")
     def test_lora_te_linear_support(self, mock_te):
         """Test LoRA support for Transformer Engine Linear layers."""
@@ -546,7 +541,6 @@ class TestLoRAIntegration:
         )
 
 
-@pytest.mark.run_only_on("GPU")
 class TestLoRAMegatronIntegration:
     """Integration tests for LoRA with real Megatron models."""
 

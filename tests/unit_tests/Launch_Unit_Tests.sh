@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
-WORKDIR /workspace
-ENV PATH="/root/.local/bin:$PATH"
-ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-ENV UV_LINK_MODE=copy
-COPY . .
-RUN bash docker/common/install.sh --base-image cuda
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+
+CUDA_VISIBLE_DEVICES="0,1" coverage run -a --data-file=/workspace/.coverage --source=/workspace/ -m pytest \
+    -o log_cli=true \
+    -o log_cli_level=INFO \
+    -vs tests/unit_tests -m "not pleasefixme"

@@ -106,6 +106,13 @@ class DistributedInitConfig:
     overlapped with other computation kernels.
     """
 
+    external_gpu_device_mapping: bool = False
+    """If True, indicates that GPU device mapping has been externally managed
+    (e.g., via CUDA_VISIBLE_DEVICES environment variable). When True, uses device 0
+    instead of local rank for CUDA device selection. This is useful when launching
+    with external process managers that handle GPU visibility.
+    """
+
 
 @dataclass
 class RerunStateMachineConfig:

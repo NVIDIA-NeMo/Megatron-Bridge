@@ -86,13 +86,16 @@ def megatron_cpu_init_context(config: Any) -> Generator[None, None, None]:
 
 
 @contextmanager
-def temporary_distributed_context() -> Generator[None, None, None]:
+def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None, None]:
     """Context manager to temporarily initialize a minimal distributed environment.
 
-    Sets up a single-process Gloo backend, initializes Megatron model parallel state,
+    Sets up a single-process distributed backend, initializes Megatron model parallel state,
     yields control, and then cleans up the distributed environment.
     Useful for operations that require Megatron's parallel state but should run
     standalone (e.g., loading distributed checkpoints).
+
+    Args:
+        backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
 
     Yields:
         None.
@@ -107,45 +110,83 @@ def temporary_distributed_context() -> Generator[None, None, None]:
 
         init_method = f"tcp://{addr}:{port}"
 
-    dist.init_process_group(backend="gloo", init_method=init_method, world_size=1, rank=0)
+    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
+    if backend == "nccl":
+        from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+        model_parallel_cuda_manual_seed(0)
     try:
         yield
     finally:
-        parallel_state.destroy_model_parallel()
-        dist.destroy_process_group()
+        if backend == "gloo":
+            parallel_state.destroy_model_parallel()
+            dist.destroy_process_group()
 
 
-def get_full_mcore_state_dict(dist_ckpt_folder: Path, model_cfg: Any) -> dict[str, torch.Tensor]:
-    """Load a full, unsharded state dict from a megatron hub distributed checkpoint.
+def load_mcore_model(
+    dist_ckpt_folder: Path,
+    model_cfg: Any,
+    return_state_dict: bool = False,
+    use_cpu_init: bool = True,
+    skip_temp_dist_context: Optional[bool] = None,
+) -> Any | dict[str, torch.Tensor]:
+    """Load a Megatron model from a distributed checkpoint.
 
-    Initializes a minimal distributed environment and a CPU model instance
+    Initializes a minimal distributed environment and a model instance
     to load the sharded state dict using the TorchDistLoadShardedStrategy.
+    Automatically selects the appropriate distributed backend (Gloo for CPU, NCCL for GPU).
 
     Args:
         dist_ckpt_folder: Path to the megatron hub distributed checkpoint directory
                           (e.g., /path/to/model/checkpoints/iter_0000001).
         model_cfg: The Megatron model configuration object (e.g., GPTConfig)
                    corresponding to the checkpoint.
+        return_state_dict: If True, return the state dict instead of model instance. Default: False.
+        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
+                     If False, use GPU initialization and NCCL backend. Default: True.
+        skip_temp_dist_context: If True, skip temporary distributed context setup.
+                               If None, automatically skip if distributed is already initialized.
+                               Default: None.
 
     Returns:
-        A dictionary containing the full, unsharded model state_dict.
+        The model instance with loaded weights if return_state_dict is False,
+        otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
-    with temporary_distributed_context():
+    # Auto-detect if we should skip temp dist context
+    if skip_temp_dist_context is None:
+        skip_temp_dist_context = dist.is_available() and dist.is_initialized()
+
+    def _load_checkpoint():
         if model_cfg.params_dtype != torch_dtype_from_mcore_config(model_cfg):
             logger.info(
                 f"Converting params_dtype from {model_cfg.params_dtype} to {torch_dtype_from_mcore_config(model_cfg)}"
             )
             model_cfg.params_dtype = torch_dtype_from_mcore_config(model_cfg)
 
-        with megatron_cpu_init_context(model_cfg):
+        if use_cpu_init:
+            with megatron_cpu_init_context(model_cfg):
+                model = model_cfg.provide()
+        else:
             model = model_cfg.provide()
 
         strategy = TorchDistLoadShardedStrategy()
         state_dict = strategy.load(model.sharded_state_dict(), Path(dist_ckpt_folder))
-        del model
 
-    return state_dict
+        if return_state_dict:
+            del model
+            return state_dict
+        else:
+            model.load_state_dict(state_dict)
+            return model
+
+    if skip_temp_dist_context:
+        return _load_checkpoint()
+    else:
+        # Use appropriate backend based on initialization type
+        backend = "gloo" if use_cpu_init else "nccl"
+        with temporary_distributed_context(backend=backend):
+            return _load_checkpoint()
 
 
 def save_hf_tokenizer_assets(tokenizer_name_or_path: str, save_path: str = "/tmp/nemo_tokenizer") -> str:
@@ -510,7 +551,7 @@ class BaseExporter(ABC):
                 logger.warning("Failed to find Huggingface tokenizer in the megatron hub checkpoint")
 
         state_dict = {}
-        state_dict = get_full_mcore_state_dict(self.input_path, model_cfg=model_config)
+        state_dict = load_mcore_model(self.input_path, model_cfg=model_config, return_state_dict=True)
 
         return state_dict, model_config
 

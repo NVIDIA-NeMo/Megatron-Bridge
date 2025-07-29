@@ -48,7 +48,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     """A mixin that implements the ModelProvider pattern for Megatron-Hub.
 
     The ModelProvider pattern solves ecosystem fragmentation by providing a standardized
-    way to instantiate models. This mixin provides a consistent `provide_models()` method
+    way to instantiate models. This mixin provides a consistent `provide_distributed_model()` method
     that handles the complexity of distributed training setup, along with HuggingFace-inspired
     `.from_hf_pretrained()` and `.save_hf_pretrained()` for interoperability.
 
@@ -81,7 +81,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """
         pass
 
-    def provide_models(
+    def provide_distributed_model(
         self,
         ddp_config: DistributedDataParallelConfig | None = None,
         model_type=ModelType.encoder_or_decoder,
@@ -190,8 +190,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             model_parallel_cuda_manual_seed(seed, **(seed_kwargs or {}))
 
     def __call__(self, *args, **kwargs: Unpack["GetModelKwargs"]) -> list[ModelT]:
-        """A convenience wrapper around `provide_models`."""
-        return self.provide_models(*args, **kwargs)
+        """A convenience wrapper around `provide_distributed_model`."""
+        return self.provide_distributed_model(*args, **kwargs)
 
     @property
     def meta_model(self) -> list[ModelT]:
@@ -358,7 +358,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
 
 
 class GetModelKwargs(TypedDict, total=False):
-    """Keyword arguments for the `provide_models` method.
+    """Keyword arguments for the `provide_distributed_model` method.
 
     Attributes:
         ddp_config: Configuration for distributed data parallel.

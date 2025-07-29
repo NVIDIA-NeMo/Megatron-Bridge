@@ -94,6 +94,12 @@ def get_model(
         if _model is not None:
             model = _model
 
+    # Set tensor model parallel attributes if not set
+    # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
     _print_num_params(model)
 
     model_config = get_model_config(model[0])

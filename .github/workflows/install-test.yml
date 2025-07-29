@@ -26,37 +26,51 @@ env:
   UV_PROJECT_ENVIRONMENT: "./venv"
 
 jobs:
-  pip-test-no-cuda:
+  pip-test-bare-metal:
     runs-on: ${{ matrix.arch }}
     name: Pip - Python${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
       fail-fast: false
       matrix:
-        arch: ["ubuntu-latest", "macos-latest"]
+        arch: ["ubuntu-latest"]
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install CUDA Toolkit for Ubuntu 22.04
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-8
+          sudo apt-get clean
+
+      - name: Install cuDNN headers
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cudnn-cuda-12
+          sudo apt-get clean
+
       - name: Install Python ${{ matrix.python-version }}
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          if [[ $ARCH == 'ubuntu-latest' ]]; then
-            sudo add-apt-repository ppa:deadsnakes/ppa -y
-            sudo apt-get update
-            sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
-          elif [[ $ARCH == 'macos-latest' ]]; then
-            brew install python@${{ matrix.python-version }}
-          fi
+          sudo add-apt-repository ppa:deadsnakes/ppa -y
+          sudo apt-get update
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get clean
 
           python${{ matrix.python-version }} -m venv ./venv
           . ./venv/bin/activate
-          pip install --upgrade pip
+          pip install --pre --no-cache-dir --pre --no-cache-dir --upgrade pip
 
       - name: Install project
         run: |
-          pip install .
+          pip install --pre --no-cache-dir torch pybind11 wheel_stub numpy
+          pip install --pre --no-cache-dir --no-build-isolation .
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -81,7 +95,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.12"]
-        extra-groups: ["", "te"]
+        extra-groups: ["", "recipes"]
     env:
       EXTRA: ${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
     steps:
@@ -97,20 +111,9 @@ jobs:
 
           . ./venv/bin/activate
 
-          pip install --upgrade pip
-
-          PIP_ARGS=()
-
-          if [[ $EXTRA == *"te"* ]]; then
-            pip install torch setuptools pybind11 wheel_stub
-            PIP_ARGS=(--no-build-isolation)
-          fi
-
-          if [[ $EXTRA == *"trtllm"* ]]; then
-            apt-get install -y libopenmpi-dev
-          fi
-
-          pip install ${PIP_ARGS[@]} .$EXTRA
+          pip install --pre --no-cache-dir --upgrade pip
+          pip install --pre --no-cache-dir torch pybind11 wheel_stub
+          pip install --pre --no-cache-dir --no-build-isolation .$EXTRA
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -151,7 +154,7 @@ jobs:
 
       - name: Upgrade pip
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --pre --no-cache-dir --pre --no-cache-dir --upgrade pip
 
       - name: Set up UV
         uses: astral-sh/setup-uv@v1
@@ -180,12 +183,8 @@ jobs:
 
           export PATH="./bin/:$PATH"
 
+          uv sync --link-mode copy --locked --only-group build
           uv sync --link-mode copy --locked --all-groups
-
-          bash ./docker/common/install_conflicting_deps.sh \
-            --export-deploy-ref $(cat ./docker/manifest.json | yq -r '.vcs-dependencies.export-deploy.ref')
-
-          uv pip install --no-deps -e .
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -200,13 +199,12 @@ jobs:
           package-name: megatron.bridge
           python-binary: ./venv/bin/python
 
-  uv-test-no-cuda:
-    runs-on: ${{ matrix.arch }}
-    name: UV - Python ${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
+  uv-test-bare-metal:
+    runs-on: linux-amd64-cpu16
+    name: UV - Python ${{ matrix.python-version }} - 'AMD64/Linux' - No CUDA
     strategy:
       fail-fast: false
       matrix:
-        arch: ["ubuntu-latest", "macos-latest"]
         python-version: ["3.12"]
     steps:
       - name: Checkout repository
@@ -217,10 +215,34 @@ jobs:
         with:
           version: 0.7.2
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
+      - name: Install CUDA Toolkit for Ubuntu 22.04
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cuda-toolkit-12-8
+          sudo apt-get clean
+
+      - name: Install cuDNN headers
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y cudnn-cuda-12
+          sudo apt-get clean
+
+      - name: Install Python ${{ matrix.python-version }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          sudo add-apt-repository ppa:deadsnakes/ppa -y
+          sudo apt-get update
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get clean
+
+          python${{ matrix.python-version }} -m venv ./venv
+          . ./venv/bin/activate
+          pip install --pre --no-cache-dir --upgrade pip
 
       - name: Install dependencies with UV
         run: |
@@ -229,9 +251,8 @@ jobs:
 
           uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
-          uv sync --link-mode copy --locked --all-groups
-
-          uv pip install --no-deps -e .
+          uv sync --link-mode copy --locked --only-group build --no-cache
+          uv sync --link-mode copy --locked --all-groups --no-cache
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -247,7 +268,7 @@ jobs:
           python-binary: ./venv/bin/python
 
   install-test-summary:
-    needs: [pip-test-no-cuda, pip-test-cuda, uv-test-no-cuda, uv-test-cuda]
+    needs: [pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]
     runs-on: ubuntu-latest
     name: Install test summary
     steps:

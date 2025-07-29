@@ -18,31 +18,21 @@ from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
+import transformer_engine.pytorch as te
 
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
-from megatron.bridge.utils.import_utils import safe_import
 
 
 logger = logging.getLogger(__name__)
 
 try:
-    import transformer_engine.pytorch as te
+    import bitsandbytes
 
-    from megatron.bridge.peft.lora_layers import TELinearAdapter
-
-    HAVE_TE = True
+    HAVE_BNB = True
 except ImportError:
-    te = None
-    TELinearAdapter = None
-    HAVE_TE = False
-
-if torch.cuda.is_available():
-    bitsandbytes, HAVE_BNB = safe_import("bitsandbytes")
-else:
-    bitsandbytes = None
     HAVE_BNB = False
 
 
@@ -105,14 +95,13 @@ class LoRA(PEFT, ModuleMatcher):
         """
         # Skip already transformed modules
         adapter_types = (LinearAdapter, LoRALinear)
-        if HAVE_TE:
-            adapter_types = adapter_types + (TELinearAdapter,)
+        adapter_types = adapter_types + (TELinearAdapter,)
         if isinstance(module, adapter_types):
             return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             (match, full_name) = ans
-            if isinstance(module, nn.Linear) or (HAVE_TE and module.__class__ == te.Linear):
+            if isinstance(module, nn.Linear) or (module.__class__ == te.Linear):
                 # Will use the `patch_linear_module` function if:
                 # - is FSDP v1
                 # - is DTensor (has _local_tensor attribute)
@@ -123,9 +112,7 @@ class LoRA(PEFT, ModuleMatcher):
                     and module.quant_state.__class__ == bitsandbytes.functional.QuantState
                 ):
                     lora_cls = patch_linear_module
-                elif HAVE_TE and module.__class__ == te.Linear:
-                    if TELinearAdapter is None:
-                        raise ImportError("TELinearAdapter is not available")
+                elif module.__class__ == te.Linear:
                     lora_cls = TELinearAdapter
                 else:
                     lora_cls = LinearAdapter
