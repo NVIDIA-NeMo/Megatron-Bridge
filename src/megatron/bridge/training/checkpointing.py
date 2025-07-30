@@ -841,6 +841,73 @@ def generate_state_dict(
     return state_dict
 
 
+def _load_model_weights_from_checkpoint(
+    checkpoint_path: str,
+    model: list[MegatronModule],
+    fully_parallel_load: bool = False,
+    dist_ckpt_strictness: Literal[
+        "assume_ok_unexpected",
+        "log_unexpected",
+        "log_all",
+        "raise_unexpected",
+        "raise_all",
+        "return_unexpected",
+        "return_all",
+        "ignore_all",
+    ] = "assume_ok_unexpected",
+    strict: bool = True,
+):
+    """Load model weights from a checkpoint.
+
+    MCore distributed checkpoints from both Megatron Bridge and MegatronLM are supported.
+    This function duplicates some logic from load_checkpoint() to simplify model
+    loading for inference.
+
+    Args:
+        checkpoint_path: path to a distributed checkpoint.
+        model: The model module(s) to load weights into.
+        fully_parallel_load: Apply full load parallelization across DP.
+        dist_ckpt_strictness: Determine handling of key mismatch during checkpoint load.
+        strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+    """
+
+    state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
+    assert state_dict is not None
+
+    sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
+    print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
+    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
+
+    if has_nvidia_modelopt:
+        restore_modelopt_state(model, state_dict)
+
+    model = unwrap_model(model)
+    sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
+
+    load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+    if fully_parallel_load:
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
+        )
+    state_dict = dist_checkpointing.load(
+        sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
+    )
+
+    if len(model) == 1:
+        _load_model_state_dict(model[0], state_dict["model"], strict)
+    else:
+        for i in range(len(model)):
+            # If there is no corresponding model in the state_dict, it will be ignored.
+            # It means that this is an empty stage.
+            model_key = "model%d" % i
+            if model_key not in state_dict:
+                continue
+            _load_model_state_dict(model[i], state_dict[model_key], strict)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
 def load_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],

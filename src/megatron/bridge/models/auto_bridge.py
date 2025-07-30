@@ -828,8 +828,8 @@ class AutoBridge(Generic[MegatronModelT]):
                         f"          # Return a MegatronMappingRegistry with weight mappings\n"
                         f"          ...\n\n"
                         f"For reference implementations, see:\n"
-                        f"  • src/megatron/hub/models/llama/llama_causal_bridge.py\n"
-                        f"  • src/megatron/hub/models/qwen/qwen_2_causal_bridge.py"
+                        f"  • src/megatron/bridge/models/llama/llama_causal_bridge.py\n"
+                        f"  • src/megatron/bridge/models/qwen/qwen_2_causal_bridge.py"
                     ) from None
             except AttributeError:
                 raise ValueError(

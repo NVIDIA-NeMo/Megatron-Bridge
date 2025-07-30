@@ -19,7 +19,7 @@ def main() -> None:
     """List all HuggingFace model architectures supported by the AutoBridge."""
     supported_models = AutoBridge.list_supported_models()
 
-    print("🚀 Megatron-Hub AutoBridge - Supported Models")
+    print("🚀 Megatron-Bridge AutoBridge - Supported Models")
     print("=" * 50)
     print()
 

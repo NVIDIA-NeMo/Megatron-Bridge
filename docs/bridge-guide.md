@@ -168,14 +168,11 @@ for name, weight in bridge.export_hf_weights(model, mode="distribute"):
 When working with Megatron Bridge, there are several patterns that will help you use the API effectively and avoid common pitfalls.
 
 ### 1. Always Use High-Level APIs
-Always prefer high-level APIs like `AutoBridge` for automatic model detection, or `AutoBridge` for causal language models. Avoid direct bridge usage unless you know the specific type required:
+Always prefer high-level APIs like `AutoBridge` for automatic model detection. Avoid direct bridge usage unless you know the specific type required:
 
 ```python
 # ✅ Preferred: Use AutoBridge for automatic detection
 bridge = AutoBridge.from_hf_pretrained("any-supported-model")
-
-# ✅ Or use AutoBridge for causal language models
-bridge = AutoBridge.from_hf_pretrained("gpt2")
 
 # ❌ Avoid: Direct bridge usage unless you know the specific type
 ```
