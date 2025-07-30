@@ -997,8 +997,6 @@ def _load_model_weights_from_checkpoint(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
 
-    return state_dict
-
     if len(model) == 1:
         _load_model_state_dict(model[0], state_dict["model"], strict)
     else:
@@ -1012,6 +1010,8 @@ def _load_model_weights_from_checkpoint(
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
+
+    return state_dict
 
 
 def load_checkpoint(
