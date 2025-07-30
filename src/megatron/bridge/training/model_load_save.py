@@ -15,10 +15,9 @@
 import logging
 import os
 import socket
-import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional, Union
+from typing import Any, Generator, Literal, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -117,6 +116,7 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
 
 def load_megatron_model(
     checkpoint_path: str,
+    model_type: Optional[Literal["gpt", "mamba"]] = None,
     return_state_dict: bool = False,
     use_cpu_init: bool = True,
     skip_temp_dist_context: Optional[bool] = None,
@@ -130,6 +130,8 @@ def load_megatron_model(
     Args:
         checkpoint_path: path to an MCore distributed checkpoint directory
                           (e.g., /path/to/model/checkpoints/iter_0000001).
+        model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
+            only GPT and Mamba models are supported.
         return_state_dict: If True, return the state dict instead of model instance. Default: False.
         use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
                      If False, use GPU initialization and NCCL backend. Default: True.
@@ -142,27 +144,37 @@ def load_megatron_model(
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
     from megatron.bridge.training.checkpointing import (
-        CONFIG_FILE,
         _load_model_weights_from_checkpoint,
         get_checkpoint_run_config_filename,
         read_run_config,
     )
+    from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
+    from megatron.bridge.training.mlm_compat.model import _gpt_provider, _mamba_provider
     from megatron.bridge.utils.instantiate_utils import instantiate
 
     try:
         run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_path))
-        # mbridge_ckpt = True
-    except RuntimeError as e:
-        # placeholder path. TODO (maanug) add support for MLM here
-        error_msg = (
-            f"Only checkpoints in the Megatron Bridge format (containing {CONFIG_FILE}) are currently supported."
-        )
-        sys.stderr.write(error_msg + "\n")
-        raise e
+        mbridge_ckpt = True
+    except RuntimeError:
+        try:
+            mlm_args = _load_args_from_checkpoint(checkpoint_path)
+            mbridge_ckpt = False
+        except AssertionError:
+            raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
 
-    # if mbridge_ckpt:
-    model_cfg = instantiate(run_config["model"])
-    provider = model_cfg.provide
+    if mbridge_ckpt:
+        model_cfg = instantiate(run_config["model"])
+    else:
+        model_cfg = _transformer_config_from_args(mlm_args)
+        assert model_type in ["gpt", "mamba"], f"model type {model_type} not supported."
+
+    def _call_model_provider(model_cfg):
+        """Handles provider call for both MBridge and MLM providers."""
+        if mbridge_ckpt:
+            return model_cfg.provide()
+        else:
+            provider = _gpt_provider if model_type == "gpt" else _mamba_provider
+            return provider(mlm_args, model_cfg)
 
     # Auto-detect if we should skip temp dist context
     if skip_temp_dist_context is None:
@@ -176,9 +188,9 @@ def load_megatron_model(
 
         if use_cpu_init:
             with megatron_cpu_init_context(model_cfg):
-                model = provider()
+                model = _call_model_provider(model_cfg)
         else:
-            model = provider()
+            model = _call_model_provider(model_cfg)
 
         state_dict = _load_model_weights_from_checkpoint(checkpoint_path, model)
 
