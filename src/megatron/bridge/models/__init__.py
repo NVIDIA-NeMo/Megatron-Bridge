@@ -39,7 +39,7 @@ from megatron.bridge.models.llama import (
     LlamaModelProvider,
 )
 from megatron.bridge.models.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.model_bridge import MegatronModelBridge, WeightDistributionMode
+from megatron.bridge.models.model_bridge import MegatronModelBridge
 from megatron.bridge.models.param_mapping import (
     ColumnParallelMapping,
     GatedMLPMapping,
@@ -57,7 +57,6 @@ __all__ = [
     "CausalLMBridge",
     "MegatronMappingRegistry",
     "MegatronModelBridge",
-    "WeightDistributionMode",
     "ColumnParallelMapping",
     "GatedMLPMapping",
     "MegatronParamMapping",

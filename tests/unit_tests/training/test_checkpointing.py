@@ -577,44 +577,44 @@ class TestNonPersistentCheckpoints:
 
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("os.path.isfile")
-    def test_get_non_persistent_iteration_global(self, mock_isfile, mock_read_state, mock_config):
+    def test_get_non_persistent_iteration_global(self, mock_isfile, mock_read_state):
         """Test getting iteration from global non-persistent checkpoint."""
-        mock_config.checkpoint.non_persistent_ckpt_type = "global"
+        non_persistent_ckpt_type = "global"
         mock_isfile.return_value = True
 
         mock_train_state = Mock()
         mock_train_state.step = 1500
         mock_read_state.return_value = mock_train_state
 
-        result = _get_non_persistent_iteration("/np_dir", mock_config)
+        result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
 
         assert result == 1500
         mock_read_state.assert_called_once()
 
-    def test_get_non_persistent_iteration_none(self, mock_config):
+    def test_get_non_persistent_iteration_none(self):
         """Test when non_persistent_ckpt_type is None."""
-        mock_config.checkpoint.non_persistent_ckpt_type = None
+        non_persistent_ckpt_type = None
 
-        result = _get_non_persistent_iteration("/np_dir", mock_config)
+        result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
 
         assert result == -1
 
-    def test_get_non_persistent_iteration_local(self, mock_config):
+    def test_get_non_persistent_iteration_local(self):
         """Test getting iteration from local non-persistent checkpoint."""
-        mock_config.checkpoint.non_persistent_ckpt_type = "local"
+        non_persistent_ckpt_type = "local"
         mock_context = {"local_checkpoint_manager": Mock()}
         mock_context["local_checkpoint_manager"].find_latest.return_value = 2000
 
-        result = _get_non_persistent_iteration("/np_dir", mock_config, mock_context)
+        result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type, mock_context)
 
         assert result == 2000
 
-    def test_get_non_persistent_iteration_invalid_type(self, mock_config):
+    def test_get_non_persistent_iteration_invalid_type(self):
         """Test error for invalid non_persistent_ckpt_type."""
-        mock_config.checkpoint.non_persistent_ckpt_type = "invalid"
+        non_persistent_ckpt_type = "invalid"
 
         with pytest.raises(ValueError):
-            _get_non_persistent_iteration("/np_dir", mock_config)
+            _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
 
 
 class TestCheckpointingContext:
@@ -707,9 +707,8 @@ class TestLoadBaseCheckpoint:
     @pytest.fixture
     def base_config(self):
         """Fixture for base checkpoint tests."""
-        mock_cfg = Mock(spec=ConfigContainer)
-        mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
-        mock_cfg.checkpoint.exit_on_missing_checkpoint = False
+        mock_cfg = Mock(spec=CheckpointConfig)
+        mock_cfg.exit_on_missing_checkpoint = False
         return mock_cfg
 
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
@@ -745,3 +744,245 @@ class TestLoadBaseCheckpoint:
             _load_base_checkpoint("/fake/dir", base_config)
 
         assert "non-distributed checkpoints is no longer supported" in str(exc_info.value)
+
+
+class TestLoadModelWeightsFromCheckpoint:
+    """Test the _load_model_weights_from_checkpoint function."""
+
+    @pytest.fixture
+    def mock_model(self):
+        """Create a mock model for testing."""
+        model = Mock()
+        model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
+        return [model]
+
+    @pytest.fixture
+    def mock_multiple_models(self):
+        """Create multiple mock models for testing."""
+        model1 = Mock()
+        model1.sharded_state_dict.return_value = {"weight1": torch.randn(10, 10)}
+        model2 = Mock()
+        model2.sharded_state_dict.return_value = {"weight2": torch.randn(5, 5)}
+        return [model1, model2]
+
+    @pytest.fixture
+    def mock_common_state_dict(self):
+        """Create a mock state dict for testing."""
+        return {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "optimizer": {"optimizer": {"param_groups": []}},
+            "opt_param_scheduler": {"max_lr": 0.001},
+        }
+
+    @pytest.fixture
+    def mock_full_state_dict(self):
+        """Create a mock state dict for testing."""
+        return {
+            "checkpoint_version": 3.0,
+            "iteration": 1000,
+            "optimizer": {"optimizer": {"param_groups": []}},
+            "opt_param_scheduler": {"max_lr": 0.001},
+            "model": {"weight": torch.randn(10, 10)},
+            "model0": {"weight1": torch.randn(10, 10)},
+            "model1": {"weight2": torch.randn(5, 5)},
+        }
+
+    @pytest.fixture
+    def mock_metadata(self):
+        """Create mock metadata for testing."""
+        return {"distrib_optim_sharding_type": "fully_sharded_model_space"}
+
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    def test_load_model_weights_single_model_success(
+        self,
+        mock_mpu,
+        mock_fully_parallel_wrapper,
+        mock_get_strategy,
+        mock_load_state_dict,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        mock_model,
+        mock_common_state_dict,
+        mock_full_state_dict,
+        mock_metadata,
+    ):
+        """Test successful loading of weights for a single model."""
+        # Setup mocks
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.return_value = mock_full_state_dict
+        mock_get_strategy.return_value = Mock()
+        mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
+        mock_unwrap_model.return_value = mock_model
+
+        # Call the function
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        _load_model_weights_from_checkpoint(
+            checkpoint_path="/test/checkpoint",
+            model=mock_model,
+            fully_parallel_load=False,
+            dist_ckpt_strictness="assume_ok_unexpected",
+            strict=True,
+        )
+
+        # Verify calls
+        mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
+        mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_common_state_dict)
+        mock_unwrap_model.assert_called_once_with(mock_model)
+        mock_generate_state_dict.assert_called_once()
+        call_args = mock_generate_state_dict.call_args
+        assert call_args[0][1] == {"metadata": mock_metadata}
+        mock_get_strategy.assert_called_once_with("/test/checkpoint")
+        mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
+
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    def test_load_model_weights_multiple_models_success(
+        self,
+        mock_mpu,
+        mock_fully_parallel_wrapper,
+        mock_get_strategy,
+        mock_load_state_dict,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        mock_multiple_models,
+        mock_common_state_dict,
+        mock_full_state_dict,
+        mock_metadata,
+    ):
+        """Test successful loading of weights for multiple models."""
+        # Setup mocks
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.return_value = mock_full_state_dict
+        mock_get_strategy.return_value = Mock()
+        mock_generate_state_dict.return_value = {
+            "model0": {"weight1": torch.randn(10, 10)},
+            "model1": {"weight2": torch.randn(5, 5)},
+        }
+        mock_unwrap_model.return_value = mock_multiple_models
+
+        # Call the function
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        _load_model_weights_from_checkpoint(
+            checkpoint_path="/test/checkpoint",
+            model=mock_multiple_models,
+            fully_parallel_load=False,
+            dist_ckpt_strictness="assume_ok_unexpected",
+            strict=True,
+        )
+
+        # Verify calls
+        mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
+        mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_common_state_dict)
+        mock_unwrap_model.assert_called_once_with(mock_multiple_models)
+        mock_generate_state_dict.assert_called_once()
+        mock_get_strategy.assert_called_once_with("/test/checkpoint")
+
+        # Verify both models were loaded
+        assert mock_load_state_dict.call_count == 2
+        mock_load_state_dict.assert_any_call(mock_multiple_models[0], mock_full_state_dict["model0"], True)
+        mock_load_state_dict.assert_any_call(mock_multiple_models[1], mock_full_state_dict["model1"], True)
+
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    def test_load_model_weights_fully_parallel_load(
+        self,
+        mock_mpu,
+        mock_fully_parallel_wrapper,
+        mock_get_strategy,
+        mock_load_state_dict,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        mock_model,
+        mock_common_state_dict,
+        mock_metadata,
+    ):
+        """Test loading with fully parallel load enabled."""
+        # Setup mocks
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_strategy = Mock()
+        mock_get_strategy.return_value = mock_strategy
+        mock_fully_parallel_wrapper.return_value = Mock()
+        mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
+        mock_unwrap_model.return_value = mock_model
+        mock_mpu.get_data_parallel_group.return_value = Mock()
+
+        # Call the function
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        _load_model_weights_from_checkpoint(
+            checkpoint_path="/test/checkpoint",
+            model=mock_model,
+            fully_parallel_load=True,
+            dist_ckpt_strictness="assume_ok_unexpected",
+            strict=True,
+        )
+
+        # Verify fully parallel wrapper was used
+        mock_fully_parallel_wrapper.assert_called_once_with(
+            mock_strategy, mock_mpu.get_data_parallel_group.return_value
+        )
+        mock_mpu.get_data_parallel_group.assert_called_once_with(with_context_parallel=True)
+
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    def test_load_model_weights_none_state_dict(
+        self,
+        mock_mpu,
+        mock_fully_parallel_wrapper,
+        mock_get_strategy,
+        mock_load_state_dict,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        mock_model,
+        mock_metadata,
+    ):
+        """Test loading when checkpoint returns None state dict."""
+        # Setup mocks
+        mock_dist_ckpt.load_common_state_dict.return_value = None
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_get_strategy.return_value = Mock()
+        mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
+        mock_unwrap_model.return_value = mock_model
+
+        # Call the function and expect assertion error
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        with pytest.raises(AssertionError):
+            _load_model_weights_from_checkpoint(
+                checkpoint_path="/test/checkpoint",
+                model=mock_model,
+                fully_parallel_load=False,
+                dist_ckpt_strictness="assume_ok_unexpected",
+                strict=True,
+            )

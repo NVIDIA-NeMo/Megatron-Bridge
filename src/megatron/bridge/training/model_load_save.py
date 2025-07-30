@@ -1,0 +1,293 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import logging
+import os
+import socket
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Generator, Optional, Union
+
+import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
+from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
+from megatron.core.optimizer import OptimizerConfig
+from megatron.core.transformer import MegatronModule
+from megatron.core.utils import get_model_config
+
+from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
+from megatron.bridge.training.state import GlobalState
+
+
+logger = logging.getLogger(__name__)
+
+
+def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
+    """Convert Megatron-Core config dtype settings to torch dtype.
+
+    Args:
+        config: Megatron-Core configuration object with bf16/fp16 flags.
+
+    Returns:
+        The corresponding torch dtype.
+    """
+    if hasattr(config, "bf16") and config.bf16:
+        return torch.bfloat16
+    elif hasattr(config, "fp16") and config.fp16:
+        return torch.float16
+    else:
+        return torch.float32
+
+
+@contextmanager
+def megatron_cpu_init_context(config: Any) -> Generator[None, None, None]:
+    """Context manager to temporarily force CPU initialization for Megatron models.
+
+    This is useful when initializing a model on a system without GPUs or when
+    memory constraints prevent GPU initialization.
+
+    Args:
+        config: The Megatron model configuration object (e.g., GPTConfig).
+            Must have a `use_cpu_initialization` attribute.
+
+    Yields:
+        None. The context modifies the config in place.
+    """
+    original_use_cpu_initialization = config.use_cpu_initialization
+    config.use_cpu_initialization = True
+
+    try:
+        yield
+    finally:
+        config.use_cpu_initialization = original_use_cpu_initialization
+
+
+@contextmanager
+def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None, None]:
+    """Context manager to temporarily initialize a minimal distributed environment.
+
+    Sets up a single-process distributed backend, initializes Megatron model parallel state,
+    yields control, and then cleans up the distributed environment.
+    Useful for operations that require Megatron's parallel state but should run
+    standalone (e.g., loading distributed checkpoints).
+
+    Args:
+        backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
+
+    Yields:
+        None.
+    """
+    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
+        init_method = None
+    else:
+        # Find an available port dynamically
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("localhost", 0))
+            addr, port = s.getsockname()
+        init_method = f"tcp://{addr}:{port}"
+
+    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
+    parallel_state.initialize_model_parallel()
+
+    if backend == "nccl":
+        from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+        model_parallel_cuda_manual_seed(0)
+
+    try:
+        yield
+    finally:
+        parallel_state.destroy_model_parallel()
+        dist.destroy_process_group()
+
+
+def load_megatron_model(
+    dist_ckpt_folder: Path,
+    model_cfg: Any,
+    return_state_dict: bool = False,
+    use_cpu_init: bool = True,
+    skip_temp_dist_context: Optional[bool] = None,
+) -> Union[Any, dict[str, torch.Tensor]]:
+    """Load a Megatron model from a distributed checkpoint.
+
+    Initializes a minimal distributed environment and a model instance
+    to load the sharded state dict using the TorchDistLoadShardedStrategy.
+    Automatically selects the appropriate distributed backend (Gloo for CPU, NCCL for GPU).
+
+    Args:
+        dist_ckpt_folder: Path to the megatron hub distributed checkpoint directory
+                          (e.g., /path/to/model/checkpoints/iter_0000001).
+        model_cfg: The Megatron model configuration object (e.g., GPTConfig)
+                   corresponding to the checkpoint.
+        return_state_dict: If True, return the state dict instead of model instance. Default: False.
+        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
+                     If False, use GPU initialization and NCCL backend. Default: True.
+        skip_temp_dist_context: If True, skip temporary distributed context setup.
+                               If None, automatically skip if distributed is already initialized.
+                               Default: None.
+
+    Returns:
+        The model instance with loaded weights if return_state_dict is False,
+        otherwise returns a dictionary containing the full, unsharded model state_dict.
+    """
+    # Auto-detect if we should skip temp dist context
+    if skip_temp_dist_context is None:
+        skip_temp_dist_context = dist.is_available() and dist.is_initialized()
+
+    def _load_checkpoint():
+        target_dtype = torch_dtype_from_mcore_config(model_cfg)
+        if model_cfg.params_dtype != target_dtype:
+            logger.info(f"Converting params_dtype from {model_cfg.params_dtype} to {target_dtype}")
+            model_cfg.params_dtype = target_dtype
+
+        if use_cpu_init:
+            with megatron_cpu_init_context(model_cfg):
+                model = model_cfg.provide()
+        else:
+            model = model_cfg.provide()
+
+        strategy = TorchDistLoadShardedStrategy()
+        state_dict = strategy.load(model.sharded_state_dict(), Path(dist_ckpt_folder))
+
+        if return_state_dict:
+            del model
+            return state_dict
+        else:
+            model.load_state_dict(state_dict)
+            return model
+
+    if skip_temp_dist_context:
+        return _load_checkpoint()
+    else:
+        # Use appropriate backend based on initialization type
+        backend = "gloo" if use_cpu_init else "nccl"
+        with temporary_distributed_context(backend=backend):
+            return _load_checkpoint()
+
+
+def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckpt_format: str = "torch_dist") -> None:
+    """Save a Megatron model in native Megatron checkpoint format without optimizer state.
+
+    This method saves the model in Megatron's native checkpoint format, which
+    can be loaded directly by Megatron for training or inference. The checkpoint
+    includes the model configuration and weights, NO optimizer state or other
+    artifacts.
+
+    Args:
+        model: Megatron model instance or list of instances.
+        path: Directory path where the checkpoint will be saved.
+        ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
+
+    Example:
+        >>> # Save model checkpoint
+        >>> save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+    Note:
+        - This method is collective and must be called by all ranks
+        - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
+        - The checkpoint format follows Megatron's standard structure for compatibility
+    """
+    # Get model config from the first model instance
+    model_config = get_model_config(model[0])
+
+    # Validate that the model config is a model provider
+    if not isinstance(model_config, ModelProviderMixin):
+        raise TypeError(
+            f"Expected model config to be an instance of ModelProviderMixin, "
+            f"but got {type(model_config).__name__}. "
+            f"Model configs must inherit from ModelProviderMixin to ensure proper "
+            f"model instantiation and configuration handling."
+        )
+
+    # Create global state for checkpointing
+    state = GlobalState()
+    state.cfg = ConfigContainer(
+        model=model_config,
+        train=None,
+        optimizer=OptimizerConfig(use_distributed_optimizer=False),
+        ddp=None,
+        scheduler=None,
+        dataset=None,
+        logger=LoggerConfig(),
+        tokenizer=None,
+        checkpoint=CheckpointConfig(
+            async_save=False,
+            save=str(path),
+            save_optim=False,
+            save_rng=False,
+            ckpt_format=ckpt_format,
+        ),
+        dist=None,
+    )
+
+    # Save the checkpoint
+    save_checkpoint(
+        state=state,
+        model=model,
+        optimizer=None,
+        opt_param_scheduler=None,
+        num_floating_point_operations_so_far=0,
+    )
+
+
+def dtype_from_str(dtype: str) -> torch.dtype:
+    """Convert a string representation of a dtype to a torch.dtype.
+
+    Handles common variations like 'fp16', 'bf16-mixed'. Defaults to float32
+    for unrecognized strings.
+
+    Args:
+        dtype: The string representation (e.g., "bf16", "fp16", "float32").
+
+    Returns:
+        The corresponding torch.dtype.
+    """
+    if not isinstance(dtype, str):
+        raise TypeError(f"Expected str, got {type(dtype)}")
+
+    if dtype in ("float16", "fp16", "16", "16-mixed"):
+        return torch.float16
+    elif dtype in ("bfloat16", "bf16-mixed"):
+        return torch.bfloat16
+    else:
+        return torch.float32
+
+
+def dtype_from_hf(config: Any) -> torch.dtype:
+    """Extract the torch.dtype from a Hugging Face PretrainedConfig object.
+
+    Args:
+        config: A Hugging Face model config object (must have `torch_dtype` attribute).
+
+    Returns:
+        The corresponding torch.dtype.
+
+    Raises:
+        ValueError: If the `torch_dtype` attribute is not a recognized string or torch.dtype.
+        AttributeError: If the config object does not have a `torch_dtype` attribute.
+    """
+    if not hasattr(config, "torch_dtype"):
+        raise AttributeError("Expected config to have attr `torch_dtype`")
+
+    torch_dtype = config.torch_dtype
+
+    if isinstance(torch_dtype, torch.dtype):
+        return torch_dtype
+    elif isinstance(torch_dtype, str):
+        return dtype_from_str(torch_dtype)
+    else:
+        raise ValueError(f"torch_dtype is not of type str/torch.dtype, got {type(torch_dtype)}")

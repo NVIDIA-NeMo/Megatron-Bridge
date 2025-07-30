@@ -593,11 +593,8 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Gather from all TP ranks
         gathered = self.gather_from_tp_ranks(megatron_weights)
 
-        # Only rank 0 concatenates and returns
-        if self.tp_rank == 0:
-            full_weight = torch.cat(gathered, dim=0)
-            return {str(self.hf_param): full_weight}
-        return {}
+        full_weight = torch.cat(gathered, dim=0)
+        return {str(self.hf_param): full_weight}
 
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
@@ -666,10 +663,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             merged = torch.cat(gathered, dim=1)
 
-        if self.tp_rank == 0:
-            return {str(self.hf_param): merged}
-        else:
-            return {}
+        return {str(self.hf_param): merged}
 
 
 class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
@@ -715,10 +709,7 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
-        # For replicated weights, only rank 0 returns to avoid duplicates
-        if self.tp_rank == 0:
-            return {str(self.hf_param): megatron_weights}
-        return {}
+        return {str(self.hf_param): megatron_weights}
 
 
 class TPAwareMapping(MegatronParamMapping[torch.Tensor]):
@@ -1162,35 +1153,27 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             # Gather shards from all TP ranks
             gathered_shards = self.gather_from_tp_ranks(megatron_weights)
 
-            if self.tp_rank == 0:
-                # Split each shard back into gate and up parts
-                gate_parts = []
-                up_parts = []
-                for shard in gathered_shards:
-                    # Each shard is [gate_shard; up_shard] concatenated along dim 0
-                    # This works for both bias (1D) and weight (2D) tensors
-                    gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
-                    gate_parts.append(gate_shard)
-                    up_parts.append(up_shard)
+            # Split each shard back into gate and up parts
+            gate_parts = []
+            up_parts = []
+            for shard in gathered_shards:
+                # Each shard is [gate_shard; up_shard] concatenated along dim 0
+                # This works for both bias (1D) and weight (2D) tensors
+                gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
+                gate_parts.append(gate_shard)
+                up_parts.append(up_shard)
 
-                # Concatenate all gate parts and all up parts separately
-                full_gate = torch.cat(gate_parts, dim=0)
-                full_up = torch.cat(up_parts, dim=0)
+            # Concatenate all gate parts and all up parts separately
+            full_gate = torch.cat(gate_parts, dim=0)
+            full_up = torch.cat(up_parts, dim=0)
 
-                # Concatenate gate and up to get the full tensor
-                fused_mlp = torch.cat([full_gate, full_up], dim=0)
-            else:
-                return {}
+            # Concatenate gate and up to get the full tensor
+            fused_mlp = torch.cat([full_gate, full_up], dim=0)
 
-        # Only rank 0 returns the split weights/biases
-        if self.tp_rank == 0:
-            # Split the concatenated tensor in half along dim 0
-            # This works for both bias (1D) and weight (2D) tensors
-            gate, up = torch.chunk(fused_mlp, 2, dim=0)
-
-            return {self.hf_param["gate"]: gate, self.hf_param["up"]: up}
-        else:
-            return {}
+        # Split the concatenated tensor in half along dim 0
+        # This works for both bias (1D) and weight (2D) tensors
+        gate, up = torch.chunk(fused_mlp, 2, dim=0)
+        return {self.hf_param["gate"]: gate, self.hf_param["up"]: up}
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* GatedMLPMapping instance."""

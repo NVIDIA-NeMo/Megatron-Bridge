@@ -186,19 +186,13 @@ class MyCustomMapping(MegatronParamMapping):
         return {"custom_weight": my_inverse_transform(gathered)}
 ```
 
-### Weight Distribution Modes
+### Exporting Weights
 
-Control how weights are distributed during export:
+Export weights to HuggingFace format (all ranks receive full weights):
 
 ```python
-# Default: Consolidate to rank 0 only
-weights = bridge.export_to_hf(model, mode="consolidate")
-
-# All ranks get full weights
-weights = bridge.export_to_hf(model, mode="replicate")
-
-# Each rank keeps its shard (experimental)
-weights = bridge.export_to_hf(model, mode="distribute")
+# Export weights
+weights = bridge.export_to_hf(model)
 ```
 
 ### Streaming Large Models

@@ -360,9 +360,10 @@ def _initialize_distributed(
             print("model parallel is already initialized")
         else:
             parallel_state.initialize_model_parallel(
-                model_config.tensor_model_parallel_size,
-                model_config.pipeline_model_parallel_size,
-                model_config.virtual_pipeline_model_parallel_size,
+                tensor_model_parallel_size=model_config.tensor_model_parallel_size,
+                pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
+                virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
+                pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
                 context_parallel_size=model_config.context_parallel_size,
                 hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
                 expert_model_parallel_size=model_config.expert_model_parallel_size,

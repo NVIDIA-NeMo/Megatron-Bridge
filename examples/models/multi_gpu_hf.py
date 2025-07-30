@@ -99,7 +99,7 @@ def main(
         console.print(f"[yellow]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/yellow]")
         console.print(f"[yellow]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/yellow]")
 
-    for name, param in bridge(megatron_model, show_progress=False, order="safetensors"):
+    for name, param in bridge(megatron_model, show_progress=False):
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             match = torch.allclose(

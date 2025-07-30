@@ -15,10 +15,11 @@
 import dataclasses
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, Literal, Type, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Iterable, Type, TypeVar, overload
 
 import torch.distributed
 import transformers
+import yaml
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from transformers import AutoConfig
@@ -28,7 +29,6 @@ from typing_extensions import Unpack
 from megatron.bridge.models import model_bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.model_bridge import WeightDistributionMode
 from megatron.bridge.models.model_provider_mixin import GetModelKwargs, ModelProviderMixin
 from megatron.bridge.models.state import SafeTensorsStateSource
 
@@ -70,8 +70,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
         >>> # Convert weights with custom settings
         >>> for name, weight in bridge.export_hf_weights(
         ...     megatron_model,
-        ...     order="safetensors",
-        ...     mode="consolidate"
+        ...     cpu=True
         ... ):
         ...     print(f"Exported {name}: {weight.shape}")
 
@@ -217,21 +216,17 @@ class CausalLMBridge(Generic[MegatronModelT]):
     def __call__(
         self,
         model: list[MegatronModelT],
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
         cpu: bool = False,
         show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
     ) -> Iterable["HFWeightTuple"]: ...
 
     def __call__(
         self,
         model,
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
         cpu: bool = False,
         show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
     ) -> Iterable["HFWeightTuple"]:
-        return self.export_hf_weights(model=model, order=order, cpu=cpu, show_progress=show_progress, mode=mode)
+        return self.export_hf_weights(model=model, cpu=cpu, show_progress=show_progress)
 
     def load_hf_weights(self, model: list[MegatronModelT], hf_path: str | Path | None = None) -> None:
         """
@@ -275,39 +270,27 @@ class CausalLMBridge(Generic[MegatronModelT]):
     def export_hf_weights(
         self,
         model: list[MegatronModelT],
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
         cpu: bool = False,
         show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
     ) -> Iterable["HFWeightTuple"]: ...
 
     def export_hf_weights(
         self,
         model,
-        order: Literal["megatron", "hf", "safetensors"] = "safetensors",
         cpu: bool = False,
         show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
 
         This method yields weight tensors in HuggingFace format, handling the
         gathering of distributed tensors and format conversion. It's useful for
-        streaming weight export or custom processing.
+        streaming weight export or custom processing. All ranks get full tensors.
 
         Args:
             model: Megatron model instance or list of instances
-            order: Export order for weights
-                - "megatron": Follow Megatron's parameter order
-                - "hf": Follow HuggingFace state dict order
-                - "safetensors": Group by safetensors file, then by key
             cpu: Whether to move tensors to CPU before yielding
             show_progress: Display progress bar during export
-            mode: Weight distribution mode
-                - "consolidate": Gather to rank 0
-                - "replicate": All ranks get full tensors
-                - "distribute": Each rank keeps its shard
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor)
@@ -320,20 +303,15 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> # Export with specific settings
             >>> weights = list(bridge.export_hf_weights(
             ...     model,
-            ...     order="safetensors",
-            ...     cpu=True,
-            ...     mode="replicate"  # All ranks get full weights
+            ...     cpu=True
             ... ))
         """
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance, model, self.hf_pretrained, order=order, cpu=cpu, show_progress=show_progress, mode=mode
+            dispatch_instance, model, self.hf_pretrained, cpu=cpu, show_progress=show_progress
         )
 
-    @overload
-    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path) -> None: ...
-
-    def save_hf_pretrained(self, model, path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
@@ -369,10 +347,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         self.save_hf_weights(model, path, show_progress)
 
-    @overload
-    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None: ...
-
-    def save_hf_weights(self, model, path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 
@@ -409,7 +384,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
             torch.distributed.barrier()
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance, model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
+            dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
         )
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
@@ -425,11 +400,208 @@ class CausalLMBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
 
-    def save_megatron_model(self, model, path: str | Path, ckpt_format: str = "torch_dist") -> None:
-        raise NotImplementedError
+    def save_megatron_model(self, model: list[MegatronModule], path: str | Path) -> None:
+        """
+        Save a Megatron model in native Megatron checkpoint format without optimizer
+        state.
+
+        This method saves the model in Megatron's native checkpoint format, which
+        can be loaded directly by Megatron for training or inference. The checkpoint
+        includes the model configuration and weights, NO optimizer state or other
+        artifacts.
+
+        Args:
+            model: Megatron model instance or list of instances
+            path: Directory path where the checkpoint will be saved
+            ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats)
+
+        Example:
+            >>> # Save model checkpoint after conversion
+            >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+        Note:
+            - This method is collective and must be called by all ranks
+            - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
+            - The checkpoint format follows Megatron's standard structure for compatibility
+        """
+        try:
+            from megatron.bridge.training.model_load_save import save_megatron_model
+        except ImportError:
+            raise ImportError("megatron.bridge.training is not available.")
+        save_megatron_model(model, path)
 
     def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
-        raise NotImplementedError
+        """
+        Load a Megatron model from a native Megatron checkpoint.
+
+        This method loads a model from a Megatron checkpoint that was saved using
+        the save_megatron_model method. It reads the checkpoint configuration,
+        creates the appropriate model provider, and loads the weights.
+
+        Args:
+            path: Directory path where the Megatron checkpoint is stored
+            **kwargs: Additional arguments passed to the model provider
+
+        Returns:
+            List of Megatron model instances loaded from the checkpoint
+
+        Example:
+            >>> # Load a previously saved Megatron model
+            >>> bridge = CausalLMBridge.from_hf_config(config)
+            >>> model = bridge.load_megatron_model("./megatron_checkpoint")
+
+            >>> # Load and specify model configuration
+            >>> model = bridge.load_megatron_model(
+            ...     "./megatron_checkpoint",
+            ...     wrap_with_ddp=False
+            ... )
+
+        Note:
+            - This method is collective and must be called by all ranks
+            - The checkpoint must have been saved with save_megatron_model
+            - The model architecture must match the bridge configuration
+        """
+        try:
+            from megatron.bridge.training.model_load_save import load_megatron_model
+            from megatron.bridge.utils.instantiate_utils import instantiate
+        except ImportError:
+            raise ImportError("megatron.bridge.training is not available.")
+
+        checkpoint_path = Path(path)
+
+        # Check for iter_* folders
+        iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
+
+        if iter_folders:
+            # Find the folder with the largest iteration number
+            def get_iter_number(folder_name):
+                try:
+                    return int(folder_name.replace("iter_", ""))
+                except ValueError:
+                    return -1  # Invalid format, put at the end
+
+            latest_iter = max(iter_folders, key=lambda f: get_iter_number(f.name))
+            checkpoint_path = checkpoint_path / latest_iter.name
+        # else: checkpoint_path remains as the input path (no iter folders found)
+
+        config_file = checkpoint_path / "run_config.yaml"
+
+        if not config_file.exists():
+            raise FileNotFoundError(f"Checkpoint config file {config_file} does not exist")
+
+        # Load the configuration
+        with open(config_file, "r") as stream:
+            config = yaml.safe_load(stream)
+
+        model_config = config["model"]
+        model_config = instantiate(model_config)
+
+        # Load the state dict
+        model = load_megatron_model(
+            checkpoint_path,
+            model_cfg=model_config,
+            use_cpu_init=True,
+        )
+        return model if isinstance(model, list) else [model]
+
+    @classmethod
+    def import_ckpt(
+        cls,
+        hf_model_id: str | Path,
+        megatron_path: str | Path,
+        **kwargs,
+    ) -> None:
+        """
+        Import a HuggingFace model and save it as a Megatron checkpoint.
+
+        This is a convenience method that combines loading a HuggingFace model,
+        converting it to Megatron format, and saving it as a native Megatron
+        checkpoint. This is useful for preparing models for Megatron training
+        or creating Megatron checkpoints from pretrained HuggingFace models.
+
+        Args:
+            hf_model_id: HuggingFace model ID or path to model directory
+                Examples: "meta-llama/Llama-3-8B", "./my_model"
+            megatron_path: Directory path where the Megatron checkpoint will be saved
+            **kwargs: Additional arguments passed to from_hf_pretrained
+                Common options include:
+                - torch_dtype: Model precision (torch.float16, torch.bfloat16)
+                - device_map: Device placement strategy ("auto", "cuda:0", etc.)
+                - trust_remote_code: Allow custom model code execution
+                - attn_implementation: Attention implementation ("flash_attention_2", etc.)
+
+        Example:
+            >>> # Basic import
+            >>> CausalLMBridge.import_ckpt(
+            ...     "meta-llama/Llama-3-8B",
+            ...     "./megatron_checkpoints/llama3_8b"
+            ... )
+
+            >>> # Import with specific settings
+            >>> CausalLMBridge.import_ckpt(
+            ...     "meta-llama/Llama-3-8B",
+            ...     "./megatron_checkpoints/llama3_8b",
+            ...     torch_dtype=torch.float16,
+            ...     device_map="auto"
+            ... )
+        """
+        # Load the HuggingFace model
+        bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
+
+        # Convert to Megatron model
+        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+
+        # Save as Megatron checkpoint
+        bridge.save_megatron_model(megatron_model, megatron_path)
+
+    def export_ckpt(
+        self,
+        megatron_path: str | Path,
+        hf_path: str | Path,
+        show_progress: bool = True,
+    ) -> None:
+        """
+        Export a Megatron checkpoint to HuggingFace format.
+
+        This is a convenience method that loads a Megatron checkpoint and
+        exports it to HuggingFace format. This is useful for sharing trained
+        models or deploying them with HuggingFace inference tools.
+
+        Args:
+            megatron_path: Directory path where the Megatron checkpoint is stored
+            hf_path: Directory path where the HuggingFace model will be saved
+            show_progress: Display progress bar during weight export
+
+        Example:
+            >>> # Basic export
+            >>> bridge = CausalLMBridge.from_hf_config(config)
+            >>> bridge.export_ckpt(
+            ...     "./megatron_checkpoints/my_model",
+            ...     "./hf_exports/my_model"
+            ... )
+
+            >>> # Export with specific settings
+            >>> bridge.export_ckpt(
+            ...     "./megatron_checkpoints/my_model",
+            ...     "./hf_exports/my_model",
+            ...     show_progress=False
+            ... )
+
+            >>> # Load the exported model with HuggingFace
+            >>> from transformers import AutoModelForCausalLM
+            >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
+        """
+        try:
+            from megatron.bridge.training.model_load_save import temporary_distributed_context
+        except ImportError:
+            raise ImportError("megatron.bridge.training is not available.")
+
+        with temporary_distributed_context(backend="gloo"):
+            # Load the Megatron model
+            megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
+
+            # Save in HuggingFace format
+            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
 
     def push_to_hub(self, path: str | Path) -> None: ...
 

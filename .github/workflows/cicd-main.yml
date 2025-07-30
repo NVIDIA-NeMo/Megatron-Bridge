@@ -116,14 +116,8 @@ jobs:
         include:
           - script: L2_Launch_training
             timeout: 60
-          - script: L2_Multi_GPU_Conversion_TP
-            timeout: 30
-          - script: L2_Multi_GPU_Conversion_PP
-            timeout: 30
-          - script: L2_Generate_From_HF_TP
-            timeout: 30
-          - script: L2_Generate_From_HF_PP
-            timeout: 30
+          - script: L2_Launch_converter
+            timeout: 60
     needs: [cicd-unit-tests]
     runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
     if: |
@@ -148,7 +142,6 @@ jobs:
           script: ${{ matrix.script }}
           timeout: ${{ matrix.timeout }}
           is_unit_test: "false"
-          cpu-only: false
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
