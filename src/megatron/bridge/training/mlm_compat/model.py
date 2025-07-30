@@ -26,18 +26,18 @@ from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
     get_gpt_heterogeneous_layer_spec,
 )
 from megatron.core.models.mamba import MambaModel
-from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer import ModuleSpec, TransformerConfig
 from megatron.core.transformer.spec_utils import import_module
 
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
 
 
-def _get_transformer_layer_spec(args, use_te, use_kitchen):
+def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitchen: bool) -> ModuleSpec:
     """Get transformer layer specification based on configuration.
 
     Args:
         args: Training arguments
-        use_te (bool): Whether to use Transformer Engine
+        use_te: Whether to use Transformer Engine
         config: Model configuration
 
     Returns:
@@ -67,9 +67,9 @@ def _get_transformer_layer_spec(args, use_te, use_kitchen):
 
 def _gpt_provider(
     args: argparse.Namespace,
-    config: TransformerConfig = None,
-    pre_process=True,
-    post_process=True,
+    config: Optional[TransformerConfig] = None,
+    pre_process: bool = True,
+    post_process: bool = True,
     vp_stage: Optional[int] = None,
 ) -> GPTModel:
     use_te = args.transformer_impl == "transformer_engine"
@@ -124,7 +124,10 @@ def _gpt_provider(
 
 
 def _mamba_provider(
-    args: argparse.Namespace, config: TransformerConfig = None, pre_process=True, post_process=True
+    args: argparse.Namespace,
+    config: Optional[TransformerConfig] = None,
+    pre_process: bool = True,
+    post_process: bool = True,
 ) -> MambaModel:
     if config is None:
         config = _transformer_config_from_args(args)

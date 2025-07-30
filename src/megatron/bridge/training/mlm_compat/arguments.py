@@ -33,7 +33,9 @@ def _load_args_from_checkpoint(checkpoint_path: str) -> argparse.Namespace:
     return state_dict["args"]
 
 
-def _transformer_config_from_args(args, config_class=TransformerConfig) -> TransformerConfig:
+def _transformer_config_from_args(
+    args: argparse.Namespace, config_class: type[TransformerConfig] = TransformerConfig
+) -> TransformerConfig:
     if args.multi_latent_attention:
         config_class = MLATransformerConfig
 
