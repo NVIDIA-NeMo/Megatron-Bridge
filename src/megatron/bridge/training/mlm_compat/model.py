@@ -38,7 +38,7 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
     Args:
         args: Training arguments
         use_te: Whether to use Transformer Engine
-        config: Model configuration
+        use_kitchen: Whether to use kitchen extension
 
     Returns:
         transformer_layer_spec: The transformer layer specification
@@ -72,6 +72,10 @@ def _gpt_provider(
     post_process: bool = True,
     vp_stage: Optional[int] = None,
 ) -> GPTModel:
+    """Provide the GPTModel exactly as done by MLM using an argparse args object.
+
+    May need to set `args` and `config` with functools.partial.
+    """
     use_te = args.transformer_impl == "transformer_engine"
 
     if config is None:
@@ -129,6 +133,10 @@ def _mamba_provider(
     pre_process: bool = True,
     post_process: bool = True,
 ) -> MambaModel:
+    """Provide the MambaModel exactly as done by MLM using an argparse args object.
+
+    May need to set `args` and `config` with functools.partial.
+    """
     if config is None:
         config = _transformer_config_from_args(args)
 

@@ -26,6 +26,7 @@ from megatron.bridge.training.mlm_compat.activations import squared_relu
 
 
 def _load_args_from_checkpoint(checkpoint_path: str) -> argparse.Namespace:
+    """Obtain argparse args object from an MLM checkpoint."""
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
     assert state_dict is not None, f"Could not load state from checkpoint at {checkpoint_path}"
     assert "args" in state_dict, "Provided checkpoint does not have arguments saved."
@@ -36,6 +37,7 @@ def _load_args_from_checkpoint(checkpoint_path: str) -> argparse.Namespace:
 def _transformer_config_from_args(
     args: argparse.Namespace, config_class: type[TransformerConfig] = TransformerConfig
 ) -> TransformerConfig:
+    """Build a variant of TransformerConfig based on contents of the MLM argparse args object."""
     if args.multi_latent_attention:
         config_class = MLATransformerConfig
 
