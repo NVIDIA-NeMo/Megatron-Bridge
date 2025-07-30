@@ -148,3 +148,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args.hf_model_id, args.output_dir, args.tp, args.pp, args.megatron_save_path)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

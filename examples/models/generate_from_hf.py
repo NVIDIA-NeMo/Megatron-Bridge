@@ -245,3 +245,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

@@ -31,6 +31,7 @@ The process is as follows:
 import argparse
 import os
 
+import torch
 from rich.console import Console
 
 from megatron.bridge import AutoBridge
@@ -69,3 +70,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args.hf_model_id, args.output_dir)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

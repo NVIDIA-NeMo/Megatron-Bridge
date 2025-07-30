@@ -19,13 +19,13 @@ import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
     ColumnParallelMapping,
     DirectMapping,
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
-    TPAwareMapping,
     merge_qkv_biases,
     merge_qkv_weights,
     split_qkv_biases,
@@ -201,10 +201,10 @@ class TestRowParallelMapping:
             assert torch.equal(result["hf.weight"], full_weight)
 
 
-class TestTPAwareMapping:
+class TestAutoMapping:
     def test_detect_parallelism_type(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
-        mapping = TPAwareMapping(megatron_param="some.weight", hf_param="hf.weight")
+        mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
 
         # Mock modules with different characteristics
         class MyCol(torch.nn.Module):
@@ -218,7 +218,7 @@ class TestTPAwareMapping:
         class MyRep(torch.nn.Module):
             tensor_model_parallel = False
 
-        TPAwareMapping.register_module_type("MyCustomRow", "row")
+        AutoMapping.register_module_type("MyCustomRow", "row")
 
         class MyCustomRow(torch.nn.Module):
             pass
@@ -450,8 +450,8 @@ class TestMappingEdgeCases:
                 mapping.broadcast_from_pp_rank(None)
 
     def test_tp_aware_unknown_module_error(self, transformer_config):
-        """Test TPAwareMapping error for unknown module types."""
-        mapping = TPAwareMapping("weight", "hf.weight")
+        """Test AutoMapping error for unknown module types."""
+        mapping = AutoMapping("weight", "hf.weight")
 
         # Create an unknown module type
         unknown_module = torch.nn.Linear(10, 10)

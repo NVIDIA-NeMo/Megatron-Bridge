@@ -40,13 +40,13 @@ from megatron.bridge.models.llama import (
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
     ColumnParallelMapping,
     GatedMLPMapping,
     MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
-    TPAwareMapping,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
@@ -61,7 +61,7 @@ __all__ = [
     "QKVMapping",
     "ReplicatedMapping",
     "RowParallelMapping",
-    "TPAwareMapping",
+    "AutoMapping",
     "GPTModelProvider",
     "T5ModelProvider",
     "LlamaModelProvider",

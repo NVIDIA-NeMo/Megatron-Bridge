@@ -84,7 +84,7 @@ class MegatronCausalLlamaBridge(MegatronModelBridge):
     def mapping_registry(self):
         # Define weight mappings
         return MegatronMappingRegistry(
-            TPAwareMapping(
+            AutoMapping(
                 megatron_param="embedding.word_embeddings.weight",
                 hf_param="model.embed_tokens.weight"
             ),
@@ -101,7 +101,7 @@ Different weight transformation strategies handle various parallelism patterns:
 - **RowParallelMapping**: Splits along input dimension
 - **QKVMapping**: Handles QKV matrix interleaving
 - **GatedMLPMapping**: Manages gated activation concatenation
-- **TPAwareMapping**: Auto-detects and applies correct strategy
+- **AutoMapping**: Auto-detects and applies correct strategy
 
 ## Conversion Process
 
@@ -236,7 +236,7 @@ To add support for a new model architecture:
 
 4. **Register Custom Modules** (if needed)
    ```python
-   TPAwareMapping.register_module_type(
+   AutoMapping.register_module_type(
        "YourColumnParallelLinear", "column"
    )
    ```

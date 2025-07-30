@@ -37,7 +37,7 @@ class MegatronMappingRegistry:
     Example:
         >>> # Create a mapping registry with various mappings
         >>> mapping_registry = MegatronMappingRegistry(
-        ...     TPAwareMapping(
+        ...     AutoMapping(
         ...         megatron_param="embedding.word_embeddings.weight",
         ...         hf_param="model.embed_tokens.weight",
         ...     ),
@@ -109,13 +109,13 @@ class MegatronMappingRegistry:
     def _compile_pattern_with_wildcards(self, pattern: str):
         """
         Compile a pattern with wildcard support.
-        
-        Supports both "**" (matches any characters including dots) and 
+
+        Supports both "**" (matches any characters including dots) and
         "*" (matches any characters except dots) wildcards.
-        
+
         Args:
             pattern: Pattern string with wildcards
-            
+
         Returns:
             Tuple of (compiled_regex, wildcard_positions)
         """
@@ -140,7 +140,7 @@ class MegatronMappingRegistry:
 
         return re.compile("^" + escaped_pattern + "$"), wildcard_positions
 
-    def megatron_to_hf_lookup(self, megatron_name: str) -> Optional[MegatronParamMapping]:
+    def megatron_to_hf_lookup(self, megatron_param_name: str) -> Optional[MegatronParamMapping]:
         """
         Get mapping for a Megatron parameter name.
 
@@ -149,7 +149,7 @@ class MegatronMappingRegistry:
         When a pattern match is found, wildcards are automatically resolved.
 
         Args:
-            megatron_name: Megatron parameter name to look up
+            megatron_param_name: Megatron parameter name to look up
                 Example: "decoder.layers.0.self_attention.linear_qkv.weight"
 
         Returns:
@@ -166,11 +166,11 @@ class MegatronMappingRegistry:
         for pattern, mapping in self._compiled_patterns:
             if pattern is None:
                 # Direct match
-                if mapping.megatron_param == megatron_name:
+                if mapping.megatron_param == megatron_param_name:
                     return mapping
             else:
                 # Pattern match
-                match = pattern.match(megatron_name)
+                match = pattern.match(megatron_param_name)
                 if match:
                     # Return resolved mapping with wildcards replaced
                     return mapping.resolve(match.groups())
