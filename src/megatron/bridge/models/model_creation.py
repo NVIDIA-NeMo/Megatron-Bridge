@@ -24,7 +24,6 @@ and configuration for distributed training.
 from typing import Callable, Protocol, runtime_checkable
 
 import torch
-import torch.nn as nn
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
     DistributedDataParallel,
@@ -68,8 +67,8 @@ def get_model(
     - Distributed Data Parallel (DDP) wrapping
 
     Args:
-        model_provider: ModelProviderMixin instance that creates the model. 
-            Uses the provide() method with optional pre_process(bool), post_process(bool), 
+        model_provider: ModelProviderMixin instance that creates the model.
+            Uses the provide() method with optional pre_process(bool), post_process(bool),
             vp_stage(int) arguments for pipeline parallelism
         ddp_config: Configuration for distributed data parallel training
         model_type: Type of model (encoder, decoder, or encoder_and_decoder)

@@ -21,7 +21,7 @@ from megatron.core.enums import ModelType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.model_provider import (
+from megatron.bridge.models.model_creation import (
     ModelProviderProtocol,
     _create_model,
     _ddp_wrap,
