@@ -22,6 +22,7 @@ from megatron.core.quantization.utils import kitchen_quantization_recipe_config,
 from megatron.core.transformer import MLATransformerConfig, TransformerConfig
 from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 
+from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.mlm_compat.activations import squared_relu
 
 
@@ -32,6 +33,16 @@ def _load_args_from_checkpoint(checkpoint_path: str) -> argparse.Namespace:
     assert "args" in state_dict, "Provided checkpoint does not have arguments saved."
 
     return state_dict["args"]
+
+
+def _tokenizer_config_from_args(args: argparse.Namespace) -> TokenizerConfig:
+    """Build TokenizerConfig from content of MLM argparse args object."""
+    kw_args = {}
+    for f in dataclasses.fields(TokenizerConfig):
+        if hasattr(args, f.name):
+            kw_args[f.name] = getattr(args, f.name)
+
+    return TokenizerConfig(**kw_args)
 
 
 def _transformer_config_from_args(
