@@ -26,7 +26,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
-from megatron.bridge.models.state import SafeTensorsStateSource, StateDict, StateSource
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict, StateSource
 
 
 @pytest.fixture

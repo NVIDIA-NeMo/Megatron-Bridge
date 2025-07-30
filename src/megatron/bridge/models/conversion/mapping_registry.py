@@ -15,7 +15,7 @@
 import re
 from typing import List, Optional
 
-from megatron.bridge.models.param_mapping import MegatronParamMapping
+from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 
 
 class MegatronMappingRegistry:
@@ -82,20 +82,17 @@ class MegatronMappingRegistry:
         for mapping in mappings:
             # Compile source patterns
             if "*" in mapping.megatron_param:
-                # Convert glob pattern to regex
-                # decoder.layers.*.mlp.linear_fc1.weight -> decoder\.layers\.(\d+)\.mlp\.linear_fc1\.weight
-                pattern = re.escape(mapping.megatron_param)
-                pattern = pattern.replace(r"\*", r"(\d+)")
-                self._compiled_patterns.append((re.compile(f"^{pattern}$"), mapping))
+                # Use sophisticated wildcard pattern compilation
+                pattern, wildcard_positions = self._compile_pattern_with_wildcards(mapping.megatron_param)
+                self._compiled_patterns.append((pattern, mapping))
             else:
                 self._compiled_patterns.append((None, mapping))
 
             # Compile destination patterns for reverse lookups
             if isinstance(mapping.hf_param, str):
                 if "*" in mapping.hf_param:
-                    pattern = re.escape(mapping.hf_param)
-                    pattern = pattern.replace(r"\*", r"(\d+)")
-                    self._reverse_patterns.append((re.compile(f"^{pattern}$"), mapping))
+                    pattern, wildcard_positions = self._compile_pattern_with_wildcards(mapping.hf_param)
+                    self._reverse_patterns.append((pattern, mapping))
                 else:
                     self._reverse_patterns.append((None, mapping))
             else:
@@ -103,12 +100,45 @@ class MegatronMappingRegistry:
                 reverse_dict_patterns = {}
                 for key, hf_pattern in mapping.hf_param.items():
                     if "*" in hf_pattern:
-                        pattern = re.escape(hf_pattern)
-                        pattern = pattern.replace(r"\*", r"(\d+)")
-                        reverse_dict_patterns[key] = re.compile(f"^{pattern}$")
+                        pattern, wildcard_positions = self._compile_pattern_with_wildcards(hf_pattern)
+                        reverse_dict_patterns[key] = pattern
                     else:
                         reverse_dict_patterns[key] = None
                 self._reverse_patterns.append((reverse_dict_patterns, mapping))
+
+    def _compile_pattern_with_wildcards(self, pattern: str):
+        """
+        Compile a pattern with wildcard support.
+        
+        Supports both "**" (matches any characters including dots) and 
+        "*" (matches any characters except dots) wildcards.
+        
+        Args:
+            pattern: Pattern string with wildcards
+            
+        Returns:
+            Tuple of (compiled_regex, wildcard_positions)
+        """
+        escaped_pattern = ''
+        i = 0
+        wildcard_positions = []
+        while i < len(pattern):
+            if pattern[i : i + 2] == '**':
+                escaped_pattern += r'(.+)'  # Match any characters including dots
+                wildcard_positions.append('**')
+                i += 2
+            elif pattern[i] == '*':
+                escaped_pattern += r'([^.]+)'  # Match any characters except dots
+                wildcard_positions.append('*')
+                i += 1
+            else:
+                if pattern[i] == '.':
+                    escaped_pattern += r'\.'  # Escape the dot
+                else:
+                    escaped_pattern += pattern[i]
+                i += 1
+
+        return re.compile("^" + escaped_pattern + "$"), wildcard_positions
 
     def megatron_to_hf_lookup(self, megatron_name: str) -> Optional[MegatronParamMapping]:
         """

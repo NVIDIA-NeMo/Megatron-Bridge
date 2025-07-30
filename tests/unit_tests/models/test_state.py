@@ -17,7 +17,7 @@
 import pytest
 import torch
 
-from megatron.bridge.models.state import StateDict
+from megatron.bridge.models.hf_pretrained.state import StateDict
 
 
 class TestStateDict:

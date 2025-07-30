@@ -20,9 +20,9 @@ from transformers import LlamaForCausalLM
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
-from megatron.bridge.models.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.model_bridge import MegatronModelBridge
-from megatron.bridge.models.param_mapping import (
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
     DirectMapping,
     GatedMLPMapping,
     QKVMapping,

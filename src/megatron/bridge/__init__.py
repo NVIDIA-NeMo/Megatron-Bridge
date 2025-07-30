@@ -13,7 +13,7 @@
 # limitations under the License.
 """Megatron Bridge - A component of the Megatron ecosystem."""
 
-from megatron.bridge.models.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.package_info import (
     __contact_emails__,
     __contact_names__,

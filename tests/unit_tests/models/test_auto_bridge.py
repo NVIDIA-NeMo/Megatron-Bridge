@@ -23,7 +23,7 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -449,7 +449,7 @@ class TestAutoBridge:
         mock_hf_model.state = Mock()
         mock_hf_model.state.source = Mock(spec=["save_generator"])
 
-        from megatron.bridge.models.state import SafeTensorsStateSource
+        from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 
         mock_hf_model.state.source = Mock(spec=SafeTensorsStateSource)
         mock_hf_model.state.source.save_generator = Mock()

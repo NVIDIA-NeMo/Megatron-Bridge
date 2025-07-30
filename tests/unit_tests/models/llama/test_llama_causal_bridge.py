@@ -24,7 +24,7 @@ from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
-from megatron.bridge.models.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 
 
 class TestMegatronLlamaBridge:

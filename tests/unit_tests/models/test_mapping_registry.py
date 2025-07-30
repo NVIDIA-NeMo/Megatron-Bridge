@@ -14,8 +14,8 @@
 
 import pytest
 
-from megatron.bridge.models.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.param_mapping import DirectMapping, QKVMapping
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.param_mapping import DirectMapping, QKVMapping
 
 
 class TestMegatronMappingRegistry:
@@ -323,7 +323,7 @@ class TestMegatronMappingRegistryEdgeCases:
 
     def test_describe_formatting(self):
         """Test the describe method formatting with various bridge types."""
-        from megatron.bridge.models.param_mapping import GatedMLPMapping, TPAwareMapping
+        from megatron.bridge.models.conversion.param_mapping import GatedMLPMapping, TPAwareMapping
 
         mappings = [
             DirectMapping("a.weight", "b.weight"),
@@ -381,3 +381,222 @@ class TestMegatronMappingRegistryEdgeCases:
         # Bridge should remain unchanged
         assert len(bridge) == original_len
         assert len(bridge.get_all_mappings()) == original_len
+
+
+class TestMegatronMappingRegistryDoubleWildcard:
+    """Test the new "**" wildcard functionality."""
+
+    def test_double_wildcard_basic_matching(self):
+        """Test basic "**" wildcard matching that can cross dots."""
+        mapping = DirectMapping(
+            megatron_param="model.**.weight",
+            hf_param="hf.**.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Should match patterns that cross multiple dot levels
+        result = bridge.megatron_to_hf_lookup("model.layers.0.attention.weight")
+        assert result is not None
+        assert result.megatron_param == "model.layers.0.attention.weight"
+        assert result.hf_param == "hf.layers.0.attention.weight"
+
+        # Should match simple single level
+        result = bridge.megatron_to_hf_lookup("model.simple.weight")
+        assert result is not None
+        assert result.hf_param == "hf.simple.weight"
+
+        # Should match complex nested structures
+        result = bridge.megatron_to_hf_lookup("model.transformer.layers.12.attention.self.weight")
+        assert result is not None
+        assert result.hf_param == "hf.transformer.layers.12.attention.self.weight"
+
+    def test_double_wildcard_vs_single_wildcard(self):
+        """Test difference between "**" and "*" wildcards."""
+        mappings = [
+            DirectMapping(
+                megatron_param="model.*.simple.weight",  # Single wildcard - no dots
+                hf_param="hf_single.*.weight"
+            ),
+            DirectMapping(
+                megatron_param="model.**.complex.weight",  # Double wildcard - can have dots
+                hf_param="hf_double.**.weight"
+            )
+        ]
+        bridge = MegatronMappingRegistry(*mappings)
+
+        # Single wildcard should match only single components (no dots)
+        result = bridge.megatron_to_hf_lookup("model.layer0.simple.weight")
+        assert result is not None
+        assert result.hf_param == "hf_single.layer0.weight"
+
+        # Single wildcard should NOT match components with dots
+        result = bridge.megatron_to_hf_lookup("model.layers.0.simple.weight")
+        assert result is None  # Should not match because "layers.0" contains a dot
+
+        # Double wildcard should match complex nested structures
+        result = bridge.megatron_to_hf_lookup("model.layers.5.attention.complex.weight")
+        assert result is not None
+        assert result.hf_param == "hf_double.layers.5.attention.weight"
+
+        # Double wildcard should also match simple structures
+        result = bridge.megatron_to_hf_lookup("model.simple.complex.weight")
+        assert result is not None
+        assert result.hf_param == "hf_double.simple.weight"
+
+    def test_mixed_wildcards_in_pattern(self):
+        """Test patterns with both "*" and "**" wildcards."""
+        mapping = DirectMapping(
+            megatron_param="model.layers.*.attention.**.weight",
+            hf_param="hf.blocks.*.attn.**.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Should match with single component for * and complex path for **
+        result = bridge.megatron_to_hf_lookup("model.layers.12.attention.self.qkv.weight")
+        assert result is not None
+        assert result.megatron_param == "model.layers.12.attention.self.qkv.weight"
+        assert result.hf_param == "hf.blocks.12.attn.self.qkv.weight"
+
+        # Should match with just the required structure
+        result = bridge.megatron_to_hf_lookup("model.layers.0.attention.proj.weight")
+        assert result is not None
+        assert result.hf_param == "hf.blocks.0.attn.proj.weight"
+
+        # Should NOT match if * part contains dots
+        result = bridge.megatron_to_hf_lookup("model.layers.sub.layer.attention.proj.weight")
+        assert result is None
+
+    def test_double_wildcard_reverse_lookup(self):
+        """Test reverse lookup with "**" wildcards."""
+        mapping = DirectMapping(
+            megatron_param="decoder.**.linear.weight",
+            hf_param="model.**.proj.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Test reverse lookup from HF to Megatron
+        result = bridge.hf_to_megatron_lookup("model.layers.5.attention.self.proj.weight")
+        assert result is not None
+        assert result.megatron_param == "decoder.layers.5.attention.self.linear.weight"
+        assert result.hf_param == "model.layers.5.attention.self.proj.weight"
+
+        # Test with simpler structure
+        result = bridge.hf_to_megatron_lookup("model.embed.proj.weight")
+        assert result is not None
+        assert result.megatron_param == "decoder.embed.linear.weight"
+
+    def test_double_wildcard_qkv_mapping(self):
+        """Test "**" wildcards with QKV mappings."""
+        mapping = QKVMapping(
+            megatron_param="decoder.**.attention.qkv.weight",
+            q="model.**.attn.q_proj.weight",
+            k="model.**.attn.k_proj.weight", 
+            v="model.**.attn.v_proj.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Test forward lookup
+        result = bridge.megatron_to_hf_lookup("decoder.layers.8.blocks.2.attention.qkv.weight")
+        assert result is not None
+        assert isinstance(result, QKVMapping)
+        assert result.megatron_param == "decoder.layers.8.blocks.2.attention.qkv.weight"
+        assert result.hf_param["q"] == "model.layers.8.blocks.2.attn.q_proj.weight"
+        assert result.hf_param["k"] == "model.layers.8.blocks.2.attn.k_proj.weight"
+        assert result.hf_param["v"] == "model.layers.8.blocks.2.attn.v_proj.weight"
+
+        # Test reverse lookup for each component
+        result_q = bridge.hf_to_megatron_lookup("model.transformer.layer.5.attn.q_proj.weight")
+        assert result_q is not None
+        assert result_q.megatron_param == "decoder.transformer.layer.5.attention.qkv.weight"
+
+        result_k = bridge.hf_to_megatron_lookup("model.deep.nested.layer.attn.k_proj.weight")
+        assert result_k is not None
+        assert result_k.megatron_param == "decoder.deep.nested.layer.attention.qkv.weight"
+
+    def test_multiple_double_wildcards(self):
+        """Test patterns with multiple "**" wildcards."""
+        mapping = DirectMapping(
+            megatron_param="model.**.layers.**.weight",
+            hf_param="hf.**.blocks.**.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Should match complex nested structures with multiple variable parts
+        result = bridge.megatron_to_hf_lookup("model.encoder.deep.layers.attention.self.weight")
+        assert result is not None
+        assert result.megatron_param == "model.encoder.deep.layers.attention.self.weight"
+        assert result.hf_param == "hf.encoder.deep.blocks.attention.self.weight"
+
+        # Should match simpler structures too
+        result = bridge.megatron_to_hf_lookup("model.simple.layers.proj.weight")
+        assert result is not None
+        assert result.hf_param == "hf.simple.blocks.proj.weight"
+
+    def test_double_wildcard_edge_cases(self):
+        """Test edge cases with "**" wildcards."""
+        mapping = DirectMapping(
+            megatron_param="**.weight",  # Double wildcard at start
+            hf_param="transformed.**.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Should match any path ending in .weight
+        result = bridge.megatron_to_hf_lookup("model.layers.0.attention.weight")
+        assert result is not None
+        assert result.hf_param == "transformed.model.layers.0.attention.weight"
+
+        # Should match simple cases too
+        result = bridge.megatron_to_hf_lookup("embed.weight")
+        assert result is not None
+        assert result.hf_param == "transformed.embed.weight"
+
+        # Test with ending double wildcard
+        mapping2 = DirectMapping(
+            megatron_param="model.**",
+            hf_param="hf.**"
+        )
+        bridge2 = MegatronMappingRegistry(mapping2)
+
+        result = bridge2.megatron_to_hf_lookup("model.anything.can.match.here")
+        assert result is not None
+        assert result.hf_param == "hf.anything.can.match.here"
+
+    def test_double_wildcard_no_match_cases(self):
+        """Test cases where "**" wildcards should not match."""
+        mapping = DirectMapping(
+            megatron_param="model.**.attention.weight",
+            hf_param="hf.**.attn.weight"
+        )
+        bridge = MegatronMappingRegistry(mapping)
+
+        # Should not match if required parts are missing
+        result = bridge.megatron_to_hf_lookup("model.layers.0.weight")  # Missing "attention"
+        assert result is None
+
+        result = bridge.megatron_to_hf_lookup("model.attention.bias")  # Wrong ending
+        assert result is None
+
+        result = bridge.megatron_to_hf_lookup("decoder.layers.attention.weight")  # Wrong start
+        assert result is None
+
+    def test_double_wildcard_get_mappings_by_pattern(self):
+        """Test get_mappings_by_pattern with "**" wildcards."""
+        mappings = [
+            DirectMapping("model.**.weight", "hf.**.weight"),
+            DirectMapping("model.**.bias", "hf.**.bias"),
+            DirectMapping("encoder.**.weight", "enc.**.weight"),
+            DirectMapping("simple.weight", "simple.weight"),
+        ]
+        bridge = MegatronMappingRegistry(*mappings)
+
+        # Test pattern matching with double wildcards
+        model_all = bridge.get_mappings_by_pattern("model.**")
+        assert len(model_all) == 2  # Both model.**.weight and model.**.bias
+
+        weight_all = bridge.get_mappings_by_pattern("**.weight")
+        assert len(weight_all) == 3  # model, encoder, and simple weight mappings
+
+        # Test exact pattern matching
+        exact = bridge.get_mappings_by_pattern("model.**.weight")
+        assert len(exact) == 1
+        assert exact[0].megatron_param == "model.**.weight"
