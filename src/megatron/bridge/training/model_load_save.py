@@ -15,6 +15,7 @@
 import logging
 import os
 import socket
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Optional, Union
@@ -22,7 +23,6 @@ from typing import Any, Generator, Optional, Union
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
-from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
@@ -116,23 +116,20 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
 
 
 def load_megatron_model(
-    dist_ckpt_folder: Path,
-    model_cfg: Any,
+    checkpoint_path: str,
     return_state_dict: bool = False,
     use_cpu_init: bool = True,
     skip_temp_dist_context: Optional[bool] = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
 
-    Initializes a minimal distributed environment and a model instance
-    to load the sharded state dict using the TorchDistLoadShardedStrategy.
+    Creates a model instance and optionally a minimal distributed environment
+    to load the model weights from `checkpoint_path` into the model.
     Automatically selects the appropriate distributed backend (Gloo for CPU, NCCL for GPU).
 
     Args:
-        dist_ckpt_folder: Path to the megatron hub distributed checkpoint directory
+        checkpoint_path: path to an MCore distributed checkpoint directory
                           (e.g., /path/to/model/checkpoints/iter_0000001).
-        model_cfg: The Megatron model configuration object (e.g., GPTConfig)
-                   corresponding to the checkpoint.
         return_state_dict: If True, return the state dict instead of model instance. Default: False.
         use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
                      If False, use GPU initialization and NCCL backend. Default: True.
@@ -144,6 +141,29 @@ def load_megatron_model(
         The model instance with loaded weights if return_state_dict is False,
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
+    from megatron.bridge.training.checkpointing import (
+        CONFIG_FILE,
+        _load_model_weights_from_checkpoint,
+        get_checkpoint_run_config_filename,
+        read_run_config,
+    )
+    from megatron.bridge.utils.instantiate_utils import instantiate
+
+    try:
+        run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_path))
+        # mbridge_ckpt = True
+    except RuntimeError as e:
+        # placeholder path. TODO (maanug) add support for MLM here
+        error_msg = (
+            f"Only checkpoints in the Megatron Bridge format (containing {CONFIG_FILE}) are currently supported."
+        )
+        sys.stderr.write(error_msg + "\n")
+        raise e
+
+    # if mbridge_ckpt:
+    model_cfg = instantiate(run_config["model"])
+    provider = model_cfg.provide
+
     # Auto-detect if we should skip temp dist context
     if skip_temp_dist_context is None:
         skip_temp_dist_context = dist.is_available() and dist.is_initialized()
@@ -156,18 +176,16 @@ def load_megatron_model(
 
         if use_cpu_init:
             with megatron_cpu_init_context(model_cfg):
-                model = model_cfg.provide()
+                model = provider()
         else:
-            model = model_cfg.provide()
+            model = provider()
 
-        strategy = TorchDistLoadShardedStrategy()
-        state_dict = strategy.load(model.sharded_state_dict(), Path(dist_ckpt_folder))
+        state_dict = _load_model_weights_from_checkpoint(checkpoint_path, model)
 
         if return_state_dict:
             del model
             return state_dict
         else:
-            model.load_state_dict(state_dict)
             return model
 
     if skip_temp_dist_context:
