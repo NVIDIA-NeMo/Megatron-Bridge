@@ -32,7 +32,7 @@ from megatron.core.transformer.spec_utils import import_module
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
 
 
-def _get_transformer_layer_spec(args, use_te, config):
+def _get_transformer_layer_spec(args, use_te, use_kitchen):
     """Get transformer layer specification based on configuration.
 
     Args:
@@ -51,7 +51,7 @@ def _get_transformer_layer_spec(args, use_te, config):
             args.multi_latent_attention,
             args.moe_use_legacy_grouped_gemm,
             qk_l2_norm=args.qk_l2_norm,
-            use_kitchen=config.use_kitchen,
+            use_kitchen=use_kitchen,
         )
     else:
         return get_gpt_layer_local_spec(
@@ -61,7 +61,7 @@ def _get_transformer_layer_spec(args, use_te, config):
             args.multi_latent_attention,
             args.moe_use_legacy_grouped_gemm,
             normalization=args.normalization,
-            use_kitchen=config.use_kitchen,
+            use_kitchen=use_kitchen,
         )
 
 
@@ -90,14 +90,14 @@ def _gpt_provider(
         transformer_layer_spec = get_gpt_heterogeneous_layer_spec(config, use_te)
     else:
         # Define the decoder layer spec
-        transformer_layer_spec = _get_transformer_layer_spec(args, use_te, config)
+        transformer_layer_spec = _get_transformer_layer_spec(args, use_te, config.use_kitchen)
 
     mtp_block_spec = None
     if args.mtp_num_layers is not None:
         if hasattr(transformer_layer_spec, "layer_specs") and len(transformer_layer_spec.layer_specs) == 0:
             # Get the decoder layer spec explicitly if no decoder layer in the last stage,
             # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
-            transformer_layer_spec_for_mtp = _get_transformer_layer_spec(args, use_te, config)
+            transformer_layer_spec_for_mtp = _get_transformer_layer_spec(args, use_te, config.use_kitchen)
         else:
             transformer_layer_spec_for_mtp = transformer_layer_spec
         mtp_block_spec = get_gpt_mtp_block_spec(
