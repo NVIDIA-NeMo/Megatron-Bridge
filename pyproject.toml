@@ -88,7 +88,7 @@ dependencies = [
     "megatron-core>=0.14.0a0,<0.15.0",
     "nvidia-modelopt[torch,onnx]>=0.33.0a0,<0.34.0; sys_platform != 'darwin'",
     "nvidia-resiliency-ext>=0.4.0a0,<0.5.0; sys_platform != 'darwin'",
-    "transformer-engine[pytorch]>=2.7.0a0,<2.8.0; sys_platform != 'darwin'"
+    "transformer-engine[pytorch]>=2.5.0a0,<2.7.0; sys_platform != 'darwin'"
 ]
 
 
@@ -100,11 +100,10 @@ version = { attr = "megatron.bridge.package_info.__version__" }
 no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
 prerelease = "allow"
 
-# uv.sources allows us to override dependencies with VCS commits. 
-# Lets use this only for debugging purposes, but not for production (main).
-[tool.uv.sources]
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "5f1142e8c12172510d34709df3629be6f88dc993" } # on release_v2.6.0
-
+# # uv.sources allows us to override dependencies with VCS commits. 
+# # Lets use this only for debugging purposes, but not for production (main).
+# [tool.uv.sources]
+# transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "5f1142e8c12172510d34709df3629be6f88dc993" } # on release_v2.6.0
 
 
 [project.optional-dependencies]
