@@ -26,6 +26,7 @@ from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
     get_gpt_heterogeneous_layer_spec,
 )
 from megatron.core.models.mamba import MambaModel
+from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.spec_utils import import_module
 
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
@@ -65,10 +66,16 @@ def _get_transformer_layer_spec(args, use_te, config):
 
 
 def _gpt_provider(
-    args: argparse.Namespace, pre_process=True, post_process=True, vp_stage: Optional[int] = None
+    args: argparse.Namespace,
+    config: TransformerConfig = None,
+    pre_process=True,
+    post_process=True,
+    vp_stage: Optional[int] = None,
 ) -> GPTModel:
     use_te = args.transformer_impl == "transformer_engine"
-    config = _transformer_config_from_args(args)
+
+    if config is None:
+        config = _transformer_config_from_args(args)
 
     if args.num_experts:
         # Define the decoder block spec
@@ -116,8 +123,12 @@ def _gpt_provider(
     )
 
 
-def _mamba_provider(args: argparse.Namespace, pre_process=True, post_process=True) -> MambaModel:
-    config = _transformer_config_from_args(args)
+def _mamba_provider(
+    args: argparse.Namespace, config: TransformerConfig = None, pre_process=True, post_process=True
+) -> MambaModel:
+    if config is None:
+        config = _transformer_config_from_args(args)
+
     mamba_stack_spec = import_module(args.spec)
 
     model = MambaModel(
