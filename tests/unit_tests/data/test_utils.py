@@ -23,11 +23,8 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
-DATA_PATH = "/opt/data/datasets/train/test_text_document"
-
-
 class TestDataUtils:
-    def test_pretrain_train_valid_test_datasets_provider(self):
+    def test_pretrain_train_valid_test_datasets_provider(self, ensure_test_data):
         # Build tokenizer
         tokenizer = build_tokenizer(
             tokenizer_config=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072),
@@ -35,6 +32,7 @@ class TestDataUtils:
             tensor_model_parallel_size=1,
         )
 
+        data_path = f"{ensure_test_data}/datasets/train/test_text_document"
         # Configure dataset
         dataset_config = GPTDatasetConfig(
             random_seed=1234,
@@ -44,7 +42,7 @@ class TestDataUtils:
             reset_position_ids=False,
             reset_attention_mask=False,
             eod_mask_loss=False,
-            blend=[[DATA_PATH, DATA_PATH], [0.3, 0.7]],
+            blend=[[data_path, data_path], [0.3, 0.7]],
         )
 
         # Get datasets
@@ -56,10 +54,11 @@ class TestDataUtils:
         assert train_ds.weights == [0.3, 0.7]
         assert (train_ds.size, valid_ds.size, test_ds.size) == (1000, 100, 10)
 
-    def test_finetuning_train_valid_test_datasets_provider(self):
+    def test_finetuning_train_valid_test_datasets_provider(self, ensure_test_data):
         # Configure dataset
+        data_path = ensure_test_data
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/opt/data/datasets/finetune_train",
+            dataset_root=f"{data_path}/datasets/finetune_train",
             seq_length=8192,
         )
 
@@ -80,8 +79,9 @@ class TestDataUtils:
         assert (valid_ds, test_ds) == (None, None)
 
         # Configure dataset
+        data_path = ensure_test_data
         dataset_config = FinetuningDatasetConfig(
-            dataset_root="/opt/data/datasets/finetune",
+            dataset_root=f"{data_path}/datasets/finetune",
             seq_length=8192,
         )
 
