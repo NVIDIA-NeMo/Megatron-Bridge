@@ -19,46 +19,47 @@ from megatron.bridge.data.loaders import (
 )
 
 
-DATA_PATH = "/opt/data/datasets/train/test_text_document"
-
-
 class TestDataLoaders:
-    def test_get_blend_and_blend_per_split_data_paths(self):
-        blend, blend_per_split = get_blend_and_blend_per_split(data_paths=[1.0, DATA_PATH])
+    def test_get_blend_and_blend_per_split_data_paths(self, ensure_test_data):
+        data_path = f"{ensure_test_data}/datasets/train/test_text_document"
+        blend, blend_per_split = get_blend_and_blend_per_split(data_paths=[1.0, data_path])
 
-        assert blend == ([DATA_PATH], [1.0])
+        assert blend == ([data_path], [1.0])
         assert blend_per_split == None
 
-    def test_get_blend_and_blend_per_split_data_args_path(self):
+    def test_get_blend_and_blend_per_split_data_args_path(self, ensure_test_data):
         # Generate data args file
-        data_args_path = "/opt/data/datasets/input/data_args.txt"
+        data_path = ensure_test_data
+        data_args_path = f"{ensure_test_data}/datasets/input/data_args.txt"
+        data_path = f"{ensure_test_data}/datasets/train/test_text_document"
         with open(data_args_path, "w") as data_args_file:
-            data_args_file.write(f"0.5 {DATA_PATH} 0.5 {DATA_PATH}")
+            data_args_file.write(f"0.5 {data_path} 0.5 {data_path}")
         blend, blend_per_split = get_blend_and_blend_per_split(data_args_path=data_args_path)
 
-        assert blend == ([DATA_PATH, DATA_PATH], [0.5, 0.5])
+        assert blend == ([data_path, data_path], [0.5, 0.5])
         assert blend_per_split == None
 
-    def test_get_blend_and_blend_per_split_per_split_data_args_path(self):
+    def test_get_blend_and_blend_per_split_per_split_data_args_path(self, ensure_test_data):
+        data_path = f"{ensure_test_data}/datasets/train/test_text_document"
         blend, blend_per_split = get_blend_and_blend_per_split(
-            train_data_paths=[0.5, DATA_PATH, 0.5, DATA_PATH],
-            valid_data_paths=[1.0, DATA_PATH],
-            test_data_paths=[1.0, DATA_PATH],
+            train_data_paths=[0.5, data_path, 0.5, data_path],
+            valid_data_paths=[1.0, data_path],
+            test_data_paths=[1.0, data_path],
         )
 
         assert blend == None
         assert blend_per_split == [
-            ([DATA_PATH, DATA_PATH], [0.5, 0.5]),
-            ([DATA_PATH], [1.0]),
-            ([DATA_PATH], [1.0]),
+            ([data_path, data_path], [0.5, 0.5]),
+            ([data_path], [1.0]),
+            ([data_path], [1.0]),
         ]
 
         split_data = {
-            "train": [DATA_PATH],
-            "valid": [DATA_PATH],
-            "test": [DATA_PATH],
+            "train": [data_path],
+            "valid": [data_path],
+            "test": [data_path],
         }
-        split_data_path = "/opt/data/datasets/input/split_data.json"
+        split_data_path = f"{ensure_test_data}/datasets/input/split_data.json"
         with open(split_data_path, "w") as f:
             json.dump(split_data, f)
 
@@ -66,7 +67,7 @@ class TestDataLoaders:
 
         assert blend == None
         assert blend_per_split == [
-            ([DATA_PATH], None),
-            ([DATA_PATH], None),
-            ([DATA_PATH], None),
+            ([data_path], None),
+            ([data_path], None),
+            ([data_path], None),
         ]
