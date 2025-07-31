@@ -1020,14 +1020,10 @@ def _load_checkpoint_from_path(
     ckpt_tp_pp = (
         run_config["model"]["tensor_model_parallel_size"],
         run_config["model"]["pipeline_model_parallel_size"],
-        run_config["model"].get("encoder_tensor_model_parallel_size", 0),
-        run_config["model"].get("encoder_pipeline_model_parallel_size", 0),
     )
     run_tp_pp = (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
-        getattr(cfg.model, "encoder_tensor_model_parallel_size", 0),
-        getattr(cfg.model, "encoder_pipeline_model_parallel_size", 0),
     )
     mismatch_msg = "(TP, PP, encoder TP, encoder PP) mismatch after resume ({} vs {} from checkpoint)".format(
         run_tp_pp, ckpt_tp_pp

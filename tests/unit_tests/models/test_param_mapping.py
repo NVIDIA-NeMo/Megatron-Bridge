@@ -223,14 +223,14 @@ class TestAutoMapping:
         class MyCustomRow(torch.nn.Module):
             pass
 
-        assert mapping._detect_parallelism_type(MyCol()) == "column"
-        assert mapping._detect_parallelism_type(MyRow()) == "row"
-        assert mapping._detect_parallelism_type(MyRep()) == "replicated"
-        assert mapping._detect_parallelism_type(torch.nn.LayerNorm(5)) == "replicated"
-        assert mapping._detect_parallelism_type(MyCustomRow()) == "row"
+        assert mapping._detect_parallelism_type(MyCol(), "some.weight") == "column"
+        assert mapping._detect_parallelism_type(MyRow(), "some.weight") == "row"
+        assert mapping._detect_parallelism_type(MyRep(), "some.weight") == "replicated"
+        assert mapping._detect_parallelism_type(torch.nn.LayerNorm(5), "some.weight") == "replicated"
+        assert mapping._detect_parallelism_type(MyCustomRow(), "some.weight") == "row"
 
         with pytest.raises(ValueError):
-            mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
+            mapping._detect_parallelism_type(torch.nn.Linear(5, 5), "some.weight")
 
 
 class TestHelperFunctions:
@@ -457,7 +457,7 @@ class TestMappingEdgeCases:
         unknown_module = torch.nn.Linear(10, 10)
 
         with pytest.raises(ValueError, match="Cannot determine parallelism type"):
-            mapping._detect_parallelism_type(unknown_module)
+            mapping._detect_parallelism_type(unknown_module, "some.weight")
 
     def test_resolve_wildcard_patterns(self):
         """Test wildcard pattern resolution."""
