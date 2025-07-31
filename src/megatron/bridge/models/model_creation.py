@@ -21,7 +21,7 @@ data parallelism (DP). It handles model initialization, wrapping,
 and configuration for distributed training.
 """
 
-from typing import Callable, Protocol, runtime_checkable
+from typing import Callable
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -273,34 +273,3 @@ def _print_num_params(model: list[MegatronModule]) -> None:
             ),
             flush=True,
         )
-
-
-@runtime_checkable
-class ModelProviderProtocol(Protocol):
-    """Protocol defining the interface for model providers.
-
-    This protocol ensures that model provider classes implement the required
-    provide method with the correct signature. It's used for type checking
-    and documentation of the expected interface.
-
-    Model providers should implement this protocol to create models compatible
-    with Megatron-Core's distributed training infrastructure.
-    """
-
-    def provide(
-        self,
-        pre_process: bool = None,
-        post_process: bool = None,
-        vp_stage: int = None,
-    ):
-        """Provide a model instance.
-
-        Args:
-            pre_process: Whether this is a pre-processing stage
-            post_process: Whether this is a post-processing stage
-            vp_stage: Virtual pipeline stage number
-
-        Returns:
-            Model instance ready for distributed training
-        """
-        ...

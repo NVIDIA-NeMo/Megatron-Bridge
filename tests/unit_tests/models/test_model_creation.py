@@ -22,7 +22,6 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_creation import (
-    ModelProviderProtocol,
     _create_model,
     _ddp_wrap,
     _print_num_params,
@@ -567,51 +566,6 @@ class TestGetModel:
         mock_ddp_wrap.assert_called_once()
         # Ensure the wrapped model is the one returned from the hook
         assert mock_ddp_wrap.call_args[0][0] == [hooked_model]
-
-
-class TestModelProviderProtocol:
-    """Test cases for ModelProviderProtocol."""
-
-    def test_protocol_implementation(self):
-        """Test that a class properly implements ModelProviderProtocol."""
-
-        class ValidProvider:
-            def get_model(
-                self,
-                ddp_config: DistributedDataParallelConfig,
-                model_type=ModelType.encoder_or_decoder,
-                overlap_param_gather_with_optimizer_step: bool = False,
-                fp16: bool | None = None,
-                bf16: bool | None = None,
-                use_torch_fsdp2: bool = False,
-                wrap_with_ddp: bool = True,
-                data_parallel_random_init: bool = True,
-                use_cpu_initialization: None | bool = False,
-            ):
-                return []
-
-        provider = ValidProvider()
-        assert isinstance(provider, ModelProviderProtocol)
-
-    def test_protocol_missing_method(self):
-        """Test that a class without get_model doesn't implement protocol."""
-
-        class InvalidProvider:
-            pass
-
-        provider = InvalidProvider()
-        assert not isinstance(provider, ModelProviderProtocol)
-
-    def test_protocol_wrong_signature(self):
-        """Test that a class with wrong get_model signature doesn't implement protocol."""
-
-        class WrongSignatureProvider:
-            def get_model(self):  # Missing required parameters
-                return []
-
-        provider = WrongSignatureProvider()
-        # Protocol checking is based on method name, not signature in runtime_checkable
-        assert isinstance(provider, ModelProviderProtocol)
 
 
 class TestEdgeCases:
