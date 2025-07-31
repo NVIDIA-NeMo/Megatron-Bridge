@@ -139,7 +139,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         final_post_wrap_hook = post_wrap_hook or self.post_wrap_hook
 
         # Late import to avoid circular dependency
-        from megatron.bridge.models.model_creation import get_model
+        from megatron.bridge.models.model_instantiation import get_model
 
         model = get_model(
             self,
