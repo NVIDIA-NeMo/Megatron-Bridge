@@ -81,21 +81,21 @@ runs:
         sudo apt update
         sudo apt install -y cachefilesd
 
-        sudo mkdir -p /var/cache/fscache
-        sudo chown root:root /var/cache/fscache
-        sudo chmod 700 /var/cache/fscache
-
         # Enable and start the service
-        sudo systemctl enable cachefilesd
-
-        # Configure cachefilesd
-        sudo tee /etc/default/cachefilesd > /dev/null <<EOF
-        RUN=yes
-        DAEMON_OPTS=""
-        EOF
+        sudo systemctl enable cachefiles
         sudo systemctl start cachefilesd
 
         # Check status
+        sudo systemctl status cachefilesd
+
+        # Enable cachefilesd
+        echo "RUN=yes" | sudo tee /etc/default/cachefilesd
+        cat /etc/default/cachefilesd
+
+        # Restart the service
+        sudo systemctl restart cachefilesd
+
+        # Check status again
         sudo systemctl status cachefilesd
 
     - name: Azure Fileshare
