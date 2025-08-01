@@ -83,9 +83,8 @@ runs:
         sudo chmod 700 /var/cache/fscache
 
         # Update config file
-        sudo sed -i 's/RUN=no/RUN=yes/' /etc/default/cachefilesd
-        cat /etc/default/cachefilesd
         echo "RUN=yes" | sudo tee /etc/default/cachefilesd
+        cat /etc/default/cachefilesd
 
         sudo apt update
         sudo apt install -y cachefilesd
