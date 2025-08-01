@@ -1056,6 +1056,53 @@ class TestLoadModelWeightsFromCheckpoint:
                 strict=True,
             )
 
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
+    @patch("megatron.bridge.training.checkpointing.mpu")
+    def test_return_state_dict(
+        self,
+        mock_mpu,
+        mock_fully_parallel_wrapper,
+        mock_get_strategy,
+        mock_load_state_dict,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        mock_model,
+        mock_common_state_dict,
+        mock_full_state_dict,
+        mock_metadata,
+    ):
+        """Test skip loading weights and return state dict."""
+        # Setup mocks
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.return_value = mock_full_state_dict
+        mock_get_strategy.return_value = Mock()
+        mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
+        mock_unwrap_model.return_value = mock_model
+
+        # Call the function
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        returned_sd = _load_model_weights_from_checkpoint(
+            checkpoint_path="/test/checkpoint",
+            model=mock_model,
+            fully_parallel_load=False,
+            return_state_dict=True,
+            dist_ckpt_strictness="assume_ok_unexpected",
+            strict=True,
+        )
+
+        # Verify calls
+        assert returned_sd == mock_full_state_dict
+        mock_dist_ckpt.load.assert_called_once()
+        mock_load_state_dict.assert_not_called()
+
 
 class TestMegatronLMCompatibility:
     """Test Megatron-LM checkpoint compatibility features."""

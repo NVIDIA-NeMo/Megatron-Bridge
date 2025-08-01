@@ -950,6 +950,7 @@ def _load_model_weights_from_checkpoint(
     checkpoint_path: str,
     model: list[MegatronModule],
     fully_parallel_load: bool = False,
+    return_state_dict: bool = False,
     dist_ckpt_strictness: Literal[
         "assume_ok_unexpected",
         "log_unexpected",
@@ -961,7 +962,7 @@ def _load_model_weights_from_checkpoint(
         "ignore_all",
     ] = "assume_ok_unexpected",
     strict: bool = True,
-) -> Union[StateDict, tuple[StateDict, set[str], set[str]]]:
+) -> Optional[Union[StateDict, tuple[StateDict, set[str], set[str]]]]:
     """Load model weights from a checkpoint.
 
     MCore distributed checkpoints from both Megatron Bridge and MegatronLM are supported.
@@ -972,6 +973,8 @@ def _load_model_weights_from_checkpoint(
         checkpoint_path: path to a distributed checkpoint.
         model: The model module(s) to load weights into.
         fully_parallel_load: Apply full load parallelization across DP.
+        return_state_dict: Skips loading state dict into model and returns model state dict
+            itself. Default False.
         dist_ckpt_strictness: Determine handling of key mismatch during checkpoint load.
         strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
     """
@@ -997,6 +1000,8 @@ def _load_model_weights_from_checkpoint(
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
+    if return_state_dict:
+        return state_dict
 
     if len(model) == 1:
         _load_model_state_dict(model[0], state_dict["model"], strict)
@@ -1011,8 +1016,6 @@ def _load_model_weights_from_checkpoint(
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
-
-    return state_dict
 
 
 def load_checkpoint(
