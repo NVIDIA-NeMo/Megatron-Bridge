@@ -89,9 +89,7 @@ runs:
         sudo systemctl enable cachefilesd
 
         # Update config file
-        sudo sed -i 's/RUN=no/RUN=yes/' /etc/default/cachefilesd
-        cat /etc/default/cachefilesd
-        echo "RUN=yes" | sudo tee /etc/default/cachefilesd
+        sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
 
         # Start the service
         sudo systemctl start cachefilesd
