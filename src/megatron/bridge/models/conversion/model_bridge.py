@@ -42,7 +42,6 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 from megatron.bridge.models.conversion.utils import get_transformer_layer_offset
 from megatron.bridge.models.decorators.dispatch import dispatch
-from megatron.bridge.models.model_provider import ModelProviderProtocol
 from megatron.bridge.utils.common_utils import unwrap_model
 
 
@@ -50,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 MappingT = TypeVar("MappingT", bound=MegatronParamMapping)
 HFPreTrained = TypeVar("HFPreTrained")
-ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderProtocol)
+ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
 

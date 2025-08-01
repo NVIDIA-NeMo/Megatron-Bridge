@@ -37,7 +37,6 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
-from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
@@ -139,8 +138,11 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         final_pre_wrap_hook = pre_wrap_hook or self.pre_wrap_hook
         final_post_wrap_hook = post_wrap_hook or self.post_wrap_hook
 
+        # Late import to avoid circular dependency
+        from megatron.bridge.models.model_instantiation import get_model
+
         model = get_model(
-            self.provide,
+            self,
             ddp_config=ddp_config,
             model_type=model_type,
             overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,

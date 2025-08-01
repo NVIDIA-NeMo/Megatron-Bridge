@@ -38,7 +38,7 @@ main() {
     # Install dependencies
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y curl git python3-pip python3-venv
+    apt-get install -y curl git python3-pip python3-venv cmake
 
     # Install uv
     UV_VERSION="0.7.2"
@@ -65,7 +65,6 @@ main() {
         )
     else
         UV_ARGS=(
-            "--no-install-package" "nvidia-cudnn-cu12"
         )
     fi
 
@@ -75,6 +74,7 @@ main() {
     # Install dependencies
     uv sync --locked --only-group build ${UV_ARGS[@]}
     uv sync \
+        -v \
         --link-mode copy \
         --locked \
         --all-extras \

@@ -788,18 +788,36 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         """Initialize TP-aware mapping."""
         super().__init__(megatron_param, hf_param)
 
-        # Create delegate mappings
-        self._column_mapping = ColumnParallelMapping(megatron_param, hf_param)
-        self._row_mapping = RowParallelMapping(megatron_param, hf_param)
-        self._replicated_mapping = ReplicatedMapping(megatron_param, hf_param)
+        # Cache for detected parallelism type and delegate mapping
+        self._detected_type: Optional[str] = None
+        self._mapping: Optional[MegatronParamMapping[torch.Tensor]] = None
+
+    def _get_or_create_mapping(self, parallelism_type: str) -> MegatronParamMapping[torch.Tensor]:
+        """Get or create the appropriate mapping for the given type."""
+        if parallelism_type == "column":
+            return ColumnParallelMapping(self.megatron_param, self.hf_param)
+        elif parallelism_type == "row":
+            return RowParallelMapping(self.megatron_param, self.hf_param)
+        elif parallelism_type == "replicated":
+            return ReplicatedMapping(self.megatron_param, self.hf_param)
+        else:
+            raise ValueError(f"Unknown parallelism type: {parallelism_type}")
 
     def _detect_parallelism_type(self, module: nn.Module, megatron_param_name: str) -> str:
         """Detect parallelism type from module."""
         module_type = type(module).__name__
 
-        # layer norm weight and bias needs to be handled as replicated
-        if "layer_norm" in megatron_param_name or "layernorm" in megatron_param_name:
-            return "replicated"
+        # Handle fused modules like TELayerNormColumnParallelLinear
+        # These modules have both column-parallel weights (weight, bias)
+        # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
+        if module_type == "TELayerNormColumnParallelLinear":
+            # Check the actual parameter name to determine the correct parallelism type
+            if megatron_param_name and (
+                megatron_param_name.endswith("layer_norm_weight") or megatron_param_name.endswith("layer_norm_bias")
+            ):
+                return "replicated"
+            # All other parameters (weight, bias) are column-parallel
+            return "column"
 
         # Check registry first
         for parallelism, types in self._MODULE_TYPE_REGISTRY.items():
@@ -841,16 +859,12 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         megatron_param_name: Optional[str] = None,
     ) -> torch.Tensor:
         """Delegate to appropriate mapping based on module type."""
-        parallelism_type = self._detect_parallelism_type(megatron_module, megatron_param_name)
+        # Detect type and create delegate on first use
+        if self._mapping is None:
+            self._detected_type = self._detect_parallelism_type(megatron_module, megatron_param_name)
+            self._mapping = self._get_or_create_mapping(self._detected_type)
 
-        if parallelism_type == "column":
-            return self._column_mapping.hf_to_megatron(hf_weights, megatron_module, megatron_param_name)
-        elif parallelism_type == "row":
-            return self._row_mapping.hf_to_megatron(hf_weights, megatron_module, megatron_param_name)
-        elif parallelism_type == "replicated":
-            return self._replicated_mapping.hf_to_megatron(hf_weights, megatron_module, megatron_param_name)
-
-        raise ValueError(f"Unknown parallelism type: {parallelism_type}")
+        return self._mapping.hf_to_megatron(hf_weights, megatron_module, megatron_param_name)
 
     def megatron_to_hf(
         self,
@@ -862,22 +876,18 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Need to determine type even if module is None (different PP rank)
         assert megatron_param_name is not None, "`megatron_param_name` is required for AutoMapping."
 
-        if megatron_module is not None:
-            parallelism_type = self._detect_parallelism_type(megatron_module, megatron_param_name)
-            # Broadcast to other ranks
-            parallelism_type = self.broadcast_obj_from_pp_rank(parallelism_type)
-        else:
-            # Receive from owning rank
-            parallelism_type = self.broadcast_obj_from_pp_rank(None)
+        if self._mapping is None:
+            if megatron_module is not None:
+                self._detected_type = self._detect_parallelism_type(megatron_module, megatron_param_name)
+                # Broadcast to other ranks
+                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type)
+            else:
+                # Receive from owning rank
+                self._detected_type = self.broadcast_obj_from_pp_rank(None)
 
-        if parallelism_type == "column":
-            return self._column_mapping.megatron_to_hf(megatron_weights, megatron_module, megatron_param_name)
-        elif parallelism_type == "row":
-            return self._row_mapping.megatron_to_hf(megatron_weights, megatron_module, megatron_param_name)
-        elif parallelism_type == "replicated":
-            return self._replicated_mapping.megatron_to_hf(megatron_weights, megatron_module, megatron_param_name)
-        else:
-            raise ValueError(f"Unknown parallelism type: {parallelism_type}")
+            self._mapping = self._get_or_create_mapping(self._detected_type)
+
+        return self._mapping.megatron_to_hf(megatron_weights, megatron_module, megatron_param_name)
 
 
 class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):

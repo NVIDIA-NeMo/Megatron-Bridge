@@ -583,7 +583,7 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
         # Convert to Megatron model
-        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
         bridge.save_megatron_model(megatron_model, megatron_path)
@@ -630,6 +630,7 @@ class AutoBridge(Generic[MegatronModelT]):
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
+        # Export ckpt performs on CPU
         with temporary_distributed_context(backend="gloo"):
             # Load the Megatron model
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
@@ -691,6 +692,8 @@ class AutoBridge(Generic[MegatronModelT]):
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
+            # Skip weights initialization since we are going to load weights
+            provider.perform_initialization = False
             if hf_path is None:
                 provider.register_pre_wrap_hook(
                     partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)

@@ -662,7 +662,7 @@ class TestAutoBridge:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Llama-3-8B")
-        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False)
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
 
     @patch.object(AutoBridge, "save_megatron_model")
@@ -683,7 +683,7 @@ class TestAutoBridge:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
-        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False)
+        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
 
     def test_export_ckpt_basic(self):
