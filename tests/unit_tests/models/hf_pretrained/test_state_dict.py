@@ -141,7 +141,7 @@ class TestStateDictKeyRetrieval:
     def test_get_all_keys_from_safetensors(self, temp_safetensors_dir):
         """Test getting keys from safetensors files."""
         # Mock SafeTensorsStateSource to avoid actual file operations
-        with patch("megatron.bridge.models.state.SafeTensorsStateSource") as mock_source_cls:
+        with patch("megatron.bridge.models.hf_pretrained.state.SafeTensorsStateSource") as mock_source_cls:
             mock_source = MagicMock()
             mock_source.keys.return_value = [
                 "transformer.wte.weight",
