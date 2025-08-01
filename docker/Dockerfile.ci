@@ -21,4 +21,5 @@ ENV UV_LINK_MODE=copy
 ENV CUDA_HOME=/usr/local/cuda
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 COPY . .
-RUN bash docker/common/install.sh --base-image cuda
+RUN --mount=type=cache,target=/root/.cache/uv \
+    bash docker/common/install.sh --base-image cuda

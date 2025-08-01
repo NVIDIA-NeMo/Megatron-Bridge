@@ -21,6 +21,7 @@ from typing import Any, Optional
 import torch
 import yaml
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
+from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
@@ -134,6 +135,8 @@ class GlobalState:
         self._async_calls_queue: Optional[AsyncCallsQueue] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
+        self._energy_monitor: Optional[EnergyMonitor] = None
+        self._energy_monitor_created: bool = False
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
@@ -276,11 +279,25 @@ class GlobalState:
         if (
             not self._nvrx_straggler_created
             and self._nvrx_straggler_manager is None
+            and self.cfg is not None
             and self.cfg.nvrx_straggler is not None
         ):
             self._nvrx_straggler_manager = NVRxStragglerDetectionManager(self.cfg.nvrx_straggler)
             self._nvrx_straggler_created = True
         return self._nvrx_straggler_manager
+
+    @property
+    def energy_monitor(self) -> Optional[EnergyMonitor]:
+        """The EnergyMonitor instance for tracking energy consumption."""
+        if (
+            not self._energy_monitor_created
+            and self._energy_monitor is None
+            and self.cfg is not None
+            and self.cfg.logger.log_energy
+        ):
+            self._energy_monitor = EnergyMonitor()
+            self._energy_monitor_created = True
+        return self._energy_monitor
 
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""

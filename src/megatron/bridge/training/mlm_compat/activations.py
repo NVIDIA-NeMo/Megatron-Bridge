@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+import torch
+import torch.nn.functional as F
+from megatron.core.jit import jit_fuser
 
-CUDA_VISIBLE_DEVICES="0,1" coverage run -a --data-file=/workspace/.coverage --source=/workspace/ -m pytest \
-    -o log_cli=true \
-    -o log_cli_level=INFO \
-    --disable-warnings \
-    -vs tests/unit_tests -m "not pleasefixme"
+
+@jit_fuser
+def squared_relu(x: torch.Tensor) -> torch.Tensor:
+    """Squared ReLU activation function."""
+    return torch.pow(F.relu(x), 2)

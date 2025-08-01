@@ -70,6 +70,26 @@ runs:
       run: |
         az acr login --name nemoci
 
+    - name: Configure local file cache
+      shell: bash
+      if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
+      env:
+        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
+      run: |
+        set -x -e -u -o pipefail
+
+        sudo apt update
+        sudo apt install -y cachefilesd
+
+        # Enable cachefilesd in config file
+        sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
+        sudo cat /etc/default/cachefilesd
+
+        # Enable and restart the service
+        sudo systemctl enable cachefilesd
+        sudo systemctl restart cachefilesd
+        sudo systemctl status cachefilesd
+
     - name: Azure Fileshare
       if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       shell: bash
@@ -120,28 +140,9 @@ runs:
 
         STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP_NAME --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" --output tsv | tr -d '"')
 
-        sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks
+        sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks,fsc,cache=strict
 
         ls -al $MNT_PATH/TestData
-
-    - name: Configure local file cache
-      shell: bash
-      if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
-      env:
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
-      run: |
-        sudo apt install -y rclone fuse3
-
-        sudo mkdir -p $MNT_PATH-cached
-
-        sudo rclone config create local-smb local nounc=true
-
-        sudo rclone mount -vv --vfs-cache-mode full \
-          --vfs-cache-max-size 50G \
-          --vfs-read-chunk-size 64M \
-          --allow-other \
-          --daemon \
-          local-smb:$MNT_PATH/ "$MNT_PATH-cached"
 
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -162,7 +163,7 @@ runs:
         MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       run: |
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume $MNT_PATH-cached/TestData:/home/TestData"
+          VOLUME_ARGS="--volume $MNT_PATH/TestData:/home/TestData"
         else
           VOLUME_ARGS=""
         fi

@@ -491,10 +491,21 @@ class TestPEFTCheckpointLoading:
             patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
             patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
             patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("os.path.exists") as mock_exists,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
+
+            # Mock file existence - run_config.yaml exists, train_state.pt doesn't (to use read_train_state mock)
+            def mock_exists_side_effect(path):
+                if "run_config.yaml" in path:
+                    return True  # run_config.yaml exists
+                elif "train_state.pt" in path:
+                    return False  # train_state.pt doesn't exist, use mock
+                return False
+
+            mock_exists.side_effect = mock_exists_side_effect
 
             # Mock generate_state_dict to return the full state dict (before filtering)
             mock_generate_state_dict.return_value = full_generated_state_dict
@@ -591,10 +602,21 @@ class TestPEFTCheckpointLoading:
             patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
             patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
             patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("os.path.exists") as mock_exists,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
+
+            # Mock file existence - run_config.yaml exists, train_state.pt doesn't (to use read_train_state mock)
+            def mock_exists_side_effect(path):
+                if "run_config.yaml" in path:
+                    return True  # run_config.yaml exists
+                elif "train_state.pt" in path:
+                    return False  # train_state.pt doesn't exist, use mock
+                return False
+
+            mock_exists.side_effect = mock_exists_side_effect
 
             # Mock run config for non-PEFT scenario
             mock_run_config = {
@@ -708,10 +730,21 @@ class TestPEFTCheckpointLoading:
             patch("megatron.bridge.training.checkpointing.mpu.get_tensor_model_parallel_world_size", return_value=1),
             patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_rank", return_value=0),
             patch("megatron.bridge.training.checkpointing.mpu.get_pipeline_model_parallel_world_size", return_value=1),
+            patch("os.path.exists") as mock_exists,
         ):
             mock_read_train_state.return_value = mock_state.train_state
             mock_get_version.return_value = 3.0
             mock_unwrap_model.return_value = mock_model
+
+            # Mock file existence - run_config.yaml exists, train_state.pt doesn't (to use read_train_state mock)
+            def mock_exists_side_effect(path):
+                if "run_config.yaml" in path:
+                    return True  # run_config.yaml exists
+                elif "train_state.pt" in path:
+                    return False  # train_state.pt doesn't exist, use mock
+                return False
+
+            mock_exists.side_effect = mock_exists_side_effect
 
             # Mock generate_state_dict to return the full state dict (before filtering)
             mock_generate_state_dict.return_value = full_generated_state_dict
