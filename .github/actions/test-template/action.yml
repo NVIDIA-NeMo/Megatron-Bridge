@@ -81,21 +81,17 @@ runs:
         sudo apt update
         sudo apt install -y cachefilesd
 
+        # Fix the config file to have only one uncommented RUN=yes
+        sudo bash -c 'cat > /etc/default/cachefilesd <<EOF
+        RUN=yes
+        DAEMON_OPTS=""
+        EOF'
+
         # Enable and start the service
-        sudo systemctl enable cachefiles
+        sudo systemctl enable cachefilesd
         sudo systemctl start cachefilesd
 
         # Check status
-        sudo systemctl status cachefilesd
-
-        # Enable cachefilesd
-        echo "RUN=yes" | sudo tee /etc/default/cachefilesd
-        cat /etc/default/cachefilesd
-
-        # Restart the service
-        sudo systemctl restart cachefilesd
-
-        # Check status again
         sudo systemctl status cachefilesd
 
     - name: Azure Fileshare
