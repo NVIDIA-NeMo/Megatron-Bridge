@@ -286,7 +286,7 @@ class TestLoadMegatronModel:
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 
-        if model_type in ["gpt", "mamba"]:
+        if model_type in ("gpt", "mamba"):
             result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
 
             assert isinstance(result, dict)

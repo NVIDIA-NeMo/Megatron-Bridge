@@ -166,7 +166,7 @@ def load_megatron_model(
         model_cfg = instantiate(run_config["model"])
     else:
         model_cfg = _transformer_config_from_args(mlm_args)
-        assert model_type in ["gpt", "mamba"], f"model type {model_type} not supported."
+        assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
