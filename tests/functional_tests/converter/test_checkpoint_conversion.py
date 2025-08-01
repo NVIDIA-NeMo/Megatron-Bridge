@@ -53,7 +53,6 @@ class TestCheckpointConversion:
             "bfloat16",
         ]
 
-        print(f"Running CMD: \n\n{' '.join(cmd)}")
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
