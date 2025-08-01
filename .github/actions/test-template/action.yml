@@ -78,36 +78,21 @@ runs:
       run: |
         set -x -e -u -o pipefail
 
+        sudo apt update
+        sudo apt install -y cachefilesd
+
         sudo mkdir -p /var/cache/fscache
         sudo chown root:root /var/cache/fscache
         sudo chmod 700 /var/cache/fscache
 
-        sudo apt update
-        sudo apt install -y cachefilesd
-
-        # Fix the config file to have only one uncommented RUN=yes
-        sudo tee /etc/default/cachefilesd > /dev/null << EOF
-        # Defaults for cachefilesd initscript
-        RUN=yes
-        DAEMON_OPTS=""
-        EOF
+        # Enable cachefilesd
+        echo "RUN=yes" | sudo tee /etc/default/cachefilesd
 
         # Enable and start the service
         sudo systemctl enable cachefilesd
         sudo systemctl start cachefilesd
 
         # Check status
-        sudo systemctl status cachefilesd
-
-        # Enable cachefilesd
-        sudo sed -i 's/RUN=no/RUN=yes/' /etc/default/cachefilesd
-        cat /etc/default/cachefilesd
-        echo "RUN=yes" | sudo tee /etc/default/cachefilesd
-
-        # Restart the service
-        sudo systemctl restart cachefilesd
-
-        # Check status again
         sudo systemctl status cachefilesd
 
     - name: Azure Fileshare
