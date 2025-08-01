@@ -42,7 +42,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 from megatron.bridge.models.conversion.utils import get_transformer_layer_offset
 from megatron.bridge.models.decorators.dispatch import dispatch
-from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.utils.common_utils import unwrap_model
 
 

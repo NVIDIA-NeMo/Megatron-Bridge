@@ -27,7 +27,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState

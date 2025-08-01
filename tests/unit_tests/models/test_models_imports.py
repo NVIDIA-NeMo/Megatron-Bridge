@@ -69,10 +69,10 @@ class TestModelsImports:
             # If the old names aren't aliased, that's okay
             pass
 
-    def test_model_provider_mixin(self):
+    def test_model_provider(self):
         """Test that model providers inherit from ModelProviderMixin."""
         from megatron.bridge.models import GPTModelProvider, LlamaModelProvider, T5ModelProvider
-        from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+        from megatron.bridge.models.model_provider import ModelProviderMixin
 
         # All providers should inherit from ModelProviderMixin
         assert issubclass(GPTModelProvider, ModelProviderMixin)

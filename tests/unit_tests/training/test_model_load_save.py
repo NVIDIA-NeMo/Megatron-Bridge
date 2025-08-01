@@ -19,7 +19,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 
-from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,

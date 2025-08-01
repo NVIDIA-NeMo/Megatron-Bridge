@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
-from megatron.bridge.models.model_provider_mixin import GetModelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import GetModelKwargs, ModelProviderMixin
 
 
 if TYPE_CHECKING:

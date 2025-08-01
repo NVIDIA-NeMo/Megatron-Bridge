@@ -29,7 +29,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.utils import fusions
 
 

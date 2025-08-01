@@ -29,15 +29,28 @@ except ImportError:
         Unpack = MagicMock()
 
 
+from typing import Callable
+
 import torch
-from megatron.core import parallel_state
-from megatron.core.distributed import DistributedDataParallelConfig
+from megatron.core import parallel_state, tensor_parallel
+from megatron.core.distributed import (
+    DistributedDataParallel,
+    DistributedDataParallelConfig,
+    TorchFullyShardedDataParallel,
+)
 from megatron.core.enums import ModelType
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.module import Float16Module, MegatronModule
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
+
+
+try:
+    from megatron.core.fp8_utils import correct_amax_history_if_needed
+except ImportError:
+    correct_amax_history_if_needed = None
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
@@ -137,9 +150,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
 
         final_pre_wrap_hook = pre_wrap_hook or self.pre_wrap_hook
         final_post_wrap_hook = post_wrap_hook or self.post_wrap_hook
-
-        # Late import to avoid circular dependency
-        from megatron.bridge.models.model_instantiation import get_model
 
         model = get_model(
             self,
@@ -389,3 +399,235 @@ class GetModelKwargs(TypedDict, total=False):
     init_model_with_meta_device: bool | None
     pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
+
+
+def get_model(
+    model_provider: ModelProviderMixin,
+    ddp_config: DistributedDataParallelConfig,
+    model_type=ModelType.encoder_or_decoder,
+    overlap_param_gather_with_optimizer_step: bool = False,
+    fp16: bool | None = None,
+    bf16: bool | None = None,
+    use_torch_fsdp2: bool = False,
+    wrap_with_ddp: bool = True,
+    data_parallel_random_init: bool = True,
+    use_cpu_initialization: None | bool = False,
+    init_model_with_meta_device: bool | None = None,
+    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
+) -> list[MegatronModule]:
+    """Create and configure a model for distributed training.
+
+    This function handles the complete model creation pipeline including:
+    - Model instantiation with proper pipeline parallel configuration
+    - GPU memory allocation
+    - Mixed precision (FP16/BF16) wrapping
+    - Float8 tensor correction
+    - Distributed Data Parallel (DDP) wrapping
+
+    Args:
+        model_provider: ModelProviderMixin instance that creates the model.
+            Uses the provide() method with optional pre_process(bool), post_process(bool),
+            vp_stage(int) arguments for pipeline parallelism
+        ddp_config: Configuration for distributed data parallel training
+        model_type: Type of model (encoder, decoder, or encoder_and_decoder)
+        overlap_param_gather_with_optimizer_step: Whether to overlap parameter
+            gathering with optimizer step for performance optimization
+        fp16: Enable FP16 mixed precision training. If None, uses model config
+        bf16: Enable BF16 mixed precision training. If None, uses model config
+        use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
+        wrap_with_ddp: Whether to wrap the model with DDP
+        data_parallel_random_init: Whether to use random initialization for
+            data parallel ranks (vs broadcasting from rank 0)
+        use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
+        init_model_with_meta_device: Whether to initialize the model on the meta device
+        pre_wrap_hook: A callable that takes a list of `MegatronModule` and returns a
+            modified list, or `None` to clear the hook.
+
+    Returns:
+        list[MegatronModule]: List of model modules. Contains multiple modules
+            when using virtual pipeline parallelism, otherwise a single module
+    """
+    if fp16:
+        model_provider.fp16 = fp16
+    if bf16:
+        model_provider.bf16 = bf16
+
+    model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
+    if init_model_with_meta_device:
+        model_provider.init_model_with_meta_device = True
+        with torch.device("meta"):
+            model = _create_model(model_provider, model_type)
+    else:
+        model = _create_model(model_provider, model_type)
+
+    if pre_wrap_hook:
+        _model = pre_wrap_hook(model)
+        if _model is not None:
+            model = _model
+
+    # Set tensor model parallel attributes if not set
+    # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+    _print_num_params(model)
+
+    model_config = get_model_config(model[0])
+
+    # GPU allocation.
+    # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
+    # in the fully_shard function of FSDP2 instead.
+    if not (use_torch_fsdp2 or model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
+        for model_module in model:
+            model_module.cuda(torch.cuda.current_device())
+
+    if model_config.fp16 or model_config.bf16:
+        model = [Float16Module(model_config, model_module) for model_module in model]
+
+    if correct_amax_history_if_needed is not None:
+        correct_amax_history_if_needed(model)
+
+    if wrap_with_ddp:
+        model = _ddp_wrap(
+            model,
+            use_torch_fsdp2,
+            data_parallel_random_init,
+            ddp_config,
+            overlap_param_gather_with_optimizer_step,
+        )
+
+    return model
+
+
+def _create_model(
+    model_provider: ModelProviderMixin,
+    model_type: ModelType,
+) -> list[MegatronModule]:
+    """Create model instances with appropriate pipeline parallel configuration.
+
+    Handles virtual pipeline parallelism (VPP) by creating multiple model
+    instances when needed. Sets pre_process and post_process flags based on
+    pipeline parallel rank.
+
+    Args:
+        model_provider: ModelProviderMixin instance that creates the model
+        model_type: ModelType enum indicating encoder, decoder, or both
+
+    Returns:
+        list: List of model instances. Multiple instances for VPP, otherwise single
+    """
+
+    if (
+        parallel_state.get_pipeline_model_parallel_world_size() > 1
+        and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
+    ):
+        assert model_type != ModelType.encoder_and_decoder, (
+            "Interleaved schedule not supported for model with both encoder and decoder"
+        )
+        model = []
+        for i in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
+            pre_process = parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=i)
+            post_process = parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=i)
+            this_model = model_provider.provide(
+                pre_process=pre_process,
+                post_process=post_process,
+                vp_stage=i,
+            )
+            this_model.model_type = model_type
+            model.append(this_model)
+    else:
+        pre_process = parallel_state.is_pipeline_first_stage()
+        post_process = parallel_state.is_pipeline_last_stage()
+        if model_type == ModelType.encoder_and_decoder:
+            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+                rank = parallel_state.get_pipeline_model_parallel_rank()
+                first_decoder_rank = parallel_state.get_pipeline_model_parallel_decoder_start()
+                world_size = parallel_state.get_pipeline_model_parallel_world_size()
+                pre_process = rank == 0 or rank == first_decoder_rank
+                post_process = (rank == (first_decoder_rank - 1)) or (rank == (world_size - 1))
+            model = model_provider.provide()
+        else:
+            model = model_provider.provide(
+                pre_process=pre_process,
+                post_process=post_process,
+            )
+        model.model_type = model_type
+
+    if not isinstance(model, list):
+        model = [model]
+
+    # Set tensor model parallel attributes if not set.
+    # Only parameters that are already tensor model parallel have these
+    # attributes set for them. We should make sure the default attributes
+    # are set for all params so the optimizer can use them.
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+    return model
+
+
+def _ddp_wrap(
+    model: list[MegatronModule],
+    use_torch_fsdp2: bool,
+    data_parallel_random_init: bool,
+    ddp_config: DistributedDataParallelConfig,
+    overlap_param_gather_with_optimizer_step: bool,
+) -> list[MegatronModule]:
+    """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
+
+    Args:
+        model: List of model modules to wrap
+        use_torch_fsdp2: Whether to use PyTorch FSDP v2 instead of DDP
+        data_parallel_random_init: Whether to broadcast parameters from rank 0
+        ddp_config: Configuration for distributed data parallel
+        overlap_param_gather_with_optimizer_step: Whether to disable bucketing
+            for overlapping parameter gathering with optimizer step
+
+    Returns:
+        list[MegatronModule]: List of DDP/FSDP wrapped model modules
+    """
+    if use_torch_fsdp2:
+        DP = TorchFullyShardedDataParallel
+    else:
+        DP = DistributedDataParallel
+
+    model = [
+        DP(
+            config=get_model_config(model_chunk),
+            ddp_config=ddp_config,
+            module=model_chunk,
+            # Turn off bucketing for model_chunk 2 onwards, since communication for these
+            # model chunks is overlapped with compute anyway.
+            disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
+        )
+        for (model_chunk_idx, model_chunk) in enumerate(model)
+    ]
+
+    # Broadcast params from data parallel src rank to other data parallel ranks.
+    if data_parallel_random_init:
+        for model_module in model:
+            model_module.broadcast_params()
+
+    return model
+
+
+def _print_num_params(model: list[MegatronModule]) -> None:
+    """Print the number of parameters in the model on rank 0.
+
+    Only prints on data parallel rank 0 to avoid duplicate output.
+    Shows parameter count per (tensor parallel, pipeline parallel) rank.
+
+    Args:
+        model: List of model modules to count parameters from
+    """
+    if parallel_state.get_data_parallel_rank() == 0 and parallel_state.get_context_parallel_rank() == 0:
+        print(
+            " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
+                parallel_state.get_tensor_model_parallel_rank(),
+                parallel_state.get_pipeline_model_parallel_rank(),
+                sum([sum([p.nelement() for p in model_module.parameters()]) for model_module in model]),
+            ),
+            flush=True,
+        )
