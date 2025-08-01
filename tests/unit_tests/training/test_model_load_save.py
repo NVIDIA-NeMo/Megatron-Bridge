@@ -188,6 +188,7 @@ class TestLoadMegatronModel:
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("os.path.exists")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
@@ -196,6 +197,7 @@ class TestLoadMegatronModel:
         mock_dist,
         mock_cpu_context,
         mock_run_config_fname,
+        mock_path_exists,
         mock_run_config,
         mock_instantiate,
         mock_load_weights,
@@ -204,6 +206,7 @@ class TestLoadMegatronModel:
         # Setup mocks
         mock_dist.is_available.return_value = False
         mock_dist.is_initialized.return_value = False
+        mock_path_exists.return_value = True
 
         mock_run_cfg_dict = {"model": {"tensor_model_parallel_size": 1}}
         mock_run_config.return_value = mock_run_cfg_dict
@@ -243,14 +246,12 @@ class TestLoadMegatronModel:
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.mlm_compat.arguments._transformer_config_from_args")
     @patch("megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint")
-    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
     def test_load_mlm_saved_model(
         self,
         mock_dist,
         mock_cpu_context,
-        mock_run_config_fname,
         mock_load_args,
         mock_transformer_cfg,
         mock_load_weights,
@@ -264,7 +265,6 @@ class TestLoadMegatronModel:
         mock_dist.is_initialized.return_value = False
 
         ckpt_path = "/path/to/mock/dist_checkpoint"
-        mock_run_config_fname.return_value = ckpt_path + "/run_config.yaml"
         mock_args = Mock()
         mock_load_args.return_value = mock_args
 
@@ -291,7 +291,6 @@ class TestLoadMegatronModel:
 
             assert isinstance(result, dict)
             assert result == expected_result
-            mock_run_config_fname.assert_called_once_with(ckpt_path)
             mock_load_args.assert_called_once_with(ckpt_path)
             mock_transformer_cfg.assert_called_once_with(mock_args)
             mock_cpu_context.assert_called_once()
@@ -309,6 +308,7 @@ class TestLoadMegatronModel:
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("os.path.exists")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
@@ -317,6 +317,7 @@ class TestLoadMegatronModel:
         mock_dist,
         mock_cpu_context,
         mock_run_config_fname,
+        mock_path_exists,
         mock_run_config,
         mock_instantiate,
         mock_load_weights,
@@ -327,6 +328,7 @@ class TestLoadMegatronModel:
         # Setup mocks
         mock_dist.is_available.return_value = True
         mock_dist.is_initialized.return_value = True
+        mock_path_exists.return_value = True
 
         mock_run_cfg_dict = {"model": {"tensor_model_parallel_size": 1}}
         mock_run_config.return_value = mock_run_cfg_dict
