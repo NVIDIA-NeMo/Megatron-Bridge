@@ -85,11 +85,12 @@ runs:
         sudo apt update
         sudo apt install -y cachefilesd
 
-        # Enable and start the service
-        sudo systemctl enable cachefilesd
-
         # Update config file
         sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
+        sudo cat /etc/default/cachefilesd
+
+        # Enable and start the service
+        sudo systemctl enable cachefilesd
 
         # Start the service
         sudo systemctl start cachefilesd
