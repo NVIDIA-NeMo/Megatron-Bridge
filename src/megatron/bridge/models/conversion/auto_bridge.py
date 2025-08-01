@@ -816,7 +816,7 @@ class AutoBridge(Generic[MegatronModelT]):
                         f"2. Implement the required methods (provider_bridge, mapping_registry)\n"
                         f"3. Register it with @MegatronModelBridge.register_bridge decorator\n\n"
                         f"Example implementation:\n"
-                        f"  from megatron.bridge.models.model_bridge import MegatronModelBridge\n"
+                        f"  from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge\n"
                         f"  from transformers import {architecture}\n"
                         f"  from megatron.core.models.gpt import GPTModel\n\n"
                         f"  @MegatronModelBridge.register_bridge(source={architecture}, target=GPTModel)\n"
