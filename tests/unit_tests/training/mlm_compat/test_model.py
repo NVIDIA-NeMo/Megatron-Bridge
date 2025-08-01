@@ -19,7 +19,7 @@ import pytest
 import torch
 from megatron.core.transformer import TransformerConfig
 
-from megatron.bridge.training.mlm_compat.model import _gpt_provider, _mamba_provider
+from megatron.bridge.training.mlm_compat.model import _get_transformer_layer_spec, _gpt_provider, _mamba_provider
 
 
 def common_mock_args() -> argparse.Namespace:
@@ -85,6 +85,33 @@ def common_mock_transformer_cfg():
         num_attention_heads=4,
         use_cpu_initialization=True,
     )
+
+
+class TestTransformerLayerSpecRouter:
+    """Test function that decides between local and TE spec."""
+
+    @pytest.fixture
+    def mock_args(self):
+        """Mock args."""
+        return common_mock_args()
+
+    @patch("megatron.bridge.training.mlm_compat.model.get_gpt_layer_with_transformer_engine_spec")
+    def test_te_spec(self, mock_te_spec_func, mock_args):
+        """Test TE layer spec branch."""
+        _get_transformer_layer_spec(mock_args, True, False)
+
+        mock_te_spec_func.assert_called_once_with(
+            None, False, False, False, False, qk_l2_norm=False, use_kitchen=False
+        )
+
+    @patch("megatron.bridge.training.mlm_compat.model.get_gpt_layer_local_spec")
+    def test_local_spec(self, mock_local_spec_func, mock_args):
+        """Test local layer spec branch."""
+        _get_transformer_layer_spec(mock_args, False, True)
+
+        mock_local_spec_func.assert_called_once_with(
+            None, False, False, False, False, normalization="LayerNorm", use_kitchen=True
+        )
 
 
 class TestGPTProvider:
