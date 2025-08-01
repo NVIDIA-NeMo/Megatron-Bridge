@@ -59,7 +59,7 @@ from typing import Optional
 
 import torch
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge import AutoBridge
 
 
 def validate_path(path: str, must_exist: bool = False) -> Path:
