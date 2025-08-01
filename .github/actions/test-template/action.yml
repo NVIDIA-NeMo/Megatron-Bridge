@@ -98,10 +98,10 @@ runs:
         # Check status
         sudo systemctl status cachefilesd
 
-        # Update config file
-        sudo sed -i 's/RUN=no/RUN=yes/' /etc/default/cachefilesd
-        cat /etc/default/cachefilesd
-        echo "RUN=yes" | sudo tee /etc/default/cachefilesd
+        # # Update config file
+        # sudo sed -i 's/RUN=no/RUN=yes/' /etc/default/cachefilesd
+        # cat /etc/default/cachefilesd
+        # echo "RUN=yes" | sudo tee /etc/default/cachefilesd
 
         # Restart the service
         sudo systemctl restart cachefilesd
