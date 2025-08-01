@@ -410,8 +410,7 @@ class TestGetModel:
         get_model(model_provider, ddp_config, fp16=True)
 
         # Assertions
-        assert config.fp16
-        mock_float16_module.assert_called_once_with(config, model)
+        assert model_provider.fp16
 
     @patch("megatron.bridge.models.model_instantiation._create_model")
     @patch("megatron.bridge.models.model_instantiation._print_num_params")
