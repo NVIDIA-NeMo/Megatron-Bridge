@@ -365,9 +365,7 @@ class TestGetModel:
 
         # Assertions
         assert len(result) == 1
-        mock_create_model.assert_called_once_with(
-            model_provider, ModelType.encoder_or_decoder
-        )
+        mock_create_model.assert_called_once_with(model_provider, ModelType.encoder_or_decoder)
         mock_print_params.assert_called_once()
         mock_ddp_wrap.assert_called_once()
 
