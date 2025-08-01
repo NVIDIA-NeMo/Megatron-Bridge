@@ -25,7 +25,7 @@ from functools import lru_cache
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 import torch
@@ -33,6 +33,7 @@ import yaml
 from megatron.core import dist_checkpointing, mpu, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict
 from megatron.core.dist_checkpointing.serialization import (
+    StateDict,
     get_default_load_sharded_strategy,
     get_default_save_sharded_strategy,
 )
@@ -960,7 +961,7 @@ def _load_model_weights_from_checkpoint(
         "ignore_all",
     ] = "assume_ok_unexpected",
     strict: bool = True,
-):
+) -> Union[StateDict, tuple[StateDict, set[str], set[str]]]:
     """Load model weights from a checkpoint.
 
     MCore distributed checkpoints from both Megatron Bridge and MegatronLM are supported.
