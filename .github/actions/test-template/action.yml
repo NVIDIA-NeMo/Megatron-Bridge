@@ -85,13 +85,14 @@ runs:
         sudo chown root:root /var/cache/fscache
         sudo chmod 700 /var/cache/fscache
 
-        sudo tee /etc/default/cachefilesd > /dev/null << 'EOF'
+        # Enable and start the service
+        sudo systemctl enable cachefilesd
+
+        # Configure cachefilesd
+        sudo tee /etc/default/cachefilesd > /dev/null <<EOF
         RUN=yes
         DAEMON_OPTS=""
         EOF
-
-        # Enable and start the service
-        sudo systemctl enable cachefilesd
         sudo systemctl start cachefilesd
 
         # Check status
