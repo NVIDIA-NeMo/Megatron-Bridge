@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import argparse
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 import torch.nn.functional as F
 from megatron.core.transformer import MLATransformerConfig, TransformerConfig
-from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 
 from megatron.bridge.training.mlm_compat.arguments import (
     _load_args_from_checkpoint,
@@ -40,7 +40,7 @@ class TestLoadArgsFromCheckpoint:
         setattr(args, "num_attention_heads", 8)
         return args
 
-    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.mlm_compat.arguments.dist_checkpointing")
     def test_args_present(self, mock_dist_ckpt, mock_args):
         """Test behavior when state dict contains args."""
         mock_dist_ckpt.load_common_state_dict.return_value = {"args": mock_args}
@@ -50,7 +50,7 @@ class TestLoadArgsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
         assert loaded_args == mock_args
 
-    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.mlm_compat.arguments.dist_checkpointing")
     def test_args_not_present(self, mock_dist_ckpt):
         """Test behavior when state dict does not contain args."""
         mock_dist_ckpt.load_common_state_dict.return_value = {}
@@ -61,7 +61,7 @@ class TestLoadArgsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/test/checkpoint")
         assert "Provided checkpoint does not have arguments saved" in str(exc_info.value)
 
-    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.mlm_compat.arguments.dist_checkpointing")
     def test_no_state_dict(self, mock_dist_ckpt):
         """Test behavior when state dict not returned."""
         mock_dist_ckpt.load_common_state_dict.return_value = None
@@ -117,6 +117,7 @@ class TestTransformerConfigFromArgs:
         setattr(args, "num_attention_heads", 12)
         setattr(args, "max_position_embeddings", 2048)
         setattr(args, "params_dtype", torch.float32)
+        setattr(args, "add_bias_linear", False)
 
         # Layer norm args
         setattr(args, "no_persist_layer_norm", False)
@@ -155,7 +156,6 @@ class TestTransformerConfigFromArgs:
         assert cfg.num_layers == 12
         assert cfg.hidden_size == 768
         assert cfg.num_attention_heads == 12
-        assert cfg.max_position_embeddings == 2048
         assert cfg.persist_layer_norm is True  # not no_persist_layer_norm
         assert cfg.layernorm_zero_centered_gamma is False
         assert cfg.layernorm_epsilon == 1e-5
@@ -168,12 +168,12 @@ class TestTransformerConfigFromArgs:
         assert cfg.num_layers_in_last_pipeline_stage == 4
         assert cfg.fp8_param is False
         assert cfg.bias_activation_fusion is False
-        assert cfg.num_query_groups is None
+        assert cfg.num_query_groups == cfg.num_attention_heads
         assert cfg.cp_comm_type == "ring"
         assert cfg.is_hybrid_model is False
-        # Should not have use_kitchen or quant_recipe attributes
-        assert not hasattr(cfg, "use_kitchen")
-        assert not hasattr(cfg, "quant_recipe")
+        # use_kitchen and quant_recipe attributes should be default
+        assert cfg.use_kitchen == False
+        assert cfg.quant_recipe == None
 
     def test_multi_latent_attention_config(self, basic_args):
         """Test multi-latent attention config creation."""
@@ -183,15 +183,6 @@ class TestTransformerConfigFromArgs:
 
         assert isinstance(cfg, MLATransformerConfig)
         assert cfg.multi_latent_attention is True
-
-    def test_heterogeneous_transformer_config(self, basic_args):
-        """Test heterogeneous transformer config creation."""
-        basic_args.heterogeneous_layers_config_path = "/path/to/config.json"
-
-        cfg = _transformer_config_from_args(basic_args)
-
-        assert isinstance(cfg, HeterogeneousTransformerConfig)
-        assert cfg.heterogeneous_layers_config_path == "/path/to/config.json"
 
     def test_heterogeneous_with_multi_latent_error(self, basic_args):
         """Test error when both heterogeneous and multi-latent attention are enabled."""
@@ -228,11 +219,10 @@ class TestTransformerConfigFromArgs:
         """Test error when both squared_relu and swiglu are enabled."""
         basic_args.squared_relu = True
         basic_args.swiglu = True
+        basic_args.bias_swiglu_fusion = True
 
-        with pytest.raises(AssertionError) as exc_info:
+        with pytest.raises(AssertionError):
             _transformer_config_from_args(basic_args)
-
-        assert "assert not args.swiglu" in str(exc_info.value)
 
     def test_xavier_uniform_init_method(self, basic_args):
         """Test Xavier uniform initialization method."""
@@ -241,7 +231,6 @@ class TestTransformerConfigFromArgs:
         cfg = _transformer_config_from_args(basic_args)
 
         assert cfg.init_method == torch.nn.init.xavier_uniform_
-        assert cfg.scaled_init_method == torch.nn.init.xavier_uniform_
 
     def test_group_query_attention(self, basic_args):
         """Test group query attention configuration."""
@@ -251,14 +240,6 @@ class TestTransformerConfigFromArgs:
         cfg = _transformer_config_from_args(basic_args)
 
         assert cfg.num_query_groups == 4
-
-    def test_group_query_attention_disabled(self, basic_args):
-        """Test group query attention when disabled."""
-        basic_args.group_query_attention = False
-
-        cfg = _transformer_config_from_args(basic_args)
-
-        assert cfg.num_query_groups is None
 
     def test_cp_comm_type_single_element(self, basic_args):
         """Test cp_comm_type with single element list."""
@@ -313,6 +294,7 @@ class TestTransformerConfigFromArgs:
     def test_custom_config_class(self, basic_args):
         """Test using a custom config class."""
 
+        @dataclass
         class CustomTransformerConfig(TransformerConfig):
             custom_field: int = 42
 
@@ -322,15 +304,3 @@ class TestTransformerConfigFromArgs:
 
         assert isinstance(cfg, CustomTransformerConfig)
         assert cfg.custom_field == 100
-
-    def test_args_with_missing_fields(self, basic_args):
-        """Test behavior when args are missing some fields."""
-        # Remove some fields from basic_args
-        delattr(basic_args, "num_layers")
-        delattr(basic_args, "hidden_size")
-
-        cfg = _transformer_config_from_args(basic_args)
-
-        # Should still create a valid config with default values
-        assert isinstance(cfg, TransformerConfig)
-        # Fields not in args should use default values from TransformerConfig

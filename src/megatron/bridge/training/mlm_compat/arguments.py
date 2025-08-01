@@ -83,7 +83,6 @@ def _transformer_config_from_args(
         kw_args["activation_func"] = squared_relu
     if args.init_method_xavier_uniform:
         kw_args["init_method"] = torch.nn.init.xavier_uniform_
-        kw_args["scaled_init_method"] = torch.nn.init.xavier_uniform_
     if args.group_query_attention:
         kw_args["num_query_groups"] = args.num_query_groups
     else:
