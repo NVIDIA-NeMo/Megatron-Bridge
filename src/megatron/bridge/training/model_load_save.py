@@ -152,10 +152,11 @@ def load_megatron_model(
     from megatron.bridge.training.mlm_compat.model import _gpt_provider, _mamba_provider
     from megatron.bridge.utils.instantiate_utils import instantiate
 
-    try:
-        run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_path))
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+    if os.path.exists(run_config_filename):
+        run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
-    except RuntimeError:
+    else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
             mbridge_ckpt = False
