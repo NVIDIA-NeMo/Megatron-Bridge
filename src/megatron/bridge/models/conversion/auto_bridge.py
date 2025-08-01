@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, Generic, Iterable, Type, TypeVar, Union
 
 import torch.distributed
 import transformers
-import yaml
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from transformers import AutoConfig
@@ -497,7 +496,6 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         try:
             from megatron.bridge.training.model_load_save import load_megatron_model
-            from megatron.bridge.utils.instantiate_utils import instantiate
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
@@ -518,22 +516,9 @@ class AutoBridge(Generic[MegatronModelT]):
             checkpoint_path = checkpoint_path / latest_iter.name
         # else: checkpoint_path remains as the input path (no iter folders found)
 
-        config_file = checkpoint_path / "run_config.yaml"
-
-        if not config_file.exists():
-            raise FileNotFoundError(f"Checkpoint config file {config_file} does not exist")
-
-        # Load the configuration
-        with open(config_file, "r") as stream:
-            config = yaml.safe_load(stream)
-
-        model_config = config["model"]
-        model_config = instantiate(model_config)
-
         # Load the state dict
         model = load_megatron_model(
-            checkpoint_path,
-            model_cfg=model_config,
+            str(checkpoint_path),
             use_cpu_init=True,
         )
         return model if isinstance(model, list) else [model]
