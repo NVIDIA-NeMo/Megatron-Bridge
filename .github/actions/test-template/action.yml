@@ -85,14 +85,6 @@ runs:
         sudo apt update
         sudo apt install -y cachefilesd
 
-        # Write correct config
-        cat <<EOF | sudo tee /etc/default/cachefilesd > /dev/null
-        # Defaults for cachefilesd initscript
-        RUN=yes
-        DAEMON_OPTS=""
-        EOF
-
-
         # Enable and start the service
         sudo systemctl enable cachefilesd
         sudo systemctl start cachefilesd
@@ -100,7 +92,7 @@ runs:
         # Check status
         sudo systemctl status cachefilesd
 
-        # Enable cachefilesd
+        # Update config file
         sudo sed -i 's/RUN=no/RUN=yes/' /etc/default/cachefilesd
         cat /etc/default/cachefilesd
         echo "RUN=yes" | sudo tee /etc/default/cachefilesd
