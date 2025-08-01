@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import tempfile
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -186,102 +185,167 @@ class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
-    @patch("megatron.bridge.training.model_load_save.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
-    def test_load_megatron_model_return_state_dict(
-        self, mock_dist, mock_cpu_context, mock_strategy_class, mock_temp_dist
+    def test_load_mbridge_saved_model(
+        self,
+        mock_dist,
+        mock_cpu_context,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_instantiate,
+        mock_load_weights,
+        mock_temp_dist,
     ):
-        """Test loading model and returning state dict."""
         # Setup mocks
         mock_dist.is_available.return_value = False
         mock_dist.is_initialized.return_value = False
 
+        mock_run_cfg_dict = {"model": {"tensor_model_parallel_size": 1}}
+        mock_run_config.return_value = mock_run_cfg_dict
+
         mock_model = Mock()
-        mock_model.sharded_state_dict.return_value = {"layer.weight": torch.randn(2, 2)}
+        mock_model_cfg = Mock()
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.provide.return_value = mock_model
+        mock_model_cfg.use_cpu_initialization = False
 
-        mock_config = Mock()
-        mock_config.params_dtype = torch.float32
-        mock_config.bf16 = True
-        mock_config.fp16 = False
-        mock_config.provide.return_value = mock_model
-        mock_config.use_cpu_initialization = False
+        mock_instantiate.return_value = mock_model_cfg
+        expected_result = {"layer.weight": torch.randn(2, 2)}
+        mock_load_weights.return_value = expected_result
 
-        mock_strategy = Mock()
-        mock_strategy.load.return_value = {"layer.weight": torch.randn(2, 2)}
-        mock_strategy_class.return_value = mock_strategy
+        ckpt_path = "/path/to/mock/dist_checkpoint"
+        result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
 
-        # Test
-        with tempfile.TemporaryDirectory() as temp_dir:
-            result = load_megatron_model(
-                dist_ckpt_folder=Path(temp_dir), model_cfg=mock_config, return_state_dict=True, use_cpu_init=True
-            )
-
-        # Assertions
         assert isinstance(result, dict)
+        assert result == expected_result
+        mock_run_config_fname.assert_called_once_with(ckpt_path)
+        mock_run_config.assert_called_once()
+        mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
         mock_cpu_context.assert_called_once()
-        mock_strategy.load.assert_called_once()
+        mock_model_cfg.provide.assert_called_once()
+        mock_load_weights.assert_called_once_with(ckpt_path, mock_model)
+        assert mock_model_cfg.params_dtype == torch.bfloat16
+
+        result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
+        assert result == mock_model
+
+    @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.mlm_compat.model._mamba_provider")
+    @patch("megatron.bridge.training.mlm_compat.model._gpt_provider")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.mlm_compat.arguments._transformer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
+    @patch("megatron.bridge.training.model_load_save.dist")
+    def test_load_mlm_saved_model(
+        self,
+        mock_dist,
+        mock_cpu_context,
+        mock_run_config_fname,
+        mock_load_args,
+        mock_transformer_cfg,
+        mock_load_weights,
+        mock_gpt_provider,
+        mock_mamba_provider,
+        mock_temp_dist,
+        model_type,
+    ):
+        # Setup mocks
+        mock_dist.is_available.return_value = False
+        mock_dist.is_initialized.return_value = False
+
+        ckpt_path = "/path/to/mock/dist_checkpoint"
+        mock_run_config_fname.return_value = ckpt_path + "/run_config.yaml"
+        mock_args = Mock()
+        mock_load_args.return_value = mock_args
+
+        mock_model = Mock()
+        mock_model_cfg = Mock()
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.use_cpu_initialization = False
+        mock_provider = None
+        if model_type == "gpt":
+            mock_provider = mock_gpt_provider
+            mock_provider.return_value = mock_model
+        elif model_type == "mamba":
+            mock_provider = mock_mamba_provider
+            mock_provider.return_value = mock_model
+
+        mock_transformer_cfg.return_value = mock_model_cfg
+        expected_result = {"layer.weight": torch.randn(2, 2)}
+        mock_load_weights.return_value = expected_result
+
+        if model_type in ["gpt", "mamba"]:
+            result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
+
+            assert isinstance(result, dict)
+            assert result == expected_result
+            mock_run_config_fname.assert_called_once_with(ckpt_path)
+            mock_load_args.assert_called_once_with(ckpt_path)
+            mock_transformer_cfg.assert_called_once_with(mock_args)
+            mock_cpu_context.assert_called_once()
+            mock_provider.assert_called_once_with(mock_args, mock_model_cfg)
+            mock_load_weights.assert_called_once_with(ckpt_path, mock_model)
+            assert mock_model_cfg.params_dtype == torch.bfloat16
+
+            result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=False, use_cpu_init=True)
+            assert result == mock_model
+        else:
+            with pytest.raises(AssertionError, match=f"model type {model_type} not supported."):
+                load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
-    @patch("megatron.bridge.training.model_load_save.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
-    def test_load_megatron_model_return_model(self, mock_dist, mock_cpu_context, mock_strategy_class, mock_temp_dist):
-        """Test loading model and returning model instance."""
-        # Setup mocks
-        mock_dist.is_available.return_value = False
-        mock_dist.is_initialized.return_value = False
-
-        mock_model = Mock()
-        mock_model.sharded_state_dict.return_value = {"layer.weight": torch.randn(2, 2)}
-
-        mock_config = Mock()
-        mock_config.params_dtype = torch.float32
-        mock_config.bf16 = False
-        mock_config.fp16 = False
-        mock_config.provide.return_value = mock_model
-        mock_config.use_cpu_initialization = False
-
-        mock_strategy = Mock()
-        mock_strategy.load.return_value = {"layer.weight": torch.randn(2, 2)}
-        mock_strategy_class.return_value = mock_strategy
-
-        # Test
-        with tempfile.TemporaryDirectory() as temp_dir:
-            result = load_megatron_model(
-                dist_ckpt_folder=Path(temp_dir), model_cfg=mock_config, return_state_dict=False, use_cpu_init=True
-            )
-
-        # Assertions
-        assert result == mock_model
-        mock_model.load_state_dict.assert_called_once()
-
-    @patch("megatron.bridge.training.model_load_save.dist")
-    def test_load_megatron_model_skip_temp_dist_context(self, mock_dist):
+    def test_load_megatron_model_skip_temp_dist_context(
+        self,
+        mock_dist,
+        mock_cpu_context,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_instantiate,
+        mock_load_weights,
+        mock_temp_dist,
+    ):
         """Test loading model when distributed is already initialized."""
+
+        # Setup mocks
         mock_dist.is_available.return_value = True
         mock_dist.is_initialized.return_value = True
 
+        mock_run_cfg_dict = {"model": {"tensor_model_parallel_size": 1}}
+        mock_run_config.return_value = mock_run_cfg_dict
+
         mock_model = Mock()
-        mock_config = Mock()
-        mock_config.params_dtype = torch.bfloat16
-        mock_config.bf16 = True
-        mock_config.fp16 = False
-        mock_config.provide.return_value = mock_model
-        mock_config.use_cpu_initialization = False
+        mock_model_cfg = Mock()
+        mock_model_cfg.params_dtype = torch.bfloat16
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.provide.return_value = mock_model
+        mock_model_cfg.use_cpu_initialization = False
 
-        with patch("megatron.bridge.training.model_load_save.TorchDistLoadShardedStrategy") as mock_strategy_class:
-            mock_strategy = Mock()
-            mock_strategy.load.return_value = {"layer.weight": torch.randn(2, 2)}
-            mock_strategy_class.return_value = mock_strategy
+        mock_instantiate.return_value = mock_model_cfg
 
-            with patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context"):
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    result = load_megatron_model(
-                        dist_ckpt_folder=Path(temp_dir), model_cfg=mock_config, use_cpu_init=True
-                    )
+        ckpt_path = "/path/to/mock/dist_checkpoint"
+        result = load_megatron_model(ckpt_path, use_cpu_init=True)
 
         assert result == mock_model
+        mock_temp_dist.assert_not_called()
 
 
 class TestSaveMegatronModel:
