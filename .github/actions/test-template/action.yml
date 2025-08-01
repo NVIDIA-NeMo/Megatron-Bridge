@@ -81,7 +81,7 @@ runs:
         sudo apt update
         sudo apt install -y cachefilesd
 
-        # Update config file
+        # Enable cachefilesd in config file
         sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
         sudo cat /etc/default/cachefilesd
 
