@@ -132,10 +132,11 @@ def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
     from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _tokenizer_config_from_args
     from megatron.bridge.utils.instantiate_utils import instantiate
 
-    try:
-        run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_path))
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+    if os.path.exists(run_config_filename):
+        run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
-    except RuntimeError:
+    else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
             mbridge_ckpt = False
