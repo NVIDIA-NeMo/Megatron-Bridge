@@ -194,7 +194,7 @@ def load_megatron_model(
             model = _call_model_provider(model_cfg)
 
         maybe_state_dict = _load_model_weights_from_checkpoint(
-            checkpoint_path, model, return_state_dict=return_state_dict
+            checkpoint_path, [model], return_state_dict=return_state_dict
         )
 
         if return_state_dict:
