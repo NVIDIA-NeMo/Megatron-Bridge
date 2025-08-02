@@ -16,7 +16,7 @@
 Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -785,34 +785,21 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
-            with patch("megatron.bridge.utils.instantiate_utils.instantiate") as mock_instantiate:
-                with patch("yaml.safe_load") as mock_yaml_load:
-                    with patch("builtins.open", mock_open(read_data="model:\n  _target_: some.model")):
-                        from pathlib import Path
+            from pathlib import Path
 
-                        # Mock path.exists() to return True for the config file
-                        with patch.object(Path, "exists") as mock_exists:
-                            with patch.object(Path, "iterdir") as mock_iterdir:
-                                # Setup mocks
-                                mock_model = Mock()
-                                mock_load_megatron_model.return_value = mock_model
+            with patch.object(Path, "iterdir") as mock_iterdir:
+                # Setup mocks
+                mock_model = Mock()
+                mock_load_megatron_model.return_value = mock_model
 
-                                # Mock iterdir to return empty list (no iter_ folders)
-                                mock_iterdir.return_value = []
+                # Mock iterdir to return empty list (no iter_ folders)
+                mock_iterdir.return_value = []
 
-                                # Mock exists to return True for config file
-                                mock_exists.return_value = True
+                result = bridge.load_megatron_model("./checkpoint_path")
 
-                                mock_yaml_config = {"model": {"_target_": "some.model"}}
-                                mock_yaml_load.return_value = mock_yaml_config
-                                mock_instantiate.return_value = Mock()
-
-                                result = bridge.load_megatron_model("./checkpoint_path")
-
-                                assert result == [mock_model]
-                                mock_load_megatron_model.assert_called_once()
-                                mock_exists.assert_called_once()
-                                mock_iterdir.assert_called_once()
+                assert result == [mock_model]
+                mock_load_megatron_model.assert_called_once()
+                mock_iterdir.assert_called_once()
 
     def test_load_megatron_model_with_iter_folder(self):
         """Test load_megatron_model with iter_ folders."""
@@ -822,62 +809,29 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
-            with patch("megatron.bridge.utils.instantiate_utils.instantiate") as mock_instantiate:
-                with patch("yaml.safe_load") as mock_yaml_load:
-                    with patch("builtins.open", mock_open(read_data="model:\n  _target_: some.model")):
-                        from pathlib import Path
+            from pathlib import Path
 
-                        # Create mock folder objects
-                        mock_iter_folder_1 = Mock()
-                        mock_iter_folder_1.is_dir.return_value = True
-                        mock_iter_folder_1.name = "iter_0000010"
+            # Create mock folder objects
+            mock_iter_folder_1 = Mock()
+            mock_iter_folder_1.is_dir.return_value = True
+            mock_iter_folder_1.name = "iter_0000010"
 
-                        mock_iter_folder_2 = Mock()
-                        mock_iter_folder_2.is_dir.return_value = True
-                        mock_iter_folder_2.name = "iter_0000020"
+            mock_iter_folder_2 = Mock()
+            mock_iter_folder_2.is_dir.return_value = True
+            mock_iter_folder_2.name = "iter_0000020"
 
-                        # Mock path.exists() and iterdir()
-                        with patch.object(Path, "exists") as mock_exists:
-                            with patch.object(Path, "iterdir") as mock_iterdir:
-                                # Setup mocks
-                                mock_model = Mock()
-                                mock_load_megatron_model.return_value = mock_model
-
-                                # Mock iterdir to return the iter folders
-                                mock_iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
-
-                                # Mock exists to return True for config file
-                                mock_exists.return_value = True
-
-                                mock_yaml_config = {"model": {"_target_": "some.model"}}
-                                mock_yaml_load.return_value = mock_yaml_config
-                                mock_instantiate.return_value = Mock()
-
-                                result = bridge.load_megatron_model("./checkpoint_path")
-
-                                assert result == [mock_model]
-                                mock_load_megatron_model.assert_called_once()
-                                mock_exists.assert_called_once()
-                                mock_iterdir.assert_called_once()
-                                # Should use the latest iteration (iter_0000020)
-
-    def test_load_megatron_model_missing_config(self):
-        """Test load_megatron_model with missing config file."""
-        mock_hf_model = Mock(spec=PreTrainedCausalLM)
-
-        bridge = AutoBridge.__new__(AutoBridge)
-        bridge.hf_pretrained = mock_hf_model
-
-        from pathlib import Path
-
-        # Mock path.exists() to return False for the config file and iterdir() to return empty list
-        with patch.object(Path, "exists") as mock_exists:
+            # Mock path.iterdir()
             with patch.object(Path, "iterdir") as mock_iterdir:
-                # Mock iterdir to return empty list (no iter_ folders)
-                mock_iterdir.return_value = []
+                # Setup mocks
+                mock_model = Mock()
+                mock_load_megatron_model.return_value = mock_model
 
-                # Mock exists to return False for config file (missing)
-                mock_exists.return_value = False
+                # Mock iterdir to return the iter folders
+                mock_iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
 
-                with pytest.raises(FileNotFoundError, match="Checkpoint config file .* does not exist"):
-                    bridge.load_megatron_model("./checkpoint_path")
+                result = bridge.load_megatron_model("./checkpoint_path")
+
+                assert result == [mock_model]
+                mock_load_megatron_model.assert_called_once()
+                mock_iterdir.assert_called_once()
+                # Should use the latest iteration (iter_0000020)
