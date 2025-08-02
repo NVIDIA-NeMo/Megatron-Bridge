@@ -233,11 +233,12 @@ class TestLoadMegatronModel:
         mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
         mock_cpu_context.assert_called_once()
         mock_model_cfg.provide.assert_called_once()
-        mock_load_weights.assert_called_once_with(ckpt_path, mock_model)
+        mock_load_weights.assert_called_once_with(ckpt_path, mock_model, return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == mock_model
+        mock_load_weights.assert_called_with(ckpt_path, mock_model, return_state_dict=False)
 
     @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
@@ -295,11 +296,12 @@ class TestLoadMegatronModel:
             mock_transformer_cfg.assert_called_once_with(mock_args)
             mock_cpu_context.assert_called_once()
             mock_provider.assert_called_once_with(mock_args, mock_model_cfg)
-            mock_load_weights.assert_called_once_with(ckpt_path, mock_model)
+            mock_load_weights.assert_called_once_with(ckpt_path, mock_model, return_state_dict=True)
             assert mock_model_cfg.params_dtype == torch.bfloat16
 
             result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=False, use_cpu_init=True)
             assert result == mock_model
+            mock_load_weights.assert_called_with(ckpt_path, mock_model, return_state_dict=False)
         else:
             with pytest.raises(AssertionError, match=f"model type {model_type} not supported."):
                 load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
