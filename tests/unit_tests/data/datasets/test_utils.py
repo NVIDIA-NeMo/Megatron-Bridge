@@ -52,7 +52,9 @@ class TestDataUtils:
         assert len(online) == 10
         assert online[5] == (3, None, None)
         assert online[1:3] == [(9, None, None), (6, None, None)]
-        assert np.array_equal(online.get_sample_block(0), np.array([2, 9, 6, 4, 0, 3, 1, 7, 8, 5]))
+        assert np.array_equal(
+            online.get_sample_block(0), np.array([2, 9, 6, 4, 0, 3, 1, 7, 8, 5])
+        )
 
     def test_deallocate_indexed_dataset_memory(self):
         indexed_dataset = IndexedDataset(1, 1)
@@ -63,7 +65,7 @@ class TestDataUtils:
 
     def test_identify_start_index_of_subsequence(self):
         subsequence = torch.tensor([1, 3])
-        sequence = torch.tensor([2,3,1,3])
+        sequence = torch.tensor([2, 3, 1, 3])
 
         start_index = _identify_start_index_of_subsequence(subsequence, sequence)
 
@@ -78,7 +80,7 @@ class TestDataUtils:
     def test_response_value_formater(self, label):
         label_start = "test "
         end_signal = "function"
-        
+
         if label is None:
             expected = ""
         elif label == "this ":
@@ -99,7 +101,7 @@ class TestDataUtils:
             "end_of_turn": "<|endofturn|>",
             "label_start": "<|label|>",
             "end_of_name": "<|endname|>",
-            'system_turn_start': "|<system>|",
+            "system_turn_start": "|<system>|",
         }
 
     @pytest.mark.parametrize("gtype", [None, "VALUE_TO_TEXT", "TEXT_TO_VALUE", "TEST"])
@@ -131,23 +133,27 @@ class TestDataUtils:
             )
 
         try:
-            result = _add_speaker_and_signal(header, source, mask_role, gtype, special_tokens)
+            result = _add_speaker_and_signal(
+                header, source, mask_role, gtype, special_tokens
+            )
             assert result == expected
         except ValueError as e:
             None
-    
+
     def test_index_file_exists(self):
         if_exists = _index_file_exists("test")
 
         assert if_exists == False
-    
+
     def test_get_header_conversation_type_mask_role(self, special_tokens):
         source = {
             "system": "Simple header.",
             "conversations": [{"from": "user", "value": "Hi there"}],
         }
 
-        header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(source, special_tokens)
+        header, conversation, data_type, mask_role = (
+            _get_header_conversation_type_mask_role(source, special_tokens)
+        )
 
         assert data_type is None
         assert mask_role == "User"
@@ -164,14 +170,16 @@ class TestDataUtils:
             ],
         }
 
-        header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(source, special_tokens)
+        header, conversation, data_type, mask_role = (
+            _get_header_conversation_type_mask_role(source, special_tokens)
+        )
 
         assert data_type == "VALUE_TO_TEXT"
         assert mask_role == {"user"}
         assert "This is a system prompt." in header
         assert "<|turn|>user<|endname|>Hello<|endofturn|>" in conversation
         assert "<|label|>greeting" in conversation
-    
+
     def test_make_indexed_dataset_compatibility(self):
         dataset = IndexedDataset()
 
@@ -179,7 +187,7 @@ class TestDataUtils:
 
         assert np.array_equal(dataset.doc_idx, np.array([0, 1], dtype=np.int64))
         assert np.array_equal(dataset.sizes, np.array([1], dtype=np.int32))
-        
+
         try:
             dataset = IndexedDataset(5, 5)
             dataset = _make_indexed_dataset_compatibility(dataset)
@@ -194,7 +202,7 @@ class TestDataUtils:
             expected = 4
         else:
             expected = None
-        
+
         try:
             index = handle_index(dataset, idx)
         except IndexError:

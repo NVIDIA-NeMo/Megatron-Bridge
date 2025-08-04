@@ -75,7 +75,7 @@ class TestDataPackingUtils:
         truncate_seq_len = 5
 
         hist, seq = create_hist(dataset, truncate_seq_len)
-        
+
         assert seq == [0, 0, 6, 0, 0, 0]
 
     def test_create_packing_strategy(self):
@@ -84,12 +84,21 @@ class TestDataPackingUtils:
 
         assignments, packing_metadata = create_packing_strategy(hist, pack_size)
 
-        assert packing_metadata == {'dataset_max_seqlen': 1, 'max_samples_per_bin': 2}
+        assert packing_metadata == {"dataset_max_seqlen": 1, "max_samples_per_bin": 2}
 
         sequences = {
-            0: [{"input_ids": [19, 0, 21413, 1873], "answer_start_idx": 0} for i in range(128)],
-            1: [{"input_ids": [17, 35, 2, 11], "answer_start_idx": 0} for i in range(128)],
-            2: [{"input_ids": [111, 9999, 5, 6], "answer_start_idx": 0} for i in range(128)],
+            0: [
+                {"input_ids": [19, 0, 21413, 1873], "answer_start_idx": 0}
+                for i in range(128)
+            ],
+            1: [
+                {"input_ids": [17, 35, 2, 11], "answer_start_idx": 0}
+                for i in range(128)
+            ],
+            2: [
+                {"input_ids": [111, 9999, 5, 6], "answer_start_idx": 0}
+                for i in range(128)
+            ],
         }
 
         try:
