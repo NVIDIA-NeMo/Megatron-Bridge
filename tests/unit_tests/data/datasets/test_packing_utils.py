@@ -103,5 +103,5 @@ class TestDataPackingUtils:
 
         try:
             data = fill_packing_strategy(assignments, sequences, 1, 1000)
-        except AssertionError:
+        except AssertionError as e:
             assert e.args[0] == "Error: There are items left over from the assignment"

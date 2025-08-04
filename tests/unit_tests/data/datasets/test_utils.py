@@ -17,18 +17,15 @@ import torch
 import pytest
 import numpy as np
 
-from dataclasses import dataclass
-
 from megatron.bridge.data.datasets.utils import (
-    build_index_from_memdata,
-    _OnlineSampleMapping,
-    _deallocate_indexed_dataset_memory,
-    _identify_start_index_of_subsequence,
-    _response_value_formater,
     _add_speaker_and_signal,
-    _index_file_exists,
+    _deallocate_indexed_dataset_memory,
     _get_header_conversation_type_mask_role,
+    _identify_start_index_of_subsequence,
+    _index_file_exists,
     _make_indexed_dataset_compatibility,
+    _OnlineSampleMapping,
+    _response_value_formater,
     handle_index,
 )
 
@@ -52,9 +49,7 @@ class TestDataUtils:
         assert len(online) == 10
         assert online[5] == (3, None, None)
         assert online[1:3] == [(9, None, None), (6, None, None)]
-        assert np.array_equal(
-            online.get_sample_block(0), np.array([2, 9, 6, 4, 0, 3, 1, 7, 8, 5])
-        )
+        assert np.array_equal(online.get_sample_block(0), np.array([2, 9, 6, 4, 0, 3, 1, 7, 8, 5]))
 
     def test_deallocate_indexed_dataset_memory(self):
         indexed_dataset = IndexedDataset(1, 1)
@@ -115,9 +110,7 @@ class TestDataUtils:
 
         if gtype is None:
             expected = (
-                "<header>"
-                "<|turn|>user<|endname|>Hello<|endofturn|>"
-                "<|turn|>assistant<|endname|>Hi<|endofturn|><|turn|>"
+                "<header><|turn|>user<|endname|>Hello<|endofturn|><|turn|>assistant<|endname|>Hi<|endofturn|><|turn|>"
             )
         elif gtype == "VALUE_TO_TEXT":
             expected = (
@@ -133,9 +126,7 @@ class TestDataUtils:
             )
 
         try:
-            result = _add_speaker_and_signal(
-                header, source, mask_role, gtype, special_tokens
-            )
+            result = _add_speaker_and_signal(header, source, mask_role, gtype, special_tokens)
             assert result == expected
         except ValueError:
             None
@@ -170,9 +161,7 @@ class TestDataUtils:
             ],
         }
 
-        header, conversation, data_type, mask_role = (
-            _get_header_conversation_type_mask_role(source, special_tokens)
-        )
+        header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(source, special_tokens)
 
         assert data_type == "VALUE_TO_TEXT"
         assert mask_role == {"user"}
