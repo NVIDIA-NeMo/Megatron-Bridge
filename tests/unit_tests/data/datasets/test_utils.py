@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import torch
 import pytest
-import numpy as np
 
 from megatron.bridge.data.datasets.utils import (
     _add_speaker_and_signal,
@@ -142,9 +142,7 @@ class TestDataUtils:
             "conversations": [{"from": "user", "value": "Hi there"}],
         }
 
-        header, conversation, data_type, mask_role = (
-            _get_header_conversation_type_mask_role(source, special_tokens)
-        )
+        header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(source, special_tokens)
 
         assert data_type is None
         assert mask_role == "User"

@@ -16,13 +16,13 @@
 import numpy as np
 
 from megatron.bridge.data.datasets.packing_utils import (
-    find_first_bin_that_fits,
     create_packing_strategy,
     fill_packing_strategy,
+    find_first_bin_that_fits,
+    first_fit,
     first_fit_decreasing,
     first_fit_shuffle,
     create_hist,
-    first_fit,
 )
 
 
@@ -87,18 +87,9 @@ class TestDataPackingUtils:
         assert packing_metadata == {"dataset_max_seqlen": 1, "max_samples_per_bin": 2}
 
         sequences = {
-            0: [
-                {"input_ids": [19, 0, 21413, 1873], "answer_start_idx": 0}
-                for i in range(128)
-            ],
-            1: [
-                {"input_ids": [17, 35, 2, 11], "answer_start_idx": 0}
-                for i in range(128)
-            ],
-            2: [
-                {"input_ids": [111, 9999, 5, 6], "answer_start_idx": 0}
-                for i in range(128)
-            ],
+            0: [{"input_ids": [19, 0, 21413, 1873], "answer_start_idx": 0} for i in range(128)],
+            1: [{"input_ids": [17, 35, 2, 11], "answer_start_idx": 0} for i in range(128)],
+            2: [{"input_ids": [111, 9999, 5, 6], "answer_start_idx": 0} for i in range(128)],
         }
 
         try:
