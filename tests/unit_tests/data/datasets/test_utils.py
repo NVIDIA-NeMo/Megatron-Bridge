@@ -14,8 +14,8 @@
 # limitations under the License.
 
 import numpy as np
-import torch
 import pytest
+import torch
 
 from megatron.bridge.data.datasets.utils import (
     _add_speaker_and_signal,

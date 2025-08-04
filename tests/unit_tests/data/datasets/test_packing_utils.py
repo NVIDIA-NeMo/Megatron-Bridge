@@ -16,13 +16,13 @@
 import numpy as np
 
 from megatron.bridge.data.datasets.packing_utils import (
+    create_hist,
     create_packing_strategy,
     fill_packing_strategy,
     find_first_bin_that_fits,
     first_fit,
     first_fit_decreasing,
     first_fit_shuffle,
-    create_hist,
 )
 
 
@@ -93,6 +93,6 @@ class TestDataPackingUtils:
         }
 
         try:
-            data = fill_packing_strategy(assignments, sequences, 1, 1000)
+            fill_packing_strategy(assignments, sequences, 1, 1000)
         except AssertionError as e:
             assert e.args[0] == "Error: There are items left over from the assignment"
