@@ -91,7 +91,7 @@ class TestDataUtils:
         try:
             response = _response_value_formater(label, label_start, end_signal)
             assert response == expected
-        except ValueError as e:
+        except ValueError:
             None
 
     @pytest.fixture
@@ -137,7 +137,7 @@ class TestDataUtils:
                 header, source, mask_role, gtype, special_tokens
             )
             assert result == expected
-        except ValueError as e:
+        except ValueError:
             None
 
     def test_index_file_exists(self):
@@ -191,7 +191,7 @@ class TestDataUtils:
         try:
             dataset = IndexedDataset(5, 5)
             dataset = _make_indexed_dataset_compatibility(dataset)
-        except AttributeError as e:
+        except AttributeError:
             None
 
     @pytest.mark.parametrize("idx", [-1, -15])
