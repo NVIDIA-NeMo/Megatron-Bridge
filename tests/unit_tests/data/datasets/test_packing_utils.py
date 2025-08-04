@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-
 from megatron.bridge.data.datasets.packing_utils import (
     create_hist,
     create_packing_strategy,
