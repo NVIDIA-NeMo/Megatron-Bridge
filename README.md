@@ -12,9 +12,9 @@
 
 ## Overview
 
-Megatron Bridge is an extension of NVIDIA's Megatron Core library that enables pretraining and finetuning HuggingFace models using a performant and scalable training loop, with features like model parallelisms and FP8 precision.
+Megatron Bridge is library under [NeMo Framework](https://github.com/NVIDIA-NeMo/.github/blob/main/profile/README.md) that leverages [megatron-core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) and [transformer engine](https://github.com/NVIDIA/TransformerEngine) to provide state-of-the-art training throughput for popular 🤗Hugging Face models. By leveraging features such as model parallelisms, reduced precision and custom training loop, Megatron Bridge is designed for researchers and community developers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
 
-Megatron Bridge is designed for researchers and engineers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
+If you already have a 🤗Hugging Face checkpoint, Megatron Bridge provides [conversion tools](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/conversion) to seamlessly transiton to megatron formats and start training right away! There are also pre-configured recipes and throughput optimized benchmark scripts for you to jumstart your training jobs.
 
 ## 🔧 Installation
 
@@ -97,15 +97,15 @@ torchrun --nproc-per-node=<num devices> /path/to/script.py
 
 ## 🚀 Key Features
 
-- **Model Conversion**: Seamless bidirectional conversion between Hugging Face and Megatron formats for interoperability
-- **Training Infrastructure**: Configurable training loop with near linear performance scalability to thousands of nodes that handles data loading, distributed training, checkpointing, and logging
-- **Parameter-Efficient Finetuning**: PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
+- **Bridge with 🤗Hugging Face**: Seamless bidirectional conversion between 🤗Hugging Face and Megatron formats for interoperability
+- **Flexible to Customize**: Lightweight custom training loop making it easy to configure custom logic in data loading, distributed training, checkpointing, evaluation and logging
+- **Supervised & Parameter-Efficient Finetuning**: SFT & PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods
 - **Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration
-- **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques
+- **Performance Optimization**: Built-in support for FP8 training, model parallelisms, and memory-efficient techniques to offer high utilization and near linear scalability to thousands of nodes.
 
 ## Supported Models
 
-Megatron Hub provides out-of-the-box recipes for a wide range of models, built on top of base model architectures from Megatron Core:
+Megatron Bridge provides out-of-the-box recipes for a wide range of models, built on top of base model architectures from [megatron-core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core):
 
 ### Large Language Models
 
