@@ -1,7 +1,7 @@
 name: Dependabot
 on:
   schedule:
-    - cron: 0 0 * * 1 # Run at midnight UTC on Mondays
+    - cron: 0 0 * * 8 # Run at 7am UTC on Mondays
   workflow_dispatch: # Allow manual triggering
 
 permissions:
