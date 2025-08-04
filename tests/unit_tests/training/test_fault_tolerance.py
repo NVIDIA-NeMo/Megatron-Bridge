@@ -215,6 +215,145 @@ class TestTrainingStepCallbacks:
         assert mock_ft_state.seen_tr_iters_cnt == 6
 
 
+class TestEvaluationStepCallbacks:
+    """Test evaluation step callback functions."""
+
+    def test_on_eval_step_start_first_call(self):
+        """Test on_eval_step_start on first call with setup section open."""
+        mock_global_state = MagicMock()
+        mock_rank_monitor_client = MagicMock()
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.is_setup_section_open = True
+        mock_ft_state.curr_eval_iter_idx = 0
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        fault_tolerance.on_eval_step_start(mock_global_state)
+
+        # Should close setup section
+        mock_rank_monitor_client.end_section.assert_called_once_with("setup")
+        assert mock_ft_state.is_setup_section_open is False
+
+        # Should not start step section yet (warmup)
+        mock_rank_monitor_client.start_section.assert_not_called()
+
+    def test_on_eval_step_start_after_warmup(self):
+        """Test on_eval_step_start after warmup iterations."""
+        mock_global_state = MagicMock()
+        mock_rank_monitor_client = MagicMock()
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.is_setup_section_open = False
+        mock_ft_state.curr_eval_iter_idx = 5  # > _NUM_WARMUP_ITERS
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        fault_tolerance.on_eval_step_start(mock_global_state)
+
+        # Should start step section
+        mock_rank_monitor_client.start_section.assert_called_once_with("step")
+        mock_rank_monitor_client.end_section.assert_not_called()
+
+    def test_on_eval_step_start_setup_section_before_eval(self):
+        """Test on_eval_step_start when setup section is open before evaluation."""
+        mock_global_state = MagicMock()
+        mock_rank_monitor_client = MagicMock()
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.is_setup_section_open = True
+        mock_ft_state.curr_eval_iter_idx = 5  # > _NUM_WARMUP_ITERS
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        fault_tolerance.on_eval_step_start(mock_global_state)
+
+        # Should close setup section and start step section
+        mock_rank_monitor_client.end_section.assert_called_once_with("setup")
+        mock_rank_monitor_client.start_section.assert_called_once_with("step")
+        assert mock_ft_state.is_setup_section_open is False
+
+    def test_on_eval_step_start_no_client(self):
+        """Test on_eval_step_start when no rank monitor client."""
+        mock_global_state = MagicMock()
+        mock_global_state.rank_monitor_client = None
+
+        # Should not raise exception
+        fault_tolerance.on_eval_step_start(mock_global_state)
+
+    def test_on_eval_step_end_warmup_period(self):
+        """Test on_eval_step_end during warmup period."""
+        mock_global_state = MagicMock()
+        mock_rank_monitor_client = MagicMock()
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.curr_eval_iter_idx = 0  # < _NUM_WARMUP_ITERS
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        fault_tolerance.on_eval_step_end(mock_global_state)
+
+        # Should not end step section during warmup
+        mock_rank_monitor_client.end_section.assert_not_called()
+        # Should increment counter
+        assert mock_ft_state.curr_eval_iter_idx == 1
+
+    def test_on_eval_step_end_after_warmup(self):
+        """Test on_eval_step_end after warmup period."""
+        mock_global_state = MagicMock()
+        mock_rank_monitor_client = MagicMock()
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.curr_eval_iter_idx = 5  # >= _NUM_WARMUP_ITERS
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        fault_tolerance.on_eval_step_end(mock_global_state)
+
+        # Should end step section
+        mock_rank_monitor_client.end_section.assert_called_once_with("step")
+        # Should increment counter
+        assert mock_ft_state.curr_eval_iter_idx == 6
+
+    def test_on_eval_step_end_no_client(self):
+        """Test on_eval_step_end when no rank monitor client."""
+        mock_global_state = MagicMock()
+        mock_global_state.rank_monitor_client = None
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.curr_eval_iter_idx = 0
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        # Should not raise exception
+        fault_tolerance.on_eval_step_end(mock_global_state)
+        # Should still increment counter
+        assert mock_ft_state.curr_eval_iter_idx == 1
+
+    def test_eval_step_workflow(self):
+        """Test complete evaluation step workflow."""
+        mock_global_state = MagicMock()
+        mock_rank_monitor_client = MagicMock()
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock()
+        mock_ft_state.is_setup_section_open = True
+        mock_ft_state.curr_eval_iter_idx = 0
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        # Simulate several evaluation steps
+        for i in range(3):
+            fault_tolerance.on_eval_step_start(mock_global_state)
+            fault_tolerance.on_eval_step_end(mock_global_state)
+
+        # First call should close setup section
+        mock_rank_monitor_client.end_section.assert_called_with("setup")
+        # After warmup, should start/end step sections
+        assert mock_rank_monitor_client.start_section.call_count == 2  # Steps 2 and 3
+        assert mock_rank_monitor_client.end_section.call_count == 3  # Setup + Steps 2 and 3
+        # Should increment eval iter counter to 3
+        assert mock_ft_state.curr_eval_iter_idx == 3
+
+
 class TestCheckpointingCallbacks:
     """Test checkpointing callback functions."""
 
@@ -636,3 +775,68 @@ class TestTrainingIntegration:
 
             mock_rank_monitor_client.start_section.assert_has_calls(expected_start_calls, any_order=False)
             mock_rank_monitor_client.shutdown_workload_monitoring.assert_called_once()
+
+    def test_complete_training_with_evaluation_workflow(self):
+        """Test a complete training and evaluation workflow with fault tolerance."""
+        # Setup
+        mock_config = MagicMock()
+        mock_config.checkpoint.save = "/tmp/checkpoints"
+        mock_config.checkpoint.async_save = False
+        mock_config.ft.calc_ft_timeouts = True
+
+        mock_global_state = MagicMock()
+        mock_ft_state = MagicMock()
+        mock_ft_state.is_setup_section_open = True
+        mock_ft_state.seen_tr_iters_cnt = 0
+        mock_ft_state.curr_eval_iter_idx = 0
+        mock_ft_state.seen_checkpoints_cnt = 0
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        mock_rank_monitor_client = MagicMock()
+        mock_rank_monitor_client.section_timeouts = {"setup": 600, "step": 180}
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        with (
+            patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
+            patch("os.path.exists", return_value=True),
+            patch("nvidia_resiliency_ext.fault_tolerance.RankMonitorClient", return_value=mock_rank_monitor_client),
+            patch("megatron.bridge.training.fault_tolerance._load_state_if_exists"),
+            patch("megatron.bridge.training.fault_tolerance._maybe_update_timeouts"),
+        ):
+            # Initialize fault tolerance
+            fault_tolerance.setup(mock_config, mock_global_state)
+
+            # Simulate training steps
+            fault_tolerance.on_training_step_start(mock_global_state)
+            fault_tolerance.on_training_step_end(mock_global_state)
+
+            # Simulate evaluation steps (should reset curr_eval_iter_idx)
+            for i in range(3):
+                fault_tolerance.on_eval_step_start(mock_global_state)
+                fault_tolerance.on_eval_step_end(mock_global_state)
+
+            # More training steps
+            fault_tolerance.on_training_step_start(mock_global_state)
+            fault_tolerance.on_training_step_end(mock_global_state)
+
+            # Simulate checkpointing
+            fault_tolerance.on_checkpointing_start(mock_global_state)
+            fault_tolerance.on_checkpointing_end(is_async_finalization=False, global_state=mock_global_state)
+
+            # Shutdown
+            fault_tolerance.shutdown(mock_global_state)
+
+            # Verify eval counter was reset when training started again
+            assert mock_ft_state.curr_eval_iter_idx == 0
+
+            # Verify the sequence of calls includes both training and eval steps
+            expected_start_calls = [
+                call("setup"),  # Initial setup
+                call("step"),  # Eval steps after warmup (1st eval)
+                call("step"),  # 2nd eval step
+                call("step"),  # 2nd training step (after eval)
+                call("checkpointing"),
+            ]
+
+            mock_rank_monitor_client.start_section.assert_has_calls(expected_start_calls, any_order=False)
