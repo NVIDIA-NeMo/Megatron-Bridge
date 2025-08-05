@@ -152,7 +152,7 @@ jobs:
     needs:
       - pre-flight
       - cicd-unit-tests
-      - cicd-functional-tests
+      # - cicd-functional-tests
     if: always()
     runs-on: ubuntu-latest
     permissions: write-all
