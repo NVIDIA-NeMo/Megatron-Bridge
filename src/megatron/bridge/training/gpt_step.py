@@ -227,7 +227,7 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
 
 
 def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
