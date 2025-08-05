@@ -86,6 +86,11 @@ runs:
         sudo apt update
         sudo apt install -y cachefilesd
 
+        # Create systemd override for proper dependencies
+        sudo mkdir -p /etc/systemd/system/cachefilesd.service.d
+        printf "[Unit]\nAfter=network.target local-fs.target\nWants=local-fs.target\n\n[Service]\nRestart=on-failure\nRestartSec=2\n" | sudo tee /etc/systemd/system/cachefilesd.service.d/override.conf > /dev/null
+        sudo systemctl daemon-reload
+
         # Enable cachefilesd in config file
         sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
         sudo cat /etc/default/cachefilesd
@@ -156,6 +161,22 @@ runs:
       uses: actions/checkout@v2
       with:
         path: Megatron-Bridge
+
+    - name: Cache uv
+      uses: actions/cache@v4
+      id: cache
+      with:
+        path: cache-mount
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-
+
+    - name: Restore Docker cache mounts
+      uses: reproducible-containers/buildkit-cache-dance@5b81f4d29dc8397a7d341dba3aeecc7ec54d6361
+      with:
+        cache-dir: cache-mount
+        dockerfile: docker/Dockerfile.ci
+        skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
     - name: Build container
       shell: bash
