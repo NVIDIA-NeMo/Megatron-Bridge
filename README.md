@@ -12,7 +12,7 @@
 
 ## Overview
 
-Megatron Bridge is library under [NeMo Framework](https://github.com/NVIDIA-NeMo/.github/blob/main/profile/README.md) that leverages [megatron-core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) and [transformer engine](https://github.com/NVIDIA/TransformerEngine) to provide state-of-the-art training throughput for popular 🤗Hugging Face models. By leveraging features such as model parallelisms, reduced precision and custom training loop, Megatron Bridge is designed for researchers and community developers who need to train large-scale models efficiently while maintaining flexibility for experimentation and customization.
+Megatron Bridge is a PyTorch native library under [NeMo Framework](https://github.com/NVIDIA-NeMo) that leverages [megatron-core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) to provide state-of-the-art training throughput for top models. It enables researchers and community developers to do both pre and post training using a performant and scalable training loop, with features like model parallelisms and mixed precisions (FP8, BF16, FP4 etc.).  Megatron Bridge users can either leverage existing 🤗HuggingFace models or define their custom PyTorch model definitions for end-to-end workflows with flexibility.
 
 If you already have a 🤗Hugging Face checkpoint, Megatron Bridge provides [conversion tools](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/conversion) to seamlessly transiton to megatron formats and start training right away! There are also pre-configured recipes and throughput optimized benchmark scripts for you to jumstart your training jobs.
 
