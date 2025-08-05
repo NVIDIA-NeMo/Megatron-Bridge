@@ -46,7 +46,9 @@ def get_tokenizer(ensure_test_data):
 
 class TestDataHFDataset:
     def test_preprocess_and_split_data_split_val_from_train(self, ensure_test_data):
-        path = PosixPath(f"{ensure_test_data}/datasets")
+        path = f"{ensure_test_data}/datasets/hf"
+        os.makedirs(path, exist_ok=True)
+        path = PosixPath(path)
         preprocess_and_split_data(
             dset=load_dataset("boolq"),
             dataset_name="boolq",
@@ -64,11 +66,13 @@ class TestDataHFDataset:
         assert os.path.exists(path / "test.jsonl")
 
     def test_preprocess_and_split_data(self, ensure_test_data):
-        path = PosixPath(f"{ensure_test_data}/datasets")
+        path = f"{ensure_test_data}/datasets/hf"
+        os.makedirs(path, exist_ok=True)
+        path = PosixPath(path)
         preprocess_and_split_data(
             dset=load_dataset("boolq"),
             dataset_name="boolq",
-            dataset_root=PosixPath(f"{ensure_test_data}/datasets/"),
+            dataset_root=path,
             process_example_fn=process_example_fn,
             tokenizer=get_tokenizer(ensure_test_data),
             val_proportion=0.1,
