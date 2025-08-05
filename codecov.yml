@@ -9,6 +9,9 @@ coverage:
         base: auto
         if_ci_failed: error
         if_not_found: success
+  ignore:
+    - "src/megatron/bridge/training/tokenizers/bert_tokenization.py"
+    - "src/megatron/bridge/training/tokenizers/gpt2_tokenization.py"
 
 fixes:
   - "/workspace/::"
