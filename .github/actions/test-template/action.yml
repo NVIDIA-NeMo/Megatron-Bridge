@@ -244,6 +244,8 @@ runs:
       id: check
       shell: bash
       run: |
+        echo "::group::Check result"
+
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage combine || true
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage xml
         docker cp nemo_container_${{ github.run_id }}:/workspace/.coverage .coverage
@@ -263,14 +265,12 @@ runs:
         if [[ "$IS_SUCCESS" == "false" ]]; then
           echo Test did not finish successfully.
           exit 1
+        else
+          docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i
         fi
 
         exit $EXIT_CODE
-
-    - name: Test coverage
-      shell: bash -x -e -u -o pipefail {0}
-      run: |
-        docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i
+        echo "::endgroup::"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
