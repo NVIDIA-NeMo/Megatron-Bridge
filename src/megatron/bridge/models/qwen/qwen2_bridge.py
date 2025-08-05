@@ -66,8 +66,6 @@ class Qwen2Bridge(MegatronModelBridge):
             add_qkv_bias=True,  # Qwen2 has bias in QKV projections
         )
 
-        provider.gradient_accumulation_fusion = False
-
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
