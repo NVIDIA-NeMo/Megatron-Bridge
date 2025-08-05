@@ -106,7 +106,7 @@ class TestDataFineTuningDataset:
             train_path_packed = dataset.train_path_packed
         except ValueError:
             None
-    
+
     def test_validation_path_packed(self, ensure_test_data):
         npy_path = f"{ensure_test_data}/datasets/finetune/test.npy"
         subprocess.run(["touch", npy_path])
