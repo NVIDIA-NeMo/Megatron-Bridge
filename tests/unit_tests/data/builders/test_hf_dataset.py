@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import os
-from datasets import load_dataset
 from pathlib import PosixPath
+
+from datasets import load_dataset
 
 from megatron.bridge.data.builders.hf_dataset import preprocess_and_split_data
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
