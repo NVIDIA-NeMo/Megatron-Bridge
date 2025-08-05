@@ -54,7 +54,10 @@ runs:
       if: ${{ inputs.has-azure-credentials == 'true' }}
       shell: bash
       run: |
+        echo "::group::Install Azure CLI"
+        # Create systemd override for proper dependencies
         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        echo "::endgroup::"
 
     - name: Azure Login
       if: ${{ inputs.has-azure-credentials == 'true' }}
