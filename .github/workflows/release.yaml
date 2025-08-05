@@ -40,7 +40,7 @@ jobs:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.51.0
     with:
       release-ref: ${{ inputs.release-ref }}
-      python-package: nemo_export_deploy_common
+      python-package: megatron.bridge
       library-name: Megatron-Bridge
       dry-run: ${{ inputs.dry-run }}
       version-bump-branch: ${{ inputs.version-bump-branch }}
