@@ -1,6 +1,6 @@
 # Changelog
 
-## NVIDIA Megatron-Bridge 0.1.0
+## NVIDIA Megatron-Bridge 0.1.0a0
 
 * Llama and Qwen
 * Pretrain/SFT
