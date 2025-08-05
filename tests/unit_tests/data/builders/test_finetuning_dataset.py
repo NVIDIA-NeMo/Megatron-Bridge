@@ -17,14 +17,14 @@ import subprocess
 from pathlib import PosixPath
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
+from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
 
 def get_dataset(
     ensure_test_data,
-    packed_sequence_size=1, 
+    packed_sequence_size=1,
     packed_train_data_path=None,
     packed_val_data_path=None,
     tokenizer_name="null",
@@ -88,7 +88,7 @@ class TestDataFineTuningDataset:
         default_pack_path = dataset.default_pack_path
 
         assert default_pack_path == PosixPath(f"{path}/packed/null")
-    
+
     def test_train_path_packed(self, ensure_test_data):
         npy_path = f"{ensure_test_data}/datasets/finetune/test.npy"
         subprocess.run(["touch", npy_path])
@@ -119,14 +119,16 @@ class TestDataFineTuningDataset:
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert validation_path_packed == PosixPath(f"{ensure_test_data}/datasets/finetune/packed/null/validation_1.npy")
+        assert validation_path_packed == PosixPath(
+            f"{ensure_test_data}/datasets/finetune/packed/null/validation_1.npy"
+        )
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
         try:
             validation_path_packed = dataset.validation_path_packed
         except ValueError:
             None
-    
+
     def test_prepare_packed_data(self, ensure_test_data):
         dataset, path = get_dataset(ensure_test_data)
 
