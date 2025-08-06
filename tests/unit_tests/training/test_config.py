@@ -870,11 +870,20 @@ class TestCheckpointConfig:
             create_test_checkpoint_config(load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim)
 
     def test_async_save_validation_error(self):
-        """Test that async_save is not allowed without a save path."""
+        """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
+        # Test that async_save requires a save path
         with pytest.raises(
             AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
         ):
             create_test_checkpoint_config(async_save=True, save=None)
 
-        # should not raise an error
-        create_test_checkpoint_config(async_save=True, save="/tmp/test_checkpoint_config")
+        # Test that async_save requires use_persistent_ckpt_worker=True
+        with pytest.raises(AssertionError, match="async_save requires use_persistent_ckpt_worker=True."):
+            create_test_checkpoint_config(
+                async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=False
+            )
+
+        # should not raise an error when both conditions are met
+        create_test_checkpoint_config(
+            async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=True
+        )
