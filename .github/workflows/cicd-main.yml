@@ -122,7 +122,7 @@ jobs:
     runs-on: self-hosted-nemo-a100-2gpu
     if: |
       (
-        success() 
+        success()
         || (
           needs.cicd-wait-in-queue.result == 'skipped'
           && needs.pre-flight.outputs.is_ci_workload == 'true'
@@ -262,7 +262,9 @@ jobs:
       && !cancelled()
     strategy:
       matrix:
-        flag: [unit-test, e2e]
+        flag:
+          - unit-test
+          # - e2e
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -22,7 +22,7 @@ inputs:
   script:
     description: "Test script to execute"
     required: true
-  is_optional:
+  is-optional:
     description: "Failure will cancel all other tests if set to true"
     required: false
     default: "false"
@@ -54,7 +54,10 @@ runs:
       if: ${{ inputs.has-azure-credentials == 'true' }}
       shell: bash
       run: |
+        echo "::group::Install Azure CLI"
+        # Create systemd override for proper dependencies
         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        echo "::endgroup::"
 
     - name: Azure Login
       if: ${{ inputs.has-azure-credentials == 'true' }}
@@ -76,6 +79,8 @@ runs:
       env:
         MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
       run: |
+        echo "::group::Configure local artifact cache"
+
         set -x -e -u -o pipefail
 
         sudo apt update
@@ -94,12 +99,14 @@ runs:
         sudo systemctl enable cachefilesd
         sudo systemctl restart cachefilesd
         sudo systemctl status cachefilesd
+        echo "::endgroup::"
 
     - name: Azure Fileshare
       if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       shell: bash
       id: azure-fileshare
       run: |
+        echo "::group::Mount SMB drive"
         sudo apt update
         sudo apt install -y cifs-utils
 
@@ -148,6 +155,7 @@ runs:
         sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks,fsc,cache=strict
 
         ls -al $MNT_PATH/TestData
+        echo "::endgroup::"
 
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -175,7 +183,9 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.PAT }}
       run: |
+        echo "::group::Build test container"
         docker build -f docker/Dockerfile.ci  --secret id=GH_TOKEN -t megatron-bridge .
+        echo "::endgroup::"
 
     - name: Start container
       shell: bash
@@ -183,6 +193,7 @@ runs:
         MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
         MOUNT_FS: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
       run: |
+        echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
           VOLUME_ARGS="--volume $MNT_PATH/TestData:/home/TestData"
         else
@@ -213,11 +224,13 @@ runs:
 
         echo "$cmd" | tee "retry_job.sh"
         bash retry_job.sh
+        echo "::endgroup::"
 
     - name: Create run-script
       id: create
       shell: bash
       run: |
+        echo "::group::Create run-script"
         COVERAGE_PREFIX=$([[ "${{ inputs.is_unit_test }}" == "true" ]] && echo "unit-test" || echo "e2e")
         echo "coverage-prefix=$COVERAGE_PREFIX" | tee -a "$GITHUB_OUTPUT"
 
@@ -235,6 +248,7 @@ runs:
 
         echo "timeout_in_seconds=$(( ${{ inputs.timeout }} * 60 ))" | tee -a "$GITHUB_OUTPUT"
         echo "$cmd" | tee "job.sh"
+        echo "::endgroup::"
 
     - name: Run main script
       uses: nick-fields/retry@v3
@@ -251,6 +265,8 @@ runs:
       id: check
       shell: bash
       run: |
+        echo "::group::Check result"
+
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage combine || true
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage xml
         docker cp nemo_container_${{ github.run_id }}:/workspace/.coverage .coverage
@@ -262,7 +278,7 @@ runs:
         EXIT_CODE=${{ steps.run-main-script.outputs.exit_code }}
         IS_SUCCESS=$([[ "$EXIT_CODE" -eq 0 ]] && echo "true" || echo "false")
 
-        if [[ "$IS_SUCCESS" == "false" && "${{ inputs.is_optional }}" == "true" ]]; then
+        if [[ "$IS_SUCCESS" == "false" && "${{ inputs.is-optional }}" == "true" ]]; then
           echo "::warning:: Test failed, but displayed as successful because it is marked as optional."
           IS_SUCCESS=true
         fi
@@ -270,14 +286,12 @@ runs:
         if [[ "$IS_SUCCESS" == "false" ]]; then
           echo Test did not finish successfully.
           exit 1
+        else
+          docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i
         fi
 
         exit $EXIT_CODE
-
-    - name: Test coverage
-      shell: bash -x -e -u -o pipefail {0}
-      run: |
-        docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i
+        echo "::endgroup::"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
