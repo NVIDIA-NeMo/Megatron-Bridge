@@ -19,6 +19,7 @@ from dataclasses import fields as dataclass_fields
 from typing import Any, Optional, Type, TypeVar
 
 import yaml
+from megatron.core.msc_utils import MultiStorageClientFeature
 from omegaconf import OmegaConf
 
 from megatron.bridge.utils.instantiate_utils import InstantiationMode, instantiate
@@ -93,11 +94,22 @@ class _ConfigContainerBase:
         Returns:
             A new instance of this class initialized with the YAML file values
         """
-        if not os.path.exists(yaml_path):
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            yaml_path_exists = msc.os.path.exists(yaml_path)
+        else:
+            yaml_path_exists = os.path.exists(yaml_path)
+
+        if not yaml_path_exists:
             raise FileNotFoundError(f"YAML file not found: {yaml_path}")
 
-        with open(yaml_path, "r") as f:
-            config_dict = yaml.safe_load(f)
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            with msc.open(yaml_path, "r") as f:
+                config_dict = yaml.safe_load(f)
+        else:
+            with open(yaml_path, "r") as f:
+                config_dict = yaml.safe_load(f)
 
         # Convert to OmegaConf first for better compatibility with instantiate
         conf = OmegaConf.create(config_dict)
@@ -182,8 +194,13 @@ class _ConfigContainerBase:
             if yaml_path is None:
                 print(yaml.safe_dump(config_dict, default_flow_style=False))
             else:
-                with open(yaml_path, "w") as f:
-                    yaml.safe_dump(config_dict, f, default_flow_style=False)
+                if MultiStorageClientFeature.is_enabled():
+                    msc = MultiStorageClientFeature.import_package()
+                    with msc.open(yaml_path, "w") as f:
+                        yaml.safe_dump(config_dict, f, default_flow_style=False)
+                else:
+                    with open(yaml_path, "w") as f:
+                        yaml.safe_dump(config_dict, f, default_flow_style=False)
 
     def __deepcopy__(self, memo):
         """Support for deep copying."""
