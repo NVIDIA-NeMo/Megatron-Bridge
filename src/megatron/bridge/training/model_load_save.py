@@ -27,10 +27,10 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
+from megatron.bridge.training.utils.checkpoint_utils import file_exists, save_checkpoint
 
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,8 @@ def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
     from megatron.bridge.utils.instantiate_utils import instantiate
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
-    if os.path.exists(run_config_filename):
+
+    if file_exists(run_config_filename):
         run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
     else:
@@ -194,7 +195,8 @@ def load_megatron_model(
     from megatron.bridge.utils.instantiate_utils import instantiate
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
-    if os.path.exists(run_config_filename):
+
+    if file_exists(run_config_filename):
         run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
     else:
