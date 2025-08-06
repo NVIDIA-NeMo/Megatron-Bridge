@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 import os
 from pathlib import PosixPath
 
+import pytest
 from datasets import load_dataset
 
-from megatron.bridge.data.builders.hf_dataset import preprocess_and_split_data, HFDatasetBuilder
+from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, preprocess_and_split_data
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -105,7 +105,7 @@ class TestDataHFDataset:
         assert os.path.exists(path / "training.jsonl")
         assert os.path.exists(path / "validation.jsonl")
         assert os.path.exists(path / "test.jsonl")
-    
+
     def test_hf_dataset_builder_lambda(self, ensure_test_data):
         path = f"{ensure_test_data}/datasets/hf"
         os.makedirs(path, exist_ok=True)
@@ -122,7 +122,7 @@ class TestDataHFDataset:
 
         with pytest.raises(ValueError):
             builder.prepare_data()
-    
+
     def test_hf_dataset_builder_with_dict(self, ensure_test_data):
         path = f"{ensure_test_data}/datasets/hf"
         os.makedirs(path, exist_ok=True)
