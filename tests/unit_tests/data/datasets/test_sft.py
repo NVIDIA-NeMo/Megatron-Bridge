@@ -37,7 +37,7 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
     with open(path, "w") as f:
         for i in range(100):
             f.write(json.dumps(line) + "\n")
-    
+
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=f"{ensure_test_data}/tokenizers/huggingface",
@@ -151,7 +151,7 @@ class TestDataGPTSFTDataset:
                 "answer_ids": [203, 204],
                 "metadata": {"id": "ex2"},
                 "token_count": 4,
-            }
+            },
         ]
         dataset.collate_fn(batch)
 
@@ -187,7 +187,7 @@ class TestDataGPTSFTPackedDataset:
                 "seq_boundaries": (0, 2),
                 "loss_mask": [0, 0, 1, 1],
                 "token_count": 4,
-            }
+            },
         ]
         dataset.collate_fn(batch)
 
@@ -240,7 +240,7 @@ class TestDataGPTSFTChatDataset:
                 "mask": np.array([0, 0, 1, 1]),
                 "metadata": {},
                 "token_count": 4,
-            }
+            },
         ]
         dataset.collate_fn(batch)
 
