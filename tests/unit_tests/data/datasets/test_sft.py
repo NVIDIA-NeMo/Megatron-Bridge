@@ -12,40 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-import numpy.testing as npt
 import json
 import os
 
-from megatron.bridge.data.datasets.sft import GPTSFTDataset, GPTSFTPackedDataset, GPTSFTChatDataset
+import numpy as np
+from megatron.core.parallel_state import initialize_model_parallel
+
+from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-
-from megatron.core.parallel_state import initialize_model_parallel
 
 
 def setup_megatron_distributed(rank=0, world_size=1):
     import torch.distributed as dist
 
-    dist.init_process_group(
-        backend="gloo",
-        init_method="tcp://127.0.0.1:29500",
-        rank=rank,
-        world_size=world_size
-    )
+    dist.init_process_group(backend="gloo", init_method="tcp://127.0.0.1:29500", rank=rank, world_size=world_size)
     initialize_model_parallel(tensor_model_parallel_size=1)
 
 
 def get_gpt_sft(ensure_test_data, dataset_type="sft"):
     path = os.path.join(ensure_test_data, "datasets/sft.jsonl")
-    line = {
-        "input": "hi how are you?",
-        "output": "I'm fine, thanks."
-    }
+    line = {"input": "hi how are you?", "output": "I'm fine, thanks."}
 
     with open(path, "w") as f:
         for i in range(100):
-            f.write(json.dumps(line) + '\n')
+            f.write(json.dumps(line) + "\n")
     
     tokenizer_config = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
@@ -84,6 +75,7 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
             truncation_field="output",
         )
 
+
 setup_megatron_distributed()
 
 
@@ -91,7 +83,7 @@ class TestDataGPTSFTDataset:
     def test_build_samples_mapping(self, ensure_test_data):
         dataset = get_gpt_sft(ensure_test_data)
         dataset._build_samples_mapping()
-    
+
     def test_gpt_sft_dataset(self, ensure_test_data):
         dataset = get_gpt_sft(ensure_test_data)
 
@@ -103,9 +95,9 @@ class TestDataGPTSFTDataset:
         dataset = get_gpt_sft(ensure_test_data)
         template_strings, template_strings_keys = dataset._separate_template(["output"])
 
-        assert template_strings == ['output', '\n\n### Response:\n', '{output}']
-        assert template_strings_keys == ['input', '<template>', 'output']
-    
+        assert template_strings == ["output", "\n\n### Response:\n", "{output}"]
+        assert template_strings_keys == ["input", "<template>", "output"]
+
     def test_multiple_truncation(self, ensure_test_data):
         dataset = get_gpt_sft(ensure_test_data)
 
@@ -119,7 +111,7 @@ class TestDataGPTSFTDataset:
 
         assert context_ids == [101, 102, 103, 104, 201, 202, 203]
         assert label_ids == [301, 302]
-    
+
     def test_utils_func(self, ensure_test_data):
         dataset = get_gpt_sft(ensure_test_data)
 
@@ -149,7 +141,7 @@ class TestDataGPTSFTDataset:
                 "context_length": 2,
                 "answer_ids": [104, 105],
                 "metadata": {"id": "ex1"},
-                "token_count": 5
+                "token_count": 5,
             },
             {
                 "input_ids": [201, 202, 203, 204],
@@ -158,7 +150,7 @@ class TestDataGPTSFTDataset:
                 "context_length": 1,
                 "answer_ids": [203, 204],
                 "metadata": {"id": "ex2"},
-                "token_count": 4
+                "token_count": 4,
             }
         ]
         dataset.collate_fn(batch)
@@ -169,7 +161,7 @@ class TestDataGPTSFTPackedDataset:
         dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
         assert len(dataset) == 100
-    
+
     def test_collate_fn(self, ensure_test_data):
         dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
@@ -183,7 +175,7 @@ class TestDataGPTSFTPackedDataset:
                 "metadata": {"id": "ex1"},
                 "seq_boundaries": (0, 3),
                 "loss_mask": [0, 0, 0, 1, 1],
-                "token_count": 5
+                "token_count": 5,
             },
             {
                 "input_ids": [201, 202, 203, 204],
@@ -194,11 +186,11 @@ class TestDataGPTSFTPackedDataset:
                 "metadata": {"id": "ex2"},
                 "seq_boundaries": (0, 2),
                 "loss_mask": [0, 0, 1, 1],
-                "token_count": 4
+                "token_count": 4,
             }
         ]
         dataset.collate_fn(batch)
-    
+
     def test_utils_func_packed(self, ensure_test_data):
         dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
@@ -235,7 +227,7 @@ class TestDataGPTSFTChatDataset:
                 "seq_boundaries": (0, 3),
                 "mask": np.array([0, 0, 0, 1, 1]),
                 "metadata": {},
-                "token_count": 5
+                "token_count": 5,
             },
             {
                 "input_ids": np.array([201, 202, 203, 204]),
@@ -247,7 +239,7 @@ class TestDataGPTSFTChatDataset:
                 "seq_boundaries": (0, 2),
                 "mask": np.array([0, 0, 1, 1]),
                 "metadata": {},
-                "token_count": 4
+                "token_count": 4,
             }
         ]
         dataset.collate_fn(batch)
