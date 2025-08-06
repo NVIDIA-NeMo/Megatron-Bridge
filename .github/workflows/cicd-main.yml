@@ -91,7 +91,7 @@ jobs:
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
+    runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
     steps:
@@ -109,50 +109,50 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
 
-  # cicd-functional-tests:
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       include:
-  #         - script: L2_Launch_training
-  #           timeout: 60
-  #         - script: L2_Launch_converter
-  #           timeout: 60
-  #   needs: [cicd-unit-tests]
-  #   runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
-  #   if: |
-  #     (
-  #       success()
-  #       || (
-  #         needs.cicd-wait-in-queue.result == 'skipped'
-  #         && needs.pre-flight.outputs.is_ci_workload == 'true'
-  #       )
-  #     )
-  #     && !cancelled()
-  #   name: ${{ matrix.script }}
-  #   environment: nemo-ci
-  #   env:
-  #     HF_HOME: /home/TestData/HF_HOME
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #     - name: main
-  #       uses: ./.github/actions/test-template
-  #       with:
-  #         script: ${{ matrix.script }}
-  #         timeout: ${{ matrix.timeout }}
-  #         is_unit_test: "false"
-  #         has-azure-credentials: "true"
-  #         azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-  #         azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-  #         azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  #         PAT: ${{ secrets.PAT }}
+  cicd-functional-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - script: L2_Launch_training
+            timeout: 60
+          - script: L2_Launch_converter
+            timeout: 60
+    needs: [cicd-unit-tests]
+    runs-on: self-hosted-nemo
+    if: |
+      (
+        success()
+        || (
+          needs.cicd-wait-in-queue.result == 'skipped'
+          && needs.pre-flight.outputs.is_ci_workload == 'true'
+        )
+      )
+      && !cancelled()
+    name: ${{ matrix.script }}
+    environment: nemo-ci
+    env:
+      HF_HOME: /home/TestData/HF_HOME
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: main
+        uses: ./.github/actions/test-template
+        with:
+          script: ${{ matrix.script }}
+          timeout: ${{ matrix.timeout }}
+          is_unit_test: "false"
+          has-azure-credentials: "true"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          PAT: ${{ secrets.PAT }}
 
   Nemo_CICD_Test:
     needs:
       - pre-flight
       - cicd-unit-tests
-      # - cicd-functional-tests
+      - cicd-functional-tests
     if: always()
     runs-on: ubuntu-latest
     permissions: write-all
