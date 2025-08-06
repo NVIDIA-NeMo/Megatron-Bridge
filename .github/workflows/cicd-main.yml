@@ -91,7 +91,7 @@ jobs:
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
+    runs-on: self-hosted-nemo-a100-2gpu
     name: Launch_Unit_Tests
     environment: nemo-ci
     steps:
@@ -119,7 +119,7 @@ jobs:
           - script: L2_Launch_converter
             timeout: 60
     needs: [cicd-unit-tests]
-    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
+    runs-on: self-hosted-nemo-a100-2gpu
     if: |
       (
         success() 
