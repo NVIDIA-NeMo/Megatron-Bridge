@@ -118,6 +118,7 @@ jobs:
             timeout: 60
           - script: L2_Launch_converter
             timeout: 60
+            is-optional: true
     needs: [cicd-unit-tests]
     runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
     if: |
@@ -147,12 +148,13 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
+          is-optional: ${{ matrix.is-optional || false }}
 
   Nemo_CICD_Test:
     needs:
       - pre-flight
       - cicd-unit-tests
-      # - cicd-functional-tests
+      - cicd-functional-tests
     if: always()
     runs-on: ubuntu-latest
     permissions: write-all
