@@ -91,7 +91,7 @@ jobs:
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
+    runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
     steps:
