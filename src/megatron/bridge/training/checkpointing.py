@@ -25,14 +25,15 @@ from functools import lru_cache
 from logging import getLogger
 from pathlib import Path
 from time import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 import torch
 import yaml
 from megatron.core import dist_checkpointing, mpu, tensor_parallel
-from megatron.core.dist_checkpointing.mapping import ShardedObject
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict
 from megatron.core.dist_checkpointing.serialization import (
+    StateDict,
     get_default_load_sharded_strategy,
     get_default_save_sharded_strategy,
 )
@@ -48,7 +49,7 @@ from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
-from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.config import CheckpointConfig
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils import wandb_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
@@ -198,7 +199,21 @@ def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
     return os.path.join(checkpoints_path, CONFIG_FILE)
 
 
-def checkpoint_exists(checkpoints_path: str) -> bool:
+def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
+    """Tracker file rescords the latest chckpoint during training to restart from.
+
+    Supports checkpoints produced by Megatron-LM.
+
+    Args:
+        checkpoints_path: Base directory where checkpoints are stored.
+
+    Returns:
+        The full path to the checkpoint tracker file (e.g., latest_checkpointed_iteration.txt).
+    """
+    return os.path.join(checkpoints_path, "latest_checkpointed_iteration.txt")
+
+
+def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
     """Check if a checkpoint directory exists.
 
     Args:
@@ -209,7 +224,14 @@ def checkpoint_exists(checkpoints_path: str) -> bool:
     """
     if checkpoints_path is None:
         return False
-    return os.path.exists(os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}"))
+
+    train_state_filename = os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
+    if os.path.exists(train_state_filename):
+        return True
+
+    # Fallback to the Megatron-LM tracker file
+    path = get_checkpoint_tracker_filename(checkpoints_path)
+    return os.path.isfile(path)
 
 
 @lru_cache()
@@ -244,6 +266,54 @@ def read_train_state(train_state_filename: str) -> TrainState:
         raise RuntimeError(state_obj[0]["msg"])
 
     return state_obj[0]
+
+
+def read_metadata(tracker_filename: str) -> tuple[int, bool]:
+    """Read the metadata from the Megatron-LM tracker file.
+
+    Args:
+        tracker_filename: Path to the tracker file.
+
+    Returns:
+        A tuple containing the iteration number and a boolean indicating if it's a release checkpoint.
+    """
+    iteration = 0
+    release = False
+
+    with open(tracker_filename, "r") as f:
+        metastring = f.read().strip()
+        try:
+            iteration = int(metastring)
+        except ValueError:
+            release = metastring == "release"
+            if not release:
+                print_rank_0("ERROR: Invalid metadata file {}. Exiting".format(tracker_filename))
+                sys.exit()
+    assert iteration > 0 or release, "error parsing metadata file {}".format(tracker_filename)
+
+    # Get the max iteration retrieved across the ranks.
+    if torch.distributed.is_initialized():
+        iters_cuda = torch.tensor([iteration], dtype=torch.long, device="cuda")
+        torch.distributed.all_reduce(iters_cuda, op=torch.distributed.ReduceOp.MAX)
+        max_iter = iters_cuda[0].item()
+
+        # We should now have all the same iteration.
+        # If not, print a warning and chose the maximum
+        # iteration across all ranks.
+        if iteration != max_iter:
+            rank = torch.distributed.get_rank()
+            print(
+                "WARNING: on rank {} found iteration {} in the "
+                "metadata while max iteration across the ranks "
+                "is {}, replacing it with max iteration.".format(rank, iteration, max_iter),
+                flush=True,
+            )
+    else:
+        # When loading a checkpoint outside of training (for example,
+        # when editing it), we might not have torch distributed
+        # initialized, in this case, just assume we have the latest
+        max_iter = iteration
+    return max_iter, release
 
 
 @lru_cache()
@@ -281,6 +351,41 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
         raise RuntimeError(config_obj[0]["msg"])
 
     return config_obj[0]
+
+
+def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
+    """Extract and convert legacy Megatron-LM args from checkpoint state_dict to Megatron-Bridge config format.
+
+    Args:
+        state_dict: The loaded checkpoint state dictionary.
+
+    Returns:
+        A dictionary in Megatron-Bridge config format with the essential fields.
+
+    Raises:
+        RuntimeError: If args are not found in the state_dict.
+    """
+    if "args" not in state_dict:
+        raise RuntimeError("Legacy checkpoint missing 'args' field in state_dict")
+
+    args = state_dict["args"]
+
+    # Convert args to minimal config container dict format
+    config = {
+        "model": {
+            "tensor_model_parallel_size": getattr(args, "tensor_model_parallel_size", 1),
+            "pipeline_model_parallel_size": getattr(args, "pipeline_model_parallel_size", 1),
+            "encoder_tensor_model_parallel_size": getattr(args, "encoder_tensor_model_parallel_size", 0),
+            "encoder_pipeline_model_parallel_size": getattr(args, "encoder_pipeline_model_parallel_size", 0),
+        },
+        "checkpoint": {
+            "save_optim": not getattr(args, "no_save_optim", False),  # Invert no_save_optim
+            "save_rng": not getattr(args, "no_save_rng", False),  # Invert no_save_rng
+            "fully_parallel_save": getattr(args, "ckpt_fully_parallel_save", False),
+        },
+    }
+
+    return config
 
 
 # ============================================================================
@@ -507,7 +612,7 @@ def save_checkpoint(
         )
 
     state_dict = generate_state_dict(
-        cfg,
+        cfg.checkpoint,
         model,
         optimizer,
         opt_param_scheduler,
@@ -764,12 +869,38 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     torch.save(dataloader_save_dict, data_state_save_path)
 
 
+def _generate_model_state_dict(
+    model: list[MegatronModule],
+    model_sd_kwargs: Optional[dict[str, Any]] = None,
+) -> dict[str, ShardedStateDict]:
+    """Generate the model subset of the state dictionary to be saved in a checkpoint.
+
+    Can be added to the full checkpoint state dictionary with dict.update().
+
+    Args:
+        model: The model module(s).
+        model_sd_kwargs: Metadata for model state dict generation.
+
+    Returns:
+        A dictionary containing the model state to be saved.
+    """
+    state_dict = {}
+
+    if len(model) == 1:
+        state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
+    else:
+        for i in range(len(model)):
+            state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
+
+    return state_dict
+
+
 def generate_state_dict(
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     model: list[MegatronModule],
     optimizer: Optional[MegatronOptimizer],
     opt_param_scheduler: Optional[Any],
-    rng_state: ShardedObject,
+    rng_state: Optional[ShardedObject],
     iteration: Optional[int] = None,
     optim_sd_kwargs: Optional[dict[str, Any]] = None,
     model_sd_kwargs: Optional[dict[str, Any]] = None,
@@ -797,14 +928,10 @@ def generate_state_dict(
     if iteration is not None:
         state_dict["iteration"] = iteration
 
-    if len(model) == 1:
-        state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
-    else:
-        for i in range(len(model)):
-            state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
+    state_dict.update(_generate_model_state_dict(model, model_sd_kwargs))
 
     # Optimizer stuff.
-    if cfg.checkpoint.save_optim:
+    if ckpt_cfg.save_optim:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
             state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
         if opt_param_scheduler is not None:
@@ -814,9 +941,81 @@ def generate_state_dict(
     state_dict["rerun_state_machine"] = rerun_state
 
     # RNG states.
-    if cfg.checkpoint.save_rng:
+    if ckpt_cfg.save_rng:
         state_dict["rng_state"] = rng_state
     return state_dict
+
+
+def _load_model_weights_from_checkpoint(
+    checkpoint_path: str,
+    model: list[MegatronModule],
+    fully_parallel_load: bool = False,
+    return_state_dict: bool = False,
+    dist_ckpt_strictness: Literal[
+        "assume_ok_unexpected",
+        "log_unexpected",
+        "log_all",
+        "raise_unexpected",
+        "raise_all",
+        "return_unexpected",
+        "return_all",
+        "ignore_all",
+    ] = "assume_ok_unexpected",
+    strict: bool = True,
+) -> Optional[Union[StateDict, tuple[StateDict, set[str], set[str]]]]:
+    """Load model weights from a checkpoint.
+
+    MCore distributed checkpoints from both Megatron Bridge and MegatronLM are supported.
+    This function duplicates some logic from load_checkpoint() to simplify model
+    loading for inference.
+
+    Args:
+        checkpoint_path: path to a distributed checkpoint.
+        model: The model module(s) to load weights into.
+        fully_parallel_load: Apply full load parallelization across DP.
+        return_state_dict: Skips loading state dict into model and returns model state dict
+            itself. Default False.
+        dist_ckpt_strictness: Determine handling of key mismatch during checkpoint load.
+        strict: Whether to enforce strict loading (see torch.nn.Module.load_state_dict).
+    """
+
+    state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
+    assert state_dict is not None
+
+    sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
+    print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
+    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
+
+    if has_nvidia_modelopt:
+        restore_modelopt_state(model, state_dict)
+
+    model = unwrap_model(model)
+    sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
+
+    load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+    if fully_parallel_load:
+        load_strategy = FullyParallelLoadStrategyWrapper(
+            load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
+        )
+    state_dict = dist_checkpointing.load(
+        sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
+    )
+    if return_state_dict:
+        return state_dict
+
+    if len(model) == 1:
+        _load_model_state_dict(model[0], state_dict["model"], strict)
+    else:
+        for i in range(len(model)):
+            # If there is no corresponding model in the state_dict, it will be ignored.
+            # It means that this is an empty stage.
+            model_key = "model%d" % i
+            if model_key not in state_dict:
+                continue
+            _load_model_state_dict(model[i], state_dict[model_key], strict)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
 
 
 def load_checkpoint(
@@ -869,6 +1068,17 @@ def load_checkpoint(
     )
 
 
+def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
+    """Helper function to load state dict with fallback for missing extra states."""
+    try:
+        module.load_state_dict(state_dict, strict=strict)
+    except Exception:
+        if strict:
+            # Fallback support for backward compatibility breaking changes in TransformerEngine
+            load_return = module.load_state_dict(state_dict, strict=False)
+            print(f"load_return: {load_return}")
+
+
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -904,7 +1114,7 @@ def _load_checkpoint_from_path(
     load_kwargs = {}
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir,
-        cfg,
+        cfg.checkpoint,
         rank0=True,
         checkpointing_context=checkpointing_context,
     )
@@ -914,7 +1124,16 @@ def _load_checkpoint_from_path(
         # Iteration and num_floating_point_operations_so_far default to 0.
         return 0, 0
 
-    run_config = read_run_config(get_checkpoint_run_config_filename(checkpoint_name))
+    # Try to read run_config.yaml first
+    # If that fails, we are loading from a Megatron-LM checkpoint, so extract the corresponding values
+    # from args in the state_dict
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+    if os.path.exists(run_config_filename):
+        run_config = read_run_config(run_config_filename)
+    else:
+        # Fallback to legacy Megatron-LM args extraction
+        print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
+        run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
 
     # TODO: Make read_run_config() return a ConfigContainer object
     ckpt_tp_pp = (
@@ -1011,7 +1230,7 @@ def _load_checkpoint_from_path(
             for m in model:
                 stack.enter_context(m.hide_loss_modules())
         load_kwargs["sharded_state_dict"] = generate_state_dict(
-            cfg,
+            cfg.checkpoint,
             model,
             gen_sd_optim,
             gen_sd_opt_param_scheduler,
@@ -1040,7 +1259,7 @@ def _load_checkpoint_from_path(
         )
 
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
-        load_dir, cfg, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
+        load_dir, cfg.checkpoint, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
     )
 
     # Set checkpoint version.
@@ -1052,7 +1271,15 @@ def _load_checkpoint_from_path(
     assert state.train_state.consumed_valid_samples == 0
 
     if not cfg.checkpoint.finetune:
-        state.train_state = read_train_state(get_checkpoint_train_state_filename(checkpoint_name))
+        # Try to read train_state.pt from checkpoint directory
+        # If it doesn't exist (checkpoint generated by Megatron-LM), create from available information
+        train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
+        if os.path.exists(train_state_filename):
+            state.train_state = read_train_state(train_state_filename)
+        else:
+            # Legacy Megatron-LM checkpoint - create TrainState from checkpoint iteration
+            print_rank_0(f"{train_state_filename} not found, creating TrainState from checkpoint state dict")
+            state.train_state = _get_train_state_from_state_dict(state_dict)
 
     # Set iteration.
     if cfg.checkpoint.finetune or release:
@@ -1062,21 +1289,11 @@ def _load_checkpoint_from_path(
         # check_checkpoint_args(checkpoint_args)
         update_num_microbatches(consumed_samples=state.train_state.consumed_train_samples, verbose=True)
 
-    def load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
-        """Helper function to load state dict with fallback for missing extra states."""
-        try:
-            module.load_state_dict(state_dict, strict=strict)
-        except Exception:
-            if strict:
-                # Fallback support for backward compatibility breaking changes in TransformerEngine
-                load_return = module.load_state_dict(state_dict, strict=False)
-                print(f"load_return: {load_return}")
-
     # Model.
     if not skip_load_to_model_and_opt:
         load_strict = False if is_peft_resume else strict
         if len(model) == 1:
-            load_model_state_dict(model[0], state_dict["model"], load_strict)
+            _load_model_state_dict(model[0], state_dict["model"], load_strict)
         else:
             for i in range(len(model)):
                 # If there is no corresponding model in the state_dict, it will be ignored.
@@ -1084,7 +1301,7 @@ def _load_checkpoint_from_path(
                 model_key = "model%d" % i
                 if model_key not in state_dict:
                     continue
-                load_model_state_dict(model[i], state_dict[model_key], load_strict)
+                _load_model_state_dict(model[i], state_dict[model_key], load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
@@ -1372,13 +1589,13 @@ def _transpose_first_dim(
 
 def _get_non_persistent_iteration(
     non_persistent_global_dir: str,
-    cfg: ConfigContainer,
+    non_persistent_ckpt_type: Optional[Literal["global", "local"]] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
 ) -> int:
     """Get iteration number from non-persistent checkpoint."""
-    if cfg.checkpoint.non_persistent_ckpt_type is None:
+    if non_persistent_ckpt_type is None:
         return -1
-    elif cfg.checkpoint.non_persistent_ckpt_type == "global":
+    elif non_persistent_ckpt_type == "global":
         train_state_filename = get_checkpoint_train_state_filename(non_persistent_global_dir, prefix=TRACKER_PREFIX)
         if os.path.isfile(train_state_filename):
             train_state = read_train_state(train_state_filename)
@@ -1390,53 +1607,51 @@ def _get_non_persistent_iteration(
             print_rank_0("WARNING: could not find the metadata file {}".format(train_state_filename))
             print_rank_0("    will not load any non-persistent checkpoint")
         return iteration
-    elif cfg.checkpoint.non_persistent_ckpt_type == "local":
+    elif non_persistent_ckpt_type == "local":
         return checkpointing_context["local_checkpoint_manager"].find_latest()
     else:
-        raise ValueError(
-            f"Please use local or global non-persistent checkpoints. Got: {cfg.checkpoint.non_persistent_ckpt_type})"
-        )
+        raise ValueError(f"Please use local or global non-persistent checkpoints. Got: {non_persistent_ckpt_type})")
 
 
 def _load_non_persistent_base_checkpoint(
     non_persistent_global_dir: str,
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
     non_persistent_iteration: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
     """Load the base state_dict from a non-persistent distributed checkpoint."""
-    assert cfg.checkpoint.non_persistent_ckpt_type is not None
-    if cfg.checkpoint.non_persistent_ckpt_type == "global":
+    assert ckpt_cfg.non_persistent_ckpt_type is not None
+    if ckpt_cfg.non_persistent_ckpt_type == "global":
         if not rank0:
             print_rank_0(f"Loading from a non-persistent checkpoint (non-persistent iter {non_persistent_iteration})")
         return _load_global_dist_base_checkpoint(
             non_persistent_global_dir,
-            cfg,
+            ckpt_cfg,
             rank0,
             sharded_state_dict,
             non_persistent_iteration,
             False,
             checkpointing_context=checkpointing_context,
         )
-    elif cfg.checkpoint.non_persistent_ckpt_type == "local":
+    elif ckpt_cfg.non_persistent_ckpt_type == "local":
         intermediate_state_dict, checkpoint_name = checkpointing_context["local_checkpoint_manager"].load()
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
-            algo=cfg.checkpoint.non_persistent_local_ckpt_algo,
+            algo=ckpt_cfg.non_persistent_local_ckpt_algo,
             parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
         raise ValueError(
-            f"Please use local or global non-persistent checkpoints. Got: {cfg.checkpoint.non_persistent_ckpt_type})"
+            f"Please use local or global non-persistent checkpoints. Got: {ckpt_cfg.non_persistent_ckpt_type})"
         )
 
 
 def _load_global_dist_base_checkpoint(
     load_dir: str,
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
     iteration: int,
@@ -1454,21 +1669,21 @@ def _load_global_dist_base_checkpoint(
 
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
-    if cfg.checkpoint.fully_parallel_load:
+    if ckpt_cfg.fully_parallel_load:
         load_strategy = FullyParallelLoadStrategyWrapper(
             load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
         )
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     state_dict = dist_checkpointing.load(
-        sharded_state_dict, checkpoint_name, load_strategy, strict=cfg.checkpoint.dist_ckpt_strictness
+        sharded_state_dict, checkpoint_name, load_strategy, strict=ckpt_cfg.dist_ckpt_strictness
     )
     return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
 
 def _load_base_checkpoint(
     load_dir: Optional[str],
-    cfg: ConfigContainer,
+    ckpt_cfg: CheckpointConfig,
     rank0: bool = False,
     sharded_state_dict: Optional[dict[str, Any]] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
@@ -1476,11 +1691,13 @@ def _load_base_checkpoint(
     """Load the base state_dict from the given directory."""
     # Try to load non-persistent checkpoint first
     non_persistent_global_dir = (
-        cfg.checkpoint.non_persistent_global_ckpt_dir
-        if cfg.checkpoint.non_persistent_global_ckpt_dir or load_dir is None
+        ckpt_cfg.non_persistent_global_ckpt_dir
+        if ckpt_cfg.non_persistent_global_ckpt_dir or load_dir is None
         else os.path.join(load_dir, _NON_PERSISTENT_CKPT_SUBDIR)
     )
-    non_persistent_iteration = _get_non_persistent_iteration(non_persistent_global_dir, cfg, checkpointing_context)
+    non_persistent_iteration = _get_non_persistent_iteration(
+        non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
+    )
     iteration, release = -1, False
     tracker_filename = "because load directory is not defined"
     if load_dir is not None:
@@ -1489,11 +1706,18 @@ def _load_base_checkpoint(
             train_state = read_train_state(tracker_filename)
             iteration = train_state.step
             # release = train_state.release
+        else:
+            # Fallback to legacy Megatron-LM tracker file format
+            legacy_tracker_filename = get_checkpoint_tracker_filename(load_dir)
+            if os.path.isfile(legacy_tracker_filename):
+                print_rank_0(f"Loading from legacy Megatron-LM checkpoint format: {legacy_tracker_filename}")
+                iteration, release = read_metadata(legacy_tracker_filename)
+                tracker_filename = legacy_tracker_filename  # Update for error messages
     if non_persistent_iteration != -1:  # there is a non-persistent checkpoint
         if non_persistent_iteration >= iteration:
             return _load_non_persistent_base_checkpoint(
                 non_persistent_global_dir,
-                cfg,
+                ckpt_cfg,
                 rank0,
                 sharded_state_dict,
                 non_persistent_iteration,
@@ -1509,7 +1733,7 @@ def _load_base_checkpoint(
             print_rank_0("WARNING: could not find the metadata file {}".format(tracker_filename))
             print_rank_0("    will not load any checkpoints and will start from random")
         # Conditionally exit if checkpoint not found.
-        if cfg.checkpoint.exit_on_missing_checkpoint:
+        if ckpt_cfg.exit_on_missing_checkpoint:
             print_rank_0(">> '--exit-on-missing-checkpoint' set ... exiting. <<")
             if torch.distributed.is_initialized():
                 torch.distributed.barrier()
@@ -1530,7 +1754,13 @@ def _load_base_checkpoint(
     # Handle global distributed checkpoint
     if is_dist_ckpt:
         return _load_global_dist_base_checkpoint(
-            load_dir, cfg, rank0, sharded_state_dict, iteration, release, checkpointing_context=checkpointing_context
+            load_dir,
+            ckpt_cfg,
+            rank0,
+            sharded_state_dict,
+            iteration,
+            release,
+            checkpointing_context=checkpointing_context,
         )
     else:
         # This path implies a non-distributed checkpoint, which is no longer supported.
@@ -1562,3 +1792,28 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, ckpt_ful
         else:
             metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
     return metadata
+
+
+def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
+    """Create a TrainState from the state dict from a Megatron-LM checkpoint."""
+    legacy_train_state = TrainState()
+    legacy_train_state.step = state_dict.get("iteration", 0)
+
+    # Extract training progress from checkpoint args (like Megatron-LM does)
+    checkpoint_args = state_dict.get("args", None)
+    if checkpoint_args is not None:
+        legacy_train_state.consumed_train_samples = getattr(checkpoint_args, "consumed_train_samples", 0)
+        legacy_train_state.skipped_train_samples = getattr(checkpoint_args, "skipped_train_samples", 0)
+        legacy_train_state.consumed_valid_samples = getattr(checkpoint_args, "consumed_valid_samples", 0)
+    else:
+        # Fallback if args not found
+        legacy_train_state.consumed_train_samples = 0
+        legacy_train_state.skipped_train_samples = 0
+        legacy_train_state.consumed_valid_samples = 0
+
+    # Extract floating point operations count from state_dict (like Megatron-LM does)
+    legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
+    legacy_train_state.do_train = False
+    legacy_train_state.do_valid = False
+    legacy_train_state.do_test = False
+    return legacy_train_state

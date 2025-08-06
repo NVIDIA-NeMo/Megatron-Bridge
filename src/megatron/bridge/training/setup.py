@@ -18,6 +18,7 @@ from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
 import torch
+from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -121,6 +122,9 @@ def setup(
 
     state = GlobalState()
     state.cfg = cfg
+
+    # Conditionally enable experimental features for Megatron Core
+    set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
 
     # Initialize async checkpoint worker if enabled
     init_async_checkpoint_worker(state)

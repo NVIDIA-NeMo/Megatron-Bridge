@@ -22,7 +22,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.gpt_provider import get_vocab_size
-from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin
 
 
 logger = logging.getLogger(__name__)

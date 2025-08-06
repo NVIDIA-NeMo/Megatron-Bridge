@@ -25,7 +25,7 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     Returns a table comparing weights between a Hugging Face model and a Megatron-LM model.
 
     Args:
-        bridge (CausalLMBridge): The bridge object containing model information.
+        bridge (AutoBridge): The bridge object containing model information.
         megatron_model: The Megatron-LM model instance.
 
     Returns:

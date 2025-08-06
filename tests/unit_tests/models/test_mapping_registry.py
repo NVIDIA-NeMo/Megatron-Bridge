@@ -14,8 +14,8 @@
 
 import pytest
 
-from megatron.bridge.models.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.param_mapping import DirectMapping, QKVMapping
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.param_mapping import DirectMapping, QKVMapping
 
 
 class TestMegatronMappingRegistry:
@@ -323,13 +323,13 @@ class TestMegatronMappingRegistryEdgeCases:
 
     def test_describe_formatting(self):
         """Test the describe method formatting with various bridge types."""
-        from megatron.bridge.models.param_mapping import GatedMLPMapping, TPAwareMapping
+        from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
 
         mappings = [
             DirectMapping("a.weight", "b.weight"),
             QKVMapping("c.qkv", q="d.q", k="d.k", v="d.v"),
             GatedMLPMapping("e.mlp", gate="f.gate", up="f.up"),
-            TPAwareMapping(megatron_param="g.*.weight", hf_param="h.*.weight"),
+            AutoMapping(megatron_param="g.*.weight", hf_param="h.*.weight"),
         ]
         bridge = MegatronMappingRegistry(*mappings)
 
@@ -356,7 +356,7 @@ class TestMegatronMappingRegistryEdgeCases:
 
         assert "4. g.*.weight" in description
         assert "→ h.*.weight" in description
-        assert "bridge: TPAwareMapping" in description
+        assert "bridge: AutoMapping" in description
 
     def test_initialization_with_list(self):
         """Test that MegatronMappingRegistry can be initialized from a list using *."""

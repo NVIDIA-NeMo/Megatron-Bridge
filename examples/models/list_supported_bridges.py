@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge import CausalLMBridge
+from megatron.bridge import AutoBridge
 
 
 def main() -> None:
-    """List all HuggingFace model architectures supported by the CausalLMBridge."""
-    supported_models = CausalLMBridge.list_supported_models()
+    """List all HuggingFace model architectures supported by the AutoBridge."""
+    supported_models = AutoBridge.list_supported_models()
 
-    print("🚀 Megatron-Hub CausalLM Bridge - Supported Models")
+    print("🚀 Megatron-Bridge AutoBridge - Supported Models")
     print("=" * 50)
     print()
 
@@ -37,7 +37,7 @@ def main() -> None:
     print()
     print("💡 Usage:")
     print("   To use any of these models, you can load them with:")
-    print("   >>> bridge = CausalLMBridge.from_hf_pretrained('model_name')")
+    print("   >>> bridge = AutoBridge.from_hf_pretrained('model_name')")
     print("   >>> model = bridge.to_megatron_model()")
     print()
     print("🔍 Model Bridge Details:")

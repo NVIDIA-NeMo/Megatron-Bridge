@@ -15,7 +15,7 @@
 import dataclasses
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, Literal, Type, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, Iterable, Type, TypeVar, Union
 
 import torch.distributed
 import transformers
@@ -25,27 +25,28 @@ from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
-from megatron.bridge.models import model_bridge
+from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.model_bridge import WeightDistributionMode
-from megatron.bridge.models.model_provider_mixin import GetModelKwargs, ModelProviderMixin
-from megatron.bridge.models.state import SafeTensorsStateSource
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.model_provider import GetModelKwargs, ModelProviderMixin
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.model_bridge import HFWeightTuple, MegatronModelBridge
+    from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
 
 
-MegatronModelT = TypeVar("ModelT", bound=MegatronModule)
+MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
 
 
-class CausalLMBridge(Generic[MegatronModelT]):
+class AutoBridge(Generic[MegatronModelT]):
     """
-    Bridge for converting Causal Language Models between HuggingFace and Megatron formats.
+    Automatically select and instantiate the appropriate bridge for a model.
 
-    This bridge handles the conversion of causal language models (e.g., GPT, Llama, Phi)
+    This unified bridge class combines automatic model detection with full bridge
+    functionality for converting models between HuggingFace and Megatron formats.
+    It handles the conversion of causal language models (e.g., GPT, Llama, Phi)
     between HuggingFace's transformers library format and Megatron-Core's distributed
     training format. It manages weight mapping, tensor parallelism distribution, and
     configuration translation.
@@ -60,7 +61,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
     Example:
         >>> # Load and convert a model to Megatron format
-        >>> bridge = CausalLMBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
         >>> provider = bridge.to_megatron_provider()
         >>> megatron_model = provider(wrap_with_ddp=False)
 
@@ -70,10 +71,13 @@ class CausalLMBridge(Generic[MegatronModelT]):
         >>> # Convert weights with custom settings
         >>> for name, weight in bridge.export_hf_weights(
         ...     megatron_model,
-        ...     order="safetensors",
-        ...     mode="consolidate"
+        ...     cpu=True
         ... ):
         ...     print(f"Exported {name}: {weight.shape}")
+
+        >>> # Check if a model is supported before loading
+        >>> if AutoBridge.can_handle("microsoft/phi-2"):
+        ...     bridge = AutoBridge.from_hf_pretrained("microsoft/phi-2")
 
     Note:
         The bridge automatically detects the model architecture and applies
@@ -126,9 +130,9 @@ class CausalLMBridge(Generic[MegatronModelT]):
         return any(arch.endswith("ForCausalLM") for arch in architectures)
 
     @classmethod
-    def from_hf_config(cls, config: PretrainedConfig) -> "CausalLMBridge":
+    def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
         """
-        Create a CausalLMBridge from a HuggingFace configuration.
+        Create an AutoBridge from a HuggingFace configuration.
 
         This method creates a bridge instance from just a model configuration,
         without loading any weights. This is useful for:
@@ -141,7 +145,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
                 architecture information
 
         Returns:
-            CausalLMBridge: Bridge instance configured for the architecture
+            AutoBridge: Bridge instance configured for the architecture
 
         Raises:
             ValueError: If the configuration is not for a supported CausalLM model
@@ -153,7 +157,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> config = AutoConfig.from_pretrained("meta-llama/Llama-3-8B")
             >>>
             >>> # Create bridge from config (no weights)
-            >>> bridge = CausalLMBridge.from_hf_config(config)
+            >>> bridge = AutoBridge.from_hf_config(config)
             >>>
             >>> # Create Megatron model with random initialization
             >>> provider = bridge.to_megatron_provider(load_weights=False)
@@ -172,9 +176,9 @@ class CausalLMBridge(Generic[MegatronModelT]):
         return cls(config)
 
     @classmethod
-    def from_hf_pretrained(cls, path: str | Path, **kwargs) -> "CausalLMBridge":
+    def from_hf_pretrained(cls, path: Union[str, Path], **kwargs) -> "AutoBridge":
         """
-        Load a CausalLMBridge from a pretrained model.
+        Load an AutoBridge from a pretrained model, automatically detecting the model type.
 
         This method loads a model from HuggingFace Hub or a local directory and
         creates a bridge instance ready for conversion operations. The model
@@ -191,47 +195,79 @@ class CausalLMBridge(Generic[MegatronModelT]):
                 - attn_implementation: Attention implementation ("flash_attention_2", etc.)
 
         Returns:
-            CausalLMBridge: Bridge instance with loaded model
+            AutoBridge: Bridge instance with loaded model
 
         Raises:
             ValueError: If the model architecture is not supported
 
         Example:
             >>> # Basic loading
-            >>> bridge = CausalLMBridge.from_hf_pretrained("gpt2")
+            >>> bridge = AutoBridge.from_hf_pretrained("gpt2")
 
             >>> # Load with specific settings
-            >>> bridge = CausalLMBridge.from_hf_pretrained(
+            >>> bridge = AutoBridge.from_hf_pretrained(
             ...     "meta-llama/Llama-3-8B",
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
             ... )
+
+            >>> # Works with local paths too
+            >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
         # First load just the config to check architecture support
-        config = AutoConfig.from_pretrained(path)
-        cls._validate_config(config, path)
+        try:
+            config = AutoConfig.from_pretrained(path, trust_remote_code=kwargs.get("trust_remote_code", False))
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load configuration from {path}. "
+                f"Ensure the path is valid and contains a config.json file. "
+                f"Error: {e}"
+            )
 
-        return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
+        cls._validate_config(config, str(path))
 
-    @overload
+        try:
+            return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
+        except Exception as e:
+            raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
+
+    @classmethod
+    def can_handle(cls, path: Union[str, Path], trust_remote_code: bool = False) -> bool:
+        """
+        Check if the bridge can handle the model at the given path.
+
+        This method allows you to verify model compatibility before attempting
+        to load it, which can be useful for validation or UI feedback.
+
+        Args:
+            path: Path to model directory or HuggingFace model ID
+                Examples: "meta-llama/Llama-3-8B", "/models/my_model"
+            trust_remote_code: Whether to trust remote code when loading config.
+                Set to True for models that use custom modeling code.
+
+        Returns:
+            bool: True if the bridge supports the model, False otherwise
+
+        Example:
+            >>> # Check if a model is supported
+            >>> if AutoBridge.can_handle("meta-llama/Llama-3-8B"):
+            ...     print("Model is supported!")
+            ... else:
+            ...     print("Model requires a custom bridge implementation")
+        """
+        try:
+            config = AutoConfig.from_pretrained(path, trust_remote_code=trust_remote_code)
+            return cls.supports(config)
+        except Exception:
+            return False
+
     def __call__(
         self,
         model: list[MegatronModelT],
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
         cpu: bool = False,
         show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
-    ) -> Iterable["HFWeightTuple"]: ...
-
-    def __call__(
-        self,
-        model,
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
-        cpu: bool = False,
-        show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
     ) -> Iterable["HFWeightTuple"]:
-        return self.export_hf_weights(model=model, order=order, cpu=cpu, show_progress=show_progress, mode=mode)
+        return self.export_hf_weights(model=model, cpu=cpu, show_progress=show_progress)
 
     def load_hf_weights(self, model: list[MegatronModelT], hf_path: str | Path | None = None) -> None:
         """
@@ -254,7 +290,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Load weights from bridge's pretrained model
-            >>> bridge = CausalLMBridge.from_hf_pretrained("gpt2")
+            >>> bridge = AutoBridge.from_hf_pretrained("gpt2")
             >>> megatron_model = create_megatron_model()  # Your model creation
             >>> bridge.load_hf_weights(megatron_model)
 
@@ -271,43 +307,23 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         return model
 
-    @overload
     def export_hf_weights(
         self,
         model: list[MegatronModelT],
-        order: Literal["megatron", "hf", "safetensors"] = "megatron",
         cpu: bool = False,
         show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
-    ) -> Iterable["HFWeightTuple"]: ...
-
-    def export_hf_weights(
-        self,
-        model,
-        order: Literal["megatron", "hf", "safetensors"] = "safetensors",
-        cpu: bool = False,
-        show_progress: bool = True,
-        mode: Union[str, WeightDistributionMode] = WeightDistributionMode.CONSOLIDATE,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
 
         This method yields weight tensors in HuggingFace format, handling the
         gathering of distributed tensors and format conversion. It's useful for
-        streaming weight export or custom processing.
+        streaming weight export or custom processing. All ranks get full tensors.
 
         Args:
             model: Megatron model instance or list of instances
-            order: Export order for weights
-                - "megatron": Follow Megatron's parameter order
-                - "hf": Follow HuggingFace state dict order
-                - "safetensors": Group by safetensors file, then by key
             cpu: Whether to move tensors to CPU before yielding
             show_progress: Display progress bar during export
-            mode: Weight distribution mode
-                - "consolidate": Gather to rank 0
-                - "replicate": All ranks get full tensors
-                - "distribute": Each rank keeps its shard
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor)
@@ -320,20 +336,15 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> # Export with specific settings
             >>> weights = list(bridge.export_hf_weights(
             ...     model,
-            ...     order="safetensors",
-            ...     cpu=True,
-            ...     mode="replicate"  # All ranks get full weights
+            ...     cpu=True
             ... ))
         """
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance, model, self.hf_pretrained, order=order, cpu=cpu, show_progress=show_progress, mode=mode
+            dispatch_instance, model, self.hf_pretrained, cpu=cpu, show_progress=show_progress
         )
 
-    @overload
-    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path) -> None: ...
-
-    def save_hf_pretrained(self, model, path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
@@ -369,10 +380,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         self.save_hf_weights(model, path, show_progress)
 
-    @overload
-    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None: ...
-
-    def save_hf_weights(self, model, path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 
@@ -409,7 +417,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
             torch.distributed.barrier()
         dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
-            dispatch_instance, model, self.hf_pretrained, order="safetensors", cpu=True, show_progress=show_progress
+            dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
         )
 
         # Check if the state source is SafeTensorsStateSource for streaming save.
@@ -425,11 +433,195 @@ class CausalLMBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
 
-    def save_megatron_model(self, model, path: str | Path, ckpt_format: str = "torch_dist") -> None:
-        raise NotImplementedError
+    def save_megatron_model(self, model: list[MegatronModule], path: str | Path) -> None:
+        """
+        Save a Megatron model in native Megatron checkpoint format without optimizer
+        state.
+
+        This method saves the model in Megatron's native checkpoint format, which
+        can be loaded directly by Megatron for training or inference. The checkpoint
+        includes the model configuration and weights, NO optimizer state or other
+        artifacts.
+
+        Args:
+            model: Megatron model instance or list of instances
+            path: Directory path where the checkpoint will be saved
+            ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats)
+
+        Example:
+            >>> # Save model checkpoint after conversion
+            >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+        Note:
+            - This method is collective and must be called by all ranks
+            - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
+            - The checkpoint format follows Megatron's standard structure for compatibility
+        """
+        try:
+            from megatron.bridge.training.model_load_save import save_megatron_model
+        except ImportError:
+            raise ImportError("megatron.bridge.training is not available.")
+        save_megatron_model(model, path)
 
     def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
-        raise NotImplementedError
+        """
+        Load a Megatron model from a native Megatron checkpoint.
+
+        This method loads a model from a Megatron checkpoint that was saved using
+        the save_megatron_model method. It reads the checkpoint configuration,
+        creates the appropriate model provider, and loads the weights.
+
+        Args:
+            path: Directory path where the Megatron checkpoint is stored
+            **kwargs: Additional arguments passed to the model provider
+
+        Returns:
+            List of Megatron model instances loaded from the checkpoint
+
+        Example:
+            >>> # Load a previously saved Megatron model
+            >>> bridge = AutoBridge.from_hf_config(config)
+            >>> model = bridge.load_megatron_model("./megatron_checkpoint")
+
+            >>> # Load and specify model configuration
+            >>> model = bridge.load_megatron_model(
+            ...     "./megatron_checkpoint",
+            ...     wrap_with_ddp=False
+            ... )
+
+        Note:
+            - This method is collective and must be called by all ranks
+            - The checkpoint must have been saved with save_megatron_model
+            - The model architecture must match the bridge configuration
+        """
+        try:
+            from megatron.bridge.training.model_load_save import load_megatron_model
+        except ImportError:
+            raise ImportError("megatron.bridge.training is not available.")
+
+        checkpoint_path = Path(path)
+
+        # Check for iter_* folders
+        iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
+
+        if iter_folders:
+            # Find the folder with the largest iteration number
+            def get_iter_number(folder_name):
+                try:
+                    return int(folder_name.replace("iter_", ""))
+                except ValueError:
+                    return -1  # Invalid format, put at the end
+
+            latest_iter = max(iter_folders, key=lambda f: get_iter_number(f.name))
+            checkpoint_path = checkpoint_path / latest_iter.name
+        # else: checkpoint_path remains as the input path (no iter folders found)
+
+        # Load the state dict
+        model = load_megatron_model(
+            str(checkpoint_path),
+            use_cpu_init=True,
+        )
+        return model if isinstance(model, list) else [model]
+
+    @classmethod
+    def import_ckpt(
+        cls,
+        hf_model_id: str | Path,
+        megatron_path: str | Path,
+        **kwargs,
+    ) -> None:
+        """
+        Import a HuggingFace model and save it as a Megatron checkpoint.
+
+        This is a convenience method that combines loading a HuggingFace model,
+        converting it to Megatron format, and saving it as a native Megatron
+        checkpoint. This is useful for preparing models for Megatron training
+        or creating Megatron checkpoints from pretrained HuggingFace models.
+
+        Args:
+            hf_model_id: HuggingFace model ID or path to model directory
+                Examples: "meta-llama/Llama-3-8B", "./my_model"
+            megatron_path: Directory path where the Megatron checkpoint will be saved
+            **kwargs: Additional arguments passed to from_hf_pretrained
+                Common options include:
+                - torch_dtype: Model precision (torch.float16, torch.bfloat16)
+                - device_map: Device placement strategy ("auto", "cuda:0", etc.)
+                - trust_remote_code: Allow custom model code execution
+                - attn_implementation: Attention implementation ("flash_attention_2", etc.)
+
+        Example:
+            >>> # Basic import
+            >>> AutoBridge.import_ckpt(
+            ...     "meta-llama/Llama-3-8B",
+            ...     "./megatron_checkpoints/llama3_8b"
+            ... )
+
+            >>> # Import with specific settings
+            >>> AutoBridge.import_ckpt(
+            ...     "meta-llama/Llama-3-8B",
+            ...     "./megatron_checkpoints/llama3_8b",
+            ...     torch_dtype=torch.float16,
+            ...     device_map="auto"
+            ... )
+        """
+        # Load the HuggingFace model
+        bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
+
+        # Convert to Megatron model
+        megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+
+        # Save as Megatron checkpoint
+        bridge.save_megatron_model(megatron_model, megatron_path)
+
+    def export_ckpt(
+        self,
+        megatron_path: str | Path,
+        hf_path: str | Path,
+        show_progress: bool = True,
+    ) -> None:
+        """
+        Export a Megatron checkpoint to HuggingFace format.
+
+        This is a convenience method that loads a Megatron checkpoint and
+        exports it to HuggingFace format. This is useful for sharing trained
+        models or deploying them with HuggingFace inference tools.
+
+        Args:
+            megatron_path: Directory path where the Megatron checkpoint is stored
+            hf_path: Directory path where the HuggingFace model will be saved
+            show_progress: Display progress bar during weight export
+
+        Example:
+            >>> # Basic export
+            >>> bridge = AutoBridge.from_hf_config(config)
+            >>> bridge.export_ckpt(
+            ...     "./megatron_checkpoints/my_model",
+            ...     "./hf_exports/my_model"
+            ... )
+
+            >>> # Export with specific settings
+            >>> bridge.export_ckpt(
+            ...     "./megatron_checkpoints/my_model",
+            ...     "./hf_exports/my_model",
+            ...     show_progress=False
+            ... )
+
+            >>> # Load the exported model with HuggingFace
+            >>> from transformers import AutoModelForCausalLM
+            >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
+        """
+        try:
+            from megatron.bridge.training.model_load_save import temporary_distributed_context
+        except ImportError:
+            raise ImportError("megatron.bridge.training is not available.")
+
+        # Export ckpt performs on CPU
+        with temporary_distributed_context(backend="gloo"):
+            # Load the Megatron model
+            megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
+
+            # Save in HuggingFace format
+            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
@@ -464,7 +656,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Create provider and model with loaded weights
-            >>> bridge = CausalLMBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
             >>> provider = bridge.to_megatron_provider()
             >>> model = provider.get_model()
 
@@ -473,7 +665,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
             >>> model = provider.get_model()  # Random initialization
 
             >>> # Load weights from a different checkpoint
-            >>> bridge = CausalLMBridge.from_hf_config(config)  # Config only
+            >>> bridge = AutoBridge.from_hf_config(config)  # Config only
             >>> provider = bridge.to_megatron_provider(hf_path="./finetuned_model")
             >>> model = provider.get_model()  # Loads finetuned weights
 
@@ -485,6 +677,8 @@ class CausalLMBridge(Generic[MegatronModelT]):
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
+            # Skip weights initialization since we are going to load weights
+            provider.perform_initialization = False
             if hf_path is None:
                 provider.register_pre_wrap_hook(
                     partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)
@@ -566,10 +760,10 @@ class CausalLMBridge(Generic[MegatronModelT]):
         if not cls.supports(config):
             architectures = getattr(config, "architectures", [])
             raise ValueError(
-                f"\n✗ Model architecture not supported by CausalLMBridge\n\n"
+                f"\n✗ Model architecture not supported by AutoBridge\n\n"
                 f"Model: {path}\n"
                 f"Architectures: {architectures}\n\n"
-                f"CausalLMBridge only supports models with architectures ending in 'ForCausalLM'.\n"
+                f"AutoBridge only supports models with architectures ending in 'ForCausalLM'.\n"
                 f"Found architectures that don't match this pattern.\n\n"
                 f"If this is a different model type (e.g., Vision, Sequence-to-Sequence),\n"
                 f"you may need to use a different bridge class."
@@ -607,7 +801,7 @@ class CausalLMBridge(Generic[MegatronModelT]):
                         f"2. Implement the required methods (provider_bridge, mapping_registry)\n"
                         f"3. Register it with @MegatronModelBridge.register_bridge decorator\n\n"
                         f"Example implementation:\n"
-                        f"  from megatron.bridge.models.model_bridge import MegatronModelBridge\n"
+                        f"  from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge\n"
                         f"  from transformers import {architecture}\n"
                         f"  from megatron.core.models.gpt import GPTModel\n\n"
                         f"  @MegatronModelBridge.register_bridge(source={architecture}, target=GPTModel)\n"
@@ -619,8 +813,8 @@ class CausalLMBridge(Generic[MegatronModelT]):
                         f"          # Return a MegatronMappingRegistry with weight mappings\n"
                         f"          ...\n\n"
                         f"For reference implementations, see:\n"
-                        f"  • src/megatron/hub/models/llama/llama_causal_bridge.py\n"
-                        f"  • src/megatron/hub/models/qwen/qwen_2_causal_bridge.py"
+                        f"  • src/megatron/bridge/models/llama/llama_bridge.py\n"
+                        f"  • src/megatron/bridge/models/qwen/qwen_2_causal_bridge.py"
                     ) from None
             except AttributeError:
                 raise ValueError(
@@ -661,15 +855,15 @@ class CausalLMBridge(Generic[MegatronModelT]):
         else:
             lines_for_build.append("  (hf_pretrained): ")  # Fallback for empty repr
 
-        # Format to_megatron dispatcher
-        tm_repr_actual_lines = repr(model_bridge.to_megatron).splitlines()
-        if tm_repr_actual_lines:
-            # First line of to_megatron part
-            lines_for_build.append(f"  (to_megatron): {tm_repr_actual_lines[0]}")
-            # Subsequent lines of to_megatron part, indented
-            for line in tm_repr_actual_lines[1:]:
+        # Format model bridge
+        mb_repr_actual_lines = repr(self._model_bridge).splitlines()
+        if mb_repr_actual_lines:
+            # First line of model bridge part
+            lines_for_build.append(f"  (model_bridge): {mb_repr_actual_lines[0]}")
+            # Subsequent lines of model bridge part, indented
+            for line in mb_repr_actual_lines[1:]:
                 lines_for_build.append(f"  {line}")
         else:
-            lines_for_build.append("  (to_megatron): ")  # Fallback for empty repr
+            lines_for_build.append("  (model_bridge): ")  # Fallback for empty repr
 
         return f"{class_name}(\n" + "\n".join(lines_for_build) + "\n)"

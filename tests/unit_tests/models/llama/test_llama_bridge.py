@@ -20,15 +20,15 @@ import pytest
 import torch
 from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
-from megatron.bridge.models.causal_bridge import CausalLMBridge
+from megatron.bridge.models import AutoBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama.llama_causal_bridge import LlamaCausalBridge
+from megatron.bridge.models.llama.llama_bridge import LlamaBridge
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
-from megatron.bridge.models.model_bridge import MegatronModelBridge
 
 
-class TestMegatronCausalLlamaBridge:
-    """Test cases for MegatronCausalLlamaBridge class."""
+class TestMegatronLlamaBridge:
+    """Test cases for MegatronLlamaBridge class."""
 
     @pytest.fixture
     def llama_3_2_1b_config_dict(self):
@@ -91,14 +91,14 @@ class TestMegatronCausalLlamaBridge:
         return mock_pretrained
 
     def test_bridge_registration(self):
-        """Test that MegatronCausalLlamaBridge is properly registered."""
+        """Test that MegatronLlamaBridge is properly registered."""
         # The @MegatronModelBridge.register_bridge decorator should register the bridge
         # Check that the class exists and has the expected base class
-        assert issubclass(LlamaCausalBridge, MegatronModelBridge)
+        assert issubclass(LlamaBridge, MegatronModelBridge)
 
     def test_provider_bridge_basic(self, mock_pretrained_llama, llama_config):
         """Test basic provider_bridge functionality."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_llama)
@@ -115,7 +115,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_llama, llama_config):
         """Test vocabulary size mapping."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -125,7 +125,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_attention_config(self, mock_pretrained_llama, llama_config):
         """Test attention configuration mapping."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -135,7 +135,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_llama, llama_config):
         """Test MLP configuration mapping."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -145,7 +145,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_normalization(self, mock_pretrained_llama, llama_config):
         """Test normalization configuration."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -154,7 +154,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_position_embedding(self, mock_pretrained_llama, llama_config):
         """Test position embedding configuration."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -163,7 +163,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_rope_scaling(self, mock_pretrained_llama, llama_config):
         """Test RoPE scaling configuration."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -181,7 +181,7 @@ class TestMegatronCausalLlamaBridge:
         mock_pretrained.model.dtype = torch.bfloat16
         mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         # The provider should respect the model's dtype
@@ -191,7 +191,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_with_custom_kwargs(self, mock_pretrained_llama):
         """Test provider_bridge with custom keyword arguments."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         # Pass model only
         result = bridge.provider_bridge(mock_pretrained_llama)
@@ -224,7 +224,7 @@ class TestMegatronCausalLlamaBridge:
         mock_pretrained.model.dtype = torch.float32
         mock_pretrained.generation_config = None
 
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         # Should use LlamaModelProvider (not Llama31) when rope_scaling is not present
@@ -233,7 +233,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_mapping_registry_implementation(self, mock_pretrained_llama):
         """Test that mapping_registry returns a proper MegatronMappingRegistry."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         # Get the mapping registry
         mapping_registry = bridge.mapping_registry()
@@ -246,7 +246,7 @@ class TestMegatronCausalLlamaBridge:
 
     def test_provider_bridge_fixed_settings(self, mock_pretrained_llama):
         """Test fixed settings that should always be set regardless of config."""
-        bridge = LlamaCausalBridge()
+        bridge = LlamaBridge()
 
         result = bridge.provider_bridge(mock_pretrained_llama)
 
@@ -254,8 +254,8 @@ class TestMegatronCausalLlamaBridge:
         assert result.gradient_accumulation_fusion == False
 
 
-class TestCausalLMBridgeIntegration:
-    """Integration tests for CausalLMBridge with Llama models."""
+class TestAutoBridgeIntegration:
+    """Integration tests for AutoBridge with Llama models."""
 
     @pytest.fixture
     def llama_configs(self):
@@ -359,10 +359,10 @@ class TestCausalLMBridgeIntegration:
         with open(tokenizer_json_path, "w") as f:
             json.dump(tokenizer_data, f, indent=2)
 
-    @patch("megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.causal_bridge.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
+    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
     def test_from_pretrained_with_temp_dir(self, mock_autoconfig, mock_pretrained, llama_configs):
-        """Test CausalLMBridge.from_hf_pretrained with temporary directory."""
+        """Test AutoBridge.from_hf_pretrained with temporary directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # Test with Llama 3.2 1B config
             config_dict = llama_configs["llama-3.2-1b"]
@@ -379,18 +379,18 @@ class TestCausalLMBridgeIntegration:
             mock_pretrained.return_value = mock_model
 
             # Create bridge from the temp directory
-            bridge = CausalLMBridge.from_hf_pretrained(temp_dir)
+            bridge = AutoBridge.from_hf_pretrained(temp_dir)
 
             # Verify
-            assert isinstance(bridge, CausalLMBridge)
+            assert isinstance(bridge, AutoBridge)
             assert bridge.hf_pretrained == mock_model
-            mock_autoconfig.assert_called_once_with(temp_dir)
+            mock_autoconfig.assert_called_once_with(temp_dir, trust_remote_code=False)
             mock_pretrained.assert_called_once_with(temp_dir)
 
-    @patch("megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.causal_bridge.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
+    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
     def test_from_pretrained_multiple_models(self, mock_autoconfig, mock_pretrained, llama_configs):
-        """Test CausalLMBridge.from_hf_pretrained with different Llama model configs."""
+        """Test AutoBridge.from_hf_pretrained with different Llama model configs."""
         for model_name, config_dict in llama_configs.items():
             with tempfile.TemporaryDirectory() as temp_dir:
                 self.create_mock_model_files(config_dict, temp_dir)
@@ -406,14 +406,16 @@ class TestCausalLMBridgeIntegration:
                 mock_pretrained.return_value = mock_model
 
                 # Create bridge
-                bridge = CausalLMBridge.from_hf_pretrained(temp_dir, torch_dtype=torch.float16)
+                bridge = AutoBridge.from_hf_pretrained(temp_dir, torch_dtype=torch.float16)
 
                 # Verify
-                assert isinstance(bridge, CausalLMBridge)
+                assert isinstance(bridge, AutoBridge)
 
                 # Get the provider to verify model-specific settings
                 # Since _model_bridge is a property, we need to patch the method it calls
-                with patch("megatron.bridge.models.causal_bridge.model_bridge.get_model_bridge") as mock_get_bridge:
+                with patch(
+                    "megatron.bridge.models.conversion.auto_bridge.model_bridge.get_model_bridge"
+                ) as mock_get_bridge:
                     mock_bridge = Mock()
                     mock_provider = Mock(spec=LlamaModelProvider)
                     mock_bridge.provider_bridge.return_value = mock_provider
@@ -428,10 +430,10 @@ class TestCausalLMBridgeIntegration:
                 mock_autoconfig.reset_mock()
                 mock_pretrained.reset_mock()
 
-    @patch("megatron.bridge.models.causal_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.causal_bridge.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
+    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
     def test_from_pretrained_with_kwargs(self, mock_autoconfig, mock_pretrained, llama_configs):
-        """Test CausalLMBridge.from_hf_pretrained with various kwargs."""
+        """Test AutoBridge.from_hf_pretrained with various kwargs."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dict = llama_configs["llama-3-8b"]
             self.create_mock_model_files(config_dict, temp_dir)
@@ -453,21 +455,21 @@ class TestCausalLMBridgeIntegration:
                 "attn_implementation": "flash_attention_2",
             }
 
-            _ = CausalLMBridge.from_hf_pretrained(temp_dir, **kwargs)
+            _ = AutoBridge.from_hf_pretrained(temp_dir, **kwargs)
 
             # Verify kwargs were passed through
             mock_pretrained.assert_called_once_with(temp_dir, **kwargs)
 
     def test_supports_llama_architectures(self, llama_configs):
-        """Test that CausalLMBridge.supports correctly identifies Llama models."""
+        """Test that AutoBridge.supports correctly identifies Llama models."""
         for model_name, config_dict in llama_configs.items():
             config = LlamaConfig(**config_dict)
-            assert CausalLMBridge.supports(config) == True
+            assert AutoBridge.supports(config) == True
 
         # Test non-causal LM architecture
         non_causal_config = Mock()
         non_causal_config.architectures = ["LlamaModel"]  # Not ForCausalLM
-        assert CausalLMBridge.supports(non_causal_config) == False
+        assert AutoBridge.supports(non_causal_config) == False
 
     def test_list_supported_models(self):
         """Test list_supported_models includes LlamaForCausalLM."""

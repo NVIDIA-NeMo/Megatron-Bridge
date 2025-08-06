@@ -29,7 +29,7 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoTokenizer
 
-from megatron.bridge import CausalLMBridge
+from megatron.bridge import AutoBridge
 from megatron.bridge.utils.common_utils import get_last_rank
 
 
@@ -110,7 +110,7 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = CausalLMBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -125,7 +125,7 @@ def main(args) -> None:
     else:
         # Load from HuggingFace and convert to Megatron
         print(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = CausalLMBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -245,3 +245,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

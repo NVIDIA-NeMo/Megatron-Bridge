@@ -15,7 +15,7 @@
 import re
 from typing import List, Optional
 
-from megatron.bridge.models.param_mapping import MegatronParamMapping
+from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
 
 
 class MegatronMappingRegistry:
@@ -37,7 +37,7 @@ class MegatronMappingRegistry:
     Example:
         >>> # Create a mapping registry with various mappings
         >>> mapping_registry = MegatronMappingRegistry(
-        ...     TPAwareMapping(
+        ...     AutoMapping(
         ...         megatron_param="embedding.word_embeddings.weight",
         ...         hf_param="model.embed_tokens.weight",
         ...     ),
@@ -110,7 +110,7 @@ class MegatronMappingRegistry:
                         reverse_dict_patterns[key] = None
                 self._reverse_patterns.append((reverse_dict_patterns, mapping))
 
-    def megatron_to_hf_lookup(self, megatron_name: str) -> Optional[MegatronParamMapping]:
+    def megatron_to_hf_lookup(self, megatron_param_name: str) -> Optional[MegatronParamMapping]:
         """
         Get mapping for a Megatron parameter name.
 
@@ -119,7 +119,7 @@ class MegatronMappingRegistry:
         When a pattern match is found, wildcards are automatically resolved.
 
         Args:
-            megatron_name: Megatron parameter name to look up
+            megatron_param_name: Megatron parameter name to look up
                 Example: "decoder.layers.0.self_attention.linear_qkv.weight"
 
         Returns:
@@ -136,11 +136,11 @@ class MegatronMappingRegistry:
         for pattern, mapping in self._compiled_patterns:
             if pattern is None:
                 # Direct match
-                if mapping.megatron_param == megatron_name:
+                if mapping.megatron_param == megatron_param_name:
                     return mapping
             else:
                 # Pattern match
-                match = pattern.match(megatron_name)
+                match = pattern.match(megatron_param_name)
                 if match:
                     # Return resolved mapping with wildcards replaced
                     return mapping.resolve(match.groups())

@@ -113,6 +113,9 @@ class DistributedInitConfig:
     with external process managers that handle GPU visibility.
     """
 
+    enable_megatron_core_experimental: bool = False
+    """Enable experimental features for Megatron Core."""
+
 
 @dataclass
 class RerunStateMachineConfig:
@@ -554,6 +557,9 @@ class LoggerConfig:
 
     set_level_for_all_loggers: bool = False
     """Set the logging level for all loggers. If False, only level for NeMo loggers will be set."""
+
+    log_energy: bool = False
+    """If set, log energy consumption (in Joules)."""
 
 
 @dataclass(kw_only=True)

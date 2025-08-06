@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.llama.llama_causal_bridge import LlamaCausalBridge  # noqa: F401
+from megatron.bridge.models.llama.llama_bridge import LlamaBridge  # noqa: F401
 from megatron.bridge.models.llama.llama_provider import (
     CodeLlamaModelProvider7B,
     CodeLlamaModelProvider13B,

@@ -29,7 +29,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.utils import fusions
 
 
@@ -140,7 +140,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     cross_entropy_loss_fusion: bool = True  # Generally beneficial, no specific dependencies
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     bias_activation_fusion: bool = False  # Disabled by default as it can interfere with certain architectures
-    persist_layer_norm: bool = field(default=False, init=False)
+    persist_layer_norm: bool = False
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 

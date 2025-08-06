@@ -23,6 +23,7 @@ def build_pretraining_data_loader(
     persistent_workers: bool = False,
     data_parallel_rank: int = 0,
     data_parallel_size: int = 1,
+    drop_last: Optional[bool] = True,
 ) -> Optional[DataLoader]:
     """Build a dataloader for pretraining.
 
@@ -42,6 +43,7 @@ def build_pretraining_data_loader(
         collate_fn: Optional custom collate function.
         pin_memory: Whether to pin memory for the DataLoader.
         persistent_workers: Whether to use persistent workers.
+        drop_last: Whether to drop last batch.
 
     Returns:
         A PyTorch DataLoader instance, or the dataset itself if dataloader_type is
@@ -62,6 +64,7 @@ def build_pretraining_data_loader(
             micro_batch_size=micro_batch_size,
             data_parallel_rank=data_parallel_rank,
             data_parallel_size=data_parallel_size,
+            drop_last=drop_last,
         )
     elif dataloader_type == "cyclic":
         batch_sampler = MegatronPretrainingRandomSampler(

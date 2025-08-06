@@ -18,14 +18,14 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.param_mapping import (
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
     ColumnParallelMapping,
     DirectMapping,
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
-    TPAwareMapping,
     merge_qkv_biases,
     merge_qkv_weights,
     split_qkv_biases,
@@ -37,7 +37,7 @@ from megatron.bridge.models.param_mapping import (
 def mock_distributed_env():
     """Mocks the distributed environment for single-process testing."""
     with (
-        patch("megatron.bridge.models.param_mapping.mpu") as mock_mpu,
+        patch("megatron.bridge.models.conversion.param_mapping.mpu") as mock_mpu,
         patch("torch.distributed") as mock_dist,
         patch("torch.cuda.current_device", return_value=0),
     ):
@@ -105,11 +105,8 @@ class TestReplicatedMapping:
         megatron_weight = torch.randn(16, 16)
         result = mapping.megatron_to_hf(megatron_weight, None)
 
-        if tp_rank == 0:
-            assert "hf.weight" in result
-            assert torch.equal(result["hf.weight"], megatron_weight)
-        else:
-            assert not result
+        assert "hf.weight" in result
+        assert torch.equal(result["hf.weight"], megatron_weight)
 
     def test_hf_to_megatron_broadcast(self, mock_distributed_env, transformer_config):
         mock_mpu, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
@@ -165,11 +162,8 @@ class TestColumnParallelMapping:
             mock_gather.return_value = list(torch.chunk(full_weight, 2, dim=0))
             result = mapping.megatron_to_hf(megatron_shard, None)
 
-            if tp_rank == 0:
-                assert "hf.weight" in result
-                assert torch.equal(result["hf.weight"], full_weight)
-            else:
-                assert not result
+            assert "hf.weight" in result
+            assert torch.equal(result["hf.weight"], full_weight)
 
 
 class TestRowParallelMapping:
@@ -203,17 +197,14 @@ class TestRowParallelMapping:
             mock_gather.return_value = list(torch.chunk(full_weight, 2, dim=1))
             result = mapping.megatron_to_hf(megatron_shard, None)
 
-            if tp_rank == 0:
-                assert "hf.weight" in result
-                assert torch.equal(result["hf.weight"], full_weight)
-            else:
-                assert not result
+            assert "hf.weight" in result
+            assert torch.equal(result["hf.weight"], full_weight)
 
 
-class TestTPAwareMapping:
+class TestAutoMapping:
     def test_detect_parallelism_type(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
-        mapping = TPAwareMapping(megatron_param="some.weight", hf_param="hf.weight")
+        mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
 
         # Mock modules with different characteristics
         class MyCol(torch.nn.Module):
@@ -227,19 +218,19 @@ class TestTPAwareMapping:
         class MyRep(torch.nn.Module):
             tensor_model_parallel = False
 
-        TPAwareMapping.register_module_type("MyCustomRow", "row")
+        AutoMapping.register_module_type("MyCustomRow", "row")
 
         class MyCustomRow(torch.nn.Module):
             pass
 
-        assert mapping._detect_parallelism_type(MyCol()) == "column"
-        assert mapping._detect_parallelism_type(MyRow()) == "row"
-        assert mapping._detect_parallelism_type(MyRep()) == "replicated"
-        assert mapping._detect_parallelism_type(torch.nn.LayerNorm(5)) == "replicated"
-        assert mapping._detect_parallelism_type(MyCustomRow()) == "row"
+        assert mapping._detect_parallelism_type(MyCol(), "some.weight") == "column"
+        assert mapping._detect_parallelism_type(MyRow(), "some.weight") == "row"
+        assert mapping._detect_parallelism_type(MyRep(), "some.weight") == "replicated"
+        assert mapping._detect_parallelism_type(torch.nn.LayerNorm(5), "some.weight") == "replicated"
+        assert mapping._detect_parallelism_type(MyCustomRow(), "some.weight") == "row"
 
         with pytest.raises(ValueError):
-            mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
+            mapping._detect_parallelism_type(torch.nn.Linear(5, 5), "some.weight")
 
 
 class TestHelperFunctions:
@@ -459,14 +450,14 @@ class TestMappingEdgeCases:
                 mapping.broadcast_from_pp_rank(None)
 
     def test_tp_aware_unknown_module_error(self, transformer_config):
-        """Test TPAwareMapping error for unknown module types."""
-        mapping = TPAwareMapping("weight", "hf.weight")
+        """Test AutoMapping error for unknown module types."""
+        mapping = AutoMapping("weight", "hf.weight")
 
         # Create an unknown module type
         unknown_module = torch.nn.Linear(10, 10)
 
         with pytest.raises(ValueError, match="Cannot determine parallelism type"):
-            mapping._detect_parallelism_type(unknown_module)
+            mapping._detect_parallelism_type(unknown_module, "some.weight")
 
     def test_resolve_wildcard_patterns(self):
         """Test wildcard pattern resolution."""
