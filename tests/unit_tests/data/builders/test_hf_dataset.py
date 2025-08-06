@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import os
 from pathlib import PosixPath
 
 from datasets import load_dataset
 
-from megatron.bridge.data.builders.hf_dataset import preprocess_and_split_data
+from megatron.bridge.data.builders.hf_dataset import preprocess_and_split_data, HFDatasetBuilder
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -82,6 +83,60 @@ class TestDataHFDataset:
             split_val_from_train=False,
             rewrite=True,
         )
+
+        assert os.path.exists(path / "training.jsonl")
+        assert os.path.exists(path / "validation.jsonl")
+        assert os.path.exists(path / "test.jsonl")
+
+    def test_hf_dataset_builder(self, ensure_test_data):
+        path = f"{ensure_test_data}/datasets/hf"
+        os.makedirs(path, exist_ok=True)
+        path = PosixPath(path)
+        builder = HFDatasetBuilder(
+            dataset_name="boolq",
+            dataset_root=path,
+            process_example_fn=process_example_fn,
+            tokenizer=get_tokenizer(ensure_test_data),
+            rewrite=True,
+        )
+
+        builder.prepare_data()
+
+        assert os.path.exists(path / "training.jsonl")
+        assert os.path.exists(path / "validation.jsonl")
+        assert os.path.exists(path / "test.jsonl")
+    
+    def test_hf_dataset_builder_lambda(self, ensure_test_data):
+        path = f"{ensure_test_data}/datasets/hf"
+        os.makedirs(path, exist_ok=True)
+        path = PosixPath(path)
+        builder = HFDatasetBuilder(
+            dataset_name="boolq",
+            dataset_root=path,
+            process_example_fn=process_example_fn,
+            tokenizer=get_tokenizer(ensure_test_data),
+            rewrite=True,
+            hf_filter_lambda="test",
+            download_mode=None,
+        )
+
+        with pytest.raises(ValueError):
+            builder.prepare_data()
+    
+    def test_hf_dataset_builder_with_dict(self, ensure_test_data):
+        path = f"{ensure_test_data}/datasets/hf"
+        os.makedirs(path, exist_ok=True)
+        path = PosixPath(path)
+        builder = HFDatasetBuilder(
+            dataset_dict=load_dataset("boolq"),
+            dataset_name="boolq",
+            dataset_root=path,
+            process_example_fn=process_example_fn,
+            tokenizer=get_tokenizer(ensure_test_data),
+            rewrite=True,
+        )
+
+        builder.prepare_data()
 
         assert os.path.exists(path / "training.jsonl")
         assert os.path.exists(path / "validation.jsonl")

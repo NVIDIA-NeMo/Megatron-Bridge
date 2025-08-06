@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import subprocess
+import pytest
 from pathlib import PosixPath
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
@@ -102,10 +103,9 @@ class TestDataFineTuningDataset:
         assert train_path_packed == PosixPath(f"{ensure_test_data}/datasets/finetune/packed/null/training_1.npy")
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
-        try:
+
+        with pytest.raises(ValueError):
             train_path_packed = dataset.train_path_packed
-        except ValueError:
-            None
 
     def test_validation_path_packed(self, ensure_test_data):
         npy_path = f"{ensure_test_data}/datasets/finetune/test.npy"
@@ -131,7 +131,5 @@ class TestDataFineTuningDataset:
     def test_prepare_packed_data(self, ensure_test_data):
         dataset, path = get_dataset(ensure_test_data)
 
-        try:
+        with pytest.raises(KeyError):
             dataset.prepare_packed_data()
-        except KeyError:
-            None
