@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import subprocess
-import pytest
 from pathlib import PosixPath
+
+import pytest
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
