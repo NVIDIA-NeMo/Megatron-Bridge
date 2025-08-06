@@ -46,20 +46,23 @@ class TestModelLoad:
 
         init_distributed()
 
-        tokenizer = load_tokenizer(ckpt_path)
-        model = load_megatron_model(ckpt_path, use_cpu_init=False)
+        try:
+            tokenizer = load_tokenizer(ckpt_path)
+            model = load_megatron_model(ckpt_path, use_cpu_init=False)
 
-        # This test expects tokenizer to be a SentencePiece tokenizer
-        token_ids = tokenizer.tokenize("NVIDIA NeMo is an end-to-end platform for")
-        input_batch = torch.tensor([token_ids]).cuda()
-        position_ids = torch.arange(input_batch.size(1), dtype=torch.long, device=input_batch.device)
-        attention_mask = torch.ones_like(input_batch, dtype=torch.bool)
+            # This test expects tokenizer to be a SentencePiece tokenizer
+            token_ids = tokenizer.tokenize("NVIDIA NeMo is an end-to-end platform for")
+            input_batch = torch.tensor([token_ids]).cuda()
+            position_ids = torch.arange(input_batch.size(1), dtype=torch.long, device=input_batch.device)
+            attention_mask = torch.ones_like(input_batch, dtype=torch.bool)
 
-        with torch.no_grad():
-            output = model.forward(input_ids=input_batch, position_ids=position_ids, attention_mask=attention_mask)
+            with torch.no_grad():
+                output = model.forward(input_ids=input_batch, position_ids=position_ids, attention_mask=attention_mask)
 
-        next_token_id = torch.argmax(output[:, -1], dim=-1).item()
-        expected_id = 267
-        assert next_token_id == expected_id, (
-            f"Model checkpoint at {ckpt_path} did not produce expected next token. Expected: {expected_id}, Actual: {next_token_id}"
-        )
+            next_token_id = torch.argmax(output[:, -1], dim=-1).item()
+            expected_id = 267
+            assert next_token_id == expected_id, (
+                f"Model checkpoint at {ckpt_path} did not produce expected next token. Expected: {expected_id}, Actual: {next_token_id}"
+            )
+        finally:
+            parallel_state.destroy_model_parallel()
