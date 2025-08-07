@@ -116,8 +116,8 @@ jobs:
         include:
           - script: L2_Launch_training
             timeout: 60
-          - script: L2_Launch_conversion
-            timeout: 10
+          - script: L2_Launch_converter
+            timeout: 20
           - script: L2_Launch_models
             timeout: 60
     needs: [cicd-unit-tests]
