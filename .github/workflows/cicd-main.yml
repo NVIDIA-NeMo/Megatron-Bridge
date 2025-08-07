@@ -100,9 +100,7 @@ jobs:
     steps:
       - name: Install bash and start Docker
         run: |
-          apk add --no-cache bash
-          dockerd-entrypoint.sh &
-          sleep 10
+          apk add --no-cache bash curl sudo
         shell: sh
 
       - name: Checkout
