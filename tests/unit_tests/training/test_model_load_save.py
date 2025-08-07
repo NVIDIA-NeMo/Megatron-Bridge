@@ -24,6 +24,7 @@ from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
     load_megatron_model,
+    load_tokenizer,
     megatron_cpu_init_context,
     save_megatron_model,
     temporary_distributed_context,
@@ -467,3 +468,73 @@ class TestDtypeFromHf:
 
         with pytest.raises(ValueError, match="torch_dtype is not of type str/torch.dtype"):
             dtype_from_hf(config)
+
+
+class TestLoadTokenizer:
+    """Test load_tokenizer function."""
+
+    @pytest.fixture
+    def mock_tokenizer(self):
+        """Mock a tokenizer from build_tokenizer."""
+
+        mock_tokenizer = Mock()
+        mock_tokenizer.vocab_size = 32000
+        mock_tokenizer.eod_id = 0
+        mock_tokenizer.eos_id = 1
+
+        return mock_tokenizer
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_mbridge_saved_tokenizer(self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer):
+        """Test loading tokenizer config from Megatron Bridge-saved checkpoint."""
+
+        # Setup mocks
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "make_vocab_size_divisible_by": 128},
+            "tokenizer": {},
+        }
+        mock_read_cfg.return_value = mock_run_cfg_dict
+
+        mock_tokenizer_cfg = Mock()
+        mock_tokenizer_cfg.vocab_size = 32000
+        mock_instantiate.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            result = load_tokenizer(ckpt_path)
+
+        assert result == mock_tokenizer
+        mock_read_cfg.assert_called_once()
+        mock_instantiate.assert_called_once_with({})
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg, 128, 1)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.training.mlm_compat.arguments._tokenizer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint")
+    def test_load_mlm_saved_tokenizer(self, mock_load_args, mock_cfg_from_args, mock_build_tokenizer, mock_tokenizer):
+        """Test loading tokenizer config from MegatronLM-saved checkpoint."""
+
+        # Setup mocks
+        mock_args = Mock()
+        mock_args.tensor_model_parallel_size = 2
+        mock_args.make_vocab_size_divisible_by = 256
+        mock_load_args.return_value = mock_args
+
+        mock_tokenizer_cfg = Mock()
+        mock_tokenizer_cfg.vocab_size = 32000
+        mock_cfg_from_args.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        ckpt_path = "/path/to/mock/dist_checkpoint"
+        result = load_tokenizer(ckpt_path)
+
+        assert result == mock_tokenizer
+        mock_load_args.assert_called_once_with(ckpt_path)
+        mock_cfg_from_args.assert_called_once_with(mock_args)
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg, 256, 2)

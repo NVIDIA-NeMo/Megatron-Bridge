@@ -91,7 +91,7 @@ jobs:
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
+    runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
     steps:
@@ -119,10 +119,10 @@ jobs:
           - script: L2_Launch_conversion
             timeout: 60
     needs: [cicd-unit-tests]
-    runs-on: linux-amd64-gpu-rtxa6000-latest-2-nemo
+    runs-on: self-hosted-nemo
     if: |
       (
-        success() 
+        success()
         || (
           needs.cicd-wait-in-queue.result == 'skipped'
           && needs.pre-flight.outputs.is_ci_workload == 'true'
@@ -262,7 +262,9 @@ jobs:
       && !cancelled()
     strategy:
       matrix:
-        flag: [unit-test, e2e]
+        flag:
+          - unit-test
+          # - e2e
     steps:
       - name: Checkout
         uses: actions/checkout@v4

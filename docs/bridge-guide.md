@@ -1,10 +1,10 @@
-# Megatron <-> HuggingFace Bridge User Guide
+# Bridge with 🤗Hugging Face
 
-Megatron Bridge provides seamless bidirectional conversion between HuggingFace Transformers and Megatron Core model formats. This guide covers the main APIs for loading models, checking compatibility, and converting between formats.
+Megatron Bridge provides seamless bidirectional conversion between 🤗Hugging Face Transformers and Megatron Core model formats. This guide covers the main APIs for loading models, checking compatibility, and converting between formats.
 
-## Loading a HuggingFace Model into Megatron Implementation
+## Loading a 🤗Hugging Face Model into Megatron Implementation
 
-The easiest way to load a HuggingFace model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge. You can then use `AutoBridge.to_megatron_model()` to initialize the Megatron model from the HuggingFace configuration and load HuggingFace weights.
+The easiest way to load a 🤗Hugging Face model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge. You can then use `AutoBridge.to_megatron_model()` to initialize the Megatron model from the 🤗Hugging Face configuration and load 🤗HuggingFace weights.
 
 ### Basic Usage
 
@@ -71,7 +71,7 @@ The provider pattern is especially useful when you need to:
 
 Before loading a model, you can check if it's supported by Megatron Bridge.
 
-You can list all supported HuggingFace model architectures with the following:
+You can list all supported 🤗Hugging Face model architectures with the following:
 
 ```python
 from megatron.bridge import AutoBridge
@@ -100,9 +100,9 @@ if AutoBridge.can_handle("custom/model", trust_remote_code=True):
     bridge = AutoBridge.from_hf_pretrained("custom/model", trust_remote_code=True)
 ```
 
-## Converting back to HuggingFace
+## Converting back to 🤗Hugging Face
 
-After training or modifying a Megatron model, you can convert it back to HuggingFace format for deployment or sharing. The bridge provides several methods for this conversion depending on your needs.
+After training or modifying a Megatron model, you can convert it back to 🤗Hugging Face format for deployment or sharing. The bridge provides several methods for this conversion depending on your needs.
 
 To save the complete model including configuration, tokenizer, and weights:
 
@@ -110,7 +110,7 @@ To save the complete model including configuration, tokenizer, and weights:
 # Save the complete model (config, tokenizer, weights)
 bridge.save_hf_pretrained(megatron_model, "./my-fine-tuned-llama")
 
-# The saved model can be loaded with HuggingFace
+# The saved model can be loaded with 🤗Hugging Face
 from transformers import AutoModelForCausalLM
 hf_model = AutoModelForCausalLM.from_pretrained("./my-fine-tuned-llama")
 ```
