@@ -50,6 +50,35 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Install curl, sudo
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y curl sudo
+
+    - name: Install Docker with custom script
+      shell: bash
+      run: |
+        # Download and modify the Docker install script
+        curl -fsSL https://get.docker.com -o get-docker.sh
+
+        # Install only CLI components (remove daemon installation)
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y ca-certificates curl gnupg lsb-release
+
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
+
+        apt-get update -qq
+        # Install CLI only, skip daemon and user management
+        apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin
+
+        docker --version
+
     - name: Install Azure CLI
       if: ${{ inputs.has-azure-credentials == 'true' }}
       shell: bash
