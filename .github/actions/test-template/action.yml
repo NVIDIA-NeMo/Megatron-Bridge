@@ -102,33 +102,33 @@ runs:
       run: |
         az acr login --name nemoci
 
-    - name: Configure local file cache
-      shell: bash
-      if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
-      env:
-        MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
-      run: |
-        echo "::group::Configure local artifact cache"
+    # - name: Configure local file cache
+    #   shell: bash
+    #   if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
+    #   env:
+    #     MNT_PATH: ${{ steps.azure-fileshare.outputs.MNT_PATH }}
+    #   run: |
+    #     echo "::group::Configure local artifact cache"
 
-        set -x -e -u -o pipefail
+    #     set -x -e -u -o pipefail
 
-        sudo apt update
-        sudo apt install -y cachefilesd
+    #     sudo apt update
+    #     sudo apt install -y cachefilesd
 
-        # Create systemd override for proper dependencies
-        sudo mkdir -p /etc/systemd/system/cachefilesd.service.d
-        printf "[Unit]\nAfter=network.target local-fs.target\nWants=local-fs.target\n\n[Service]\nRestart=on-failure\nRestartSec=2\n" | sudo tee /etc/systemd/system/cachefilesd.service.d/override.conf > /dev/null
-        sudo systemctl daemon-reload
+    #     # Create systemd override for proper dependencies
+    #     sudo mkdir -p /etc/systemd/system/cachefilesd.service.d
+    #     printf "[Unit]\nAfter=network.target local-fs.target\nWants=local-fs.target\n\n[Service]\nRestart=on-failure\nRestartSec=2\n" | sudo tee /etc/systemd/system/cachefilesd.service.d/override.conf > /dev/null
+    #     sudo systemctl daemon-reload
 
-        # Enable cachefilesd in config file
-        sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
-        sudo cat /etc/default/cachefilesd
+    #     # Enable cachefilesd in config file
+    #     sudo sed -i 's/^#RUN=yes/RUN=yes/' /etc/default/cachefilesd
+    #     sudo cat /etc/default/cachefilesd
 
-        # Enable and restart the service
-        sudo systemctl enable cachefilesd
-        sudo systemctl restart cachefilesd
-        sudo systemctl status cachefilesd
-        echo "::endgroup::"
+    #     # Enable and restart the service
+    #     sudo systemctl enable cachefilesd
+    #     sudo systemctl restart cachefilesd
+    #     sudo systemctl status cachefilesd
+    #     echo "::endgroup::"
 
     - name: Azure Fileshare
       if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
