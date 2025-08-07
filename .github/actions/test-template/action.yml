@@ -189,7 +189,7 @@ runs:
     - name: Checkout repository
       uses: actions/checkout@v2
       with:
-        path: Megatron-Bridge
+        path: ${{ github.workspace }}/Megatron-Bridge
 
     - name: Cache uv
       uses: actions/cache@v4
@@ -244,7 +244,7 @@ runs:
           --env NEMO_HOME=/home/TestData/nemo_home \
           --env RUN_ID=${{ github.run_id }} \
           --workdir /workspace \
-          --volume ./Megatron-Bridge:/workspace \
+          --volume ${{ github.workspace }}/Megatron-Bridge:/workspace \
           $VOLUME_ARGS \
           megatron-bridge \
           bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
