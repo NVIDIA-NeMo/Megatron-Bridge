@@ -107,9 +107,9 @@ jobs:
       - name: Install Docker
         run: |
           curl -fsSL https://get.docker.com -o get-docker.sh
-          sh get-docker.sh
-          usermod -aG docker $USER
-          newgrp docker
+          sudo sh get-docker.sh
+          sudo usermod -aG docker $USER
+          sudo newgrp docker
           docker --version
 
       - name: Checkout
