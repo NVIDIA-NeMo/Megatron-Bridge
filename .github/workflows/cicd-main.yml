@@ -124,6 +124,10 @@ jobs:
             timeout: 60
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
+    container:
+      image: ubuntu:22.04
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
     if: |
       (
         success()
@@ -156,7 +160,7 @@ jobs:
     needs:
       - pre-flight
       - cicd-unit-tests
-      # - cicd-functional-tests
+      - cicd-functional-tests
     if: always()
     runs-on: ubuntu-latest
     permissions: write-all
