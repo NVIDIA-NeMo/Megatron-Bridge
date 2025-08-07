@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge  # noqa: F401
+from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge
 from megatron.bridge.models.qwen.qwen2_provider import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
