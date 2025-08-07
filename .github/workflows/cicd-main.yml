@@ -95,14 +95,10 @@ jobs:
     name: Launch_Unit_Tests
     environment: nemo-ci
     container:
-      image: docker:dind
-      options: --privileged
+      image: ubuntu:22.04
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
     steps:
-      - name: Install bash and start Docker
-        run: |
-          apk add --no-cache bash curl sudo
-        shell: sh
-
       - name: Checkout
         uses: actions/checkout@v4
       - name: main
