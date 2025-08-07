@@ -52,6 +52,7 @@ class Qwen2ModelProvider(GPTModelProvider):
 # Qwen 2 Model Providers
 # =============================================================================
 
+
 @dataclass
 class Qwen2ModelProvider500M(Qwen2ModelProvider):
     """
@@ -116,6 +117,7 @@ class Qwen2ModelProvider72B(Qwen2ModelProvider):
 # =============================================================================
 # Qwen 2.5 Model Providers
 # =============================================================================
+
 
 @dataclass
 class Qwen25ModelProvider500M(Qwen2ModelProvider):
