@@ -47,8 +47,6 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
     hybrid_override_pattern: Optional[str] = None
-    post_process: bool = True
-    pre_process: bool = True
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
     position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
@@ -63,13 +61,7 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     layernorm_epsilon: float = 1e-5
-    # TODO: Move this to better places?
-    get_attention_mask_from_fusion: bool = False
     attention_backend: AttnBackend = AttnBackend.flash
-    forward_step_fn: Callable = ssm_forward_step
-    data_step_fn: Callable = gpt_data_step
-    vocab_file: str = None
-    tokenizer_model_path: str = None
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
@@ -105,6 +97,9 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             hybrid_mlp_ratio=self.hybrid_mlp_ratio,
             hybrid_override_pattern=self.hybrid_override_pattern,
+            fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+            parallel_output=self.parallel_output,
+            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
             position_embedding_type=self.position_embedding_type,
             rotary_percent=self.rotary_percent,
             rotary_base=self.rotary_base,
