@@ -150,7 +150,6 @@ class TestQwen2Conversion:
 
         # Try loading the model to verify it's valid
         try:
-            config = Qwen2Config.from_pretrained(qwen2_toy_model_path)
             model = Qwen2ForCausalLM.from_pretrained(
                 qwen2_toy_model_path,
                 torch_dtype=torch.bfloat16,
