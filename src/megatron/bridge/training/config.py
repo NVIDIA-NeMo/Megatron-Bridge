@@ -470,6 +470,7 @@ class CheckpointConfig:
 
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
+            assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
 
 
 @dataclass(kw_only=True)

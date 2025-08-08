@@ -1,10 +1,10 @@
-# Megatron-Bridge Framework
+# Bridge with 🤗Hugging Face
 
-The bridge framework provides seamless bidirectional conversion between HuggingFace Transformers and Megatron-Core model formats, handling the complexities of distributed model parallelism transparently.
+The bridge provides seamless bidirectional conversion between 🤗Hugging Face Transformers and megatron-core model formats, handling the complexities of distributed model parallelism transparently.
 
 ## Quick Start
 
-### Loading a HuggingFace Model into Megatron
+### Loading a 🤗Hugging Face Model into Megatron
 
 ```python
 from megatron.bridge import AutoBridge
@@ -20,7 +20,7 @@ provider.pipeline_model_parallel_size = 2
 model = provider(wrap_with_ddp=False)
 ```
 
-### Converting Megatron Models back to HuggingFace
+### Converting Megatron Models back to 🤗Hugging Face
 
 ```python
 # Export a trained Megatron model to HuggingFace format
@@ -68,7 +68,7 @@ The bridge framework uses a layered architecture with clear separation of concer
 
 ### Multi-Dispatch Registration
 
-The framework uses decorators to register bridge implementations, enabling automatic routing:
+The bridge uses decorators to register bridge implementations, enabling automatic routing:
 
 ```python
 @MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
@@ -105,7 +105,7 @@ Different weight transformation strategies handle various parallelism patterns:
 
 ## Conversion Process
 
-### HuggingFace → Megatron
+### 🤗Hugging Face → Megatron
 
 1. **Planning Phase**
    - Iterate through Megatron model parameters
@@ -123,7 +123,7 @@ Different weight transformation strategies handle various parallelism patterns:
    - Row-parallel: scatter along dim 1
    - Replicated: broadcast to all ranks
 
-### Megatron → HuggingFace
+### Megatron → 🤗Hugging Face
 
 1. **Collection Phase**
    - Gather parameter locations across pipeline ranks
@@ -139,7 +139,7 @@ Different weight transformation strategies handle various parallelism patterns:
 
 ### Tensor Parallelism (TP)
 
-The framework automatically handles three TP patterns:
+The bridge automatically handles three TP patterns:
 
 ```python
 # Column-parallel (output split)
@@ -188,7 +188,7 @@ class MyCustomMapping(MegatronParamMapping):
 
 ### Exporting Weights
 
-Export weights to HuggingFace format (all ranks receive full weights):
+Export weights to 🤗Hugging Face format (all ranks receive full weights):
 
 ```python
 # Export weights

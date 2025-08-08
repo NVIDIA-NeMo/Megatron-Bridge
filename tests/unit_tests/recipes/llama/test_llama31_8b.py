@@ -251,7 +251,7 @@ class TestPretrainConfig:
         assert config.checkpoint.save_interval == 2000
         assert config.checkpoint.ckpt_format == "torch_dist"
         assert config.checkpoint.fully_parallel_save is True
-        assert config.checkpoint.async_save is True
+        assert config.checkpoint.async_save is False
 
     def test_pretrain_config_ddp_configuration(self):
         """Test distributed data parallel configuration."""
