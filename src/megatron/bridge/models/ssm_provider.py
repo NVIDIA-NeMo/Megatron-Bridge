@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional, Union
 
@@ -25,6 +26,9 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.gpt_provider import get_vocab_size
 from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,6 +72,7 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = field(
         default_factory=lambda: default_mamba_stack_spec
     )
+    vocab_size: Optional[int] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
@@ -89,10 +94,21 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
             "Virtual pipeline model parallelism is temporarily unsupported in SSM/Mamaba "
             "models due to upstream MCore MambaModel API dependency"
         )
+
+        if self.vocab_size is not None:
+            vocab_size = self.vocab_size
+            if tokenizer is not None:
+                logger.info(
+                    f"Use preset vocab_size: {vocab_size}, original vocab_size: {tokenizer.vocab_size}, dummy tokens:"
+                    f" {vocab_size - tokenizer.vocab_size}."
+                )
+        else:
+            vocab_size = get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by)
+
         return MCoreMambaModel(
             self,
             mamba_stack_spec=mamba_stack_spec,
-            vocab_size=get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by),
+            vocab_size=vocab_size,
             max_sequence_length=self.seq_length,
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             hybrid_mlp_ratio=self.hybrid_mlp_ratio,
