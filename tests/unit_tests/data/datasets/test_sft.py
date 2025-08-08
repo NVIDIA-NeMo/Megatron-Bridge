@@ -242,7 +242,6 @@ class TestDataGPTSFTPackedDataset:
         dataset.collate_fn(batch)
 
     def test_utils_func_packed(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
         assert dataset._maybe_cast_to_list([11]) == [11]
