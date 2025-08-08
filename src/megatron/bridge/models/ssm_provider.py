@@ -29,10 +29,10 @@ from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
 
 @dataclass
 class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
-    """Configuration and provider for Megatron Core GPT models.
+    """Configuration and provider for Megatron Core Mamba models.
 
-    This class extends TransformerConfig with GPT-specific parameters and
-    provides a method to instantiate configured GPT models.
+    This class extends TransformerConfig with Mamba-specific parameters and
+    provides a method to instantiate configured Mamba models.
     """
 
     # Model configuration
