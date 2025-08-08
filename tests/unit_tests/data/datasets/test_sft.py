@@ -17,7 +17,8 @@ import json
 import os
 
 import numpy as np
-from megatron.core.parallel_state import initialize_model_parallel
+import torch.distributed as dist
+import megatron.core.parallel_state as parallel_state
 
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
