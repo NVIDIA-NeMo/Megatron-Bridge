@@ -94,10 +94,6 @@ jobs:
     runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
-    container:
-      image: ubuntu:22.04
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -124,10 +120,6 @@ jobs:
             timeout: 60
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
-    container:
-      image: ubuntu:22.04
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
     if: |
       (
         success()

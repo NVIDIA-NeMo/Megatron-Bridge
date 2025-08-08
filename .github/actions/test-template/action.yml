@@ -50,57 +50,57 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install curl, sudo
-      shell: bash
-      run: |
-        apt-get update
-        apt-get install -y curl sudo uuid-runtime systemd
+    # - name: Install curl, sudo
+    #   shell: bash
+    #   run: |
+    #     apt-get update
+    #     apt-get install -y curl sudo uuid-runtime systemd
 
-    - name: Install Docker with custom script
-      shell: bash
-      run: |
-        # Download and modify the Docker install script
-        curl -fsSL https://get.docker.com -o get-docker.sh
+    # - name: Install Docker with custom script
+    #   shell: bash
+    #   run: |
+    #     # Download and modify the Docker install script
+    #     curl -fsSL https://get.docker.com -o get-docker.sh
 
-        # Install only CLI components (remove daemon installation)
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
-        apt-get install -y ca-certificates curl gnupg lsb-release
+    #     # Install only CLI components (remove daemon installation)
+    #     export DEBIAN_FRONTEND=noninteractive
+    #     apt-get update -qq
+    #     apt-get install -y ca-certificates curl gnupg lsb-release
 
-        install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" -o /etc/apt/keyrings/docker.asc
-        chmod a+r /etc/apt/keyrings/docker.asc
+    #     install -m 0755 -d /etc/apt/keyrings
+    #     curl -fsSL "https://download.docker.com/linux/ubuntu/gpg" -o /etc/apt/keyrings/docker.asc
+    #     chmod a+r /etc/apt/keyrings/docker.asc
 
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
+    #     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable" > /etc/apt/sources.list.d/docker.list
 
-        apt-get update -qq
-        # Install CLI only, skip daemon and user management
-        apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin
+    #     apt-get update -qq
+    #     # Install CLI only, skip daemon and user management
+    #     apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin
 
-        docker --version
+    #     docker --version
 
-    - name: Install Azure CLI
-      if: ${{ inputs.has-azure-credentials == 'true' }}
-      shell: bash
-      run: |
-        echo "::group::Install Azure CLI"
-        # Create systemd override for proper dependencies
-        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-        echo "::endgroup::"
+    # - name: Install Azure CLI
+    #   if: ${{ inputs.has-azure-credentials == 'true' }}
+    #   shell: bash
+    #   run: |
+    #     echo "::group::Install Azure CLI"
+    #     # Create systemd override for proper dependencies
+    #     curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    #     echo "::endgroup::"
 
-    - name: Azure Login
-      if: ${{ inputs.has-azure-credentials == 'true' }}
-      uses: azure/login@v2
-      with:
-        client-id: ${{ inputs.azure-client-id }}
-        tenant-id: ${{ inputs.azure-tenant-id }}
-        subscription-id: ${{ inputs.azure-subscription-id }}
+    # - name: Azure Login
+    #   if: ${{ inputs.has-azure-credentials == 'true' }}
+    #   uses: azure/login@v2
+    #   with:
+    #     client-id: ${{ inputs.azure-client-id }}
+    #     tenant-id: ${{ inputs.azure-tenant-id }}
+    #     subscription-id: ${{ inputs.azure-subscription-id }}
 
-    - name: Azure ACR Login
-      if: ${{ inputs.has-azure-credentials == 'true' }}
-      shell: bash
-      run: |
-        az acr login --name nemoci
+    # - name: Azure ACR Login
+    #   if: ${{ inputs.has-azure-credentials == 'true' }}
+    #   shell: bash
+    #   run: |
+    #     az acr login --name nemoci
 
     # - name: Configure local file cache
     #   shell: bash
@@ -130,61 +130,61 @@ runs:
     #     sudo systemctl status cachefilesd
     #     echo "::endgroup::"
 
-    - name: Azure Fileshare
-      if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
-      shell: bash
-      id: azure-fileshare
-      run: |
-        echo "::group::Mount SMB drive"
-        sudo apt update
-        sudo apt install -y cifs-utils
+    # - name: Azure Fileshare
+    #   if: ${{ inputs.has-azure-credentials == 'true' && inputs.is_unit_test == 'false' }}
+    #   shell: bash
+    #   id: azure-fileshare
+    #   run: |
+    #     echo "::group::Mount SMB drive"
+    #     sudo apt update
+    #     sudo apt install -y cifs-utils
 
-        RESOURCE_GROUP_NAME="azure-gpu-vm-runner_group"
-        STORAGE_ACCOUNT_NAME="nemocistorageaccount2"
-        FILE_SHARE_NAME="fileshare"
+    #     RESOURCE_GROUP_NAME="azure-gpu-vm-runner_group"
+    #     STORAGE_ACCOUNT_NAME="nemocistorageaccount2"
+    #     FILE_SHARE_NAME="fileshare"
 
-        MNT_ROOT="/media"
-        MNT_PATH="$MNT_ROOT/$STORAGE_ACCOUNT_NAME/$FILE_SHARE_NAME"
+    #     MNT_ROOT="/media"
+    #     MNT_PATH="$MNT_ROOT/$STORAGE_ACCOUNT_NAME/$FILE_SHARE_NAME"
 
-        echo "MNT_PATH=$MNT_PATH" | tee -a "$GITHUB_OUTPUT"
+    #     echo "MNT_PATH=$MNT_PATH" | tee -a "$GITHUB_OUTPUT"
 
-        sudo mkdir -p $MNT_PATH
+    #     sudo mkdir -p $MNT_PATH
 
-        # Create a folder to store the credentials for this storage account and
-        # any other that you might set up.
-        CREDENTIAL_ROOT="/etc/smbcredentials"
-        sudo mkdir -p "/etc/smbcredentials"
+    #     # Create a folder to store the credentials for this storage account and
+    #     # any other that you might set up.
+    #     CREDENTIAL_ROOT="/etc/smbcredentials"
+    #     sudo mkdir -p "/etc/smbcredentials"
 
-        # Get the storage account key for the indicated storage account.
-        # You must be logged in with az login and your user identity must have
-        # permissions to list the storage account keys for this command to work.
-        STORAGE_ACCOUNT_KEY=$(az storage account keys list \
-            --resource-group $RESOURCE_GROUP_NAME \
-            --account-name $STORAGE_ACCOUNT_NAME \
-            --query "[0].value" --output tsv | tr -d '"')
+    #     # Get the storage account key for the indicated storage account.
+    #     # You must be logged in with az login and your user identity must have
+    #     # permissions to list the storage account keys for this command to work.
+    #     STORAGE_ACCOUNT_KEY=$(az storage account keys list \
+    #         --resource-group $RESOURCE_GROUP_NAME \
+    #         --account-name $STORAGE_ACCOUNT_NAME \
+    #         --query "[0].value" --output tsv | tr -d '"')
 
-        # Create the credential file for this individual storage account
-        SMB_CREDENTIAL_FILE="$CREDENTIAL_ROOT/$STORAGE_ACCOUNT_NAME.cred"
-        if [ ! -f $SMB_CREDENTIAL_FILE ]; then
-            echo "username=$STORAGE_ACCOUNT_NAME" | sudo tee $SMB_CREDENTIAL_FILE > /dev/null
-            echo "password=$STORAGE_ACCOUNT_KEY" | sudo tee -a $SMB_CREDENTIAL_FILE > /dev/null
-        else
-            echo "The credential file $SMB_CREDENTIAL_FILE already exists, and was not modified."
-        fi
+    #     # Create the credential file for this individual storage account
+    #     SMB_CREDENTIAL_FILE="$CREDENTIAL_ROOT/$STORAGE_ACCOUNT_NAME.cred"
+    #     if [ ! -f $SMB_CREDENTIAL_FILE ]; then
+    #         echo "username=$STORAGE_ACCOUNT_NAME" | sudo tee $SMB_CREDENTIAL_FILE > /dev/null
+    #         echo "password=$STORAGE_ACCOUNT_KEY" | sudo tee -a $SMB_CREDENTIAL_FILE > /dev/null
+    #     else
+    #         echo "The credential file $SMB_CREDENTIAL_FILE already exists, and was not modified."
+    #     fi
 
-        # Change permissions on the credential file so only root can read or modify the password file.
-        sudo chmod 600 $SMB_CREDENTIAL_FILE
+    #     # Change permissions on the credential file so only root can read or modify the password file.
+    #     sudo chmod 600 $SMB_CREDENTIAL_FILE
 
-        # This command assumes you have logged in with az login
-        HTTP_ENDPOINT=$(az storage account show --resource-group $RESOURCE_GROUP_NAME --name $STORAGE_ACCOUNT_NAME --query "primaryEndpoints.file" --output tsv | tr -d '"')
-        SMB_PATH=$(echo $HTTP_ENDPOINT | cut -c7-${#HTTP_ENDPOINT})$FILE_SHARE_NAME
+    #     # This command assumes you have logged in with az login
+    #     HTTP_ENDPOINT=$(az storage account show --resource-group $RESOURCE_GROUP_NAME --name $STORAGE_ACCOUNT_NAME --query "primaryEndpoints.file" --output tsv | tr -d '"')
+    #     SMB_PATH=$(echo $HTTP_ENDPOINT | cut -c7-${#HTTP_ENDPOINT})$FILE_SHARE_NAME
 
-        STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP_NAME --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" --output tsv | tr -d '"')
+    #     STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP_NAME --account-name $STORAGE_ACCOUNT_NAME --query "[0].value" --output tsv | tr -d '"')
 
-        sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks,fsc,cache=strict
+    #     sudo mount -t cifs $SMB_PATH $MNT_PATH -o credentials=$SMB_CREDENTIAL_FILE,serverino,nosharesock,actimeo=30,mfsymlinks,fsc,cache=strict
 
-        ls -al $MNT_PATH/TestData
-        echo "::endgroup::"
+    #     ls -al $MNT_PATH/TestData
+    #     echo "::endgroup::"
 
     - name: Checkout repository
       uses: actions/checkout@v2
@@ -224,7 +224,7 @@ runs:
       run: |
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume $MNT_PATH/TestData:/home/TestData"
+          VOLUME_ARGS="--volume /mnt/datadrive/TestData:/home/TestData"
         else
           VOLUME_ARGS=""
         fi
@@ -331,3 +331,8 @@ runs:
           coverage.xml
           .coverage
         include-hidden-files: true
+    
+    - name: Container shutdown
+      if: always()
+      run: |
+        docker container rm -f nemo_container_${{ github.run_id }} || true
