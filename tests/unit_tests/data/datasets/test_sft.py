@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import json
 import os
 
@@ -21,20 +22,6 @@ from megatron.core.parallel_state import initialize_model_parallel
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-
-
-def setup_megatron_distributed(rank=0, world_size=1):
-    import torch.distributed as dist
-
-    dist.init_process_group(backend="gloo", init_method="tcp://127.0.0.1:29500", rank=rank, world_size=world_size)
-    initialize_model_parallel(tensor_model_parallel_size=1)
-
-
-def teardown_megatron_distributed():
-    import torch.distributed as dist
-
-    if dist.is_initialized():
-        dist.destroy_process_group()
 
 
 def get_gpt_sft(ensure_test_data, dataset_type="sft"):
@@ -84,44 +71,81 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
 
 
 class TestDataGPTSFTDataset:
+    @pytest.fixture(autouse=True)
+    def setup_and_teardown_parallel_state(self):
+        """Setup and teardown parallel state for Megatron tests."""
+
+        if not dist.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = "29500"
+            os.environ["RANK"] = "0"
+            os.environ["LOCAL_RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
+
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                torch.cuda.set_device(0)
+
+            init_process_group_kwargs = {
+                "backend": "nccl" if device_count > 0 else "gloo",
+                "world_size": 1,
+                "rank": 0,
+                "timeout": datetime.timedelta(minutes=30),
+            }
+
+            dist.init_process_group(**init_process_group_kwargs)
+
+        assert dist.is_initialized(), "Distributed backend not initialized"
+        if not parallel_state.model_parallel_is_initialized():
+            parallel_state.initialize_model_parallel(
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+                context_parallel_size=1,
+            )
+
+        assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+        from megatron.bridge.training.initialize import _set_random_seed
+
+        _set_random_seed(
+            seed_=1234,
+            data_parallel_random_init=False,
+            te_rng_tracker=True,
+            inference_rng_tracker=False,
+        )
+
+        yield
+
+        try:
+            if parallel_state.model_parallel_is_initialized():
+                parallel_state.destroy_model_parallel()
+            if dist.is_initialized():
+                dist.destroy_process_group()
+                # Clean up environment variables
+                for key in ["MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE"]:
+                    os.environ.pop(key, None)
+        except (NameError, AttributeError, RuntimeError):
+            pass
+
     def test_build_samples_mapping(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
         dataset._build_samples_mapping()
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_gpt_sft_dataset(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
 
         assert len(dataset) == 100
         assert type(dataset[11]) is dict
         assert type(dataset[-11]) is dict
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_separate_template(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
         template_strings, template_strings_keys = dataset._separate_template(["output"])
 
         assert template_strings == ["output", "\n\n### Response:\n", "{output}"]
         assert template_strings_keys == ["input", "<template>", "output"]
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_multiple_truncation(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
 
         template_ids = [
@@ -135,13 +159,7 @@ class TestDataGPTSFTDataset:
         assert context_ids == [101, 102, 103, 104, 201, 202, 203]
         assert label_ids == [301, 302]
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_utils_func(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
 
         assert dataset._truncation([101, 102, 103, 104], 0) == []
@@ -159,13 +177,7 @@ class TestDataGPTSFTDataset:
 
         dataset._create_attention_mask(3)
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_collate_fn(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
 
         batch = [
@@ -190,26 +202,14 @@ class TestDataGPTSFTDataset:
         ]
         dataset.collate_fn(batch)
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
 
 class TestDataGPTSFTPackedDataset:
     def test_gpt_sft_packed_dataset(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
         assert len(dataset) == 100
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_collate_fn(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
         batch = [
@@ -260,26 +260,14 @@ class TestDataGPTSFTPackedDataset:
         assert dataset._build_samples_mapping() == None
         dataset._load_dataset()
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
 
 class TestDataGPTSFTChatDataset:
     def test_maybe_validate_prompt_template(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data, dataset_type="chat")
 
         assert dataset._maybe_validate_prompt_template() == None
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_collate_fn(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data, dataset_type="chat")
         batch = [
             {
@@ -309,17 +297,6 @@ class TestDataGPTSFTChatDataset:
         ]
         dataset.collate_fn(batch)
 
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
-
     def test_build_samples_mapping(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data, dataset_type="chat")
         dataset._build_samples_mapping()
-
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
