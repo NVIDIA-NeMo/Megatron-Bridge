@@ -12,29 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import inspect
 import logging
 from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Callable, Literal, Optional, Union
 
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
-from megatron.core.models.gpt.gpt_layer_specs import (
-    get_gpt_layer_local_spec,
-    get_gpt_layer_with_transformer_engine_spec,
-)
-from megatron.core.transformer import ModuleSpec
-from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.transformer_config import TransformerConfig
+
 from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
-from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)
-
 
 
 @dataclass
@@ -56,19 +49,19 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     num_attention_heads: int = 1
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
-    hybrid_override_pattern: str = None
+    hybrid_override_pattern: Optional[str] = None
     post_process: bool = True
     pre_process: bool = True
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
-    position_embedding_type: Literal['learned_absolute', 'rope', 'none'] = 'none'
+    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: Optional[float] = None
     apply_rope_fusion: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False
-    normalization: str = 'RMSNorm'
+    normalization: str = "RMSNorm"
     add_bias_linear: bool = False
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -86,7 +79,6 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = field(
         default_factory=lambda: default_mamba_stack_spec
     )
-
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
