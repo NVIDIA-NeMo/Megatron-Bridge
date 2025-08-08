@@ -78,7 +78,6 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
 
 class TestDataGPTSFTDataset:
     def test_build_samples_mapping(self, ensure_test_data):
-        setup_megatron_distributed()
         dataset = get_gpt_sft(ensure_test_data)
         dataset._build_samples_mapping()
 
