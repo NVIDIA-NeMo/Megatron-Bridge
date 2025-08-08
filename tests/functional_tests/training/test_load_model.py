@@ -48,7 +48,7 @@ class TestModelLoad:
 
         try:
             tokenizer = load_tokenizer(ckpt_path)
-            model = load_megatron_model(ckpt_path, use_cpu_init=False)
+            model = load_megatron_model(ckpt_path, model_type="gpt", use_cpu_init=False)
 
             # This test expects tokenizer to be a SentencePiece tokenizer
             token_ids = tokenizer.tokenize("NVIDIA NeMo is an end-to-end platform for")
