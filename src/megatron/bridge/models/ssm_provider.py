@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional, Union
 
@@ -24,10 +23,8 @@ from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.gpt_provider import get_vocab_size
 from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -115,15 +112,3 @@ class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
             pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
             post_process=post_process or parallel_state.is_pipeline_last_stage(),
         )
-
-
-def get_vocab_size(config: TransformerConfig, vocab_size: int, make_vocab_size_divisible_by: int) -> int:
-    """Calculate padded vocab size for tensor parallelism."""
-    after = vocab_size
-    multiple = make_vocab_size_divisible_by * config.tensor_model_parallel_size
-    after = ((after + multiple - 1) // multiple) * multiple
-    logger.info(
-        f"Padded vocab_size from {vocab_size} to {after} for tensor parallel size "
-        f"{config.tensor_model_parallel_size} and make_vocab_size_divisible_by {make_vocab_size_divisible_by}"
-    )
-    return after
