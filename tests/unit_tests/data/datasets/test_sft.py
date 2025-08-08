@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+import datetime
 import json
 import os
 
 import megatron.core.parallel_state as parallel_state
 import numpy as np
 import pytest
+import torch
 import torch.distributed as dist
 
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
@@ -239,11 +240,6 @@ class TestDataGPTSFTPackedDataset:
             },
         ]
         dataset.collate_fn(batch)
-
-        try:
-            pass
-        finally:
-            teardown_megatron_distributed()
 
     def test_utils_func_packed(self, ensure_test_data):
         setup_megatron_distributed()
