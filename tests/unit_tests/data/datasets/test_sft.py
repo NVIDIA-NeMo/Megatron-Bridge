@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 import json
 import os
 
-import numpy as np
-import torch.distributed as dist
 import megatron.core.parallel_state as parallel_state
+import numpy as np
+import pytest
+import torch.distributed as dist
 
 from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTDataset, GPTSFTPackedDataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
