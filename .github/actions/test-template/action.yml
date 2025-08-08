@@ -334,5 +334,6 @@ runs:
     
     - name: Container shutdown
       if: always()
+      shell: bash
       run: |
         docker container rm -f nemo_container_${{ github.run_id }} || true
