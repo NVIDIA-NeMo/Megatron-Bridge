@@ -13,17 +13,12 @@
 # limitations under the License.
 
 import logging
-import math
-from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Union
+from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.ssm_provider import SSMProvider
-from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)
@@ -31,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NemotronHModelProvider(SSMProvider):
-    """Configuration for Nemotron-H models.
-    """
+    """Configuration for Nemotron-H models."""
 
     seq_length: int = 8192
     mamba_num_groups: int = 8
@@ -40,7 +34,7 @@ class NemotronHModelProvider(SSMProvider):
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
     activation_func: callable = lambda x: torch.pow(F.relu(x), 2)
-    tokenizer_library: str = 'tiktoken'
+    tokenizer_library: str = "tiktoken"
     tokenizer_name: str = "TiktokenTokenizer"
     mapping_type: str = "nvidia-hybrid-nemotronh"
     masked_softmax_fusion: bool = True
@@ -51,10 +45,10 @@ class NemotronHModelProvider(SSMProvider):
     first_last_layers_bf16: bool = True
     is_hybrid_model: bool = True
 
+
 @dataclass
 class NemotronHModel8BProvider(NemotronHModelProvider):
-    """Configuration for a 8B parameter Nemotron-H model.
-    """
+    """Configuration for a 8B parameter Nemotron-H model."""
 
     hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
     num_layers: int = 52
