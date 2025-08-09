@@ -1,0 +1,137 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import contextlib
+import inspect
+import logging
+from dataclasses import dataclass, field
+from functools import partial
+from typing import Any, Callable, Literal, Optional, Union
+
+import torch
+from megatron.core import parallel_state
+from megatron.core.models.mamba import MambaModel as MCoreMambaModel
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_local_spec,
+    get_gpt_layer_with_transformer_engine_spec,
+)
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.bridge.models.model_provider_mixin import ModelProviderMixin
+from megatron.bridge.utils import fusions
+
+
+logger = logging.getLogger(__name__)
+
+
+
+@dataclass
+class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
+    """Configuration and provider for Megatron Core GPT models.
+
+    This class extends TransformerConfig with GPT-specific parameters and
+    provides a method to instantiate configured GPT models.
+    """
+
+    # Model configuration
+    fp16_lm_cross_entropy: bool = False
+    parallel_output: bool = True
+    share_embeddings_and_output_weights: bool = False
+    params_dtype: torch.dtype = torch.bfloat16
+    fp16: bool = False
+    bf16: bool = True
+    mamba_num_groups: int = 8
+    num_attention_heads: int = 1
+    hybrid_attention_ratio: float = 0.0
+    hybrid_mlp_ratio: float = 0.0
+    hybrid_override_pattern: str = None
+    post_process: bool = True
+    pre_process: bool = True
+    seq_length: int = 8192
+    # Mamba with no attention has no need for position embeddings, so none is default
+    position_embedding_type: Literal['learned_absolute', 'rope', 'none'] = 'none'
+    rotary_percent: float = 1.0
+    rotary_base: int = 10000
+    seq_len_interpolation_factor: Optional[float] = None
+    apply_rope_fusion: bool = True
+    make_vocab_size_divisible_by: int = 128
+    gated_linear_unit: bool = False
+    normalization: str = 'RMSNorm'
+    add_bias_linear: bool = False
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    layernorm_epsilon: float = 1e-5
+    # TODO: Move this to better places?
+    get_attention_mask_from_fusion: bool = False
+    attention_backend: AttnBackend = AttnBackend.flash
+    forward_step_fn: Callable = ssm_forward_step
+    data_step_fn: Callable = gpt_data_step
+    vocab_file: str = None
+    tokenizer_model_path: str = None
+    deallocate_pipeline_outputs: bool = True
+    bias_dropout_fusion: bool = True
+    cross_entropy_loss_fusion: bool = True
+    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = field(
+        default_factory=lambda: default_mamba_stack_spec
+    )
+
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreMambaModel:
+        """Configure and instantiate a Megatron Core Mamba model based on this configuration.
+
+        Args:
+            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
+            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
+            vp_stage: Virtual pipeline stage
+            tokenizer: Tokenizer used with the model
+
+        Returns:
+            MCoreMambaModel: Configured Megatron Core Mamba model instance
+        """
+        mamba_stack_spec = self.mamba_stack_spec
+        if not isinstance(mamba_stack_spec, ModuleSpec):
+            mamba_stack_spec = mamba_stack_spec()
+
+        assert getattr(self, "virtual_pipeline_model_parallel_size", None) is None and vp_stage is None, (
+            "Virtual pipeline model parallelism is temporarily unsupported in SSM/Mamaba "
+            "models due to upstream MCore MambaModel API dependency"
+        )
+        return MCoreMambaModel(
+            self,
+            mamba_stack_spec=mamba_stack_spec,
+            vocab_size=get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by),
+            max_sequence_length=self.seq_length,
+            hybrid_attention_ratio=self.hybrid_attention_ratio,
+            hybrid_mlp_ratio=self.hybrid_mlp_ratio,
+            hybrid_override_pattern=self.hybrid_override_pattern,
+            position_embedding_type=self.position_embedding_type,
+            rotary_percent=self.rotary_percent,
+            rotary_base=self.rotary_base,
+            seq_len_interpolation_factor=self.seq_len_interpolation_factor,
+            pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
+            post_process=post_process or parallel_state.is_pipeline_last_stage(),
+        )
+
+
+def get_vocab_size(config: TransformerConfig, vocab_size: int, make_vocab_size_divisible_by: int) -> int:
+    """Calculate padded vocab size for tensor parallelism."""
+    after = vocab_size
+    multiple = make_vocab_size_divisible_by * config.tensor_model_parallel_size
+    after = ((after + multiple - 1) // multiple) * multiple
+    logger.info(
+        f"Padded vocab_size from {vocab_size} to {after} for tensor parallel size "
+        f"{config.tensor_model_parallel_size} and make_vocab_size_divisible_by {make_vocab_size_divisible_by}"
+    )
+    return after
