@@ -53,7 +53,7 @@ class MixedPrecisionConfig:
     fp8_param_gather: bool = False
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
-    initial_loss_scale: Optional[float] = 4294967296  # 2^32
+    initial_loss_scale: Optional[float] = 4294967296  # 2**32
     min_loss_scale: float = 1.0
     loss_scale_window: float = 1000
     hysteresis: int = 2
