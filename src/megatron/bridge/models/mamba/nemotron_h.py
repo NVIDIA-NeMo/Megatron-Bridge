@@ -34,9 +34,6 @@ class NemotronHModelProvider(SSMProvider):
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
     activation_func: callable = lambda x: torch.pow(F.relu(x), 2)
-    tokenizer_library: str = "tiktoken"
-    tokenizer_name: str = "TiktokenTokenizer"
-    mapping_type: str = "nvidia-hybrid-nemotronh"
     masked_softmax_fusion: bool = True
     apply_query_key_layer_scaling: bool = False
     persist_layer_norm: bool = True
