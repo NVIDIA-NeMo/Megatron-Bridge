@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.nemotron_h.nemotron_h_causal_bridge import NemotronHCausalBridge  # noqa: F401
-from megatron.bridge.models.nemotron_h.nemotron_h_provider import (
-    NemotronHModelProvider,
+from megatron.bridge.models.mamba.nemotron_h import (
     NemotronHModel8BProvider,
+    NemotronHModelProvider,
 )
 
 
