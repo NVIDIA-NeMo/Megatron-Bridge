@@ -130,7 +130,7 @@ def _megatron_local_name_to_global(
     if ".mlp.experts.linear_fc" in param_name and get_pg_size(ep_group) > 1:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
-        
+
         def _update_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
             local_expert_number = int(param_name.split(f".{param_type}")[-1])
@@ -139,7 +139,7 @@ def _megatron_local_name_to_global(
                 f".{param_type}{local_expert_number}",
                 f".{param_type}{global_expert_number}",
             )
-        
+
         # Handle weight and bias parameters
         if ".weight" in param_name:
             param_name = _update_expert_number(param_name, "weight")
@@ -411,7 +411,6 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
         for task in self._with_progress_tracking(hf_to_megatron_tasks, description):
-            
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue

@@ -630,8 +630,8 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if self.tp_size == 1:
             return hf_weights
 
-        # Some parameters are named with global expert number, e.g. experts.weight15, 
-        # normalize it to experts.weight0, note we are only use the shape, dtype, device info, 
+        # Some parameters are named with global expert number, e.g. experts.weight15,
+        # normalize it to experts.weight0, note we are only use the shape, dtype, device info,
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
@@ -714,8 +714,8 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if self.tp_size == 1:
             return hf_weights
 
-        # Some parameters are named with global expert number, e.g. experts.weight15, 
-        # normalize it to experts.weight0, note we are only use the shape, dtype, device info, 
+        # Some parameters are named with global expert number, e.g. experts.weight15,
+        # normalize it to experts.weight0, note we are only use the shape, dtype, device info,
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
@@ -1208,8 +1208,8 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             return torch.cat([hf_weights["gate"], hf_weights["up"]], dim=0)
 
         # Get target parameter info from megatron module
-        # Some parameters are named with global expert number, e.g. experts.weight15, 
-        # normalize it to experts.weight0, note we are only use the shape, dtype, device info, 
+        # Some parameters are named with global expert number, e.g. experts.weight15,
+        # normalize it to experts.weight0, note we are only use the shape, dtype, device info,
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
