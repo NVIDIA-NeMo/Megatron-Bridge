@@ -786,6 +786,22 @@ class ConfigContainer(Container):
         else:
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
+        if self.model.context_parallel_size > 1:
+            assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
+                "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
+            )
+            if isinstance(self.dataset, FinetuningDatasetConfig):
+                # check calculate_per_token_loss to be True
+                # check average_in_collective to be False
+                # for context parallel to solve the issue of nan loss on ranks with all tokens masked
+                # (only happens in SFT)
+                assert self.model.calculate_per_token_loss, (
+                    "When finetuning with CP>1, calculate_per_token_loss must be True"
+                )
+                assert not self.ddp.average_in_collective, (
+                    "When finetuning with CP>1, average_in_collective must be False"
+                )
+
         if (
             isinstance(self.dataset, FinetuningDatasetConfig)
             and self.dataset.packed_sequence_specs is not None
