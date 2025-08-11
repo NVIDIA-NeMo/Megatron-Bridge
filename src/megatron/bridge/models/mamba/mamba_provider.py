@@ -123,3 +123,97 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
             pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
             post_process=post_process or parallel_state.is_pipeline_last_stage(),
         )
+
+
+@dataclass
+class MambaProvider130M(MambaProvider):
+    """Configuration for a 130M parameter Mamba model."""
+
+    hybrid_override_pattern: str = "M" * 24
+    num_layers: int = 24
+    seq_length: int = 2048
+    hidden_size: int = 768
+    mamba_num_groups: int = 1
+    ffn_hidden_size: int = 768
+    make_vocab_size_divisible_by: int = 16
+
+
+@dataclass
+class MambaProvider370M(MambaProvider):
+    """Configuration for a 370M parameter Mamba model."""
+
+    hybrid_override_pattern: str = "M" * 48
+    num_layers: int = 48
+    seq_length: int = 2048
+    hidden_size: int = 1024
+    mamba_num_groups: int = 1
+    ffn_hidden_size: int = 1024
+    make_vocab_size_divisible_by: int = 16
+
+
+@dataclass
+class MambaProvider780M(MambaProvider):
+    """Configuration for a 780M parameter Mamba model."""
+
+    hybrid_override_pattern: str = "M" * 48
+    num_layers: int = 48
+    seq_length: int = 2048
+    hidden_size: int = 1536
+    mamba_num_groups: int = 1
+    ffn_hidden_size: int = 1536
+    make_vocab_size_divisible_by: int = 16
+
+
+@dataclass
+class MambaProvider1_3B(MambaProvider):
+    """Configuration for a 1.3B parameter Mamba model."""
+
+    hybrid_override_pattern: str = "M" * 48
+    num_layers: int = 48
+    seq_length: int = 2048
+    hidden_size: int = 2048
+    mamba_num_groups: int = 1
+    ffn_hidden_size: int = 2048
+    make_vocab_size_divisible_by: int = 16
+
+
+@dataclass
+class MambaProvider2_7B(MambaProvider):
+    """Configuration for a 2.7B parameter Mamba model."""
+
+    hybrid_override_pattern: str = "M" * 64
+    num_layers: int = 64
+    seq_length: int = 2048
+    hidden_size: int = 2560
+    mamba_num_groups: int = 1
+    ffn_hidden_size: int = 2560
+    make_vocab_size_divisible_by: int = 16
+
+
+@dataclass
+class NVIDIAMambaProvider8B(MambaProvider):
+    """Configuration for a 8B parameter Mamba model used in NVIDIA research."""
+
+    hybrid_override_pattern: str = "M" * 56
+    num_attention_heads: int = 32
+    num_layers: int = 56
+    seq_length: int = 4096
+    hidden_size: int = 4096
+    mamba_num_groups: int = 8
+    ffn_hidden_size: int = 4096
+    make_vocab_size_divisible_by: int = 128
+
+
+@dataclass
+class NVIDIAMambaHybridProvider8B(MambaProvider):
+    """Configuration for a 8B parameter hybrid Mamba model used in NVIDIA research."""
+
+    hybrid_override_pattern: str = "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
+    num_layers: int = 56
+    seq_length: int = 4096
+    hidden_size: int = 4096
+    mamba_num_groups: int = 8
+    ffn_hidden_size: int = 16384
+    num_attention_heads: int = 32
+    num_query_groups: int = 8
+    make_vocab_size_divisible_by: int = 128
