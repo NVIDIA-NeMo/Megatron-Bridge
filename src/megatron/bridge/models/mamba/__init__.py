@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.mamba.mamba_provider import MambaProvider
 from megatron.bridge.models.mamba.nemotron_h import (
     NemotronHModel8BProvider,
     NemotronHModelProvider,
@@ -21,4 +22,5 @@ from megatron.bridge.models.mamba.nemotron_h import (
 __all__ = [
     "NemotronHModelProvider",
     "NemotronHModel8BProvider",
+    "MambaProvider",
 ]

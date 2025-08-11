@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SSMProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
+class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     """Configuration and provider for Megatron Core Mamba models.
 
     This class extends TransformerConfig with Mamba-specific parameters and

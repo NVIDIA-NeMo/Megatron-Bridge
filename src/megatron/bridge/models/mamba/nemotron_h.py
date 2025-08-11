@@ -18,14 +18,14 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.models.ssm_provider import SSMProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaProvider
 
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class NemotronHModelProvider(SSMProvider):
+class NemotronHModelProvider(MambaProvider):
     """Configuration for Nemotron-H models."""
 
     seq_length: int = 8192
