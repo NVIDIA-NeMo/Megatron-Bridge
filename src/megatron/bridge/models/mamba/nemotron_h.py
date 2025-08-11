@@ -38,7 +38,6 @@ class NemotronHModelProvider(MambaProvider):
     apply_query_key_layer_scaling: bool = False
     persist_layer_norm: bool = True
     attention_softmax_in_fp32: bool = False
-    vocab_size: int = 131072
     first_last_layers_bf16: bool = True
     is_hybrid_model: bool = True
 
