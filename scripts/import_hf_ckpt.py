@@ -14,14 +14,16 @@
 # limitations under the License.
 
 """
-Script to import HuggingFace models into Megatron checkpoint format using the AutoBridge.
+Script to import HuggingFace models into Megatron Bridge checkpoint format using the AutoBridge.
 
 Usage:
-    python import_hf_ckpt.py model_id output_path [--trust-remote-code]
+    python import_hf_ckpt.py --model-id MODEL_ID --output-path OUTPUT_PATH [--trust-remote-code]
 """
 
 import argparse
 import sys
+
+import torch
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 
@@ -29,15 +31,14 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 def main():
     """Main function to import HuggingFace model to Megatron checkpoint."""
     parser = argparse.ArgumentParser(description="Import HuggingFace model to Megatron checkpoint")
-    parser.add_argument("model_id", help="HuggingFace model ID or path")
-    parser.add_argument("output_path", help="Output directory for Megatron checkpoint")
+    parser.add_argument("--model-id", required=True, help="HuggingFace model ID or path")
+    parser.add_argument("--output-path", required=True, help="Output directory for Megatron checkpoint")
     parser.add_argument("--trust-remote-code", action="store_true", help="Trust remote code")
 
     args = parser.parse_args()
 
-    # Validate model compatibility
     if not AutoBridge.can_handle(args.model_id, trust_remote_code=args.trust_remote_code):
-        print("ERROR: Model is not supported by AutoBridge")
+        print(f"ERROR: Model {args.model_id} is not supported by Megatron-Bridge")
         sys.exit(1)
 
     try:
@@ -46,6 +47,9 @@ def main():
     except Exception as e:
         print(f"Import failed: {e}")
         sys.exit(1)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
