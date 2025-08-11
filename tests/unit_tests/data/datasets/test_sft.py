@@ -31,8 +31,9 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
     path = os.path.join(ensure_test_data, "datasets/sft.jsonl")
     line = {"input": "hi how are you?", "output": "I'm fine, thanks."}
 
+    num_samples = 100
     with open(path, "w") as f:
-        for i in range(100):
+        for i in range(num_samples):
             f.write(json.dumps(line) + "\n")
 
     tokenizer_config = TokenizerConfig(
@@ -46,17 +47,17 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
     )
 
     if dataset_type == "sft":
-        return GPTSFTDataset(
+        dataset = GPTSFTDataset(
             file_path=path,
             tokenizer=tokenizer,
             label_key="output",
-            max_num_samples=100,
+            max_num_samples=num_samples,
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
         )
     elif dataset_type == "packed":
         path = os.path.join(ensure_test_data, "datasets/sft.jsonl.idx.npy")
-        return GPTSFTPackedDataset(
+        dataset = GPTSFTPackedDataset(
             file_path=path,
             tokenizer=tokenizer,
             label_key="output",
@@ -64,13 +65,15 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
             truncation_field="output",
         )
     else:
-        return GPTSFTChatDataset(
+        dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
         )
+    
+    return dataset, num_samples
 
 
 class TestDataGPTSFTDataset:
@@ -131,25 +134,25 @@ class TestDataGPTSFTDataset:
             pass
 
     def test_build_samples_mapping(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data)
+        dataset, _ = get_gpt_sft(ensure_test_data)
         dataset._build_samples_mapping()
 
     def test_gpt_sft_dataset(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data)
+        dataset, _ = get_gpt_sft(ensure_test_data)
 
-        assert len(dataset) == 100
+        assert len(dataset) == dataset_length
         assert type(dataset[11]) is dict
         assert type(dataset[-11]) is dict
 
     def test_separate_template(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data)
+        dataset, _ = get_gpt_sft(ensure_test_data)
         template_strings, template_strings_keys = dataset._separate_template(["output"])
 
         assert template_strings == ["output", "\n\n### Response:\n", "{output}"]
         assert template_strings_keys == ["input", "<template>", "output"]
 
     def test_multiple_truncation(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data)
+        dataset, _ = get_gpt_sft(ensure_test_data)
 
         template_ids = [
             [101, 102, 103, 104],
@@ -163,7 +166,7 @@ class TestDataGPTSFTDataset:
         assert label_ids == [301, 302]
 
     def test_utils_func(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data)
+        dataset, _ = get_gpt_sft(ensure_test_data)
 
         assert dataset._truncation([101, 102, 103, 104], 0) == []
         assert dataset._truncation([101, 102, 103, 104], 2) == [101, 102]
@@ -181,7 +184,7 @@ class TestDataGPTSFTDataset:
         dataset._create_attention_mask(3)
 
     def test_collate_fn(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data)
+        dataset, _ = get_gpt_sft(ensure_test_data)
 
         batch = [
             {
@@ -208,12 +211,12 @@ class TestDataGPTSFTDataset:
 
 class TestDataGPTSFTPackedDataset:
     def test_gpt_sft_packed_dataset(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
+        dataset, dataset_length = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
-        assert len(dataset) == 100
+        assert len(dataset) == dataset_length
 
     def test_collate_fn(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
+        dataset, _ = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
         batch = [
             {
@@ -242,7 +245,7 @@ class TestDataGPTSFTPackedDataset:
         dataset.collate_fn(batch)
 
     def test_utils_func_packed(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data, dataset_type="packed")
+        dataset, _ = get_gpt_sft(ensure_test_data, dataset_type="packed")
 
         assert dataset._maybe_cast_to_list([11]) == [11]
         assert dataset._maybe_cast_to_list(np.array([11])) == [11]
@@ -260,12 +263,12 @@ class TestDataGPTSFTPackedDataset:
 
 class TestDataGPTSFTChatDataset:
     def test_maybe_validate_prompt_template(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data, dataset_type="chat")
+        dataset, _ = get_gpt_sft(ensure_test_data, dataset_type="chat")
 
         assert dataset._maybe_validate_prompt_template() == None
 
     def test_collate_fn(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data, dataset_type="chat")
+        dataset, _ = get_gpt_sft(ensure_test_data, dataset_type="chat")
         batch = [
             {
                 "input_ids": np.array([101, 102, 103, 104, 105]),
@@ -295,5 +298,5 @@ class TestDataGPTSFTChatDataset:
         dataset.collate_fn(batch)
 
     def test_build_samples_mapping(self, ensure_test_data):
-        dataset = get_gpt_sft(ensure_test_data, dataset_type="chat")
+        dataset, _ = get_gpt_sft(ensure_test_data, dataset_type="chat")
         dataset._build_samples_mapping()
