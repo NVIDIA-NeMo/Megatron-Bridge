@@ -20,6 +20,21 @@ from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.llama import Llama32ModelProvider3B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import (
+    create_checkpoint_config,
+    create_ddp_config,
+    create_logger_config,
+    create_optimizer_and_scheduler_config,
+    create_peft_config,
+    create_rng_config,
+    create_squad_dataset_config,
+    create_tokenizer_config,
+    create_training_config,
+    get_default_learning_rate,
+    get_distributed_optimizer_setting,
+    get_packed_sequence_settings,
+    setup_output_directories,
+)
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -215,5 +230,129 @@ def pretrain_config(
         cfg.comm_overlap = CommOverlapConfig(
             tp_comm_overlap=False,
         )
+
+    return cfg
+
+
+def finetune_config(
+    pretrained_checkpoint: str,
+    dir: Optional[str] = None,
+    name: str = "default",
+    packed_sequence: bool = False,
+    peft_scheme: Optional[str] = "lora",
+) -> ConfigContainer:
+    """
+    Create a fine-tuning configuration for Llama3.2 3B model.
+
+    This function sets up a complete configuration for fine-tuning, including
+    model, trainer, data, logging, optimization, and resumption settings.
+
+    Supports PEFT (LoRA/DoRA) with optimized defaults and packed sequence training
+    for improved efficiency.
+
+    Args:
+        pretrained_checkpoint (str): Path to existing Megatron checkpoint directory.
+                                   This should be a checkpoint converted from HuggingFace format
+                                   using AutoBridge.import_ckpt().
+        dir (Optional[str]): Directory for saving logs and checkpoints.
+        name (str): Name of the fine-tuning run.
+        packed_sequence (bool): Whether to use packed sequences for better efficiency.
+                       Automatically configures sequence length (4096 vs 2048) and batch size (8 vs 128).
+        peft_scheme (Optional[str]): PEFT scheme to use. Options: "lora", "dora", or None for full fine-tuning.
+                    Defaults to "lora". Uses fixed dim=8 and alpha=16 for both LoRA and DoRA.
+
+    Returns:
+        ConfigContainer: Configuration for fine-tuning.
+
+    Note:
+        By default, this recipe uses the SQuAD dataset for question-answering fine-tuning.
+
+    Note:
+        To convert a HuggingFace model to Megatron format, use:
+        >>> AutoBridge.import_ckpt("meta-llama/Llama-3.2-3B", "./megatron_checkpoint")
+
+    Examples:
+        Basic LoRA fine-tuning:
+        >>> cfg = finetune_config(
+        ...     pretrained_checkpoint="./megatron_checkpoint",
+        ...     name="my_lora_finetune"
+        ... )
+
+        Full fine-tuning:
+        >>> cfg = finetune_config(
+        ...     pretrained_checkpoint="./megatron_checkpoint",
+        ...     name="full_finetune",
+        ...     peft_scheme=None
+        ... )
+
+        DoRA with packed sequences:
+        >>> cfg = finetune_config(
+        ...     pretrained_checkpoint="./megatron_checkpoint",
+        ...     name="dora_packed",
+        ...     peft_scheme="dora",
+        ...     packed_sequence=True
+        ... )
+    """
+    # Setup directories
+    run_output_dir, checkpoint_dir, tensorboard_dir = setup_output_directories(dir, name)
+
+    # Get settings based on packed sequence usage
+    seq_length, global_batch_size = get_packed_sequence_settings(packed_sequence)
+    micro_batch_size = 1
+
+    # Configure PEFT if specified
+    peft_config = create_peft_config(peft_scheme)
+    use_distributed_optimizer = get_distributed_optimizer_setting(peft_scheme)
+
+    # Model configuration
+    model_cfg = model_config()
+    model_cfg.seq_length = seq_length
+
+    # PEFT-specific model settings
+    if peft_config is not None:
+        # Some settings currently do not function correctly with PEFT
+        model_cfg.cross_entropy_loss_fusion = False
+
+    # Training hyperparameters
+    train_iters = 1000
+    lr_warmup_iters = 50
+    min_lr = 0.0
+
+    # Optimizer and scheduler configuration
+    lr = get_default_learning_rate(peft_scheme)
+    opt_config, scheduler = create_optimizer_and_scheduler_config(
+        lr=lr,
+        train_iters=train_iters,
+        lr_warmup_iters=lr_warmup_iters,
+        min_lr=min_lr,
+        adam_beta2=0.98,
+        use_distributed_optimizer=use_distributed_optimizer,
+    )
+
+    # Config Container
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=create_training_config(
+            train_iters=train_iters,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=create_ddp_config(use_distributed_optimizer=use_distributed_optimizer),
+        dataset=create_squad_dataset_config(
+            seq_length=seq_length,
+            packed_sequence=packed_sequence,
+        ),
+        logger=create_logger_config(tensorboard_dir=tensorboard_dir),
+        tokenizer=create_tokenizer_config(model_id="meta-llama/Llama-3.2-3B"),
+        checkpoint=create_checkpoint_config(
+            pretrained_checkpoint=pretrained_checkpoint,
+            checkpoint_dir=checkpoint_dir,
+        ),
+        rng=create_rng_config(),
+        mixed_precision="bf16_mixed",
+        peft=peft_config,
+    )
 
     return cfg

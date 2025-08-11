@@ -19,7 +19,23 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.llama import Llama2ModelProvider7B
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import (
+    create_checkpoint_config,
+    create_ddp_config,
+    create_logger_config,
+    create_optimizer_and_scheduler_config,
+    create_peft_config,
+    create_rng_config,
+    create_squad_dataset_config,
+    create_tokenizer_config,
+    create_training_config,
+    get_default_learning_rate,
+    get_distributed_optimizer_setting,
+    get_packed_sequence_settings,
+    setup_output_directories,
+)
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -218,3 +234,173 @@ def pretrain_config(
         )
 
     return cfg
+
+
+def finetune_config(
+    pretrained_checkpoint: str,
+    dir: Optional[str] = None,
+    name: str = "default",
+    packed_sequence: bool = False,
+    peft_scheme: Optional[str] = "lora",
+) -> ConfigContainer:
+    """
+    Create a fine-tuning configuration for Llama2 7B model.
+
+    This function sets up a complete configuration for fine-tuning, including
+    model, trainer, data, logging, optimization, and resumption settings.
+
+    Supports PEFT (LoRA/DoRA) with optimized defaults and packed sequence training
+    for improved efficiency. Performance optimizations are enabled by default:
+    - For PEFT: TP=1, target_modules=['linear_qkv'] for better efficiency
+    - For full finetuning: grad_reduce_in_fp32=False for better performance
+
+    Args:
+        pretrained_checkpoint (str): Path to existing Megatron checkpoint directory.
+                                   This should be a checkpoint converted from HuggingFace format
+                                   using AutoBridge.import_ckpt().
+        dir (Optional[str]): Directory for saving logs and checkpoints.
+        name (str): Name of the fine-tuning run.
+        packed_sequence (bool): Whether to use packed sequences for better efficiency.
+                       Automatically configures sequence length (4096 vs 2048) and batch size (8 vs 128).
+        peft_scheme (Optional[str]): PEFT scheme to use. Options: "lora", "dora", or None for full fine-tuning.
+                    Defaults to "lora". Uses fixed dim=8 and alpha=16 for both LoRA and DoRA.
+
+    Returns:
+        ConfigContainer: Configuration for fine-tuning.
+
+    Note:
+        By default, this recipe uses the SQuAD dataset for question-answering fine-tuning.
+
+    Note:
+        To convert a HuggingFace model to Megatron format, use:
+        >>> AutoBridge.import_ckpt("meta-llama/Llama-2-7b-hf", "./megatron_checkpoint")
+
+    Examples:
+        Basic LoRA fine-tuning:
+        >>> cfg = finetune_config(
+        ...     pretrained_checkpoint="./megatron_checkpoint",
+        ...     name="my_lora_finetune"
+        ... )
+
+        Full fine-tuning:
+        >>> cfg = finetune_config(
+        ...     pretrained_checkpoint="./megatron_checkpoint",
+        ...     name="full_finetune",
+        ...     peft_scheme=None
+        ... )
+
+        DoRA with packed sequences:
+        >>> cfg = finetune_config(
+        ...     pretrained_checkpoint="./megatron_checkpoint",
+        ...     name="dora_packed",
+        ...     peft_scheme="dora",
+        ...     packed_sequence=True
+        ... )
+    """
+    # Setup directories
+    run_output_dir, checkpoint_dir, tensorboard_dir = setup_output_directories(dir, name)
+
+    # Get settings based on packed sequence usage
+    seq_length, global_batch_size = get_packed_sequence_settings(packed_sequence)
+    micro_batch_size = 1
+
+    # Configure PEFT if specified
+    peft_config = create_peft_config(peft_scheme)
+    use_distributed_optimizer = get_distributed_optimizer_setting(peft_scheme)
+
+    # Model configuration based on scheme (matches NeMo branch order)
+    if peft_config is None:
+        # Full fine-tuning optimizations
+        model_cfg = model_config()
+        model_cfg.seq_length = seq_length
+        comm_overlap_config = CommOverlapConfig(tp_comm_overlap=False)
+    else:
+        # PEFT-specific optimizations
+        model_cfg = model_config(tensor_parallelism=1)
+        model_cfg.seq_length = seq_length
+        model_cfg.cross_entropy_loss_fusion = False
+        peft_config.target_modules = ["linear_qkv"]
+        comm_overlap_config = None
+
+    # Training hyperparameters
+    train_iters = 1000
+    lr_warmup_iters = 50
+    min_lr = 0.0
+
+    # Optimizer and scheduler configuration
+    lr = get_default_learning_rate(peft_scheme)
+    opt_config, scheduler = create_optimizer_and_scheduler_config(
+        lr=lr,
+        train_iters=train_iters,
+        lr_warmup_iters=lr_warmup_iters,
+        min_lr=min_lr,
+        use_distributed_optimizer=use_distributed_optimizer,
+    )
+    opt_config.use_precision_aware_optimizer = False
+
+    # Mixed precision configuration
+    from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+
+    final_precision_config = get_mixed_precision_config("bf16_mixed")
+    final_precision_config.grad_reduce_in_fp32 = False
+
+    # Config Container
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=create_training_config(
+            train_iters=train_iters,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=_create_ddp_config_with_performance_opts(
+            use_distributed_optimizer=use_distributed_optimizer,
+            peft_config=peft_config,
+        ),
+        dataset=create_squad_dataset_config(
+            seq_length=seq_length,
+            packed_sequence=packed_sequence,
+        ),
+        logger=create_logger_config(tensorboard_dir=tensorboard_dir),
+        tokenizer=create_tokenizer_config(model_id="meta-llama/Llama-2-7b-hf"),
+        checkpoint=create_checkpoint_config(
+            pretrained_checkpoint=pretrained_checkpoint,
+            checkpoint_dir=checkpoint_dir,
+        ),
+        rng=create_rng_config(),
+        mixed_precision=final_precision_config,
+        peft=peft_config,
+        comm_overlap=comm_overlap_config,
+    )
+
+    return cfg
+
+
+def _create_ddp_config_with_performance_opts(
+    use_distributed_optimizer: bool,
+    peft_config: Optional[PEFT] = None,
+) -> DistributedDataParallelConfig:
+    """
+    Create DDP config with performance optimizations for Llama2 7B.
+
+    For full fine-tuning (peft_config is None), applies performance optimizations:
+    - grad_reduce_in_fp32=False
+    - overlap_grad_reduce=True
+    - overlap_param_gather=True
+    - average_in_collective=True
+
+    For PEFT, uses the standard DDP config.
+    """
+    # Start with standard DDP config
+    ddp_config = create_ddp_config(use_distributed_optimizer=use_distributed_optimizer)
+
+    # Apply performance optimizations only for full fine-tuning
+    if peft_config is None:
+        ddp_config.check_for_nan_in_grad = True
+        ddp_config.grad_reduce_in_fp32 = False
+        ddp_config.overlap_grad_reduce = True
+        ddp_config.overlap_param_gather = True
+        ddp_config.average_in_collective = True
+
+    return ddp_config
