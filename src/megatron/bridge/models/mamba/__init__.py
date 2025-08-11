@@ -22,7 +22,7 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaHybridProvider8B,
     NVIDIAMambaProvider8B,
 )
-from megatron.bridge.models.mamba.nemotron_h import (
+from megatron.bridge.models.mamba.nemotron_h_provider import (
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
