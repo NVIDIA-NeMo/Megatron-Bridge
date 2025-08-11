@@ -138,7 +138,7 @@ class TestDataGPTSFTDataset:
         dataset._build_samples_mapping()
 
     def test_gpt_sft_dataset(self, ensure_test_data):
-        dataset, _ = get_gpt_sft(ensure_test_data)
+        dataset, dataset_length = get_gpt_sft(ensure_test_data)
 
         assert len(dataset) == dataset_length
         assert type(dataset[11]) is dict
