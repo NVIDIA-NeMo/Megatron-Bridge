@@ -72,7 +72,7 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",
         )
-    
+
     return dataset, num_samples
 
 
