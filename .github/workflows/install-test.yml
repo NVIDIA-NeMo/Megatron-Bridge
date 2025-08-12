@@ -38,20 +38,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install CUDA Toolkit for Ubuntu 22.04
+      - name: Install CUDA Toolkit and cuDNN headers for Ubuntu 22.04
         run: |
           wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
-          sudo apt-get install -y cuda-toolkit-12-8
-          sudo apt-get clean
-
-      - name: Install cuDNN headers
-        run: |
-          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update
-          sudo apt-get install -y cudnn-cuda-12
+          sudo apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12
           sudo apt-get clean
 
       - name: Install Python ${{ matrix.python-version }}
@@ -69,6 +61,7 @@ jobs:
 
       - name: Install project
         run: |
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
           pip install --pre --no-cache-dir torch pybind11 wheel_stub numpy
           pip install --pre --no-cache-dir --no-build-isolation .
 
