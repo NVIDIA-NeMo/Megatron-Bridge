@@ -208,7 +208,7 @@ class GPTSFTDataset(Dataset):
         is_test: bool = False,
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
-        get_attention_mask_from_fusion: bool = False,
+        get_attention_mask_from_fusion: bool = True,
         sanity_check_dist_workers: bool = True,
     ):
         """
@@ -256,6 +256,8 @@ class GPTSFTDataset(Dataset):
             }
         is_test: Whether this dataset is the test split.
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
+        get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
+            of adding it to the batch dict.
         sanity_check_dist_workers (bool): if true, will run sanity check across workers when making mapping.
         """
         self.tokenizer = tokenizer
