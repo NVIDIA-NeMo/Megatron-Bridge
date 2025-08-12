@@ -24,6 +24,7 @@ import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
+from megatron.core.tokenizers import MegatronTokenizerBase
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.datasets.utils import (
@@ -32,7 +33,6 @@ from megatron.bridge.data.datasets.utils import (
     _OnlineSampleMapping,
     _preprocess,
 )
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
@@ -76,7 +76,7 @@ def get_dataset_root(name: str) -> Path:
 
 def create_sft_dataset(
     path: Path,
-    tokenizer: "MegatronTokenizer",
+    tokenizer: "MegatronTokenizerBase",
     seq_length: int = 2048,
     add_bos: bool = False,
     add_eos: bool = True,
@@ -106,7 +106,7 @@ def create_sft_dataset(
 
     Args:
         path (Path): Path to the dataset file. For packed datasets, this should be a .npy file.
-        tokenizer (MegatronTokenizer): The tokenizer to use for tokenizing the data.
+        tokenizer (MegatronTokenizerBase): The tokenizer to use for tokenizing the data.
         seq_length (int, optional): Maximum sequence length for each example. Defaults to 2048.
         add_bos (bool, optional): Whether to add a beginning-of-sentence token. Defaults to False.
         add_eos (bool, optional): Whether to add an end-of-sentence token. Defaults to True.
@@ -182,7 +182,7 @@ class GPTSFTDataset(Dataset):
     def __init__(
         self,
         file_path: str,
-        tokenizer: MegatronTokenizer,
+        tokenizer: MegatronTokenizerBase,
         max_seq_length: int = 1024,
         min_seq_length: int = 1,
         pad_seq_length_to_mult: int = 16,
@@ -219,7 +219,7 @@ class GPTSFTDataset(Dataset):
                     Q: What did the math of artificial viscosity do?',
                 'output': 'smoothed the shock transition without sacrificing basic physics'
             }
-        tokenizer: Tokenizer for the dataset. Instance of a class that inherits MegatronTokenizer (ex: SentencePiece).
+        tokenizer: Tokenizer for the dataset. Instance of a class that inherits MegatronTokenizerBase (ex: SentencePiece).
         max_seq_length (int): maximum sequence length for each dataset examples.
             Examples will either be truncated to fit this length or dropped if they cannot be truncated.
         min_seq_length (int): min length of each data example in the dataset.
@@ -724,7 +724,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
     def __init__(
         self,
         file_path: str,
-        tokenizer: MegatronTokenizer,
+        tokenizer: MegatronTokenizerBase,
         return_cu_seqlen: bool = True,
         pad_cu_seqlens: bool = False,
         pack_metadata_file_path: Optional[str] = None,

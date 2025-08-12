@@ -21,7 +21,6 @@ import torch
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
-from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
@@ -304,7 +303,7 @@ class FinetuningDatasetBuilder:
         """Automatically get the model name from model path."""
         if self.packed_sequence_specs and self.packed_sequence_specs.tokenizer_model_name is not None:
             return self.packed_sequence_specs.tokenizer_model_name
-        elif isinstance(self.tokenizer, _HuggingFaceTokenizer):
+        elif self.tokenizer.library == "huggingface":
             name = self.tokenizer._tokenizer.name_or_path
             if name.endswith("context/nemo_tokenizer"):
                 # NEMO_HOME/hf_org/hf_model/context/nemo_tokenizer => hf_org--hf_model

@@ -25,12 +25,13 @@ from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
+from megatron.core.tokenizers import MegatronTokenizerBase
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
+from megatron.bridge.training.tokenizers.build_tokenizer import build_tokenizer
 
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
         dist.destroy_process_group()
 
 
-def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
+def load_tokenizer(checkpoint_path: str) -> MegatronTokenizerBase:
     """Create a tokenizer from a training checkpoint.
 
     Obtains tokenizer configuration from the checkpoint and builds the tokenizer.

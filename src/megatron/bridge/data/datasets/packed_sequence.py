@@ -18,23 +18,23 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from megatron.core.tokenizers import MegatronTokenizerBase
 
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.data.datasets.sft import create_sft_dataset
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
 
 
-def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_seq_length: int, seed: int):
+def tokenize_dataset(path: Path, tokenizer: MegatronTokenizerBase, max_seq_length: int, seed: int):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
     and prepares it for further processing.
 
     Args:
         path (Path): Path to the dataset file.
-        tokenizer (TokenizerSpec): The tokenizer to use for tokenization.
+        tokenizer (MegatronTokenizerBase): The tokenizer to use for tokenization.
         max_seq_length (int): Maximum sequence length for the tokens.
         seed (int): Random seed for shuffling the dataset (optional).
 
@@ -56,7 +56,7 @@ def prepare_packed_sequence_data(
     output_path: Path,
     output_metadata_path: Path,
     packed_sequence_size: int,
-    tokenizer: MegatronTokenizer,
+    tokenizer: MegatronTokenizerBase,
     max_seq_length: int,
     seed: Optional[int] = 0,
     packing_algorithm: str = "first_fit_shuffle",

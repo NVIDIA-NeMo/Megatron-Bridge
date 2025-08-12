@@ -40,7 +40,7 @@ from megatron.bridge.training.initialize import initialize_megatron, set_jit_fus
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.tokenizers.build_tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0
 

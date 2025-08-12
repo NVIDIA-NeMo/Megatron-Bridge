@@ -19,6 +19,7 @@ from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
+from megatron.core.tokenizers import MegatronTokenizerBase
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
@@ -28,7 +29,6 @@ from megatron.bridge.training.config import (
     GPTDatasetConfig,
     MockGPTDatasetConfig,
 )
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
@@ -79,7 +79,7 @@ def pretrain_train_valid_test_datasets_provider(
 
 
 def hf_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: HFDatasetConfig, tokenizer: MegatronTokenizer
+    train_val_test_num_samples: list[int], dataset_config: HFDatasetConfig, tokenizer: MegatronTokenizerBase
 ) -> tuple[Any, Any, Any]:
     """Build train, validation, and test datasets from a Hugging Face dataset.
 
@@ -89,7 +89,7 @@ def hf_train_valid_test_datasets_provider(
         train_val_test_num_samples: A list containing the number of samples for
                                     train, validation, and test datasets.
         dataset_config: Configuration object for the Hugging Face dataset.
-        tokenizer: The MegatronTokenizer instance.
+        tokenizer: The MegatronTokenizerBase instance.
 
     Returns:
         A tuple containing the train, validation, and test datasets.
@@ -113,7 +113,7 @@ def hf_train_valid_test_datasets_provider(
 
 
 def finetuning_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: FinetuningDatasetConfig, tokenizer: MegatronTokenizer
+    train_val_test_num_samples: list[int], dataset_config: FinetuningDatasetConfig, tokenizer: MegatronTokenizerBase
 ) -> tuple[Any, Any, Any]:
     """Build finetuning train, validation, and test datasets.
 
@@ -123,7 +123,7 @@ def finetuning_train_valid_test_datasets_provider(
         train_val_test_num_samples: A list containing the number of samples for
                                     train, validation, and test datasets.
         dataset_config: Configuration object for the finetuning dataset.
-        tokenizer: The MegatronTokenizer instance.
+        tokenizer: The MegatronTokenizerBase instance.
 
     Returns:
         A tuple containing the train, validation, and test datasets.

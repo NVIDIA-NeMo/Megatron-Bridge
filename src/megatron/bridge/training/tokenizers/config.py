@@ -12,55 +12,77 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-from typing import Literal, Optional
+from dataclasses import dataclass, field
+from typing import Literal, Optional, Union, Dict, List
+
+from megatron.core.tokenizers import MegatronTokenizerBase
 
 
 @dataclass
 class TokenizerConfig:
     """Configuration settings for the tokenizer."""
 
-    vocab_size: Optional[int] = None
-    """Size of vocab before EOD or padding."""
+    tokenizer_path: str = None
+    """Path to tokenizer model."""
 
+    metadata_path: Optional[Union[str | dict]] = None
+    """Tokenizer metadata."""
+
+    multimodal_tokenizer: Optional[bool] = False
+    """Whether to use multimodal tokenizer."""
+
+    special_tokens: Optional[Union[Dict[str, str], List[str]]] = None
+    """Tokenizer special tokens."""
+
+    chat_template: Optional[str] = None
+    """Tokenizer chat template."""
+
+    # Sentencepiece tokenizer arguments
+    legacy: Optional[bool] = None
+    ignore_extra_whitespaces: Optional[bool] = None
+    chat_template: Optional[str] = None
+    trim_spm_separator_after_special_token: Optional[bool] = None
+    spm_separator: Optional[str] = None
+
+    # Huggingface tokenizer arguments
+    use_fast: Optional[bool] = None
+    trust_remote_code: Optional[bool] = None
+    include_special_tokens: Optional[bool] = None
     vocab_file: Optional[str] = None
-    """Path to the vocab file."""
+    meges_file: Optional[str] = None
+    additional_special_tokens: Optional[List[str]] = None
 
-    merge_file: Optional[str] = None
-    """Path to the BPE merge file."""
+    # Tiktoken tokenizer arguments
+    num_special_tokens: Optional[int] = None
+    pattern: Optional[int] = None
 
-    vocab_extra_ids: int = 0
-    """Number of additional vocabulary tokens. They are used for span masking in the T5 model"""
+    # Null tokenizer arguments
+    vocab_size: Optional[int] = None
 
-    tokenizer_type: Optional[
+    # Multimodal tokenizer arguments
+    tokenizer_prompt_format: Optional[str] = None
+    image_tag_type: Optional[str] = None
+
+    # Metadata arguments
+    write_metadata: Optional[bool] = False
+    """Creates tokenizer metadata file."""
+
+    tokenizer_library: Optional[
         Literal[
-            "BertWordPieceLowerCase",
-            "BertWordPieceCase",
-            "GPT2BPETokenizer",
-            "SentencePieceTokenizer",
-            "GPTSentencePieceTokenizer",
-            "HuggingFaceTokenizer",
-            "Llama2Tokenizer",
-            "TikTokenizer",
-            "MultimodalTokenizer",
-            "NullTokenizer",
+            "huggingface",
+            "sentencepiece",
+            "tiktoken",
+            "megatron",
+            "null",
+            "byte-level",
         ]
     ] = None
-    """What type of tokenizer to use."""
 
-    tokenizer_model: Optional[str] = None
-    """Sentencepiece tokenizer model."""
+    model_type: Optional[str] = None
+    """Type of LLM model to be used with tokenizer."""
 
-    tiktoken_pattern: Optional[str] = None
-    """Which tiktoken pattern to use. Options: [v1, v2]"""
+    tokenizer_class: Optional[MegatronTokenizerBase] = None
+    """Pre-defined tokenizer class."""
 
-    tiktoken_num_special_tokens: int = 1000
-    """Number of special tokens in tiktoken tokenizer"""
-
-    tiktoken_special_tokens: Optional[list[str]] = None
-    """List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]"""
-
-    tokenizer_prompt_format: Optional[str] = None
-    special_tokens: Optional[list[str]] = None
-    image_tag_type: Optional[str] = None
-    padded_vocab_size: Optional[int] = None
+    overwrite_metadata: Optional[bool] = False
+    """If overwrite metadata file."""

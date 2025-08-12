@@ -20,7 +20,7 @@ import nemo_run as run
 
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
 from megatron.bridge.recipes.utils.nemo_run_utils import get_partial_fn
-from megatron.bridge.training.config import ConfigContainer, ProfilingConfig
+from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TokenizerConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
@@ -37,25 +37,49 @@ def main(args: argparse.Namespace) -> None:
 
     # Get the base ConfigContainer from the recipe
     cfg: ConfigContainer = pretrain_config()
+    
+    cfg.dataset.sequence_length = 2048
+    cfg.model.seq_length = 2048
+    cfg.dataset.num_workers = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.num_layers = 4
+    cfg.model.num_attention_heads = 8
+    cfg.model.num_query_groups = 8
+    cfg.model.hidden_size = 768
+    cfg.model.ffn_hidden_size = 2048
+    cfg.tokenizer = TokenizerConfig(tokenizer_path="/home/data/llama/tokenizer.model")
+    # Example of applying programmatic overrides
+    cfg.train.global_batch_size = 8
+    cfg.train.train_iters = 100
+    cfg.train.eval_iters = 4
+    cfg.logger.log_interval = 1
 
     # Example of applying programmatic overrides
-    cfg.train.train_iters = 20
-    cfg.train.global_batch_size = 8
-    cfg.train.micro_batch_size = 1
-    cfg.train.eval_iters = 0
+    #cfg.train.train_iters = 20
+    #cfg.train.global_batch_size = 8
+    #cfg.train.micro_batch_size = 1
+    #cfg.train.eval_iters = 0
 
     cfg.scheduler.lr_warmup_iters = 5
 
-    cfg.logger.log_interval = 1
+    #cfg.logger.log_interval = 1
 
-    cfg.dataset.sequence_length = 4096
-    cfg.checkpoint.save = None
-
+    #cfg.dataset.sequence_length = 4096
+    #cfg.checkpoint.save = None
+    paths = ["/home/data/llama/my-llama_00_text_document"]
+    cfg.dataset.split = "900,95,5"
+    from megatron.core.datasets.utils import get_blend_from_list
+    paths, weights = get_blend_from_list(paths)
+    cfg.dataset.blend = [paths, weights]
+    #print(cfg.dataset)
     if cfg.profiling is None:
         cfg.profiling = ProfilingConfig()
     cfg.profiling.use_nsys_profiler = False
     cfg.profiling.use_pytorch_profiler = True
     cfg.profiling.record_shapes = True
+    
+    import torch
+    cfg.model.embedding_init_method = run.Partial(torch.nn.init.normal_, mean=0.0, std=0.01)
 
     # Create a run.Partial object for the pretrain function
     fn = get_partial_fn(pretrain, cfg, forward_step)
