@@ -43,12 +43,35 @@ def mock_distributed_env():
     ):
 
         def setup_mocks(tp_size=1, tp_rank=0, pp_size=1, pp_rank=0):
+            # Ensure Megatron and torch.distributed appear initialized
+            mock_mpu.is_initialized.return_value = True
+            mock_dist.is_initialized.return_value = True
+
+            # Simple process group mock with size() and rank()
+            class _MockGroup:
+                def __init__(self, size, rank):
+                    self._size = size
+                    self._rank = rank
+
+                def size(self):
+                    return self._size
+
+                def rank(self):
+                    return self._rank
+
+            tp_group = _MockGroup(tp_size, tp_rank)
+            pp_group = _MockGroup(pp_size, pp_rank)
+
             mock_mpu.get_tensor_model_parallel_world_size.return_value = tp_size
             mock_mpu.get_tensor_model_parallel_rank.return_value = tp_rank
             mock_mpu.get_pipeline_model_parallel_world_size.return_value = pp_size
             mock_mpu.get_pipeline_model_parallel_rank.return_value = pp_rank
-            mock_mpu.get_tensor_model_parallel_group.return_value = "tp_group"
-            mock_mpu.get_pipeline_model_parallel_group.return_value = "pp_group"
+            mock_mpu.get_tensor_model_parallel_group.return_value = tp_group
+            mock_mpu.get_pipeline_model_parallel_group.return_value = pp_group
+
+            # Utility fns used by mapping helpers
+            mock_dist.get_global_rank.side_effect = lambda group, group_rank: group_rank
+            mock_dist.get_process_group_ranks.side_effect = lambda group: list(range(group.size()))
             return mock_mpu, mock_dist
 
         yield setup_mocks
@@ -121,7 +144,18 @@ class TestReplicatedMapping:
 
         with patch.object(mapping, "broadcast_tensor_to_tp_ranks", return_value=hf_weight) as mock_broadcast_method:
             result = mapping.hf_to_megatron(hf_weight, megatron_module)
-            mock_broadcast_method.assert_called_once_with(hf_weight, src_rank=0)
+            # Verify the method was called once
+            mock_broadcast_method.assert_called_once()
+
+            # Check the arguments more robustly
+            args, kwargs = mock_broadcast_method.call_args
+            called_tensor = args[0]
+            assert "src_rank" in kwargs
+            assert kwargs["src_rank"] == 0
+
+            # Verify the tensor shapes match and values are the same (accounting for device movement)
+            assert called_tensor.shape == hf_weight.shape
+            assert torch.equal(called_tensor.cpu(), hf_weight.cpu())
             assert torch.equal(result, hf_weight)
 
 
@@ -223,14 +257,14 @@ class TestAutoMapping:
         class MyCustomRow(torch.nn.Module):
             pass
 
-        assert mapping._detect_parallelism_type(MyCol(), "some.weight") == "column"
-        assert mapping._detect_parallelism_type(MyRow(), "some.weight") == "row"
-        assert mapping._detect_parallelism_type(MyRep(), "some.weight") == "replicated"
-        assert mapping._detect_parallelism_type(torch.nn.LayerNorm(5), "some.weight") == "replicated"
-        assert mapping._detect_parallelism_type(MyCustomRow(), "some.weight") == "row"
+        assert mapping._detect_parallelism_type(MyCol()) == "column"
+        assert mapping._detect_parallelism_type(MyRow()) == "row"
+        assert mapping._detect_parallelism_type(MyRep()) == "replicated"
+        assert mapping._detect_parallelism_type(torch.nn.LayerNorm(5)) == "replicated"
+        assert mapping._detect_parallelism_type(MyCustomRow()) == "row"
 
         with pytest.raises(ValueError):
-            mapping._detect_parallelism_type(torch.nn.Linear(5, 5), "some.weight")
+            mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
 
 
 class TestHelperFunctions:
@@ -457,7 +491,7 @@ class TestMappingEdgeCases:
         unknown_module = torch.nn.Linear(10, 10)
 
         with pytest.raises(ValueError, match="Cannot determine parallelism type"):
-            mapping._detect_parallelism_type(unknown_module, "some.weight")
+            mapping._detect_parallelism_type(unknown_module)
 
     def test_resolve_wildcard_patterns(self):
         """Test wildcard pattern resolution."""
