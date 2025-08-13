@@ -16,7 +16,6 @@ from typing import Any, Optional, Union
 
 import pytest
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -221,6 +220,8 @@ def create_test_config_container(
     else:
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
 
+    from megatron.core.distributed import DistributedDataParallelConfig
+
     container = ConfigContainer(
         train=train_config or create_test_training_config(),
         model=model_config,
@@ -256,6 +257,35 @@ def restore_get_world_size_safe(original_func, module_ref):
     """
     if original_func is not None:
         module_ref.get_world_size_safe = original_func
+
+
+def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collective, dataset_type="finetuning"):
+    """Helper to create config container for context parallel tests."""
+    from megatron.core.distributed import DistributedDataParallelConfig
+
+    gpt_model_cfg = create_test_gpt_config(
+        seq_length=512,
+        context_parallel_size=cp_size,
+        calculate_per_token_loss=calc_per_token_loss,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+    )
+
+    dataset_cfg = (
+        create_test_finetuning_dataset_config(sequence_length=512)
+        if dataset_type == "finetuning"
+        else create_test_gpt_dataset_config(sequence_length=512)
+    )
+
+    ddp_cfg = DistributedDataParallelConfig(average_in_collective=avg_in_collective)
+
+    container, og_ws, cfg_mod = create_test_config_container(
+        world_size_override=cp_size,
+        model_config=gpt_model_cfg,
+        dataset_config_override=dataset_cfg,
+    )
+    container.ddp = ddp_cfg
+    return container, og_ws, cfg_mod
 
 
 class TestMockGPTDatasetConfig:
@@ -713,6 +743,70 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "seq_length, context_parallel_size, expect_assertion_error",
+        [
+            (512, 2, False),  # 512 % (2 * 2) == 0, valid
+            (510, 2, True),  # 510 % (2 * 2) != 0, invalid
+            (256, 3, True),  # 256 % (3 * 2) != 0, invalid
+        ],
+    )
+    def test_context_parallel_seq_length_divisibility(
+        self, monkeypatch, seq_length, context_parallel_size, expect_assertion_error
+    ):
+        """Test sequence length must be divisible by 2 * context_parallel_size when CP > 1."""
+        gpt_model_cfg = create_test_gpt_config(
+            seq_length=seq_length,
+            context_parallel_size=context_parallel_size,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=context_parallel_size, model_config=gpt_model_cfg
+        )
+
+        try:
+            if expect_assertion_error:
+                with pytest.raises(
+                    AssertionError, match="Sequence length must be divisible by 2 \\* context parallel size"
+                ):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        "dataset_type, cp_size, calc_per_token_loss, avg_in_collective, expect_error, error_match",
+        [
+            # FinetuningDatasetConfig with CP > 1 - both checks should trigger
+            ("finetuning", 2, False, False, True, "calculate_per_token_loss must be True"),
+            ("finetuning", 2, True, True, True, "average_in_collective must be False"),
+            ("finetuning", 2, True, False, False, None),  # Valid case
+            # GPTDatasetConfig with CP > 1 - checks should be skipped
+            ("gpt", 2, False, True, False, None),
+            # CP = 1 - checks should be skipped regardless of dataset type
+            ("finetuning", 1, False, True, False, None),
+        ],
+    )
+    def test_context_parallel_finetuning_validations(
+        self, monkeypatch, dataset_type, cp_size, calc_per_token_loss, avg_in_collective, expect_error, error_match
+    ):
+        """Test context parallel validations for finetuning configurations."""
+        container, og_ws, cfg_mod = create_test_cp_config_container(
+            cp_size, calc_per_token_loss, avg_in_collective, dataset_type
+        )
+
+        try:
+            if expect_error:
+                with pytest.raises(AssertionError, match=error_match):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """
@@ -870,11 +964,20 @@ class TestCheckpointConfig:
             create_test_checkpoint_config(load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim)
 
     def test_async_save_validation_error(self):
-        """Test that async_save is not allowed without a save path."""
+        """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
+        # Test that async_save requires a save path
         with pytest.raises(
             AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
         ):
             create_test_checkpoint_config(async_save=True, save=None)
 
-        # should not raise an error
-        create_test_checkpoint_config(async_save=True, save="/tmp/test_checkpoint_config")
+        # Test that async_save requires use_persistent_ckpt_worker=True
+        with pytest.raises(AssertionError, match="async_save requires use_persistent_ckpt_worker=True."):
+            create_test_checkpoint_config(
+                async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=False
+            )
+
+        # should not raise an error when both conditions are met
+        create_test_checkpoint_config(
+            async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=True
+        )

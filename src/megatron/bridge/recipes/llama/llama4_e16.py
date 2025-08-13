@@ -209,7 +209,6 @@ def pretrain_config(
             save=checkpoint_dir,
             ckpt_format="torch_dist",
             fully_parallel_save=True,
-            async_save=True,
         ),
         rng=RNGConfig(seed=1234),
         mixed_precision=precision_config,

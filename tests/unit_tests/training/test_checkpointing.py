@@ -13,12 +13,14 @@
 # limitations under the License.
 """Unit tests for megatron.bridge.training.checkpointing module."""
 
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
     CheckpointType,
@@ -192,6 +194,18 @@ class TestCheckpointUtilities:
         # Test with full path as directory
         ensure_directory_exists("/path/to/dir", check_parent=False)
         mock_makedirs.assert_called_with("/path/to/dir", exist_ok=True)
+
+    def test_ensure_directory_exists_with_msc_url(self):
+        """Test directory creation with MSC URL."""
+        MultiStorageClientFeature.enable()
+
+        # Verify that the parent directory is created
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=True)
+            assert os.path.exists(f"{temp_dir}/checkpoints")
+
+            ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=False)
+            assert os.path.exists(f"{temp_dir}/checkpoints/iter_0000001")
 
 
 class TestCheckpointTypes:
@@ -645,7 +659,7 @@ class TestNonPersistentCheckpoints:
     """Test non-persistent checkpoint functionality."""
 
     @patch("megatron.bridge.training.checkpointing.read_train_state")
-    @patch("os.path.isfile")
+    @patch("os.path.exists")
     def test_get_non_persistent_iteration_global(self, mock_isfile, mock_read_state):
         """Test getting iteration from global non-persistent checkpoint."""
         non_persistent_ckpt_type = "global"
@@ -795,7 +809,7 @@ class TestLoadBaseCheckpoint:
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
-    @patch("os.path.isfile")
+    @patch("os.path.exists")
     def test_load_base_checkpoint_non_distributed_error(
         self, mock_isfile, mock_dist_ckpt, mock_read_state, mock_get_np_iter, base_config
     ):
@@ -1181,7 +1195,7 @@ class TestMegatronLMCompatibility:
         assert "Legacy checkpoint missing 'args' field" in str(exc_info.value)
 
     @patch("megatron.bridge.training.checkpointing.read_metadata")
-    @patch("os.path.isfile")
+    @patch("os.path.exists")
     def test_load_base_checkpoint_legacy_tracker(self, mock_isfile, mock_read_metadata):
         """Test loading checkpoint with legacy Megatron-LM tracker file."""
         mock_cfg = Mock()
