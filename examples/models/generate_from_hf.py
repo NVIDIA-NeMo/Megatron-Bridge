@@ -102,6 +102,8 @@ def main(args) -> None:
     # pylint: disable=C0115,C0116
     tp = args.tp
     pp = args.pp
+    ep = args.ep
+    etp = args.etp
 
     # Choose loading method based on arguments
     if args.megatron_model_path:
@@ -116,6 +118,8 @@ def main(args) -> None:
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
+        model_provider.expert_model_parallel_size = ep
+        model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
 
@@ -129,6 +133,8 @@ def main(args) -> None:
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
+        model_provider.expert_model_parallel_size = ep
+        model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider(wrap_with_ddp=False)
@@ -241,6 +247,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
+    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
     args = parser.parse_args()
 
