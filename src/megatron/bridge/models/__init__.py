@@ -48,8 +48,6 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
-from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
@@ -57,11 +55,12 @@ from megatron.bridge.models.qwen import (
     Qwen2ModelProvider72B,
     Qwen2ModelProvider500M,
     Qwen3ModelProvider,
+    Qwen3ModelProvider600M,
     Qwen3ModelProvider1P7B,
-    Qwen3ModelProvider7B,
+    Qwen3ModelProvider4B,
+    Qwen3ModelProvider8B,
     Qwen3ModelProvider14B,
-    Qwen3ModelProvider28B,
-    Qwen3ModelProvider110B,
+    Qwen3ModelProvider32B,
     Qwen25ModelProvider1P5B,
     Qwen25ModelProvider3B,
     Qwen25ModelProvider7B,
@@ -123,11 +122,10 @@ __all__ = [
     "Qwen25ModelProvider32B",
     "Qwen25ModelProvider72B",
     "Qwen3ModelProvider",
+    "Qwen3ModelProvider600M",
     "Qwen3ModelProvider1P7B",
-    "Qwen3ModelProvider7B",
+    "Qwen3ModelProvider4B",
+    "Qwen3ModelProvider8B",
     "Qwen3ModelProvider14B",
-    "Qwen3ModelProvider28B",
-    "Qwen3ModelProvider110B",
-    "Qwen3MoEModelProvider",
-    "Qwen3MoEModelProvider235B",
+    "Qwen3ModelProvider32B",
 ]

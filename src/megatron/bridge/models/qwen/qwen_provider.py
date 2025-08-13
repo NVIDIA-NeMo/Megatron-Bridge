@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -42,6 +43,14 @@ class Qwen2ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
+    autocast_dtype: torch.dtype = torch.bfloat16
+    params_dtype: torch.dtype = torch.bfloat16
+    bf16: bool = True
+
+
+# =============================================================================
+# Qwen 2 Model Providers
+# =============================================================================
 
 
 @dataclass
@@ -55,14 +64,7 @@ class Qwen2ModelProvider500M(Qwen2ModelProvider):
     num_attention_heads: int = 14
     num_query_groups: int = 2
     ffn_hidden_size: int = 4864
-
-
-@dataclass
-class Qwen25ModelProvider500M(Qwen2ModelProvider500M):
-    """
-    Config for Qwen 2.5 0.5B: https://huggingface.co/Qwen/Qwen2.5-0.5B
-    """
-
+    share_embeddings_and_output_weights: bool = True
     seq_length: int = 32768
 
 
@@ -77,6 +79,74 @@ class Qwen2ModelProvider1P5B(Qwen2ModelProvider):
     num_attention_heads: int = 12
     num_query_groups: int = 2
     ffn_hidden_size: int = 8960
+    seq_length: int = 32768
+    share_embeddings_and_output_weights: bool = True
+
+
+@dataclass
+class Qwen2ModelProvider7B(Qwen2ModelProvider):
+    """
+    Config for Qwen 2 7B: https://huggingface.co/Qwen/Qwen2-7B
+    """
+
+    num_layers: int = 28
+    hidden_size: int = 3584
+    num_attention_heads: int = 28
+    num_query_groups: int = 4
+    ffn_hidden_size: int = 18944
+    vocab_size: int = 152064
+    seq_length: int = 32768
+
+
+@dataclass
+class Qwen2ModelProvider72B(Qwen2ModelProvider):
+    """
+    Config for Qwen 2 72B: https://huggingface.co/Qwen/Qwen2-72B
+    """
+
+    num_layers: int = 80
+    hidden_size: int = 8192
+    num_attention_heads: int = 64
+    num_query_groups: int = 8
+    ffn_hidden_size: int = 29568
+    vocab_size: int = 152064
+    layernorm_epsilon: float = 1e-6
+    seq_length: int = 32768
+
+
+# =============================================================================
+# Qwen 2.5 Model Providers
+# =============================================================================
+
+
+@dataclass
+class Qwen25ModelProvider500M(Qwen2ModelProvider):
+    """
+    Config for Qwen 2.5 0.5B: https://huggingface.co/Qwen/Qwen2.5-0.5B
+    """
+
+    num_layers: int = 24
+    hidden_size: int = 896
+    num_attention_heads: int = 14
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 4864
+    share_embeddings_and_output_weights: bool = True
+    seq_length: int = 32768
+
+
+@dataclass
+class Qwen25ModelProvider1P5B(Qwen2ModelProvider):
+    """
+    Config for Qwen 2.5 1.5B: https://huggingface.co/Qwen/Qwen2.5-1.5B
+    """
+
+    num_layers: int = 28
+    hidden_size: int = 1536
+    num_attention_heads: int = 12
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 8960
+    seq_length: int = 32768
+    share_embeddings_and_output_weights: bool = True
 
 
 @dataclass
@@ -92,21 +162,13 @@ class Qwen25ModelProvider3B(Qwen2ModelProvider):
     ffn_hidden_size: int = 11008
     vocab_size: int = 151936
     share_embeddings_and_output_weights: bool = True
+    seq_length: int = 32768
 
 
 @dataclass
-class Qwen25ModelProvider1P5B(Qwen2ModelProvider1P5B):
+class Qwen25ModelProvider7B(Qwen2ModelProvider):
     """
-    Config for Qwen 2.5 1.5B: https://huggingface.co/Qwen/Qwen2.5-1.5B
-    """
-
-    seq_length: int = 131072
-
-
-@dataclass
-class Qwen2ModelProvider7B(Qwen2ModelProvider):
-    """
-    Config for Qwen 2 7B: https://huggingface.co/Qwen/Qwen2-7B
+    Config for Qwen 2.5 7B: https://huggingface.co/Qwen/Qwen2.5-7B
     """
 
     num_layers: int = 28
@@ -115,15 +177,7 @@ class Qwen2ModelProvider7B(Qwen2ModelProvider):
     num_query_groups: int = 4
     ffn_hidden_size: int = 18944
     vocab_size: int = 152064
-
-
-@dataclass
-class Qwen25ModelProvider7B(Qwen2ModelProvider7B):
-    """
-    Config for Qwen 2.5 7B: https://huggingface.co/Qwen/Qwen2.5-7B
-    """
-
-    seq_length: int = 131072
+    seq_length: int = 32768
 
 
 @dataclass
@@ -138,8 +192,8 @@ class Qwen25ModelProvider14B(Qwen2ModelProvider):
     num_query_groups: int = 8
     ffn_hidden_size: int = 13824
     vocab_size: int = 152064
-    layernorm_epsilon: float = 1e-5
-    seq_length: int = 131072
+    layernorm_epsilon: float = 1e-6
+    seq_length: int = 32768
 
 
 @dataclass
@@ -154,14 +208,14 @@ class Qwen25ModelProvider32B(Qwen2ModelProvider):
     num_query_groups: int = 8
     ffn_hidden_size: int = 27648
     vocab_size: int = 152064
-    layernorm_epsilon: float = 1e-5
-    seq_length: int = 131072
+    layernorm_epsilon: float = 1e-6
+    seq_length: int = 32768
 
 
 @dataclass
-class Qwen2ModelProvider72B(Qwen2ModelProvider):
+class Qwen25ModelProvider72B(Qwen2ModelProvider):
     """
-    Config for Qwen 2 72B: https://huggingface.co/Qwen/Qwen2-72B
+    Config for Qwen 2.5 72B: https://huggingface.co/Qwen/Qwen2.5-72B
     """
 
     num_layers: int = 80
@@ -170,106 +224,114 @@ class Qwen2ModelProvider72B(Qwen2ModelProvider):
     num_query_groups: int = 8
     ffn_hidden_size: int = 29568
     vocab_size: int = 152064
-    layernorm_epsilon: float = 1e-5
+    layernorm_epsilon: float = 1e-6
+    seq_length: int = 32768
+
+
+# =============================================================================
+# Qwen 3 Model Provider (based on GPTProvider)
+# =============================================================================
 
 
 @dataclass
-class Qwen25ModelProvider72B(Qwen2ModelProvider72B):
-    """
-    Config for Qwen 2.5 72B: https://huggingface.co/Qwen/Qwen2.5-72B
-    """
+class Qwen3ModelProvider(GPTModelProvider):
+    """Base model provider for Qwen 3 Models."""
 
-    seq_length: int = 131072
-
-
-@dataclass
-class Qwen3ModelProvider(Qwen2ModelProvider):
-    """Configuration for Qwen3 models.
-
-    Qwen3 differs from Qwen2 by using QK layernorm.
-    """
-
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
     add_qkv_bias: bool = False
     qk_layernorm: bool = True
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
-    max_position_embeddings: int = 40960
+    seq_length: int = 40960
+    init_method_std: int = 0.02
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
     vocab_size: int = 151936
+    share_embeddings_and_output_weights: Optional[bool] = False
+    layernorm_epsilon: float = 1e-6
+    rotary_base: float = 1000000.0
+    position_embedding_type: str = "rope"
+    autocast_dtype: torch.dtype = torch.bfloat16
+    params_dtype: torch.dtype = torch.bfloat16
+    bf16: bool = True
+
+
+@dataclass
+class Qwen3ModelProvider600M(Qwen3ModelProvider):
+    """
+    Config for Qwen 3 0.6B: https://huggingface.co/Qwen/Qwen3-0.6B
+    """
+
+    num_layers: int = 28
+    hidden_size: int = 1024
+    num_attention_heads: int = 16
+    ffn_hidden_size: int = 3072
+    share_embeddings_and_output_weights: bool = True
 
 
 @dataclass
 class Qwen3ModelProvider1P7B(Qwen3ModelProvider):
     """
-    Config for Qwen3 1.7B: https://huggingface.co/Qwen/Qwen3-1.7B
-    """
-
-    num_layers: int = 24
-    hidden_size: int = 1536
-    num_attention_heads: int = 12
-    num_query_groups: int = 2
-    ffn_hidden_size: int = 8960
-    vocab_size: int = 151936
-    seq_length: int = 8192
-
-
-@dataclass
-class Qwen3ModelProvider7B(Qwen3ModelProvider):
-    """
-    Config for Qwen3 7B: https://huggingface.co/Qwen/Qwen3-7B
+    Config for Qwen 3 1.7B: https://huggingface.co/Qwen/Qwen3-1.7B
     """
 
     num_layers: int = 28
-    hidden_size: int = 3584
-    num_attention_heads: int = 28
-    num_query_groups: int = 4
-    ffn_hidden_size: int = 18944
-    vocab_size: int = 152064
-    seq_length: int = 8192
+    hidden_size: int = 2048
+    num_attention_heads: int = 16
+    ffn_hidden_size: int = 6144
+    share_embeddings_and_output_weights: bool = True
+
+
+@dataclass
+class Qwen3ModelProvider4B(Qwen3ModelProvider):
+    """
+    Config for Qwen 3 4B: https://huggingface.co/Qwen/Qwen3-4B
+    """
+
+    num_layers: int = 36
+    hidden_size: int = 2560
+    num_attention_heads: int = 32
+    ffn_hidden_size: int = 9728
+    share_embeddings_and_output_weights: bool = True
+
+
+@dataclass
+class Qwen3ModelProvider8B(Qwen3ModelProvider):
+    """
+    Config for Qwen 3 8B: https://huggingface.co/Qwen/Qwen3-8B
+    """
+
+    num_layers: int = 36
+    hidden_size: int = 4096
+    num_attention_heads: int = 32
+    ffn_hidden_size: int = 12288
 
 
 @dataclass
 class Qwen3ModelProvider14B(Qwen3ModelProvider):
     """
-    Config for Qwen3 14B: https://huggingface.co/Qwen/Qwen3-14B
+    Config for Qwen 3 14B: https://huggingface.co/Qwen/Qwen3-14B
     """
 
     num_layers: int = 40
     hidden_size: int = 5120
     num_attention_heads: int = 40
-    num_query_groups: int = 8
-    ffn_hidden_size: int = 13824
-    vocab_size: int = 152064
-    seq_length: int = 8192
+    ffn_hidden_size: int = 17408
 
 
 @dataclass
-class Qwen3ModelProvider28B(Qwen3ModelProvider):
+class Qwen3ModelProvider32B(Qwen3ModelProvider):
     """
-    Config for Qwen3 28B: https://huggingface.co/Qwen/Qwen3-28B
-    """
-
-    num_layers: int = 48
-    hidden_size: int = 6016
-    num_attention_heads: int = 47
-    num_query_groups: int = 8
-    ffn_hidden_size: int = 16256
-    vocab_size: int = 152064
-    seq_length: int = 8192
-
-
-@dataclass
-class Qwen3ModelProvider110B(Qwen3ModelProvider):
-    """
-    Config for Qwen3 110B: https://huggingface.co/Qwen/Qwen3-110B
+    Config for Qwen 3 32B: https://huggingface.co/Qwen/Qwen3-32B
     """
 
-    num_layers: int = 80
-    hidden_size: int = 8192
+    num_layers: int = 64
+    hidden_size: int = 5120
     num_attention_heads: int = 64
-    num_query_groups: int = 8
-    ffn_hidden_size: int = 49152
-    vocab_size: int = 152064
-    seq_length: int = 8192
+    ffn_hidden_size: int = 25600
 
 
 @dataclass

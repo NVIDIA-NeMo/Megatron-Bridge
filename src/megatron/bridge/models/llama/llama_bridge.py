@@ -74,8 +74,6 @@ class LlamaBridge(MegatronModelBridge):
             vocab_size=hf_config.vocab_size,
         )
 
-        provider.gradient_accumulation_fusion = False
-
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:

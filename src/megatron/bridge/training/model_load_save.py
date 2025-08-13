@@ -30,6 +30,7 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,46 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     finally:
         parallel_state.destroy_model_parallel()
         dist.destroy_process_group()
+
+
+def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
+    """Create a tokenizer from a training checkpoint.
+
+    Obtains tokenizer configuration from the checkpoint and builds the tokenizer.
+    Checkpoint should be in MCore distributed checkpoint format.
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory
+                          (e.g., /path/to/model/checkpoints/iter_0000001).
+    """
+    from megatron.bridge.training.checkpointing import (
+        get_checkpoint_run_config_filename,
+        read_run_config,
+    )
+    from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _tokenizer_config_from_args
+    from megatron.bridge.utils.instantiate_utils import instantiate
+
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+    if os.path.exists(run_config_filename):
+        run_config = read_run_config(run_config_filename)
+        mbridge_ckpt = True
+    else:
+        try:
+            mlm_args = _load_args_from_checkpoint(checkpoint_path)
+            mbridge_ckpt = False
+        except AssertionError:
+            raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
+
+    if mbridge_ckpt:
+        cfg = instantiate(run_config["tokenizer"])
+        tp_size = run_config["model"]["tensor_model_parallel_size"]
+        vocab_size_divisor = run_config["model"]["make_vocab_size_divisible_by"]
+    else:
+        cfg = _tokenizer_config_from_args(mlm_args)
+        tp_size = getattr(mlm_args, "tensor_model_parallel_size", 1)
+        vocab_size_divisor = getattr(mlm_args, "make_vocab_size_divisible_by", 128)
+
+    return build_tokenizer(cfg, vocab_size_divisor, tp_size)
 
 
 def load_megatron_model(
