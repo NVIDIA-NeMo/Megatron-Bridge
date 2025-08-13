@@ -69,7 +69,7 @@ jobs:
 
   cicd-wait-in-queue:
     needs: [pre-flight]
-    runs-on: ubuntu-latest
+    runs-on: nemo-ci-aws-gpu-x2
     environment: test
     if: |
       needs.pre-flight.outputs.test_to_run != '[]'
