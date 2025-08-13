@@ -17,11 +17,14 @@
 
 import copy
 import functools
+import os
+import tempfile
 from dataclasses import dataclass
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 import torch
+from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
@@ -476,6 +479,20 @@ class TestConfigContainer_ToYaml:
         # Verify the correct arguments were passed to yaml.safe_dump
         call_args = mock_yaml_dump.call_args
         assert call_args[1]["default_flow_style"] is False
+
+    def test_to_yaml_with_msc_url(self):
+        """Test to_yaml with MSC URL."""
+        config = TestConfigContainer(name="msc_test", value=999)
+
+        MultiStorageClientFeature.enable()
+
+        # Verify that the file is created in the temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.to_yaml(f"msc://default{temp_dir}/test_output.yaml")
+            assert os.path.exists(f"{temp_dir}/test_output.yaml")
+
+            loaded_config = TestConfigContainer.from_yaml(f"msc://default{temp_dir}/test_output.yaml")
+            assert config.to_dict() == loaded_config.to_dict()
 
 
 class TestConfigContainer_DeepCopy:
