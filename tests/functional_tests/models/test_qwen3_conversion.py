@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import Qwen3Config, Qwen3ForCausalLM, AutoTokenizer
-
+from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM
 
 
 HF_QWEN3_TOY_MODEL_CONFIG = {

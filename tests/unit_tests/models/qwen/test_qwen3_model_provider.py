@@ -16,12 +16,12 @@ import torch.nn.functional as F
 
 from megatron.bridge.models.qwen import (
     Qwen3ModelProvider,
-    Qwen3ModelProvider600M,
     Qwen3ModelProvider1P7B,
     Qwen3ModelProvider4B,
     Qwen3ModelProvider8B,
     Qwen3ModelProvider14B,
     Qwen3ModelProvider32B,
+    Qwen3ModelProvider600M,
 )
 
 

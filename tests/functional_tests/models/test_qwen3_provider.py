@@ -16,12 +16,12 @@ import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.qwen import (
-    Qwen3ModelProvider600M,
     Qwen3ModelProvider1P7B,
     Qwen3ModelProvider4B,
     Qwen3ModelProvider8B,
     Qwen3ModelProvider14B,
     Qwen3ModelProvider32B,
+    Qwen3ModelProvider600M,
 )
 from tests.functional_tests.utils import compare_provider_configs
 
