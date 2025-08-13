@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   pre-flight:
-    runs-on: ubuntu-latest
+    runs-on: nemo-ci-cpu
     outputs:
       is_ci_workload: ${{ steps.is_ci_workload.outputs.main }}
       no_fail_fast: ${{ steps.no_fail_fast.outputs.main }}
