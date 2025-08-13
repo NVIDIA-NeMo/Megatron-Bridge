@@ -48,8 +48,6 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
-from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
