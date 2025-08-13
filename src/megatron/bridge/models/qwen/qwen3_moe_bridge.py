@@ -16,14 +16,14 @@ import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3MoeForCausalLM
 
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
-    QKVMapping,
-    GatedMLPMapping,
     AutoMapping,
+    GatedMLPMapping,
+    QKVMapping,
 )
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
 
 

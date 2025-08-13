@@ -55,12 +55,15 @@ from megatron.bridge.models.qwen import (
     Qwen2ModelProvider72B,
     Qwen2ModelProvider500M,
     Qwen3ModelProvider,
-    Qwen3ModelProvider600M,
     Qwen3ModelProvider1P7B,
     Qwen3ModelProvider4B,
     Qwen3ModelProvider8B,
     Qwen3ModelProvider14B,
     Qwen3ModelProvider32B,
+    Qwen3ModelProvider600M,
+    Qwen3MoEModelProvider,
+    Qwen3MoEModelProvider30B_A3B,
+    Qwen3MoEModelProvider235B_A22B,
     Qwen25ModelProvider1P5B,
     Qwen25ModelProvider3B,
     Qwen25ModelProvider7B,
@@ -68,11 +71,6 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider32B,
     Qwen25ModelProvider72B,
     Qwen25ModelProvider500M,
-)
-from megatron.bridge.models.qwen import (
-    Qwen3MoEModelProvider,
-    Qwen3MoEModelProvider30B_A3B,
-    Qwen3MoEModelProvider235B_A22B,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 

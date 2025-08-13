@@ -258,8 +258,8 @@ class TestQwen3MoEBridge:
     def test_provider_bridge_missing_tie_word_embeddings(self, mock_qwen3_moe_config):
         """Test provider_bridge when tie_word_embeddings is missing."""
         # Remove tie_word_embeddings attribute
-        if hasattr(mock_qwen3_moe_config, 'tie_word_embeddings'):
-            delattr(mock_qwen3_moe_config, 'tie_word_embeddings')
+        if hasattr(mock_qwen3_moe_config, "tie_word_embeddings"):
+            delattr(mock_qwen3_moe_config, "tie_word_embeddings")
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_moe_config
@@ -294,13 +294,13 @@ class TestQwen3MoEBridge:
     def test_mapping_registry(self):
         """Test mapping_registry returns valid mappings."""
         bridge = Qwen3MoEBridge()
-        
+
         registry = bridge.mapping_registry()
-        
+
         # Check that registry is not None and has mappings
         assert registry is not None
         assert len(registry.mappings) > 0
-        
+
         # Check for expected mapping types
         mapping_types = [type(mapping).__name__ for mapping in registry.mappings]
         assert "AutoMapping" in mapping_types
@@ -310,24 +310,24 @@ class TestQwen3MoEBridge:
     def test_mapping_registry_parameter_mappings(self):
         """Test that mapping_registry contains expected parameter mappings."""
         bridge = Qwen3MoEBridge()
-        
+
         registry = bridge.mapping_registry()
-        
+
         # Extract all AutoMapping instances
         auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
-        
+
         # Check for critical parameter mappings
         hf_params = [mapping.hf_param for mapping in auto_mappings]
         megatron_params = [mapping.megatron_param for mapping in auto_mappings]
-        
+
         # Should have embedding mappings
         assert "model.embed_tokens.weight" in hf_params
         assert "embedding.word_embeddings.weight" in megatron_params
-        
+
         # Should have output layer mappings
         assert "lm_head.weight" in hf_params
         assert "output_layer.weight" in megatron_params
-        
+
         # Should have layer norm mappings
         assert "model.norm.weight" in hf_params
         assert "decoder.final_layernorm.weight" in megatron_params
@@ -335,42 +335,45 @@ class TestQwen3MoEBridge:
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
         bridge = Qwen3MoEBridge()
-        
+
         registry = bridge.mapping_registry()
-        
+
         # Extract QKVMapping instances
         qkv_mappings = [m for m in registry.mappings if type(m).__name__ == "QKVMapping"]
-        
+
         # Should have at least one QKV mapping
         assert len(qkv_mappings) > 0
-        
+
         # Check the QKV mapping structure
         qkv_mapping = qkv_mappings[0]
-        assert hasattr(qkv_mapping, 'hf_param')
+        assert hasattr(qkv_mapping, "hf_param")
         assert isinstance(qkv_mapping.hf_param, dict)
-        assert 'q' in qkv_mapping.hf_param
-        assert 'k' in qkv_mapping.hf_param
-        assert 'v' in qkv_mapping.hf_param
-        assert hasattr(qkv_mapping, 'megatron_param')
+        assert "q" in qkv_mapping.hf_param
+        assert "k" in qkv_mapping.hf_param
+        assert "v" in qkv_mapping.hf_param
+        assert hasattr(qkv_mapping, "megatron_param")
 
     def test_mapping_registry_moe_mappings(self):
         """Test that mapping_registry contains MoE-specific mappings."""
         bridge = Qwen3MoEBridge()
-        
+
         registry = bridge.mapping_registry()
-        
+
         # Extract all mappings
         auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
         gated_mlp_mappings = [m for m in registry.mappings if type(m).__name__ == "GatedMLPMapping"]
-        
+
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
         assert "model.layers.*.mlp.gate.weight" in hf_params
-        
+
         # Check for expert mappings in GatedMLPMapping
         assert len(gated_mlp_mappings) > 0
-        
+
         # Check expert down projection mapping
-        expert_down_params = [mapping.hf_param for mapping in auto_mappings 
-                             if "experts" in mapping.hf_param and "down_proj" in mapping.hf_param]
+        expert_down_params = [
+            mapping.hf_param
+            for mapping in auto_mappings
+            if "experts" in mapping.hf_param and "down_proj" in mapping.hf_param
+        ]
         assert len(expert_down_params) > 0

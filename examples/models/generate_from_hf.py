@@ -196,7 +196,9 @@ def main(args) -> None:
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_0(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
-                    print_rank_0(f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})")
+                    print_rank_0(
+                        f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
+                    )
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
 
