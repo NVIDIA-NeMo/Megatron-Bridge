@@ -48,7 +48,7 @@ jobs:
           pre-commit run --all-files --show-diff-on-failure --color=always
 
   cicd-wait-in-queue:
-    needs: [pre-flight]
+    needs: [pre-flight, linting]
     runs-on: ubuntu-latest
     environment: test
     if: |
