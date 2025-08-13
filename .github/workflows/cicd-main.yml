@@ -69,7 +69,7 @@ jobs:
 
   cicd-wait-in-queue:
     needs: [pre-flight]
-    runs-on: nemo-ci-aws-gpu-x2
+    runs-on: ubuntu-latest
     environment: test
     if: |
       needs.pre-flight.outputs.test_to_run != '[]'
@@ -91,7 +91,7 @@ jobs:
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: nemo-ci-aws-gpu-x2
+    runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
     steps:
@@ -119,7 +119,7 @@ jobs:
           - script: L2_Launch_converter
             timeout: 60
     needs: [cicd-unit-tests]
-    runs-on: nemo-ci-aws-gpu-x2
+    runs-on: self-hosted-nemo
     if: |
       (
         success()
