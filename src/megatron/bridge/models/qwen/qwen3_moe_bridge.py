@@ -70,8 +70,6 @@ class Qwen3MoEBridge(MegatronModelBridge):
             moe_grouped_gemm=True,
         )
 
-        provider.gradient_accumulation_fusion = False
-
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
