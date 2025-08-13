@@ -696,6 +696,8 @@ class GPTSFTDataset(Dataset):
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
             attention_mask = torch.stack(attention_mask)
+        else:
+            attention_mask = None
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
@@ -716,10 +718,8 @@ class GPTSFTDataset(Dataset):
             "answers": answers,
             "metadata": metadata,
             "token_count": token_count,
+            "attention_mask": attention_mask,
         }
-
-        if not self.get_attention_mask_from_fusion:
-            processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
 
@@ -1068,6 +1068,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
             attention_mask = torch.stack(attention_mask)
+        else:
+            attention_mask = None
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
@@ -1088,9 +1090,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
             "context_lengths": context_lengths,
             "answers": answers,
             "metadata": metadata,
+            "attention_mask": attention_mask,
         }
-
-        if not self.get_attention_mask_from_fusion:
-            processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
