@@ -89,7 +89,7 @@ def setup_logging(
     from specific modules.
 
     Logging Level Precedence:
-    1. Env var `MEGATRON_HUB_LOGGING_LEVEL`
+    1. Env var `MEGATRON_BRIDGE_LOGGING_LEVEL`
     2. `logging_level` argument
     3. Default: `logging.INFO`
 
@@ -101,7 +101,7 @@ def setup_logging(
                                    loggers. If False (default), only sets the level
                                    for the root logger and loggers starting with 'nemo'.
     """
-    env_logging_level = os.getenv("MEGATRON_HUB_LOGGING_LEVEL", None)
+    env_logging_level = os.getenv("MEGATRON_BRIDGE_LOGGING_LEVEL", None)
     if env_logging_level is not None:
         logging_level = int(env_logging_level)
 
