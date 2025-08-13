@@ -28,6 +28,7 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider72B,
     Qwen25ModelProvider500M,
 )
+from tests.functional_tests.utils import compare_provider_configs
 
 
 HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
@@ -45,59 +46,6 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     "Qwen/Qwen2-7B-Instruct": Qwen2ModelProvider7B,
     "Qwen/Qwen2-72B-Instruct": Qwen2ModelProvider72B,
 }
-
-
-def compare_provider_configs(converted_provider, predefined_provider, model_id):
-    """Compare ALL configuration attributes between converted and predefined providers."""
-
-    # Get all attributes from both providers
-    converted_attrs = vars(converted_provider)
-    predefined_attrs = vars(predefined_provider)
-
-    # First check that both providers have the same set of attributes
-    converted_keys = set(converted_attrs.keys())
-    predefined_keys = set(predefined_attrs.keys())
-
-    missing_in_converted = predefined_keys - converted_keys
-    missing_in_predefined = converted_keys - predefined_keys
-
-    if missing_in_converted:
-        raise AssertionError(f"Converted provider for {model_id} is missing attributes: {missing_in_converted}")
-
-    if missing_in_predefined:
-        raise AssertionError(f"Predefined provider for {model_id} is missing attributes: {missing_in_predefined}")
-
-    # Compare all attribute values
-    mismatched_attrs = []
-    excluded_attrs = set()
-
-    for attr_name in sorted(converted_keys):
-        # Skip excluded attributes
-        if "init_method" in attr_name or attr_name == "generation_config":
-            excluded_attrs.add(attr_name)
-            continue
-
-        converted_value = converted_attrs[attr_name]
-        predefined_value = predefined_attrs[attr_name]
-
-        # Handle special comparison cases for different types
-        if converted_value != predefined_value:
-            # For functions, compare by name/identity since they might be the same function
-            # but not pass == comparison
-            if callable(converted_value) and callable(predefined_value):
-                if (
-                    hasattr(converted_value, "__name__")
-                    and hasattr(predefined_value, "__name__")
-                    and converted_value.__name__ == predefined_value.__name__
-                ):
-                    continue
-                elif converted_value is predefined_value:
-                    continue
-
-            mismatched_attrs.append(f"  {attr_name}: converted={converted_value} vs predefined={predefined_value}")
-
-    if mismatched_attrs:
-        raise AssertionError(f"Configuration mismatch for {model_id}:\n" + "\n".join(mismatched_attrs))
 
 
 class TestQwenModelProviderMapping:
