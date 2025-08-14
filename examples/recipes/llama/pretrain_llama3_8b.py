@@ -52,16 +52,17 @@ import argparse
 import logging
 import os
 import sys
+import pdb
 from pathlib import Path
 from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
-from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.utils.omegaconf_utils import (
+from megatron.bridge.recipes.llama.llama3_8b import pretrain_config  # type: ignore
+from megatron.bridge.training.config import ConfigContainer  # type: ignore
+from megatron.bridge.training.gpt_step import forward_step  # type: ignore
+from megatron.bridge.training.pretrain import pretrain  # type: ignore
+from megatron.bridge.training.utils.omegaconf_utils import (  # type: ignore
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
@@ -124,10 +125,15 @@ def main() -> None:
             model.pipeline_model_parallel_size=2 \
             train.global_batch_size=512
     """
+    # Only set breakpoint for rank 0
     args, cli_overrides = parse_cli_args()
 
     logger.info("Megatron-Bridge Llama3 8B Pretraining Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
+
+    if int(os.environ.get('RANK', 0)) == 0:
+        print("======= Debugging Breakpoint ========")
+        pdb.set_trace()  # Breakpoint for debugging (rank 0 only)
 
     # Load base configuration from the recipe as a Python dataclass
     cfg: ConfigContainer = pretrain_config()

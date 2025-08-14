@@ -60,7 +60,7 @@ class DistributedInitConfig:
     distributed_backend: Literal["nccl", "gloo"] = "nccl"
     """Which backend to use for distributed training."""
 
-    distributed_timeout_minutes: int = 10
+    distributed_timeout_minutes: int = 30
     """Timeout minutes for torch.distributed."""
 
     align_grad_reduce: bool = True
