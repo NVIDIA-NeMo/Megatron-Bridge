@@ -200,6 +200,7 @@ def pretrain_config(
         checkpoint=CheckpointConfig(
             save_interval=10,
             save=checkpoint_dir,
+            load=checkpoint_dir,
             ckpt_format="torch_dist",
             dist_ckpt_strictness="log_all",
         ),
