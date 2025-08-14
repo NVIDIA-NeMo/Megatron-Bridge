@@ -28,6 +28,8 @@ from megatron.bridge.models.mamba.nemotron_h_provider import (
     NemotronHModel47BProvider,
     NemotronHModel56BProvider,
     NemotronHModelProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
 )
 
 

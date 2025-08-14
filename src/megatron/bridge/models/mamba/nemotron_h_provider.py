@@ -96,3 +96,33 @@ class NemotronHModel56BProvider(NemotronHModelProvider):
     mamba_state_dim: int = 256
     ffn_hidden_size: int = 32768
     num_attention_heads: int = 64
+
+
+@dataclass
+class NemotronNano9Bv2Provider(NemotronHModelProvider):
+    """Configuration for a 9B parameter Nemotron Nano v2 model."""
+
+    hybrid_override_pattern: str = "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
+    num_layers: int = 56
+    hidden_size: int = 4480
+    mamba_num_heads: int = 128
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 15680
+    num_attention_heads: int = 40
+    mamba_head_dim: int = 80
+
+
+@dataclass
+class NemotronNano12Bv2Provider(NemotronHModelProvider):
+    """Configuration for a 12B parameter Nemotron Nano v2 model."""
+
+    hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
+    num_layers: int = 62
+    hidden_size: int = 5120
+    mamba_num_heads: int = 128
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 20480
+    num_attention_heads: int = 40
+    mamba_head_dim: int = 80
