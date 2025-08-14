@@ -1643,6 +1643,7 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, ckpt_ful
         else:
             metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
     metadata["chained_optim_avoid_prefix"] = True
+    metadata["singleton_local_shards"] = False
     return metadata
 
 
