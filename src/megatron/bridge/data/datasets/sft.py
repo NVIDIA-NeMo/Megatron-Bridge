@@ -92,6 +92,7 @@ def create_sft_dataset(
     memmap_workers: int = 2,
     hf_dataset: bool = False,
     global_sample_mapping: bool = False,
+    get_attention_mask_from_fusion: bool = True,
     pack_metadata_file_path: Path = None,
     pad_cu_seqlens: bool = False,
     chat: bool = False,
@@ -126,6 +127,8 @@ def create_sft_dataset(
             Defaults to False.
         global_sample_mapping (bool, optional): Whether to use a global sample mapping for shuffling across all data,
             or shuffle within each epoch. Defaults to False.
+        get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
+            of adding it to the batch dict.
         pack_metadata_file_path (Path, optional): Path to the metadata file for packed datasets.
             Required if `pad_cu_seqlens` is True. Defaults to None.
         pad_cu_seqlens (bool, optional): Whether to pad `cu_seqlens` for packed datasets,
@@ -155,6 +158,7 @@ def create_sft_dataset(
         "index_mapping_dir": index_mapping_dir,
         "prompt_template": prompt_template,
         "truncation_method": truncation_method,
+        "get_attention_mask_from_fusion": get_attention_mask_from_fusion,
     }
 
     if chat:
@@ -208,7 +212,7 @@ class GPTSFTDataset(Dataset):
         is_test: bool = False,
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
-        get_attention_mask_from_fusion: bool = False,
+        get_attention_mask_from_fusion: bool = True,
         sanity_check_dist_workers: bool = True,
     ):
         """
@@ -256,6 +260,8 @@ class GPTSFTDataset(Dataset):
             }
         is_test: Whether this dataset is the test split.
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
+        get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
+            of adding it to the batch dict.
         sanity_check_dist_workers (bool): if true, will run sanity check across workers when making mapping.
         """
         self.tokenizer = tokenizer
@@ -690,6 +696,8 @@ class GPTSFTDataset(Dataset):
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
             attention_mask = torch.stack(attention_mask)
+        else:
+            attention_mask = None
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
@@ -710,10 +718,8 @@ class GPTSFTDataset(Dataset):
             "answers": answers,
             "metadata": metadata,
             "token_count": token_count,
+            "attention_mask": attention_mask,
         }
-
-        if not self.get_attention_mask_from_fusion:
-            processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
 
@@ -1062,6 +1068,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
             attention_mask = torch.stack(attention_mask)
+        else:
+            attention_mask = None
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
@@ -1082,9 +1090,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
             "context_lengths": context_lengths,
             "answers": answers,
             "metadata": metadata,
+            "attention_mask": attention_mask,
         }
-
-        if not self.get_attention_mask_from_fusion:
-            processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
