@@ -194,13 +194,14 @@ class TestQwen3MoEConversion:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "tp,pp,test_name",
+        "tp,pp,ep,test_name",
         [
-            (2, 1, "TP"),
-            (1, 2, "PP"),
+            (2, 1, 1, "TP"),
+            (1, 2, 1, "PP"),
+            (1, 1, 2, "EP"),
         ],
     )
-    def test_qwen3_moe_conversion_parallelism(self, qwen3_moe_toy_model_path, tmp_path, tp, pp, test_name):
+    def test_qwen3_moe_conversion_parallelism(self, qwen3_moe_toy_model_path, tmp_path, tp, pp, ep, test_name):
         """
         Test Qwen3 MoE model conversion with different parallelism configurations.
 
@@ -209,6 +210,7 @@ class TestQwen3MoEConversion:
             tmp_path: Pytest temporary path fixture
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
+            ep: Expert parallelism size
             test_name: Name of the test for identification
         """
 
@@ -238,6 +240,8 @@ class TestQwen3MoEConversion:
             str(tp),
             "--pp",
             str(pp),
+            "--ep",
+            str(ep),
         ]
 
         try:
