@@ -94,7 +94,7 @@ class TestExtendInstance:
         # Check MRO
         mro = obj.__class__.__mro__
         assert len(mro) >= 3  # NewClass, Mixin, BaseClass, object
-        assert issubclass(mro[1], type(Mixin))
+        assert mro[1] == Mixin
 
     def test_extend_instance_multiple_extensions(self):
         """Test applying multiple mixins in sequence."""

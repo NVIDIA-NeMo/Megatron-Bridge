@@ -57,7 +57,7 @@ class TestGemmaModelProvider:
         assert provider.attention_backend == AttnBackend.flash
 
     @patch("megatron.bridge.models.gemma.gemma_provider.parallel_state")
-    @patch("megatron.bridge.models.gemma.gemma_provider.extend_instance")
+    @patch("megatron.bridge.models.gemma.modules.extend_instance")
     def test_gemma_model_provider_provide_with_embedding_scaling(self, mock_extend_instance, mock_parallel_state):
         """Test that provide method applies embedding scaling when appropriate."""
         # Mock the parent provide method
@@ -92,7 +92,7 @@ class TestGemmaModelProvider:
             # Second arg should be the EmbeddingScalingMixin class
 
     @patch("megatron.bridge.models.gemma.gemma_provider.parallel_state")
-    @patch("megatron.bridge.models.gemma.gemma_provider.extend_instance")
+    @patch("megatron.bridge.models.gemma.modules.extend_instance")
     def test_gemma_model_provider_provide_no_embedding_scaling(self, mock_extend_instance, mock_parallel_state):
         """Test that provide method doesn't apply embedding scaling when not first stage."""
         mock_model = Mock()
@@ -123,7 +123,7 @@ class TestGemmaModelProvider:
             mock_extend_instance.assert_not_called()
 
     @patch("megatron.bridge.models.gemma.gemma_provider.parallel_state")
-    @patch("megatron.bridge.models.gemma.gemma_provider.extend_instance")
+    @patch("megatron.bridge.models.gemma.modules.extend_instance")
     def test_gemma_model_provider_provide_virtual_pipeline_none(self, mock_extend_instance, mock_parallel_state):
         """Test provide method when vp_stage is None (no virtual pipeline)."""
         mock_model = Mock()
