@@ -30,7 +30,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank
+from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
 class SingleBatchIterator:
