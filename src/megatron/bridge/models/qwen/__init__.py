@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge
-from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge
 from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
 from megatron.bridge.models.qwen.qwen_provider import (
     Qwen2ModelProvider,
