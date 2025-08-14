@@ -261,14 +261,6 @@ class AutoBridge(Generic[MegatronModelT]):
         except Exception:
             return False
 
-    def __call__(
-        self,
-        model: list[MegatronModelT],
-        cpu: bool = False,
-        show_progress: bool = True,
-    ) -> Iterable["HFWeightTuple"]:
-        return self.export_hf_weights(model=model, cpu=cpu, show_progress=show_progress)
-
     def load_hf_weights(self, model: list[MegatronModelT], hf_path: str | Path | None = None) -> None:
         """
         Load HuggingFace weights into a Megatron model.
