@@ -21,6 +21,8 @@ from megatron.bridge.models.mamba.nemotron_h_provider import (
     NemotronHModel47BProvider,
     NemotronHModel56BProvider,
     NemotronHModelProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
 )
 
 
@@ -122,16 +124,6 @@ class TestNemotronHModel4BProvider:
         assert provider.num_layers == 52
         assert provider.hidden_size == 3072
         assert provider.mamba_num_heads == 112
-
-    def test_nemotron_h_4b_hybrid_pattern(self):
-        """Test Nemotron-H 4B hybrid pattern configuration."""
-        provider = NemotronHModel4BProvider()
-
-        # Check that the hybrid pattern is correctly set
-        pattern = provider.hybrid_override_pattern
-        assert "M" in pattern  # Mamba layers
-        assert "*" in pattern  # Attention layers
-        assert len(pattern) > 0
 
 
 class TestNemotronHModel8BProvider:
@@ -252,14 +244,106 @@ class TestNemotronHProviderInheritance:
         """Test Nemotron-H 56B provider inherits from NemotronHModelProvider."""
         assert issubclass(NemotronHModel56BProvider, NemotronHModelProvider)
 
+    def test_nemotron_nano_9b_v2_inherits_from_base(self):
+        """Test Nemotron Nano v2 9B provider inherits from NemotronHModelProvider."""
+        assert issubclass(NemotronNano9Bv2Provider, NemotronHModelProvider)
+
+    def test_nemotron_nano_12b_v2_inherits_from_base(self):
+        """Test Nemotron Nano v2 12B provider inherits from NemotronHModelProvider."""
+        assert issubclass(NemotronNano12Bv2Provider, NemotronHModelProvider)
+
     def test_provide_method_inherited(self):
         """Test that provide method works correctly in inherited classes."""
         # Test with Nemotron-H 4B
-        provider = NemotronHModel4BProvider()
+        providers = [
+            NemotronHModel4BProvider(),
+            NemotronHModel8BProvider(),
+            NemotronHModel47BProvider(),
+            NemotronHModel56BProvider(),
+            NemotronNano9Bv2Provider(),
+            NemotronNano12Bv2Provider(),
+        ]
 
-        # The provide method should be inherited from MambaProvider
-        assert hasattr(provider, "provide")
-        assert callable(provider.provide)
+        for provider in providers:
+            # The provide method should be inherited from MambaProvider
+            assert hasattr(provider, "provide")
+            assert callable(provider.provide)
+
+
+class TestNemotronNano9Bv2Provider:
+    """Test cases for NemotronNano9Bv2Provider class."""
+
+    def test_nemotron_nano_9b_v2_default_configuration(self):
+        """Test Nemotron Nano v2 9B model has correct default configuration."""
+        provider = NemotronNano9Bv2Provider()
+
+        # Check Nemotron Nano v2 9B specific configuration
+        assert provider.num_layers == 56
+        assert provider.hidden_size == 4480
+        assert provider.num_attention_heads == 40
+        assert provider.mamba_num_heads == 128
+        assert provider.kv_channels == 128
+        assert provider.mamba_state_dim == 128
+        assert provider.ffn_hidden_size == 15680
+        assert provider.mamba_head_dim == 80
+        assert provider.hybrid_override_pattern == "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
+
+    def test_nemotron_nano_9b_v2_override_configuration(self):
+        """Test Nemotron Nano v2 9B model with overridden configuration."""
+        provider = NemotronNano9Bv2Provider(
+            seq_length=16384,
+            hidden_dropout=0.1,
+            mamba_head_dim=96,
+        )
+
+        # Check overridden values
+        assert provider.seq_length == 16384
+        assert provider.hidden_dropout == 0.1
+        assert provider.mamba_head_dim == 96
+
+        # Check critical defaults remain
+        assert provider.num_layers == 56
+        assert provider.hidden_size == 4480
+        assert provider.mamba_num_heads == 128
+        assert provider.ffn_hidden_size == 15680
+
+
+class TestNemotronNano12Bv2Provider:
+    """Test cases for NemotronNano12Bv2Provider class."""
+
+    def test_nemotron_nano_12b_v2_default_configuration(self):
+        """Test Nemotron Nano v2 12B model has correct default configuration."""
+        provider = NemotronNano12Bv2Provider()
+
+        # Check Nemotron Nano v2 12B specific configuration
+        assert provider.num_layers == 62
+        assert provider.hidden_size == 5120
+        assert provider.num_attention_heads == 40
+        assert provider.mamba_num_heads == 128
+        assert provider.kv_channels == 128
+        assert provider.mamba_state_dim == 128
+        assert provider.ffn_hidden_size == 20480
+        assert provider.mamba_head_dim == 80
+        assert provider.hybrid_override_pattern == "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
+
+    def test_nemotron_nano_12b_v2_override_configuration(self):
+        """Test Nemotron Nano v2 12B model with overridden configuration."""
+        provider = NemotronNano12Bv2Provider(
+            seq_length=32768,
+            hidden_dropout=0.1,
+            mamba_head_dim=96,
+        )
+
+        # Check overridden values
+        assert provider.seq_length == 32768
+        assert provider.hidden_dropout == 0.1
+        assert provider.mamba_head_dim == 96
+
+        # Check critical defaults remain
+        assert provider.num_layers == 62
+        assert provider.hidden_size == 5120
+        assert provider.mamba_num_heads == 128
+        assert provider.ffn_hidden_size == 20480
 
 
 class TestHybridPatterns:
@@ -272,6 +356,8 @@ class TestHybridPatterns:
             NemotronHModel8BProvider(),
             NemotronHModel47BProvider(),
             NemotronHModel56BProvider(),
+            NemotronNano9Bv2Provider(),
+            NemotronNano12Bv2Provider(),
         ]
 
         for provider in providers:
