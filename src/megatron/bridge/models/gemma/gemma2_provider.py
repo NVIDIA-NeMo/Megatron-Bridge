@@ -438,5 +438,6 @@ class Gemma2ModelProvider27B(Gemma2ModelProvider):
     hidden_size: int = 4608
     num_attention_heads: int = 32
     num_query_groups: int = 16
+    kv_channels: int = 128
     ffn_hidden_size: int = 36864
     query_pre_attn_scalar: int = 144
