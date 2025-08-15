@@ -11,3 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from megatron.bridge.models.gemma.gemma_bridge import GemmaBridge  # noqa: F401
+from megatron.bridge.models.gemma.gemma_provider import (
+    CodeGemmaModelProvider2B,
+    CodeGemmaModelProvider7B,
+    GemmaModelProvider,
+    GemmaModelProvider2B,
+    GemmaModelProvider7B,
+)
+
+
+__all__ = [
+    "GemmaModelProvider",
+    "GemmaModelProvider2B",
+    "GemmaModelProvider7B",
+    "CodeGemmaModelProvider2B",
+    "CodeGemmaModelProvider7B",
+]

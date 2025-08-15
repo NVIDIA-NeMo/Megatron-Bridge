@@ -15,6 +15,7 @@
 from dataclasses import dataclass
 from typing import Callable
 
+import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer.enums import AttnBackend
@@ -44,6 +45,13 @@ class GemmaModelProvider(GPTModelProvider):
     layernorm_zero_centered_gamma: bool = True
     # Disable cuDNN attention since TE 1.8 does not support head dim > 128
     attention_backend: AttnBackend = AttnBackend.flash
+
+    # Gemma defaults from HuggingFace
+    layernorm_epsilon: float = 1e-06
+    vocab_size: int = 256000
+    bf16: bool = True
+    params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Gemma model.
