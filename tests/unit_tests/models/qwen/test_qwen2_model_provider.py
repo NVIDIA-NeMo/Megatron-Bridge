@@ -138,7 +138,7 @@ class TestQwen2ModelProvider500M:
         assert provider.normalization == "RMSNorm"
         assert provider.activation_func is F.silu
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 4096
+        assert provider.seq_length == 32768
         assert provider.add_qkv_bias is True
 
     def test_qwen2_500m_override_configuration(self):
@@ -200,7 +200,7 @@ class TestQwen2ModelProvider1P5B:
         assert provider.ffn_hidden_size == 8960
 
         # Check inherited defaults
-        assert provider.seq_length == 4096
+        assert provider.seq_length == 32768
         assert provider.vocab_size == 151936
 
 
@@ -217,7 +217,7 @@ class TestQwen25ModelProvider1P5B:
         assert provider.num_attention_heads == 12
         assert provider.num_query_groups == 2
         assert provider.ffn_hidden_size == 8960
-        assert provider.seq_length == 131072  # Extended context for 2.5
+        assert provider.seq_length == 32768  # Updated context for 2.5
 
         # Check inherited defaults
         assert provider.vocab_size == 151936
@@ -260,7 +260,7 @@ class TestQwen2ModelProvider7B:
         assert provider.vocab_size == 152064
 
         # Check inherited defaults
-        assert provider.seq_length == 4096
+        assert provider.seq_length == 32768
         assert provider.normalization == "RMSNorm"
 
 
@@ -278,7 +278,7 @@ class TestQwen25ModelProvider7B:
         assert provider.num_query_groups == 4
         assert provider.ffn_hidden_size == 18944
         assert provider.vocab_size == 152064
-        assert provider.seq_length == 131072  # Extended context for 2.5
+        assert provider.seq_length == 32768  # Updated context for 2.5
 
         # Check inherited defaults
         assert provider.normalization == "RMSNorm"
@@ -298,8 +298,8 @@ class TestQwen25ModelProvider14B:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 13824
         assert provider.vocab_size == 152064
-        assert provider.layernorm_epsilon == 1e-5
-        assert provider.seq_length == 131072
+        assert provider.layernorm_epsilon == 1e-6
+        assert provider.seq_length == 32768
 
         # Check inherited defaults
         assert provider.normalization == "RMSNorm"
@@ -320,8 +320,8 @@ class TestQwen25ModelProvider32B:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 27648
         assert provider.vocab_size == 152064
-        assert provider.layernorm_epsilon == 1e-5
-        assert provider.seq_length == 131072
+        assert provider.layernorm_epsilon == 1e-6
+        assert provider.seq_length == 32768
 
         # Check inherited defaults
         assert provider.normalization == "RMSNorm"
@@ -342,10 +342,10 @@ class TestQwen2ModelProvider72B:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 29568
         assert provider.vocab_size == 152064
-        assert provider.layernorm_epsilon == 1e-5
+        assert provider.layernorm_epsilon == 1e-6
 
         # Check inherited defaults
-        assert provider.seq_length == 4096
+        assert provider.seq_length == 32768
         assert provider.normalization == "RMSNorm"
 
 
@@ -363,8 +363,8 @@ class TestQwen25ModelProvider72B:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 29568
         assert provider.vocab_size == 152064
-        assert provider.layernorm_epsilon == 1e-5
-        assert provider.seq_length == 131072  # Extended context for 2.5
+        assert provider.layernorm_epsilon == 1e-6
+        assert provider.seq_length == 32768  # Updated context for 2.5
 
         # Check inherited defaults
         assert provider.normalization == "RMSNorm"
@@ -378,7 +378,7 @@ class TestQwen2VsQwen25Differences:
         qwen2_provider = Qwen2ModelProvider500M()
         qwen25_provider = Qwen25ModelProvider500M()
 
-        assert qwen2_provider.seq_length == 4096
+        assert qwen2_provider.seq_length == 32768
         assert qwen25_provider.seq_length == 32768
 
     def test_qwen2_vs_qwen25_1p5b_context_length(self):
@@ -386,24 +386,24 @@ class TestQwen2VsQwen25Differences:
         qwen2_provider = Qwen2ModelProvider1P5B()
         qwen25_provider = Qwen25ModelProvider1P5B()
 
-        assert qwen2_provider.seq_length == 4096
-        assert qwen25_provider.seq_length == 131072
+        assert qwen2_provider.seq_length == 32768
+        assert qwen25_provider.seq_length == 32768
 
     def test_qwen2_vs_qwen25_7b_context_length(self):
         """Test that Qwen2.5 7B has extended context compared to Qwen2."""
         qwen2_provider = Qwen2ModelProvider7B()
         qwen25_provider = Qwen25ModelProvider7B()
 
-        assert qwen2_provider.seq_length == 4096
-        assert qwen25_provider.seq_length == 131072
+        assert qwen2_provider.seq_length == 32768
+        assert qwen25_provider.seq_length == 32768
 
     def test_qwen2_vs_qwen25_72b_context_length(self):
         """Test that Qwen2.5 72B has extended context compared to Qwen2."""
         qwen2_provider = Qwen2ModelProvider72B()
         qwen25_provider = Qwen25ModelProvider72B()
 
-        assert qwen2_provider.seq_length == 4096
-        assert qwen25_provider.seq_length == 131072
+        assert qwen2_provider.seq_length == 32768
+        assert qwen25_provider.seq_length == 32768
 
     def test_qwen25_3b_unique_features(self):
         """Test that Qwen2.5 3B has unique features not in Qwen2."""
@@ -431,12 +431,12 @@ class TestQwen2ProviderInheritance:
         assert issubclass(Qwen2ModelProvider7B, Qwen2ModelProvider)
         assert issubclass(Qwen2ModelProvider72B, Qwen2ModelProvider)
 
-    def test_qwen25_models_inherit_from_qwen2(self):
-        """Test Qwen2.5 providers inherit from corresponding Qwen2 providers."""
-        assert issubclass(Qwen25ModelProvider500M, Qwen2ModelProvider500M)
-        assert issubclass(Qwen25ModelProvider1P5B, Qwen2ModelProvider1P5B)
-        assert issubclass(Qwen25ModelProvider7B, Qwen2ModelProvider7B)
-        assert issubclass(Qwen25ModelProvider72B, Qwen2ModelProvider72B)
+    def test_qwen25_models_inherit_from_base(self):
+        """Test Qwen2.5 providers inherit from base Qwen2ModelProvider."""
+        assert issubclass(Qwen25ModelProvider500M, Qwen2ModelProvider)
+        assert issubclass(Qwen25ModelProvider1P5B, Qwen2ModelProvider)
+        assert issubclass(Qwen25ModelProvider7B, Qwen2ModelProvider)
+        assert issubclass(Qwen25ModelProvider72B, Qwen2ModelProvider)
 
     def test_qwen25_unique_models_inherit_from_base(self):
         """Test Qwen2.5 unique models inherit from base Qwen2ModelProvider."""

@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import LlamaForCausalLM
+from transformers import Qwen2ForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -26,52 +24,46 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
+from megatron.bridge.models.qwen.qwen_provider import Qwen2ModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
-class LlamaBridge(MegatronModelBridge):
+@MegatronModelBridge.register_bridge(source=Qwen2ForCausalLM, target=GPTModel)
+class Qwen2Bridge(MegatronModelBridge):
     """
-    Megatron Bridge for Llama Causal LM.
+    Megatron Bridge for Qwen2 Causal LM.
 
-    As a user you would not use this bridge directly, but through `AutoBridge`.
+    This bridge handles the conversion between HuggingFace Qwen2ForCausalLM
+    and Megatron-Core GPTModel formats, including weight mappings and
+    configuration translation.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+        >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B")
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen2ModelProvider:
         hf_config = hf_pretrained.config
 
-        if (
-            getattr(hf_config, "rope_scaling", None) is not None
-            and hf_config.rope_scaling.get("rope_type") == "llama3"
-        ):
-            # Apply Llama3.1 customize rope scaling
-            cls = partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-        else:
-            cls = LlamaModelProvider
-
-        provider = cls(
+        provider = Qwen2ModelProvider(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
             ffn_hidden_size=hf_config.intermediate_size,
             num_attention_heads=hf_config.num_attention_heads,
+            num_query_groups=hf_config.num_key_value_heads,
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            num_query_groups=hf_config.num_key_value_heads,
-            seq_length=hf_config.max_position_embeddings,
-            rotary_base=hf_config.rope_theta,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
+            rotary_base=hf_config.rope_theta,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            vocab_size=hf_config.vocab_size,
+            seq_length=hf_config.max_position_embeddings,
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             generation_config=hf_pretrained.generation_config,
-            vocab_size=hf_config.vocab_size,
+            add_qkv_bias=True,  # Qwen2 has bias in QKV projections
         )
 
         return provider
@@ -106,6 +98,13 @@ class LlamaBridge(MegatronModelBridge):
                     k="model.layers.*.self_attn.k_proj.weight",
                     v="model.layers.*.self_attn.v_proj.weight",
                     megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                ),
+                # QKV bias: Combine separate Q, K, V biases into single QKV bias (Qwen2 specific)
+                QKVMapping(
+                    q="model.layers.*.self_attn.q_proj.bias",
+                    k="model.layers.*.self_attn.k_proj.bias",
+                    v="model.layers.*.self_attn.v_proj.bias",
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.bias",
                 ),
                 # Gated MLP: Combine gate and up projection matrices into single FC1 matrix
                 GatedMLPMapping(

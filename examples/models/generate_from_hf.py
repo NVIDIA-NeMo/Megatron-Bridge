@@ -30,7 +30,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank
+from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
 class SingleBatchIterator:
@@ -102,11 +102,13 @@ def main(args) -> None:
     # pylint: disable=C0115,C0116
     tp = args.tp
     pp = args.pp
+    ep = args.ep
+    etp = args.etp
 
     # Choose loading method based on arguments
     if args.megatron_model_path:
         # Load from Megatron checkpoint
-        print(f"Loading Megatron model from: {args.megatron_model_path}")
+        print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
@@ -116,6 +118,8 @@ def main(args) -> None:
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
+        model_provider.expert_model_parallel_size = ep
+        model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
 
@@ -124,11 +128,13 @@ def main(args) -> None:
 
     else:
         # Load from HuggingFace and convert to Megatron
-        print(f"Loading HuggingFace model from: {args.hf_model_path}")
+        print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
         bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
+        model_provider.expert_model_parallel_size = ep
+        model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider(wrap_with_ddp=False)
@@ -156,8 +162,7 @@ def main(args) -> None:
     # Greedy generation loop
     for step in range(args.max_new_tokens):
         with torch.no_grad():
-            if torch.distributed.get_rank() == 0:
-                print(f"Generation step {step}")
+            print_rank_0(f"Generation step {step}")
 
             fwd_bwd_function = get_forward_backward_func()
             iterator = SingleBatchIterator(input_ids, position_ids, attention_mask)
@@ -185,13 +190,15 @@ def main(args) -> None:
                 next_token_ids = torch.argmax(output[:, -1], dim=-1, keepdim=True)
 
                 # Debug: print token information
-                if step < 5 and parallel_state.get_tensor_model_parallel_rank() == 0:  # Only for first few iterations
-                    print(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
+                if step < 5:  # Only for first few iterations
+                    print_rank_0(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
                     logits = output[0, -1, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
-                    print(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
-                    print(f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})")
+                    print_rank_0(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
+                    print_rank_0(
+                        f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
+                    )
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
 
@@ -212,11 +219,10 @@ def main(args) -> None:
 
     # Decode the generated sequence
     generated_text = tokenizer.decode(list(generated_ids[0]))
-    if torch.distributed.get_rank() == 0:
-        print("======== GENERATED TEXT OUTPUT ========")
-        print(f"Prompt: {prompt}")
-        print(f"Generated: {generated_text}")
-        print("=======================================")
+    print_rank_0("======== GENERATED TEXT OUTPUT ========")
+    print_rank_0(f"Prompt: {prompt}")
+    print_rank_0(f"Generated: {generated_text}")
+    print_rank_0("=======================================")
 
 
 if __name__ == "__main__":
@@ -241,6 +247,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
+    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
     args = parser.parse_args()
 

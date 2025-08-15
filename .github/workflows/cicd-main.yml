@@ -57,9 +57,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: test
     if: |
-      needs.pre-flight.outputs.test_to_run != '[]'
-      && needs.pre-flight.outputs.components_to_run != '[]'
-      && needs.pre-flight.outputs.is_ci_workload == 'false'
+      !(needs.pre-flight.outputs.is_ci_workload == 'true'
+      || needs.pre-flight.outputs.docs_only == 'true')
     steps:
       - name: Running CI tests
         run: |
@@ -69,10 +68,8 @@ jobs:
     if: |
       (
         success() 
-        || (
-          needs.cicd-wait-in-queue.result == 'skipped'
-          && needs.pre-flight.outputs.is_ci_workload == 'true'
-        )
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
@@ -102,16 +99,16 @@ jobs:
           - script: L2_Launch_training
             timeout: 60
           - script: L2_Launch_converter
+            timeout: 20
+          - script: L2_Launch_models
             timeout: 60
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
       (
-        success()
-        || (
-          needs.cicd-wait-in-queue.result == 'skipped'
-          && needs.pre-flight.outputs.is_ci_workload == 'true'
-        )
+        success() 
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
     name: ${{ matrix.script }}
@@ -264,7 +261,7 @@ jobs:
       matrix:
         flag:
           - unit-test
-          # - e2e
+          - e2e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
