@@ -41,7 +41,6 @@ PERF_ENV_VARS = {
         "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
         "NVTE_FLASH_ATTN": "1",  # Enable Flash Attention, which is needed to enable cuDNN fused attention
         "NVTE_FUSED_ATTN": "1",  # Enable cuDNN fused attention
-        "NEMO_LOG_MEMORY_USAGE": "1",  # Print memory allocation
     }
 
 def slurm_executor(
@@ -69,7 +68,14 @@ def slurm_executor(
     custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
     err_msgs = []
     mounts = []
-    srun_args = custom_srun_args.copy() + ["--mpi=pmix", "--no-container-mount-home", "--container-writable"]
+    # Explicitly request GPU resources to ensure proper allocation
+    # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
+    srun_args = custom_srun_args.copy() + [
+        "--mpi=pmix", 
+        "--no-container-mount-home", 
+        "--container-writable",
+        f"--gres=gpu:{num_gpus_per_node}"
+    ]
 
     if log_dir != get_nemorun_home():
         err_msgs.append(f"\nRun `export NEMORUN_HOME={log_dir}` in your shell environment and rerun this script.")
