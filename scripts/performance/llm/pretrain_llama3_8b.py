@@ -1,5 +1,7 @@
 from os.path import basename, splitext
 
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as recipe
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_fp8_mixed
 
@@ -49,7 +51,7 @@ if __name__ == "__main__":
     if args.enable_nsys:
         plugins.append(NsysPlugin(start_step=5, end_step=6))
 
-    exp_name = f"{splitext(basename(__file__))[0]}_{args.compute_dtype}",
+    exp_name = f"{splitext(basename(__file__))[0]}_{args.compute_dtype}"
     if args.compute_dtype == "fp8":
         exp_name += f"_{args.fp8_recipe}"
         precision_config = bf16_with_fp8_mixed()
@@ -59,7 +61,11 @@ if __name__ == "__main__":
 
     with run.Experiment(exp_name) as exp:
         exp.add(
-            recipe(mock=True, global_batch_size=128, precision_config=precision_config),
+            pretrain(
+                config=recipe(
+                    mock=True, global_batch_size=128, precision_config=precision_config),
+                forward_step_func=forward_step,
+            ),
             executor=executor,
             name = exp_name,
             plugins=plugins,
