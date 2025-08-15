@@ -19,6 +19,7 @@ on:
     branches:
       - main
       - "pull-request/[0-9]+"
+      - "deploy-release/*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
