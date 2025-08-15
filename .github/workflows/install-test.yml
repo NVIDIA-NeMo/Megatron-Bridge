@@ -26,7 +26,14 @@ env:
   UV_PROJECT_ENVIRONMENT: "./venv"
 
 jobs:
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.53.0
+
   pip-test-bare-metal:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: ${{ matrix.arch }}
     name: Pip - Python${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
@@ -86,6 +93,10 @@ jobs:
           python-binary: python
 
   pip-test-cuda:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: Pip - Python${{ matrix.python-version }}${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }} - AMD64/Linux - NGC CUDA
     container:
@@ -129,6 +140,10 @@ jobs:
           python-binary: ./venv/bin/python
 
   uv-test-cuda:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC CUDA
     container:
@@ -200,6 +215,10 @@ jobs:
           python-binary: ./venv/bin/python
 
   uv-test-bare-metal:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: UV - Python ${{ matrix.python-version }} - 'AMD64/Linux' - No CUDA
     strategy:
@@ -268,9 +287,16 @@ jobs:
           python-binary: ./venv/bin/python
 
   install-test-summary:
-    needs: [pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]
+    needs: [pre-flight, pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]
     runs-on: ubuntu-latest
     name: Install test summary
+    if: |
+      (
+        needs.pre-flight.outputs.docs_only == 'true'
+        || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+        || success()
+      )
+      && !cancelled()
     steps:
       - name: Result
         run: echo Install check successful
