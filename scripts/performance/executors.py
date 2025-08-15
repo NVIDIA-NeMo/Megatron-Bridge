@@ -14,15 +14,14 @@
 
 import os
 import sys
+from pathlib import Path
 from typing import Dict, List
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
 from nemo_run.core.execution.launcher import SlurmTemplate
 
-from nemo.lightning.base import DEFAULT_NEMO_CACHE_HOME
-from nemo.utils import logging
-
+DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv('NEMO_HOME', DEFAULT_NEMO_CACHE_HOME)
 
 # NOTE: If you update this template,
@@ -75,7 +74,7 @@ def slurm_executor(
     if log_dir != get_nemorun_home():
         err_msgs.append(f"\nRun `export NEMORUN_HOME={log_dir}` in your shell environment and rerun this script.")
     if len(err_msgs) > 0:
-        logging.error("\n".join(err_msgs))
+        print("\n".join(err_msgs))
         sys.exit(1)
 
     if gpu.lower() not in ['b200']:
