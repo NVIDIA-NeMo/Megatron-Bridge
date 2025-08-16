@@ -24,10 +24,11 @@ from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
 
 
 LLAMA_PRETRAIN_RECIPES = [
-    (llama32_1b_config, "llama32_1b"),  # Small model, should definitely fit
-    (llama32_3b_config, "llama32_3b"),  # Small model, should fit
-    (llama3_8b_config, "llama3_8b"),  # May work with default parallelism settings
-    (llama31_8b_config, "llama31_8b"),  # May work with default parallelism settings
+    # (config_func, name, parallelism_overrides)
+    (llama32_1b_config, "llama32_1b", {}),  # Small model, use recipe defaults
+    (llama32_3b_config, "llama32_3b", {}),  # Small model, use recipe defaults
+    (llama3_8b_config, "llama3_8b", {"tensor_parallelism": 2, "pipeline_parallelism": 1}),  # 8B model, use TP=2
+    (llama31_8b_config, "llama31_8b", {"tensor_parallelism": 2, "pipeline_parallelism": 1}),  # 8B model, use TP=2
 ]
 
 
@@ -35,7 +36,7 @@ class TestLlamaRecipes:
     """Test class for LLaMA recipe functional tests."""
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name", LLAMA_PRETRAIN_RECIPES)
-    def test_llama_pretrain_recipes(self, config_func, recipe_name, tmp_path):
-        """Functional test for LLaMA recipes with default configurations."""
-        run_pretrain_recipe_test(config_func, recipe_name, tmp_path)
+    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides", LLAMA_PRETRAIN_RECIPES)
+    def test_llama_pretrain_recipes(self, config_func, recipe_name, parallelism_overrides, tmp_path):
+        """Functional test for LLaMA recipes with appropriate parallelism configurations."""
+        run_pretrain_recipe_test(config_func, recipe_name, tmp_path, **parallelism_overrides)
