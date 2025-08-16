@@ -359,6 +359,26 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 yield task
                 progress.update(task_id, advance=1)
 
+
+    def load_hf_weights(self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        """ Load weights from HuggingFace state dict.
+        This function can be overridden by subclasses to preprocess the HF weights before conversion, such as renaming 
+        certain parameters to avoid mapping conflicts, or dequantize the weights.
+
+        Args:
+            hf_param: The parameter name or dictionary of parameter names to load.
+            hf_state_dict: The HuggingFace state dictionary.
+
+        Returns:
+            The loaded weights.
+        """
+        if isinstance(hf_param, str):
+            hf_weights = hf_state_dict[hf_param]
+        else:
+            hf_weights = {k: hf_state_dict[v] for k, v in task.mapping.hf_param.items()}
+        return hf_weights
+
+
     def load_weights_hf_to_megatron(
         self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> List[MegatronModel]:
@@ -415,10 +435,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             if task.megatron_module is None:
                 continue
             # 1) Fetch source tensor(s) from HF state dict
-            if isinstance(task.mapping.hf_param, str):
-                hf_weights = hf_state_dict[task.mapping.hf_param]
-            else:
-                hf_weights = {k: hf_state_dict[v] for k, v in task.mapping.hf_param.items()}
+            hf_weights = self.load_hf_weights(task.mapping.hf_param, hf_state_dict)
 
             # 2) Delegate conversion & distribution to the bridge
             converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)

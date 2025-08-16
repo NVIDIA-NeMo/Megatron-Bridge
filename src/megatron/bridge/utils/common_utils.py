@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import re
 from typing import Type, Union
 
 import torch
@@ -143,3 +144,21 @@ def use_dist_ckpt(ckpt_format: str) -> bool:
         True if the format is not "torch", False otherwise.
     """
     return ckpt_format != "torch"
+
+
+def extract_expert_number_from_param(param_name: str) -> int:
+    """Extract the expert number from a parameter name.
+
+    Args:
+        param_name: The parameter name to extract the expert number from.
+
+    Returns:
+        The expert number.
+
+    """
+    pattern = r'(?:experts\.|weight|bias)(\d+)'
+    match = re.search(pattern, param_name)
+    if not match:
+        raise ValueError(f"No expert number found in parameter name: {param_name}. "
+                         f"Please update the regex {pattern} if necessary.")
+    return int(match.group(1))
