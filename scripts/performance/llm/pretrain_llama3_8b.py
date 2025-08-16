@@ -4,6 +4,7 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as recipe
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_fp8_mixed
+from megatron.bridge.recipes.utils.nemo_run_utils import get_partial_fn
 
 from ..argument_parser import parse_cli_args
 from ..executors import slurm_executor
@@ -61,7 +62,8 @@ if __name__ == "__main__":
 
     with run.Experiment(exp_name) as exp:
         exp.add(
-            pretrain(
+            get_partial_fn(
+                pretrain,
                 config=recipe(
                     mock=True, global_batch_size=128, precision_config=precision_config),
                 forward_step_func=forward_step,
