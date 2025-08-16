@@ -43,7 +43,7 @@ permissions:
 
 jobs:
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@ko3n1g/fix/release-version-bump # v0.54.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.54.3
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
       python-package: megatron.bridge
@@ -52,7 +52,7 @@ jobs:
       version-bump-branch: ${{ inputs.version-bump-branch || github.ref_name }}
       create-gh-release: ${{ inputs.create-gh-release || true }}
       packaging: uv
-      has-src-dir: false
+      has-src-dir: true
       skip-test-wheel: true
       custom-container: nvcr.io/nvidia/pytorch:25.05-py3
       runner: linux-amd64-cpu16
