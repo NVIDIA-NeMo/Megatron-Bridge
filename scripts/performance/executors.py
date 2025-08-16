@@ -72,9 +72,7 @@ def slurm_executor(
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
     srun_args = custom_srun_args.copy() + [
         "--mpi=pmix", 
-        "--no-container-mount-home", 
-        "--container-writable",
-        f"--gres=gpu:{num_gpus_per_node}"
+        "--no-container-mount-home",
     ]
 
     if log_dir != get_nemorun_home():
@@ -134,7 +132,7 @@ def slurm_executor(
         time=time_limit,
         mem="0",
         exclusive=True,
-        packager=run.GitArchivePackager(),
+        # packager=run.GitArchivePackager(),
         segment=segment,
         network=network,
         launcher=launcher,

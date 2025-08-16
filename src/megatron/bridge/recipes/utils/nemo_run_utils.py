@@ -17,6 +17,7 @@ import functools
 import logging
 from typing import Callable
 
+import torch
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -95,7 +96,7 @@ def prepare_config_for_nemo_run(config: ConfigContainer) -> ConfigContainer:
         patched_fields.append("model_config.output_layer_init_method")
 
     # Check for other potential functools.partial objects in the model config
-    for field_name in ("bias_init_method", "weight_init_method"):
+    for field_name in ("bias_init_method", "weight_init_method", "embedding_init_method"):
         if hasattr(model_cfg, field_name):
             field_value = getattr(model_cfg, field_name)
             if isinstance(field_value, functools.partial):
@@ -144,11 +145,38 @@ def _fix_yaml_serialization_issues(config: ConfigContainer) -> None:
                 setattr(model_cfg, attr_name, attr_value.value)
                 fixed_fields.append(f"model_config.{attr_name} ({attr_value} -> {attr_value.value})")
 
-    # Handle enum fields in other config sections
+    # Handle torch.dtype fields in model config
+    for dtype_field in ("params_dtype", "pipeline_dtype", "autocast_dtype"):
+        if hasattr(model_cfg, dtype_field):
+            dtype_value = getattr(model_cfg, dtype_field)
+            if isinstance(dtype_value, torch.dtype):
+                setattr(model_cfg, dtype_field, str(dtype_value))
+                fixed_fields.append(f"model_config.{dtype_field} ({dtype_value} -> {str(dtype_value)})")
+
+    # Handle torch.dtype fields in mixed_precision config
+    if hasattr(config, "mixed_precision") and config.mixed_precision is not None:
+        mp_cfg = config.mixed_precision
+        for dtype_field in ("params_dtype", "pipeline_dtype", "autocast_dtype"):
+            if hasattr(mp_cfg, dtype_field):
+                dtype_value = getattr(mp_cfg, dtype_field)
+                if isinstance(dtype_value, torch.dtype):
+                    setattr(mp_cfg, dtype_field, str(dtype_value))
+                    fixed_fields.append(f"mixed_precision.{dtype_field} ({dtype_value} -> {str(dtype_value)})")
+
+    # Handle enum fields and torch.dtype fields in other config sections
     for config_section_name in ("train", "optimizer", "scheduler"):
         if hasattr(config, config_section_name):
             config_section = getattr(config, config_section_name)
             if config_section is not None:
+                # Handle torch.dtype fields in this config section
+                for dtype_field in ("params_dtype", "pipeline_dtype", "autocast_dtype", "main_grads_dtype", "main_params_dtype", "exp_avg_dtype", "exp_avg_sq_dtype"):
+                    if hasattr(config_section, dtype_field):
+                        dtype_value = getattr(config_section, dtype_field)
+                        if isinstance(dtype_value, torch.dtype):
+                            setattr(config_section, dtype_field, str(dtype_value))
+                            fixed_fields.append(f"{config_section_name}.{dtype_field} ({dtype_value} -> {str(dtype_value)})")
+
+                # Handle enum fields
                 for attr_name in dir(config_section):
                     if not attr_name.startswith("_"):
                         try:
