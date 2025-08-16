@@ -130,6 +130,7 @@ class TestPretrainConfig:
 
         # Check dataset configuration (should be in mock mode)
         assert config.dataset.sequence_length == 8192
+        assert config.model.seq_length == 8192
         assert config.dataset.split == "1,1,1"
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is None
