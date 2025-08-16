@@ -4,7 +4,7 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as recipe
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_fp8_mixed
-from megatron.bridge.recipes.utils.nemo_run_utils import get_partial_fn
+from megatron.bridge.recipes.utils.nemo_run_utils import get_partial_fn, prepare_config_for_nemo_run
 
 from ..argument_parser import parse_cli_args
 from ..executors import slurm_executor
@@ -58,6 +58,7 @@ if __name__ == "__main__":
         precision_config = bf16_with_fp8_mixed()
     else:
         precision_config = bf16_mixed()
+    precision_config = prepare_config_for_nemo_run(precision_config)
     precision_config.grad_reduce_in_fp32 = False
 
     with run.Experiment(exp_name) as exp:
