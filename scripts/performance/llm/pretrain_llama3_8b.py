@@ -22,6 +22,9 @@ if HAS_NEMO_RUN:
         NsysPlugin,
     )
 
+import fiddle as fdl
+import fiddle._src.experimental.dataclasses as fdl_dc
+
 if __name__ == "__main__":
     args = parse_cli_args().parse_args()
 
@@ -58,7 +61,7 @@ if __name__ == "__main__":
         precision_config = bf16_with_fp8_mixed()
     else:
         precision_config = bf16_mixed()
-    precision_config = run.Config(precision_config)
+    precision_config = fdl.cast(run.Config, fdl_dc.convert_dataclasses_to_configs(precision_config))
     precision_config.grad_reduce_in_fp32 = False
 
     with run.Experiment(exp_name) as exp:
