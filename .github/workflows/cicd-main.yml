@@ -102,6 +102,8 @@ jobs:
             timeout: 20
           - script: L2_Launch_models
             timeout: 60
+          - script: L2_Launch_recipes
+            timeout: 60
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
