@@ -38,8 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pre-flight]
     if: |
-      !(needs.pre-flight.outputs.is_ci_workload == 'true'
-      || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+      !(needs.pre-flight.outputs.is_deployment_workflow == 'true'
       || needs.pre-flight.outputs.docs_only == 'true')
     steps:
       - name: Checkout repository
