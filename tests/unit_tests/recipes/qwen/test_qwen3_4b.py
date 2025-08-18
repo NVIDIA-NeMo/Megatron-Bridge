@@ -129,6 +129,13 @@ class TestPretrainConfig:
         assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
         assert config.ddp.use_distributed_optimizer is True
 
+    def test_pretrain_config_tokenizer_configuration(self):
+        """Test tokenizer configuration."""
+        config = pretrain_config()
+
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "Qwen/Qwen3-4B"
+
     @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
     def test_pretrain_config_sequence_lengths(self, seq_length):
         """Test various sequence lengths."""

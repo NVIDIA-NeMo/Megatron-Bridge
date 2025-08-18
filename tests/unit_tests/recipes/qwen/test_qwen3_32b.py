@@ -16,6 +16,7 @@ import os
 import tempfile
 
 import pytest
+import torch
 
 from megatron.bridge.models.qwen import Qwen3ModelProvider32B
 from megatron.bridge.recipes.qwen.qwen3_32b import model_config, pretrain_config
@@ -33,7 +34,7 @@ class TestModelConfig:
         assert isinstance(config, Qwen3ModelProvider32B)
         assert config.tensor_model_parallel_size == 8  # Default for Qwen3 32B model
         assert config.pipeline_model_parallel_size == 2  # Default for Qwen3 32B model
-        assert config.pipeline_dtype is None
+        assert config.pipeline_dtype == torch.bfloat16  # Default pipeline dtype for PP > 1
         assert config.virtual_pipeline_model_parallel_size is None
         assert config.context_parallel_size == 1
         assert config.sequence_parallel is False
@@ -72,7 +73,7 @@ class TestPretrainConfig:
         # Check model configuration (Qwen3 32B specific defaults)
         assert config.model.tensor_model_parallel_size == 8  # Default for Qwen3 32B model
         assert config.model.pipeline_model_parallel_size == 2  # Default for Qwen3 32B model
-        assert config.model.pipeline_dtype is None
+        assert config.model.pipeline_dtype == torch.bfloat16  # Default pipeline dtype for PP > 1
 
         # Check recompute settings
         assert config.model.recompute_granularity == "full"
@@ -138,6 +139,13 @@ class TestPretrainConfig:
         assert config.ddp.average_in_collective is True
         assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
         assert config.ddp.use_distributed_optimizer is True
+
+    def test_pretrain_config_tokenizer_configuration(self):
+        """Test tokenizer configuration."""
+        config = pretrain_config()
+
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "Qwen/Qwen3-32B"
 
     @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
     def test_pretrain_config_sequence_lengths(self, seq_length):

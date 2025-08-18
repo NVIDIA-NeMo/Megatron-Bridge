@@ -19,6 +19,7 @@ import pytest
 
 from megatron.bridge.models.qwen import Qwen3ModelProvider600M
 from megatron.bridge.recipes.qwen.qwen3_600m import model_config, pretrain_config
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -128,6 +129,13 @@ class TestPretrainConfig:
         assert config.ddp.average_in_collective is True
         assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
         assert config.ddp.use_distributed_optimizer is True
+
+    def test_pretrain_config_tokenizer_configuration(self):
+        """Test tokenizer configuration."""
+        config = pretrain_config()
+
+        assert config.tokenizer.tokenizer_type == "NullTokenizer"
+        assert config.tokenizer.vocab_size == DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 
     @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
     def test_pretrain_config_sequence_lengths(self, seq_length):
