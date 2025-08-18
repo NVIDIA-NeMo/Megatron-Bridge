@@ -272,14 +272,16 @@ def pretrain_config(
         logger=LoggerConfig(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
+            load=checkpoint_dir,
             ckpt_format="torch_dist",
             fully_parallel_save=True,
-            async_save=True,
+            async_save=False,
         ),
         rng=RNGConfig(seed=1234),
         comm_overlap=comm_overlap_config,
