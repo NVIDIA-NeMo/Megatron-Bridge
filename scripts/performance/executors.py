@@ -132,7 +132,7 @@ def slurm_executor(
         time=time_limit,
         mem="0",
         exclusive=True,
-        # packager=run.GitArchivePackager(),
+        packager=run.GitArchivePackager(),
         segment=segment,
         network=network,
         launcher=launcher,
