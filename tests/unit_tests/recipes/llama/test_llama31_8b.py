@@ -278,8 +278,8 @@ class TestPretrainConfig:
         """Test default CommOverlapConfig setup."""
         config = pretrain_config()
 
-        # Default setup should have TP comm overlap disabled due to TP size being 1
-        assert config.comm_overlap is not None
+        # Default setup should have comm_overlap disabled (None) for memory efficiency
+        assert config.comm_overlap is None
 
     def test_pretrain_config_custom_comm_overlap(self):
         """Test custom CommOverlapConfig."""
@@ -297,19 +297,34 @@ class TestPretrainConfig:
 
     def test_pretrain_config_comm_overlap_with_tp(self):
         """Test CommOverlapConfig with tensor parallelism enabled."""
-        # Mock HAVE_TE to True to simulate transformer engine being available
-        with patch("megatron.bridge.training.comm_overlap.HAVE_TE", True):
-            config = pretrain_config(
-                tensor_parallelism=4,
-                context_parallelism=2,
-                sequence_parallelism=True,
-            )
+        # Even with TP > 1, comm_overlap should be None by default for memory efficiency
+        config = pretrain_config(
+            tensor_parallelism=4,
+            context_parallelism=2,
+            sequence_parallelism=True,
+        )
 
-        # With TP > 1 and sequence parallelism, comm_overlap should be configured
+        # Comm overlap should be disabled by default regardless of parallelism settings
+        assert config.comm_overlap is None
+
+    def test_pretrain_config_explicit_comm_overlap_enable(self):
+        """Test that communication overlap can still be enabled when explicitly provided."""
+        # Create a custom comm overlap config to enable it explicitly
+        custom_overlap = CommOverlapConfig(
+            tp_comm_overlap=True,
+            defer_embedding_wgrad_compute=True,
+            wgrad_deferral_limit=25,
+        )
+
+        config = pretrain_config(
+            tensor_parallelism=4, context_parallelism=2, sequence_parallelism=True, comm_overlap_config=custom_overlap
+        )
+
+        # Should use the explicitly provided config
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
         assert config.comm_overlap.defer_embedding_wgrad_compute is True
-        assert config.comm_overlap.wgrad_deferral_limit == 50  # Default from recipe
+        assert config.comm_overlap.wgrad_deferral_limit == 25
 
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""
