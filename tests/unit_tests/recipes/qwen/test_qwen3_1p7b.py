@@ -20,7 +20,6 @@ import pytest
 
 from megatron.bridge.models.qwen import Qwen3ModelProvider1P7B
 from megatron.bridge.recipes.qwen.qwen3_1p7b import model_config, pretrain_config
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -216,8 +215,8 @@ class TestPretrainConfig:
         """Test tokenizer configuration."""
         config = pretrain_config()
 
-        assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.vocab_size == DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "Qwen/Qwen3-1.7B"
 
     def test_pretrain_config_rng_configuration(self):
         """Test RNG configuration."""
