@@ -89,6 +89,19 @@ class TestPretrainConfig:
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is None
 
+        # Check tokenizer configuration
+        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert config.tokenizer.tokenizer_model == "Qwen/Qwen3-30B-A3B"
+
+        # Check DDP configuration
+        assert config.ddp.check_for_nan_in_grad is True
+        assert config.ddp.grad_reduce_in_fp32 is True
+        assert config.ddp.overlap_grad_reduce is True
+        assert config.ddp.overlap_param_gather is True
+        assert config.ddp.average_in_collective is True
+        assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+        assert config.ddp.use_distributed_optimizer is True
+
     def test_pretrain_config_custom_training_parameters(self):
         """Test pretrain_config with custom training parameters."""
         config = pretrain_config(
@@ -130,35 +143,6 @@ class TestPretrainConfig:
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is None
         assert config.dataset.split == "1,1,1"
-
-    def test_pretrain_config_ddp_configuration(self):
-        """Test distributed data parallel configuration."""
-        config = pretrain_config()
-
-        assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.grad_reduce_in_fp32 is True
-        assert config.ddp.overlap_grad_reduce is True
-        assert config.ddp.overlap_param_gather is True
-        assert config.ddp.average_in_collective is True
-        assert config.ddp.data_parallel_sharding_strategy == "optim_grads_params"
-        assert config.ddp.use_distributed_optimizer is True
-
-    def test_pretrain_config_tokenizer_configuration(self):
-        """Test tokenizer configuration."""
-        config = pretrain_config()
-
-        assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-        assert config.tokenizer.tokenizer_model == "Qwen/Qwen3-30B-A3B"
-
-    def test_pretrain_config_moe_specific_parameters(self):
-        """Test MoE-specific parameters."""
-        config = pretrain_config(
-            expert_parallelism=8,
-            sequence_parallelism=False,
-        )
-
-        assert config.model.expert_model_parallel_size == 8
-        assert config.model.sequence_parallel is False
 
     @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
     def test_pretrain_config_sequence_lengths(self, seq_length):

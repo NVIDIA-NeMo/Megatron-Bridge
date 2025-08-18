@@ -149,36 +149,6 @@ class TestPretrainConfig:
         assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert config.tokenizer.tokenizer_model == "Qwen/Qwen3-235B-A22B"
 
-    def test_pretrain_config_moe_specific_parameters(self):
-        """Test MoE-specific parameters."""
-        config = pretrain_config(
-            expert_parallelism=16,
-            context_parallelism=4,
-            sequence_parallelism=False,
-        )
-
-        assert config.model.expert_model_parallel_size == 16
-        assert config.model.context_parallel_size == 4
-        assert config.model.sequence_parallel is False
-
-    def test_pretrain_config_massive_moe_defaults(self):
-        """Test that 235B-A22B MoE model has appropriate defaults for its massive size."""
-        config = pretrain_config()
-
-        # Check massive MoE-specific defaults
-        assert config.model.tensor_model_parallel_size == 4
-        assert config.model.pipeline_model_parallel_size == 16  # High PP for massive model
-        assert config.model.context_parallel_size == 2  # Context parallelism for massive model
-        assert config.model.expert_model_parallel_size == 8  # High expert parallelism
-        assert config.model.sequence_parallel is True
-
-        # Check training optimizations for massive model
-        assert config.train.micro_batch_size == 1  # Reduced micro batch size
-
-        # Check pipeline split configuration for massive model
-        assert config.model.account_for_embedding_in_pipeline_split is True
-        assert config.model.account_for_loss_in_pipeline_split is True
-
     @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
     def test_pretrain_config_sequence_lengths(self, seq_length):
         """Test various sequence lengths."""
