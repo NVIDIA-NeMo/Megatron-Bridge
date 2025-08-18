@@ -37,7 +37,7 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 def model_config(
     tensor_parallelism: int = 4,
     pipeline_parallelism: int = 16,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 2,
     expert_parallelism: Optional[int] = 8,
@@ -87,7 +87,7 @@ def pretrain_config(
     # Model configuration
     tensor_parallelism: int = 4,
     pipeline_parallelism: int = 16,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 2,
     expert_parallelism: Optional[int] = 8,

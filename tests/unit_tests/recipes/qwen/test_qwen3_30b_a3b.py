@@ -16,6 +16,7 @@ import os
 import tempfile
 
 import pytest
+import torch
 
 from megatron.bridge.models.qwen import Qwen3MoEModelProvider30B_A3B
 from megatron.bridge.recipes.qwen.qwen3_30b_a3b import model_config, pretrain_config
@@ -33,7 +34,7 @@ class TestModelConfig:
         assert isinstance(config, Qwen3MoEModelProvider30B_A3B)
         assert config.tensor_model_parallel_size == 4  # Default for Qwen3 30B-A3B MoE
         assert config.pipeline_model_parallel_size == 2  # Default for Qwen3 30B-A3B MoE
-        assert config.pipeline_dtype is None
+        assert config.pipeline_dtype == torch.bfloat16
         assert config.virtual_pipeline_model_parallel_size is None
         assert config.context_parallel_size == 1
         assert config.expert_model_parallel_size == 4  # Default expert parallelism
@@ -73,7 +74,7 @@ class TestPretrainConfig:
         # Check model configuration (Qwen3 30B-A3B MoE specific defaults)
         assert config.model.tensor_model_parallel_size == 4  # Default for Qwen3 30B-A3B MoE
         assert config.model.pipeline_model_parallel_size == 2  # Default for Qwen3 30B-A3B MoE
-        assert config.model.pipeline_dtype is None
+        assert config.model.pipeline_dtype == torch.bfloat16
         assert config.model.expert_model_parallel_size == 4  # Default expert parallelism
         assert config.model.sequence_parallel is True  # Enabled by default for MoE
 
