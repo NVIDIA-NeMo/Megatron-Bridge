@@ -212,14 +212,20 @@ def pretrain_config(
         mixed_precision=precision_config,
     )
 
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=True,
-            tp_comm_overlap_cfg=userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
-            defer_embedding_wgrad_compute=True,
-            wgrad_deferral_limit=50,
-            overlap_param_gather_with_optimizer_step=False,  # Currently disabled due to an issue with checkpointing
-            align_param_gather=True,
-        )
+    # TODO(ananthsub): Temporarily disabled as the extra allocations causes an OOM on a single node
+    # if cfg.comm_overlap is None:
+    #     cfg.comm_overlap = get_comm_overlap_config()
 
     return cfg
+
+
+def get_comm_overlap_config() -> CommOverlapConfig:
+    """Communication overlap configuration for the Llama3.1 8B model."""
+    return CommOverlapConfig(
+        tp_comm_overlap=True,
+        tp_comm_overlap_cfg=userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
+        defer_embedding_wgrad_compute=True,
+        wgrad_deferral_limit=50,
+        overlap_param_gather_with_optimizer_step=False,  # Currently disabled due to an issue with checkpointing
+        align_param_gather=True,
+    )
