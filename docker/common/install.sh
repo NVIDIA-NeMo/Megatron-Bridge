@@ -38,7 +38,7 @@ main() {
     # Install dependencies
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y curl git python3-pip python3-venv cmake
+    apt-get install -y curl git python3-pip python3-venv cmake libcutlass-dev
 
     # Install uv
     UV_VERSION="0.7.2"
