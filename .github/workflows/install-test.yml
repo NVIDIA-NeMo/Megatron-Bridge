@@ -24,7 +24,11 @@ on:
       - "pull-request/[0-9]+"
       - "deploy-release/*"
 env:
-  UV_PROJECT_ENVIRONMENT: "./venv"
+  PATH: "/root/.local/bin:$PATH"
+  UV_PROJECT_ENVIRONMENT: /opt/venv
+  UV_LINK_MODE: "copy"
+  CUDA_HOME: "/usr/local/cuda"
+  LD_LIBRARY_PATH: "/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
 
 jobs:
   pre-flight:
@@ -46,32 +50,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install CUDA Toolkit and cuDNN headers for Ubuntu 22.04
-        run: |
-          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update
-          sudo apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12
-          sudo apt-get clean
-
-      - name: Install Python ${{ matrix.python-version }}
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get update
-          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv cmake
-          sudo apt-get clean
-
-          python${{ matrix.python-version }} -m venv ./venv
-          . ./venv/bin/activate
-          pip install --pre --no-cache-dir --pre --no-cache-dir --upgrade pip
-
       - name: Install project
-        run: |
-          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-          pip install --pre --no-cache-dir torch pybind11 wheel_stub numpy
-          pip install --pre --no-cache-dir --no-build-isolation .
+        run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -84,7 +64,7 @@ jobs:
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
           package-name: megatron.bridge
-          python-binary: python
+          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   pip-test-cuda:
     needs: [pre-flight]
@@ -109,16 +89,7 @@ jobs:
 
       - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
         shell: bash -x -e -u -o pipefail {0}
-        run: |
-          apt-get update
-          apt-get install -y python3 python3.12 python3.12-venv python3.12-dev cmake
-          python3 -m venv ./venv
-
-          . ./venv/bin/activate
-
-          pip install --pre --no-cache-dir --upgrade pip
-          pip install --pre --no-cache-dir torch pybind11 wheel_stub
-          pip install --pre --no-cache-dir --no-build-isolation .$EXTRA
+        run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -153,7 +124,7 @@ jobs:
 
       - name: Install project
         shell: bash
-        run: bash docker/common/install.sh --base-image cuda
+        run: bash docker/common/install.sh --base-image cuda --use-uv
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -166,7 +137,7 @@ jobs:
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
           package-name: megatron.bridge
-          python-binary: ./venv/bin/python
+          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   uv-test-bare-metal:
     needs: [pre-flight]
@@ -235,7 +206,7 @@ jobs:
         uses: ./FW-CI-templates/.github/actions/check-imports
         with:
           package-name: megatron.bridge
-          python-binary: ./venv/bin/python
+          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   install-test-summary:
     needs: [pre-flight, pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]

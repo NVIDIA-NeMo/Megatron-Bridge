@@ -8,24 +8,40 @@ while [[ $# -gt 0 ]]; do
         BASE_IMAGE="$2"
         shift 2
         ;;
+    --python-version)
+        PYTHON_VERSION="$2"
+        shift 2
+        ;;
+    --use-uv)
+        USE_UV="true"
+        shift 1
+        ;;
     *)
         echo "Unknown option: $1"
-        echo "Usage: $0 --base-image {pytorch|cuda}"
+        echo "Usage: $0 --base-image {pytorch|cuda|ubuntu} [--use-uv] [--python-version]"
         exit 1
         ;;
     esac
 done
 
+if [[ -z "${PYTHON_VERSION:-}" ]]; then
+    PYTHON_VERSION="3.12"
+fi
+
+if [[ -z "${USE_UV:-}" ]]; then
+    USE_UV="false"
+fi
+
 # Validate base image argument
 if [[ -z "${BASE_IMAGE:-}" ]]; then
     echo "Error: --base-image argument is required"
-    echo "Usage: $0 --base-image {pytorch|cuda}"
+    echo "Usage: $0 --base-image {pytorch|cuda|ubuntu}"
     exit 1
 fi
 
-if [[ "$BASE_IMAGE" != "pytorch" && "$BASE_IMAGE" != "cuda" ]]; then
-    echo "Error: --base-image must be either 'pytorch' or 'cuda'"
-    echo "Usage: $0 --base-image {pytorch|cuda}"
+if [[ "$BASE_IMAGE" != "pytorch" && "$BASE_IMAGE" != "cuda" && "$BASE_IMAGE" != "ubuntu" ]]; then
+    echo "Error: --base-image must be either 'pytorch' or 'cuda' or 'ubuntu'"
+    echo "Usage: $0 --base-image {pytorch|cuda|ubuntu}"
     exit 1
 fi
 
@@ -38,50 +54,72 @@ main() {
     # Install dependencies
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y curl git python3-pip python3-venv cmake
-
-    # Install uv
-    UV_VERSION="0.7.2"
-    curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
-
-    UV_ARGS=()
-    if [[ "$BASE_IMAGE" == "pytorch" ]]; then
-        UV_ARGS=(
-            "--no-install-package" "torch"
-            "--no-install-package" "torchvision"
-            "--no-install-package" "triton"
-            "--no-install-package" "nvidia-cublas-cu12"
-            "--no-install-package" "nvidia-cuda-cupti-cu12"
-            "--no-install-package" "nvidia-cuda-nvrtc-cu12"
-            "--no-install-package" "nvidia-cuda-runtime-cu12"
-            "--no-install-package" "nvidia-cudnn-cu12"
-            "--no-install-package" "nvidia-cufft-cu12"
-            "--no-install-package" "nvidia-cufile-cu12"
-            "--no-install-package" "nvidia-curand-cu12"
-            "--no-install-package" "nvidia-cusolver-cu12"
-            "--no-install-package" "nvidia-cusparse-cu12"
-            "--no-install-package" "nvidia-cusparselt-cu12"
-            "--no-install-package" "nvidia-nccl-cu12"
-        )
+    apt-get install -y curl git cmake
+    if [[ "$BASE_IMAGE" == "ubuntu" ]]; then
+        apt-get install -y wget software-properties-common
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+        dpkg -i cuda-keyring_1.1-1_all.deb
+        rm cuda-keyring_1.1-1_all.deb
+        add-apt-repository ppa:deadsnakes/ppa -y
+        apt-get update
+        apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12 python3 python$PYTHON_VERSION-dev python$PYTHON_VERSION-venv
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python$PYTHON_VERSION 1
     else
-        UV_ARGS=(
-        )
+        apt-get install -y python3-pip python3-venv
     fi
+    apt-get clean
 
-    # Create virtual environment and install dependencies
-    uv venv ${UV_PROJECT_ENVIRONMENT} $([[ "$BASE_IMAGE" == "pytorch" ]] && echo "--system-site-packages")
+    if [[ "$USE_UV" == "true" ]]; then
+        UV_ARGS=()
+        if [[ "$BASE_IMAGE" == "pytorch" ]]; then
+            UV_ARGS=(
+                "--no-install-package" "torch"
+                "--no-install-package" "torchvision"
+                "--no-install-package" "triton"
+                "--no-install-package" "nvidia-cublas-cu12"
+                "--no-install-package" "nvidia-cuda-cupti-cu12"
+                "--no-install-package" "nvidia-cuda-nvrtc-cu12"
+                "--no-install-package" "nvidia-cuda-runtime-cu12"
+                "--no-install-package" "nvidia-cudnn-cu12"
+                "--no-install-package" "nvidia-cufft-cu12"
+                "--no-install-package" "nvidia-cufile-cu12"
+                "--no-install-package" "nvidia-curand-cu12"
+                "--no-install-package" "nvidia-cusolver-cu12"
+                "--no-install-package" "nvidia-cusparse-cu12"
+                "--no-install-package" "nvidia-cusparselt-cu12"
+                "--no-install-package" "nvidia-nccl-cu12"
+            )
+        else
+            UV_ARGS=(
+            )
+        fi
+    
+        # Install uv
+        UV_VERSION="0.7.2"
+        curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
 
-    # Install dependencies
-    uv sync --locked --only-group build ${UV_ARGS[@]}
-    uv sync \
-        -v \
-        --link-mode copy \
-        --locked \
-        --all-extras \
-        --all-groups ${UV_ARGS[@]}
+        # Create virtual environment and install dependencies
+        uv venv ${UV_PROJECT_ENVIRONMENT} $([[ "$BASE_IMAGE" == "pytorch" ]] && echo "--system-site-packages")
 
-    # Install the package
-    uv pip install --no-deps -e .
+        # Install dependencies
+        uv sync --locked --only-group build ${UV_ARGS[@]}
+        uv sync \
+            -v \
+            --link-mode copy \
+            --locked \
+            --all-extras \
+            --all-groups ${UV_ARGS[@]}
+
+        # Install the package
+        uv pip install --no-deps -e .
+    else
+        python3 -m venv $UV_PROJECT_ENVIRONMENT
+        . $UV_PROJECT_ENVIRONMENT/bin/activate
+
+        pip install --pre --no-cache-dir --upgrade pip
+        pip install --pre --no-cache-dir torch pybind11 wheel_stub ninja wheel
+        pip install --pre --no-cache-dir --no-build-isolation .
+    fi
 
 }
 
