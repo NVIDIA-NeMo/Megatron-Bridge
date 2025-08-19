@@ -192,7 +192,8 @@ jobs:
         shell: bash
         run: |
           bash docker/common/install.sh --base-image ubuntu --use-uv
-          ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python -m ensurepip --upgrade
+          uv run python -m ensurepip --upgrade
+          ln -sf /opt/venv/bin/pip3 /opt/venv/bin/pip
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
