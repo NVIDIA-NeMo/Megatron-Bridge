@@ -142,6 +142,7 @@ jobs:
           echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
           echo "CUDACXX=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         shell: bash
@@ -186,6 +187,7 @@ jobs:
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
           echo "CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
           echo "CUDACXX=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         shell: bash
