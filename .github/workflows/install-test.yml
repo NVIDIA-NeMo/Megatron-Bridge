@@ -47,11 +47,11 @@ jobs:
 
       - name: Set PATH
         run: |
-          echo "export PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
-          echo "export UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "export UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
-          echo "export CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
-          echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
+          echo "PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
+          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
+          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
+          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
@@ -92,11 +92,11 @@ jobs:
 
       - name: Set PATH
         run: |
-          echo "export PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
-          echo "export UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "export UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
-          echo "export CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
-          echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
+          echo "PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
+          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
+          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
+          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
 
       - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
         shell: bash -x -e -u -o pipefail {0}
@@ -131,7 +131,7 @@ jobs:
         python-version: ["3.12"]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4]
+        uses: actions/checkout@v4
 
       - name: Set PATH
         run: |
