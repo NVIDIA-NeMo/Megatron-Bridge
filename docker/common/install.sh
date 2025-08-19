@@ -39,7 +39,7 @@ if [[ -z "${BASE_IMAGE:-}" ]]; then
     exit 1
 fi
 
-if [[ "$BASE_IMAGE" != "pytorch" && "$BASE_IMAGE" != "cuda" && "$BASE_IMAGE" != "ubuntu" ]]; then
+if [[ "$BASE_IMAGE" != "pytorch" && "$BASE_IMAGE" != "ubuntu" ]]; then
     echo "Error: --base-image must be either 'pytorch' or 'ubuntu'"
     echo "Usage: $0 --base-image {pytorch|ubuntu}"
     exit 1
