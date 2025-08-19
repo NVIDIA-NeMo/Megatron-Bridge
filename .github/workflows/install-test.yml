@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:deadsnakes/ppa -y
           sudo apt-get update
-          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv cmake
           sudo apt-get clean
 
           python${{ matrix.python-version }} -m venv ./venv
@@ -111,7 +111,7 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         run: |
           apt-get update
-          apt-get install -y python3 python3.12 python3.12-venv python3.12-dev
+          apt-get install -y python3 python3.12 python3.12-venv python3.12-dev cmake
           python3 -m venv ./venv
 
           . ./venv/bin/activate
@@ -210,7 +210,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:deadsnakes/ppa -y
           sudo apt-get update
-          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv cmake
           sudo apt-get clean
 
           python${{ matrix.python-version }} -m venv ./venv
