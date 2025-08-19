@@ -18,7 +18,7 @@ while [[ $# -gt 0 ]]; do
         ;;
     *)
         echo "Unknown option: $1"
-        echo "Usage: $0 --base-image {pytorch|cuda|ubuntu} [--use-uv] [--python-version]"
+        echo "Usage: $0 --base-image {pytorch|ubuntu} [--use-uv] [--python-version]"
         exit 1
         ;;
     esac
@@ -35,13 +35,13 @@ fi
 # Validate base image argument
 if [[ -z "${BASE_IMAGE:-}" ]]; then
     echo "Error: --base-image argument is required"
-    echo "Usage: $0 --base-image {pytorch|cuda|ubuntu}"
+    echo "Usage: $0 --base-image {pytorch|ubuntu}"
     exit 1
 fi
 
 if [[ "$BASE_IMAGE" != "pytorch" && "$BASE_IMAGE" != "cuda" && "$BASE_IMAGE" != "ubuntu" ]]; then
-    echo "Error: --base-image must be either 'pytorch' or 'cuda' or 'ubuntu'"
-    echo "Usage: $0 --base-image {pytorch|cuda|ubuntu}"
+    echo "Error: --base-image must be either 'pytorch' or 'ubuntu'"
+    echo "Usage: $0 --base-image {pytorch|ubuntu}"
     exit 1
 fi
 
@@ -66,7 +66,7 @@ main() {
     apt-get install -y wget curl git cmake
 
     # Install CUDA
-    if [[ "$BASE_IMAGE" != "pytorch" ]]; then
+    if [[ "$BASE_IMAGE" = "ubuntu" ]]; then
         rm /etc/apt/sources.list.d/cuda*.list || true
         rm /etc/apt/sources.list.d/nvidia-cuda.list || true
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
