@@ -24,6 +24,13 @@ on:
       - "pull-request/[0-9]+"
       - "deploy-release/*"
 
+env:
+  PATH: ".local/bin:${{ env.PATH }}"
+  UV_PROJECT_ENVIRONMENT: "/opt/venv"
+  UV_LINK_MODE: "copy"
+  CUDA_HOME: "/usr/local/cuda"
+  LD_LIBRARY_PATH: "/usr/local/cuda/lib64:${{ env.LD_LIBRARY_PATH }}"
+
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.53.0
@@ -44,14 +51,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set PATH
-        run: |
-          echo "PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
-          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
-          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
