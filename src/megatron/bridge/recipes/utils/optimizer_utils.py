@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
+
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.training.config import SchedulerConfig
@@ -26,12 +28,13 @@ def distributed_fused_adam_with_cosine_annealing(
     adam_eps: float = 1e-5,
     weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: float = 1e-5,
+    min_lr: Optional[float] = None,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler.
     """
+    min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
     optimizer = OptimizerConfig(
         optimizer="adam",
         lr=max_lr,
