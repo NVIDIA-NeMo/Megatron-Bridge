@@ -110,6 +110,7 @@ def setup(
     # TODO: Freeze state.cfg
 
     cfg.validate()
+
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):

@@ -22,11 +22,19 @@ on:
     branches:
       - main
       - "pull-request/[0-9]+"
+      - "deploy-release/*"
 env:
   UV_PROJECT_ENVIRONMENT: "./venv"
 
 jobs:
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.53.0
+
   pip-test-bare-metal:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: ${{ matrix.arch }}
     name: Pip - Python${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - No CUDA
     strategy:
@@ -38,20 +46,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install CUDA Toolkit for Ubuntu 22.04
+      - name: Install CUDA Toolkit and cuDNN headers for Ubuntu 22.04
         run: |
           wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
-          sudo apt-get install -y cuda-toolkit-12-8
-          sudo apt-get clean
-
-      - name: Install cuDNN headers
-        run: |
-          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update
-          sudo apt-get install -y cudnn-cuda-12
+          sudo apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12
           sudo apt-get clean
 
       - name: Install Python ${{ matrix.python-version }}
@@ -69,6 +69,7 @@ jobs:
 
       - name: Install project
         run: |
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
           pip install --pre --no-cache-dir torch pybind11 wheel_stub numpy
           pip install --pre --no-cache-dir --no-build-isolation .
 
@@ -86,6 +87,10 @@ jobs:
           python-binary: python
 
   pip-test-cuda:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: Pip - Python${{ matrix.python-version }}${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }} - AMD64/Linux - NGC CUDA
     container:
@@ -129,6 +134,10 @@ jobs:
           python-binary: ./venv/bin/python
 
   uv-test-cuda:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC CUDA
     container:
@@ -200,6 +209,10 @@ jobs:
           python-binary: ./venv/bin/python
 
   uv-test-bare-metal:
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: UV - Python ${{ matrix.python-version }} - 'AMD64/Linux' - No CUDA
     strategy:
@@ -246,9 +259,6 @@ jobs:
 
       - name: Install dependencies with UV
         run: |
-
-          export PATH="${UV_PROJECT_ENVIRONMENT}/bin/:$PATH"
-
           uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
           uv sync --link-mode copy --locked --only-group build --no-cache
@@ -268,9 +278,16 @@ jobs:
           python-binary: ./venv/bin/python
 
   install-test-summary:
-    needs: [pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]
+    needs: [pre-flight, pip-test-bare-metal, pip-test-cuda, uv-test-bare-metal, uv-test-cuda]
     runs-on: ubuntu-latest
     name: Install test summary
+    if: |
+      (
+        needs.pre-flight.outputs.docs_only == 'true'
+        || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+        || success()
+      )
+      && !cancelled()
     steps:
       - name: Result
         run: echo Install check successful

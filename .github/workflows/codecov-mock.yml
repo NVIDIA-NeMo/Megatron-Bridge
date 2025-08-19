@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,25 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-name: Code linting
+
+name: Build docs
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
-  workflow_call:
+  push:
+    branches:
+      - "deploy-release/*"
 
 jobs:
-  lint-check:
-    name: Lint check
+  coverage-placeholder:
+    name: codecov/patch
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
-
-      - name: Check lint
-        run: |
-          pip install pre-commit==3.6.0
-          pre-commit install
-          pre-commit run --all-files --show-diff-on-failure --color=always
+      - name: Dummy placeholder
+        run: echo "noop"

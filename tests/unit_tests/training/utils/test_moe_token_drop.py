@@ -20,7 +20,7 @@ from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 
 @pytest.mark.unit
-class TestApplyMoeTokenDrop:
+class TestApplyMoETokenDrop:
     """Test cases for the apply_moe_token_drop function."""
 
     @pytest.fixture

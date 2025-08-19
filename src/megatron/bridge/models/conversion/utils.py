@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-from typing import Optional
+import copy
+import functools
+import re
+import types
+from typing import List, Optional, Tuple
 
 import torch
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.module import MegatronModule
 from rich.table import Table
+
+from megatron.bridge.utils.common_utils import unwrap_model
 
 
 def weights_verification_table(bridge, megatron_model) -> Table:
@@ -52,130 +57,190 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     return table
 
 
-# Adapted from MCore for few additional changes, consider upstream later.
-# Update argument to able to take in pipeline_rank
-def get_transformer_layer_offset(config: TransformerConfig, pipeline_rank: int = 0, vp_stage: Optional[int] = None):
-    """Get the index offset of current pipeline stage, given the level of pipelining."""
-    from megatron.core.transformer.enums import LayerType
+def get_module_and_param_from_name(
+    models: MegatronModule | List[MegatronModule],
+    param_name: str,
+    vp_stage: Optional[int] = None,
+) -> Tuple[torch.nn.Module, torch.Tensor] | Tuple[torch.nn.Module, torch.Tensor, Tuple]:
+    """
+    Get parameter from specific VP stage, ensuring that parameter
+    attributes are preserved. Supports both absolute and relative parameter names.
 
-    if config.pipeline_model_parallel_size > 1:
-        if config.pipeline_model_parallel_layout:
-            offset = config.pipeline_model_parallel_layout.get_layer_offset(
-                layer_type=LayerType.decoder, vp_stage=vp_stage
-            )
-        elif (
-            config.num_layers_in_first_pipeline_stage is not None
-            or config.num_layers_in_last_pipeline_stage is not None
-        ):
-            # Calculate number of pipeline stages to distribute the remaining Transformer
-            # layers after deducting the Transformer layers in the first or the last stages
-            middle_pipeline_stages = config.pipeline_model_parallel_size
-            middle_pipeline_stages -= sum(
-                [
-                    1 if x is not None else 0
-                    for x in (
-                        config.num_layers_in_first_pipeline_stage,
-                        config.num_layers_in_last_pipeline_stage,
-                    )
-                ]
-            )
+    Args:
+        models: List of Megatron model instances or a submodule
+        param_name: Dot-separated parameter name (can be absolute or relative to models)
+        vp_stage: Virtual pipeline stage index (None for single stage)
 
-            # Calculate layers to distribute in each pipeline stage. If the
-            # num_layers_in_first_pipeline_stage and num_layers_in_last_pipeline_stage
-            # are not set, we will not enable uneven pipeline. All layers will be treated
-            # as middle layers.
-            num_layers_in_first_pipeline_stage = (
-                0 if config.num_layers_in_first_pipeline_stage is None else config.num_layers_in_first_pipeline_stage
-            )
-            num_layers_in_last_pipeline_stage = (
-                0 if config.num_layers_in_last_pipeline_stage is None else config.num_layers_in_last_pipeline_stage
-            )
+    Returns:
+        Tuple of (module, parameter) where module owns the parameter
 
-            middle_num_layers = (
-                config.num_layers - num_layers_in_first_pipeline_stage - num_layers_in_last_pipeline_stage
-            )
+    Raises:
+        ValueError: If vp_stage is out of range or parameter doesn't exist
 
-            if (vp_size := config.virtual_pipeline_model_parallel_size) is not None:
-                assert vp_stage is not None, "vp_stage must be provided if virtual pipeline model parallel size is set"
+    Examples:
+        Basic usage with full model:
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=full_model,
+        ...     param_name="transformer.layers.0.attention.query.weight"
+        ... )
 
-                # Calculate number of layers in each virtual model chunk
-                # If the num_layers_in_first_pipeline_stage and
-                # num_layers_in_last_pipeline_stage are not set, all pipeline stages
-                # will be treated as middle pipeline stages in the calculation
-                num_layers_per_virtual_model_chunk_in_first_pipeline_stage = (
-                    0
-                    if config.num_layers_in_first_pipeline_stage is None
-                    else config.num_layers_in_first_pipeline_stage // vp_size
-                )
+        Usage with model list and VP stage:
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=[model1, model2, model3],
+        ...     param_name="layers.0.mlp.dense.bias",
+        ...     vp_stage=1
+        ... )
 
-                num_layers_per_virtual_model_chunk_in_last_pipeline_stage = (
-                    0
-                    if config.num_layers_in_last_pipeline_stage is None
-                    else config.num_layers_in_last_pipeline_stage // vp_size
-                )
+        Usage with submodule and relative path:
+        >>> linear_module = model.transformer.layers[0].mlp.dense
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=linear_module,
+        ...     param_name="weight"
+        ... )
 
-                num_layers_per_vritual_model_chunk_in_middle_pipeline_stage = middle_num_layers // vp_size
+        Usage with submodule and absolute path (automatic suffix matching):
+        >>> linear_module = model.transformer.layers[0].mlp.dense
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=linear_module,
+        ...     param_name="transformer.layers.0.mlp.dense.weight"
+        ... )
+        # Automatically matches "weight" suffix and returns the parameter
 
-                # First stage + middle stage + last stage
-                total_virtual_chunks = (
-                    num_layers_per_virtual_model_chunk_in_first_pipeline_stage
-                    + num_layers_per_vritual_model_chunk_in_middle_pipeline_stage
-                    + num_layers_per_virtual_model_chunk_in_last_pipeline_stage
-                )
+        Edge case with partial path matching:
+        >>> attention_module = model.transformer.layers[0].attention
+        >>> module, param = get_module_and_param_from_name(
+        ...     models=attention_module,
+        ...     param_name="layers.0.attention.query.weight"
+        ... )
+        # Matches "query.weight" suffix within the attention module
+    """
 
-                # Calculate the layer offset with interleaved uneven pipeline parallelism
-                if pipeline_rank == 0:
-                    offset = vp_stage * total_virtual_chunks
-                else:
-                    offset = (
-                        vp_stage * total_virtual_chunks
-                        + num_layers_per_virtual_model_chunk_in_first_pipeline_stage
-                        + (pipeline_rank - 1)
-                        * (num_layers_per_vritual_model_chunk_in_middle_pipeline_stage // middle_pipeline_stages)
-                    )
-            else:
-                if middle_pipeline_stages > 0:
-                    num_layers_per_pipeline_rank = middle_num_layers // middle_pipeline_stages
-                else:
-                    num_layers_per_pipeline_rank = 0
-
-                middle_pipeline_rank = (
-                    pipeline_rank if config.num_layers_in_first_pipeline_stage is None else pipeline_rank - 1
-                )
-
-                if pipeline_rank == 0:
-                    offset = 0
-                else:
-                    offset = (middle_pipeline_rank * num_layers_per_pipeline_rank) + num_layers_in_first_pipeline_stage
+    if isinstance(models, list):
+        if vp_stage is None:
+            model = models[0]
         else:
-            num_layers = config.num_layers
-
-            # Increase the number of layers by one if we include the embedding (loss)
-            # layer into pipeline parallelism partition and placement
-            if config.account_for_embedding_in_pipeline_split:
-                num_layers += 1
-
-            if config.account_for_loss_in_pipeline_split:
-                num_layers += 1
-
-            num_layers_per_pipeline_rank = num_layers // config.pipeline_model_parallel_size
-
-            if (vp_size := config.virtual_pipeline_model_parallel_size) is not None:
-                assert vp_stage is not None, "vp_stage must be provided if virtual pipeline model parallel size is set"
-
-                num_layers_per_virtual_rank = num_layers_per_pipeline_rank // vp_size
-                total_virtual_chunks = num_layers // vp_size
-                offset = vp_stage * total_virtual_chunks + (pipeline_rank * num_layers_per_virtual_rank)
-
-                # Reduce the offset of embedding layer from the total layer number
-                if config.account_for_embedding_in_pipeline_split:
-                    raise NotImplementedError()
-            else:
-                offset = pipeline_rank * num_layers_per_pipeline_rank
-
-                # Reduce the offset of embedding layer from the total layer number
-                if config.account_for_embedding_in_pipeline_split:
-                    raise NotImplementedError()
+            if vp_stage >= len(models):
+                raise ValueError(f"VP stage {vp_stage} out of range (max: {len(models) - 1})")
+            model = models[vp_stage]
     else:
-        offset = 0
-    return offset
+        model = models
+
+    module = unwrap_model(model)
+    splitted_name = param_name.split(".")
+
+    # Try to find the parameter using the given parts
+    def try_get_param(parts):
+        param = module
+        temp_module = module
+
+        for i, part in enumerate(parts):
+            if not hasattr(param, part):
+                return None
+            param = getattr(param, part)
+            if i < len(parts) - 1:
+                temp_module = getattr(temp_module, part)
+
+        return temp_module, param
+
+    # First try the full parameter name (current behavior)
+    result = try_get_param(splitted_name)
+    if result is not None:
+        return result
+
+    # If full name doesn't work, try suffixes of the parameter name
+    # This handles cases where models is a submodule but param_name is absolute
+    for start_idx in range(1, len(splitted_name)):
+        suffix_parts = splitted_name[start_idx:]
+        result = try_get_param(suffix_parts)
+        if result is not None:
+            return result
+
+    # If no approach works, raise an error
+    raise ValueError(f"Parameter '{param_name}' not found in model at VP stage {vp_stage}")
+
+
+def remove_non_pickleables(obj, max_depth: int = 2, current_depth: int = 0):
+    """Remove non-pickleable objects from a configuration object recursively.
+
+    This utility function identifies and removes objects that cannot be pickled for
+    inter-process communication, including functions, bound methods, partial
+    functions, and other problematic callables.
+
+    Args:
+        obj: The object to clean
+        max_depth: Maximum recursion depth (default: 2)
+        current_depth: Current recursion depth (internal use)
+
+    Returns:
+        The cleaned object with non-pickleables removed
+    """
+
+    # Stop recursion if max depth reached
+    if current_depth >= max_depth:
+        return obj
+
+    # Handle None
+    if obj is None:
+        return obj
+
+    # Check if object is a problematic callable
+    if callable(obj):
+        # Allow classes/types but remove function objects, methods, partials
+        if isinstance(obj, type):
+            return obj
+        elif hasattr(obj, "__call__") and (
+            isinstance(obj, (types.FunctionType, types.MethodType, functools.partial)) or hasattr(obj, "__self__")
+        ):  # bound methods
+            return None
+
+    # Handle dataclass/object with attributes
+    if hasattr(obj, "__dict__"):
+        # Create a copy to avoid modifying the original
+        cleaned_obj = copy.copy(obj)
+
+        for attr_name in list(vars(cleaned_obj).keys()):
+            attr_value = getattr(cleaned_obj, attr_name)
+
+            # Recursively clean attribute
+            cleaned_value = remove_non_pickleables(attr_value, max_depth, current_depth + 1)
+
+            # Set the cleaned value (or None if it was removed)
+            setattr(cleaned_obj, attr_name, cleaned_value)
+
+        return cleaned_obj
+
+    # Handle lists
+    elif isinstance(obj, list):
+        return [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
+
+    # Handle tuples
+    elif isinstance(obj, tuple):
+        return tuple(remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj)
+
+    # Handle dictionaries
+    elif isinstance(obj, dict):
+        return {key: remove_non_pickleables(value, max_depth, current_depth + 1) for key, value in obj.items()}
+
+    # For primitive types and other safe objects, return as-is
+    return obj
+
+
+def extract_sort_key(param_name: str):
+    """Extract sorting key based on layer and expert numbers."""
+
+    # Extract at most 2 numbers: layer number and expert number
+    # Pattern: *layers.d+.*d+ (layer number and potentially expert number)
+    numbers = []
+    # Find layer number
+    layer_match = re.search(r"layers\.(\d+)", param_name)
+    if layer_match:
+        numbers.append(int(layer_match.group(1)))
+    # Find expert number after bias or weight
+    expert_match = re.search(r"(?:bias|weight)(\d+)", param_name)
+    if expert_match:
+        numbers.append(int(expert_match.group(1)))
+    # Pad to ensure consistent comparison (max 2 numbers)
+    while len(numbers) < 2:
+        numbers.append(-1)
+    numbers = numbers[:2]  # Keep at most 2 numbers
+    return numbers, param_name

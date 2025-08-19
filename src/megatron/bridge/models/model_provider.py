@@ -15,7 +15,7 @@
 import abc
 import os
 from pathlib import Path
-from typing import Callable, Generic, TypedDict, TypeVar
+from typing import Callable, Generic, TypedDict, TypeVar, Union
 
 
 try:
@@ -105,7 +105,11 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         data_parallel_random_init: bool = True,
         use_cpu_initialization: None | bool = False,
         init_model_with_meta_device: bool | None = None,
-        pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
+        pre_wrap_hook: Union[
+            Callable[[list[MegatronModule]], list[MegatronModule]],
+            list[Callable[[list[MegatronModule]], list[MegatronModule]]],
+        ]
+        | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
@@ -126,8 +130,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
             use_cpu_initialization: Initialize model on CPU.
             init_model_with_meta_device: Initialize model on meta device.
-            pre_wrap_hook: A single callable to modify the model before it's wrapped. If provided,
-                this will override all hooks registered via `register_pre_wrap_hook`.
+            pre_wrap_hook: A single callable or list of callables to modify the model before it's wrapped.
+                If provided, this will override all hooks registered via `register_pre_wrap_hook`.
+                If a list is provided, hooks will be executed in order.
             post_wrap_hook: A single callable to modify the model after it's wrapped. If provided,
                 this will override all hooks registered via `register_post_wrap_hook`.
 
@@ -148,7 +153,17 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             print("Model parallel not initialized, initializing...")
             self.initialize_model_parallel(seed=0)
 
-        final_pre_wrap_hook = pre_wrap_hook or self.pre_wrap_hook
+        # Convert list of hooks to a single composed callable
+        if isinstance(pre_wrap_hook, list):
+
+            def composed_pre_wrap_hook(model: list[MegatronModule]) -> list[MegatronModule]:
+                for hook in pre_wrap_hook:
+                    model = hook(model)
+                return model
+
+            final_pre_wrap_hook = composed_pre_wrap_hook
+        else:
+            final_pre_wrap_hook = pre_wrap_hook or self.pre_wrap_hook
         final_post_wrap_hook = post_wrap_hook or self.post_wrap_hook
 
         model = get_model(
@@ -200,10 +215,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         )
         if seed is not None:
             model_parallel_cuda_manual_seed(seed, **(seed_kwargs or {}))
-
-    def __call__(self, *args, **kwargs: Unpack["GetModelKwargs"]) -> list[ModelT]:
-        """A convenience wrapper around `provide_distributed_model`."""
-        return self.provide_distributed_model(*args, **kwargs)
 
     @property
     def meta_model(self) -> list[ModelT]:
@@ -383,7 +394,7 @@ class GetModelKwargs(TypedDict, total=False):
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
         use_cpu_initialization: Initialize model on CPU.
         init_model_with_meta_device: Initialize model on meta device.
-        pre_wrap_hook: A single callable that overrides all registered pre-wrap hooks.
+        pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
     """
 
@@ -397,7 +408,13 @@ class GetModelKwargs(TypedDict, total=False):
     data_parallel_random_init: bool
     use_cpu_initialization: bool | None
     init_model_with_meta_device: bool | None
-    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
+    pre_wrap_hook: (
+        Union[
+            Callable[[list[MegatronModule]], list[MegatronModule]],
+            list[Callable[[list[MegatronModule]], list[MegatronModule]]],
+        ]
+        | None
+    )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
 
 
@@ -413,7 +430,11 @@ def get_model(
     data_parallel_random_init: bool = True,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
-    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
+    pre_wrap_hook: Union[
+        Callable[[list[MegatronModule]], list[MegatronModule]],
+        list[Callable[[list[MegatronModule]], list[MegatronModule]]],
+    ]
+    | None = None,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -440,8 +461,9 @@ def get_model(
             data parallel ranks (vs broadcasting from rank 0)
         use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
         init_model_with_meta_device: Whether to initialize the model on the meta device
-        pre_wrap_hook: A callable that takes a list of `MegatronModule` and returns a
-            modified list, or `None` to clear the hook.
+        pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
+            and returns a modified list, or `None` to clear the hook. If a list is provided,
+            hooks will be executed in order.
 
     Returns:
         list[MegatronModule]: List of model modules. Contains multiple modules
@@ -461,9 +483,20 @@ def get_model(
         model = _create_model(model_provider, model_type)
 
     if pre_wrap_hook:
-        _model = pre_wrap_hook(model)
-        if _model is not None:
-            model = _model
+        if isinstance(pre_wrap_hook, list):
+            # Execute hooks in order
+            for hook in pre_wrap_hook:
+                if not callable(hook):
+                    raise RuntimeError("All elements in pre_wrap_hook list must be callable")
+                _model = hook(model)
+                if _model is not None:
+                    model = _model
+        else:
+            if not callable(pre_wrap_hook):
+                raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
+            _model = pre_wrap_hook(model)
+            if _model is not None:
+                model = _model
 
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)

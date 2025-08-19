@@ -564,7 +564,7 @@ class TestDoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(dora_hook)
 
         # Get the model with DoRA applied via hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
@@ -598,7 +598,7 @@ class TestDoRAMegatronIntegration:
         )
 
         # Get base model first to count original parameters
-        base_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        base_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         base_model = [chunk.cuda() for chunk in base_model]
 
         # Count original parameters
@@ -619,7 +619,7 @@ class TestDoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(dora_hook)
 
         # Get DoRA-adapted model using hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Count parameters after DoRA
@@ -645,7 +645,7 @@ class TestDoRAMegatronIntegration:
         # Register hook and apply DoRA first time
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
-        first_transform = model_provider(ddp_config=None, wrap_with_ddp=False)
+        first_transform = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         first_transform = [chunk.cuda() for chunk in first_transform]
 
@@ -705,7 +705,7 @@ class TestDoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(dora_hook)
 
         # Get DoRA-adapted model using hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Test forward pass with proper Megatron input format
@@ -774,7 +774,7 @@ class TestDoRAMegatronIntegration:
             model_provider.register_pre_wrap_hook(dora_hook)
 
             # Get adapted model using hook
-            adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+            adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
             adapted_model = [chunk.cuda() for chunk in adapted_model]
 
             # Count DoRA modules

@@ -32,7 +32,7 @@ from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, Ll
 @MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
 class LlamaBridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for Llama Causal LM.
+    Megatron Bridge for Llama Causal LM.
 
     As a user you would not use this bridge directly, but through `AutoBridge`.
 
@@ -73,8 +73,6 @@ class LlamaBridge(MegatronModelBridge):
             generation_config=hf_pretrained.generation_config,
             vocab_size=hf_config.vocab_size,
         )
-
-        provider.gradient_accumulation_fusion = False
 
         return provider
 

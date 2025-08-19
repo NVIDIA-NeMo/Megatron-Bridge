@@ -546,12 +546,11 @@ class TestGetModel:
         model = MockMegatronModule(config)
         mock_create_model.return_value = [model]
 
-        # The hook might modify the model, so we mock that
-        hooked_model = MockMegatronModule(config)
-        pre_wrap_hook = Mock(return_value=[hooked_model])
+        # Hook now operates on individual model modules, not the entire list
+        pre_wrap_hook = Mock(return_value=None)
 
-        mock_correct_amax.return_value = [hooked_model]
-        mock_ddp_wrap.return_value = [hooked_model]
+        mock_correct_amax.return_value = [model]
+        mock_ddp_wrap.return_value = [model]
 
         model_provider = MockModelProvider(model)
         ddp_config = DistributedDataParallelConfig()
@@ -559,12 +558,11 @@ class TestGetModel:
         result = get_model(model_provider, ddp_config, pre_wrap_hook=pre_wrap_hook, use_cpu_initialization=True)
 
         # Assertions
-        assert result == [hooked_model]
+        assert result == [model]
         mock_create_model.assert_called_once()
+        # Hook should be called once with the model list
         pre_wrap_hook.assert_called_once_with([model])
         mock_ddp_wrap.assert_called_once()
-        # Ensure the wrapped model is the one returned from the hook
-        assert mock_ddp_wrap.call_args[0][0] == [hooked_model]
 
 
 class TestEdgeCases:

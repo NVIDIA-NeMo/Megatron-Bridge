@@ -20,7 +20,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.utils import get_batch_on_this_cp_rank
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig
 from megatron.bridge.training.losses import masked_next_token_loss
@@ -64,11 +64,12 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     )
 
 
-def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
+def get_batch_from_iterator(data_iterator: Iterable, use_mtp: bool = False) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
     Args:
         data_iterator: The data iterator to get the batch from.
+        use_mtp: Whether Multi-Token Prediction layers are enabled.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -84,7 +85,7 @@ def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
 
-    if parallel_state.is_pipeline_first_stage():
+    if parallel_state.is_pipeline_first_stage() or use_mtp:
         required_device_keys.update(("tokens", "position_ids"))
     if parallel_state.is_pipeline_last_stage():
         required_device_keys.update(("labels", "loss_mask"))
@@ -101,7 +102,9 @@ def get_batch_from_iterator(data_iterator: Iterable) -> dict[str, torch.Tensor]:
     return _batch_required_keys
 
 
-def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> dict[str, torch.Tensor]:
+def get_batch_on_this_tp_rank(
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
+) -> dict[str, torch.Tensor]:
     """Get a batch from the data iterator, handling TP broadcasting.
 
     On TP rank 0, it fetches the next batch from the iterator and broadcasts
@@ -111,6 +114,7 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
     Args:
         data_iterator: The data iterator.
         cfg: The configuration container.
+        use_mtp: Whether Multi-Token Prediction layers are enabled.
 
     Returns:
         A dictionary containing the batch data for the current rank.
@@ -151,6 +155,12 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
             _broadcast(batch["position_ids"])
 
         elif parallel_state.is_pipeline_last_stage():
+            # Multi-Token Prediction (MTP) layers need tokens and position_ids to calculate embedding.
+            # Currently the Multi-Token Prediction (MTP) layers is fixed on the last stage, so we need
+            # to broadcast tokens and position_ids to all of the tensor parallel ranks on the last stage.
+            if use_mtp:
+                _broadcast(batch["tokens"])
+                _broadcast(batch["position_ids"])
             _broadcast(batch["labels"])
             _broadcast(batch["loss_mask"])
             _broadcast(batch["attention_mask"])
@@ -208,8 +218,15 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
             _broadcast(position_ids)
 
         elif parallel_state.is_pipeline_last_stage():
-            tokens = None
-            position_ids = None
+            # Multi-Token Prediction (MTP) layers need tokens and position_ids to calculate embedding.
+            # Currently the Multi-Token Prediction (MTP) layers is fixed on the last stage, so we need
+            # to broadcast tokens and position_ids to all of the tensor parallel ranks on the last stage.
+            if use_mtp:
+                _broadcast(tokens)
+                _broadcast(position_ids)
+            else:
+                tokens = None
+                position_ids = None
 
             _broadcast(labels)
             _broadcast(loss_mask)
@@ -227,7 +244,7 @@ def get_batch_on_this_tp_rank(data_iterator: Iterable, cfg: ConfigContainer) -> 
 
 
 def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -243,6 +260,7 @@ def get_batch(
     Args:
         data_iterator: Input data iterator
         cfg: Configuration container
+        use_mtp: Whether Multi-Token Prediction layers are enabled
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
@@ -252,10 +270,10 @@ def get_batch(
         return None, None, None, None, None, None, None, None
 
     if isinstance(cfg.dataset, FinetuningDatasetConfig):
-        batch = get_batch_from_iterator(data_iterator)
+        batch = get_batch_from_iterator(data_iterator, use_mtp)
     else:
         # get batches based on the TP rank you are on
-        batch = get_batch_on_this_tp_rank(data_iterator, cfg)
+        batch = get_batch_on_this_tp_rank(data_iterator, cfg, use_mtp)
         batch["cu_seqlens"] = None
         batch["cu_seqlens_argmin"] = None
         batch["max_seqlen"] = None
@@ -289,10 +307,13 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -
     timers = state.timers
     straggler_timer = state.straggler_timer
 
+    config = get_model_config(model)
+    use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
+
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
         tokens, labels, loss_mask, attention_mask, position_ids, cu_seqlens, cu_seqlens_argmin, max_seqlen = get_batch(
-            data_iterator, state.cfg
+            data_iterator, state.cfg, use_mtp
         )
     timers("batch-generator").stop()
 
