@@ -60,7 +60,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:deadsnakes/ppa -y
           sudo apt-get update
-          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv libcutlass-dev
           sudo apt-get clean
 
           python${{ matrix.python-version }} -m venv ./venv
@@ -69,7 +69,10 @@ jobs:
 
       - name: Install project
         run: |
-          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=$CUDA_HOME/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          export PATH="/root/.local/bin:$CUDA_HOME/bin:$PATH"
+          export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;9.0"
           pip install --pre --no-cache-dir torch pybind11 wheel_stub numpy
           pip install --pre --no-cache-dir --no-build-isolation .
 
@@ -111,11 +114,14 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         run: |
           apt-get update
-          apt-get install -y python3 python3.12 python3.12-venv python3.12-dev
+          apt-get install -y python3 python3.12 python3.12-venv python3.12-dev  libcutlass-dev
           python3 -m venv ./venv
 
           . ./venv/bin/activate
-
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=$CUDA_HOME/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          export PATH="/root/.local/bin:$CUDA_HOME/bin:$PATH"
+          export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;9.0"
           pip install --pre --no-cache-dir --upgrade pip
           pip install --pre --no-cache-dir torch pybind11 wheel_stub
           pip install --pre --no-cache-dir --no-build-isolation .$EXTRA
