@@ -63,9 +63,9 @@ main() {
     
     # Install tools
     apt-get update
+    apt-get install -y wget curl git cmake
 
     # Install CUDA
-    apt-get install -y wget curl git cmake
     if [[ "$BASE_IMAGE" == "ubuntu" ]]; then
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
         dpkg -i cuda-keyring_1.1-1_all.deb
