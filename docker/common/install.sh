@@ -67,6 +67,8 @@ main() {
 
     # Install CUDA
     if [[ "$BASE_IMAGE" != "pytorch" ]]; then
+        rm /etc/apt/sources.list.d/cuda*.list      
+        rm /etc/apt/sources.list.d/nvidia-cuda.list
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
         dpkg -i cuda-keyring_1.1-1_all.deb
         rm cuda-keyring_1.1-1_all.deb
