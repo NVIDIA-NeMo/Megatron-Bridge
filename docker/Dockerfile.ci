@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
+FROM ubuntu24.04
 WORKDIR /workspace
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -26,5 +26,5 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
-    bash docker/common/install.sh --base-image cuda --use-uv && \
+    bash docker/common/install.sh --base-image ubuntu --use-uv && \
     uv cache prune --ci
