@@ -52,6 +52,7 @@ jobs:
           echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
@@ -97,6 +98,7 @@ jobs:
           echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
       - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
         shell: bash -x -e -u -o pipefail {0}
@@ -140,6 +142,7 @@ jobs:
           echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         shell: bash
@@ -181,6 +184,7 @@ jobs:
           echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
+          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         shell: bash
