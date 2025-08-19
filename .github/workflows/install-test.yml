@@ -23,12 +23,6 @@ on:
       - main
       - "pull-request/[0-9]+"
       - "deploy-release/*"
-env:
-  PATH: ".local/bin:$PATH"
-  UV_PROJECT_ENVIRONMENT: /opt/venv
-  UV_LINK_MODE: "copy"
-  CUDA_HOME: "/usr/local/cuda"
-  LD_LIBRARY_PATH: "/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
 
 jobs:
   pre-flight:
@@ -49,6 +43,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set PATH
+        run: |
+          echo "export PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
+          echo "export UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
+          echo "export UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
+          echo "export CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
+          echo "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
 
       - name: Install project
         run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
