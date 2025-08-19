@@ -100,7 +100,7 @@ jobs:
 
       - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
         shell: bash -x -e -u -o pipefail {0}
-        run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
+        run: bash docker/common/install.sh --base-image cuda --python-version ${{ matrix.python-version }}
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
@@ -165,6 +165,7 @@ jobs:
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: linux-amd64-cpu16
     name: UV - Python ${{ matrix.python-version }} - 'AMD64/Linux' - Bare Metal
+    container: ubuntu:24.04
     strategy:
       fail-fast: false
       matrix:
@@ -173,46 +174,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up UV
-        uses: astral-sh/setup-uv@v1
-        with:
-          version: 0.7.2
-
-      - name: Install CUDA Toolkit for Ubuntu 22.04
+      - name: Set PATH
         run: |
-          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update
-          sudo apt-get install -y cuda-toolkit-12-8
-          sudo apt-get clean
+          echo "PATH=.local/bin:\$PATH" | tee -a "$GITHUB_ENV"
+          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
+          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
+          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:\$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
 
-      - name: Install cuDNN headers
-        run: |
-          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update
-          sudo apt-get install -y cudnn-cuda-12
-          sudo apt-get clean
-
-      - name: Install Python ${{ matrix.python-version }}
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get update
-          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv cmake
-          sudo apt-get clean
-
-          python${{ matrix.python-version }} -m venv ./venv
-          . ./venv/bin/activate
-          pip install --pre --no-cache-dir --upgrade pip
-
-      - name: Install dependencies with UV
-        run: |
-          uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
-
-          uv sync --link-mode copy --locked --only-group build --no-cache
-          uv sync --link-mode copy --locked --all-groups --no-cache
+      - name: Install project
+        shell: bash
+        run: bash docker/common/install.sh --base-image ubuntu --use-uv
 
       - name: Checkout check-imports
         uses: actions/checkout@v4
