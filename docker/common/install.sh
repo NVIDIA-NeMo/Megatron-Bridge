@@ -117,7 +117,7 @@ main() {
         . $UV_PROJECT_ENVIRONMENT/bin/activate
 
         pip install --pre --no-cache-dir --upgrade pip
-        pip install --pre --no-cache-dir torch pybind11 wheel_stub ninja wheel
+        pip install --pre --no-cache-dir torch pybind11 wheel_stub ninja wheel packaging
         pip install --pre --no-cache-dir --no-build-isolation .
     fi
 
