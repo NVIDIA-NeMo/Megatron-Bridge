@@ -82,6 +82,7 @@ main() {
     if [[ "$USE_UV" == "true" ]]; then
         UV_ARGS=()
         if [[ "$BASE_IMAGE" == "pytorch" ]]; then
+            unset PIP_CONSTRAINT
             UV_ARGS=(
                 "--no-install-package" "torch"
                 "--no-install-package" "torchvision"
