@@ -191,6 +191,8 @@ jobs:
           source ./venv/bin/activate
 
           export PATH="./bin/:$PATH"
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
           uv sync --link-mode copy --locked --only-group build
           uv sync --link-mode copy --locked --all-groups
