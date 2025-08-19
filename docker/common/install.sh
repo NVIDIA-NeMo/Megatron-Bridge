@@ -99,7 +99,7 @@ main() {
         curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
 
         # Create virtual environment and install dependencies
-        uv venv ${UV_PROJECT_ENVIRONMENT} $([[ "$BASE_IMAGE" == "pytorch" ]] && echo "--system-site-packages")
+        uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
 
         # Install dependencies
         uv sync --locked --only-group build ${UV_ARGS[@]}
