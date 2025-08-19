@@ -195,9 +195,10 @@ jobs:
 
           uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
           source ./venv/bin/activate
-
-          export PATH="./bin/:$PATH"
-
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=$CUDA_HOME/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          export PATH="./bin/:$CUDA_HOME/bin:$PATH"
+          export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;9.0"
           uv sync --link-mode copy --locked --only-group build
           uv sync --link-mode copy --locked --all-groups
 
@@ -256,7 +257,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:deadsnakes/ppa -y
           sudo apt-get update
-          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv
+          sudo apt-get install -y python3 python${{ matrix.python-version }} python${{ matrix.python-version }}-venv libcutlass-dev
           sudo apt-get clean
 
           python${{ matrix.python-version }} -m venv ./venv
@@ -266,7 +267,10 @@ jobs:
       - name: Install dependencies with UV
         run: |
           uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
-
+          export CUDA_HOME=/usr/local/cuda
+          export LD_LIBRARY_PATH=$CUDA_HOME/lib64:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+          export PATH="/root/.local/bin:$CUDA_HOME/bin:$PATH"
+          export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;9.0"
           uv sync --link-mode copy --locked --only-group build --no-cache
           uv sync --link-mode copy --locked --all-groups --no-cache
 
