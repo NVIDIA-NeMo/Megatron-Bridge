@@ -87,7 +87,14 @@ version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
 # Currently, TE must be built with no build-isolation b/c it requires torch
-no-build-isolation-package = ["transformer-engine", "transformer-engine-torch"]
+no-build-isolation-package = [
+    "transformer-engine",
+    "transformer-engine-torch",
+    "mamba-ssm",
+    "causal-conv1d",
+    "nv-grouped-gemm",
+    "flash_mla",
+]
 prerelease = "allow"
 
 # uv.sources allows us to override dependencies with VCS commits. 
