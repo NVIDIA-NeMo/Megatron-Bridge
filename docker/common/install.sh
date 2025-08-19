@@ -74,6 +74,9 @@ main() {
         apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12 libcutlass-dev 
     fi
 
+    # Clean up
+    apt-get clean
+
     if [[ "$USE_UV" == "true" ]]; then
         UV_ARGS=()
         if [[ "$BASE_IMAGE" == "pytorch" ]]; then
