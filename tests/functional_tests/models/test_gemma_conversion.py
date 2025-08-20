@@ -94,14 +94,30 @@ class TestGemmaConversion:
             # Ensure model directory exists before creating tokenizer files
             model_dir.mkdir(parents=True, exist_ok=True)
 
+            # Use a simple tokenizer that doesn't require SentencePiece model files
             tokenizer_config = {
-                "tokenizer_class": "GemmaTokenizer",
+                "tokenizer_class": "PreTrainedTokenizerFast",
                 "vocab_size": 256000,
                 "bos_token": "<bos>",
                 "eos_token": "<eos>",
                 "pad_token": "<pad>",
                 "unk_token": "<unk>",
+                "model_max_length": 8192,
             }
+
+            # Create a minimal vocab.json for PreTrainedTokenizerFast
+            vocab = {f"<token_{i}>": i for i in range(1000)}  # Minimal vocab
+            vocab.update(
+                {
+                    "<pad>": 0,
+                    "<unk>": 1,
+                    "<bos>": 2,
+                    "<eos>": 3,
+                }
+            )
+
+            with open(model_dir / "vocab.json", "w") as f:
+                json.dump(vocab, f)
 
             with open(model_dir / "tokenizer_config.json", "w") as f:
                 json.dump(tokenizer_config, f, indent=2)
