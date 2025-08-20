@@ -20,7 +20,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.llama import Llama31ModelProvider8B
-from megatron.bridge.recipes.llama.llama31_8b import model_config, pretrain_config
+from megatron.bridge.recipes.llama.llama31_8b import get_comm_overlap_config, model_config, pretrain_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
 from megatron.bridge.training.config import ConfigContainer
@@ -432,3 +432,19 @@ class TestPretrainConfig:
     def test_precision_recipes(self, precision):
         cfg = pretrain_config(precision_config=precision)
         assert cfg.mixed_precision == precision
+
+
+@pytest.mark.unit
+class TestGetCommOverlapConfig:
+    """Test cases for the get_comm_overlap_config function."""
+
+    def test_get_comm_overlap_config_default_values(self):
+        """Test get_comm_overlap_config returns the expected configuration."""
+        config = get_comm_overlap_config()
+
+        assert isinstance(config, CommOverlapConfig)
+        assert config.tp_comm_overlap is True
+        assert config.defer_embedding_wgrad_compute is True
+        assert config.wgrad_deferral_limit == 50
+        assert config.overlap_param_gather_with_optimizer_step is False
+        assert config.align_param_gather is True
