@@ -90,6 +90,10 @@ class TestGemmaConversion:
             print(f"Warning: Could not download tokenizer, creating minimal tokenizer files: {e}")
             # Create minimal tokenizer files if download fails
             # This is a fallback for offline environments
+
+            # Ensure model directory exists before creating tokenizer files
+            model_dir.mkdir(parents=True, exist_ok=True)
+
             tokenizer_config = {
                 "tokenizer_class": "GemmaTokenizer",
                 "vocab_size": 256000,
