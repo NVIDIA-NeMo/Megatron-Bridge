@@ -241,17 +241,17 @@ def build_and_load_model(
     from megatron.bridge.training.checkpointing import (
         _load_model_weights_from_checkpoint,
     )
-    from megatron.bridge.training.mlm_compat.model import _gpt_provider, _mamba_provider
+    from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if isinstance(model_cfg, ModelProviderMixin):
-            return model_cfg.provide()
+            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
             provider = _gpt_provider if model_type == "gpt" else _mamba_provider
-            return provider(megatron_args, model_cfg)
+            return _get_model(megatron_args, provider, model_cfg, wrap_with_ddp=False)
 
     # Auto-detect if we should skip temp dist context
     if skip_temp_dist_context is None:
