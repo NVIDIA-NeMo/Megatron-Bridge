@@ -34,49 +34,27 @@ Key Features:
 
 Usage Examples:
     # Basic pretraining with mock data
-    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \\
+    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \
         --exp-name test_run --pretrain --max-steps 100
 
     # Finetuning with custom parameters and overrides
-    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \\
-        --exp-name finetune_run --finetune --data squad --dataset-root /data/squad \\
-        --lr 1e-5 model.seq_length=4096 train.eval_interval=50
-
-    # Advanced training with profiling
-    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \\
-        --exp-name profile_run --pretrain --nsys --convergence \\
-        --tensor-parallel-size 2 optimizer.lr=3e-4
+    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \
+        --exp-name finetune_run --finetune --data squad --dataset-root /data/squad \
+        --lr 1e-5 --pretrained_checkpoint /path/to/checkpoint model.seq_length=4096 train.eval_interval=50
 
 Expected Recipe Structure:
 - Recipe modules must be located at: megatron.bridge.recipes.{model_family}.{recipe_name}
 - For pretraining: recipe must have pretrain_config(dir, name, **kwargs) function
-- For finetuning: recipe must have finetune_config(dir, name, **kwargs) function
+- For finetuning: recipe must have finetune_config(dir, name, pretrained_checkpoint, **kwargs) function
 - Both functions should return a ConfigContainer instance
 """
 
 import argparse
 import importlib
 import logging
-from typing import Optional
 
 import torch
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors import process_squad_example
-from megatron.bridge.peft.dora import DoRA
-from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-from megatron.bridge.training.config import (
-    ConfigContainer,
-    GPTDatasetConfig,
-    MockGPTDatasetConfig,
-    ProfilingConfig,
-    TokenizerConfig,
-)
-from megatron.bridge.training.finetune import finetune
-from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -107,8 +85,10 @@ def parse_plugin_config_overrides(unknown_args: list[str]) -> list[str]:
     return config_overrides
 
 
-def create_mock_dataset_config(seq_length: int) -> MockGPTDatasetConfig:
+def create_mock_dataset_config(seq_length):
     """Create mock dataset configuration for Megatron-Bridge."""
+    from megatron.bridge.training.config import MockGPTDatasetConfig
+
     # Create mock dataset using MockGPTDatasetConfig which enforces blend=None, blend_per_split=None
     return MockGPTDatasetConfig(
         random_seed=1234,
@@ -125,10 +105,11 @@ def create_mock_dataset_config(seq_length: int) -> MockGPTDatasetConfig:
     )
 
 
-def create_rp2_dataset_config(
-    dataset_paths: list[str], seq_length: int, index_mapping_dir: Optional[str] = None
-) -> GPTDatasetConfig:
+def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None):
     """Create RedPajama2 dataset configuration for Megatron-Bridge."""
+    from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+    from megatron.bridge.training.config import GPTDatasetConfig
+
     # Get blend configuration for rp2 data paths
     blend, blend_per_split, split = get_blend_fields_from_data_paths(data_paths=dataset_paths, mock=False)
 
@@ -151,8 +132,12 @@ def create_rp2_dataset_config(
     )
 
 
-def create_squad_dataset_config(dataset_root: str, seq_length: int, packed: bool = False) -> HFDatasetConfig:
+def create_squad_dataset_config(dataset_root, seq_length, packed=False):
     """Create SQuAD dataset configuration for Megatron-Bridge using HF dataset."""
+    from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
+    from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+    from megatron.bridge.data.hf_processors import process_squad_example
+
     # Create packed sequence specs if needed
     packed_sequence_specs = None
     if packed:
@@ -178,7 +163,7 @@ def create_squad_dataset_config(dataset_root: str, seq_length: int, packed: bool
     )
 
 
-def apply_args_to_config(config: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+def apply_args_to_config(config, args):
     """Apply CLI arguments to ConfigContainer fields."""
 
     # Training configuration
@@ -198,6 +183,12 @@ def apply_args_to_config(config: ConfigContainer, args: argparse.Namespace) -> C
         config.model.pipeline_model_parallel_size = args.pipeline_parallel_size
     if args.context_parallel_size:
         config.model.context_parallel_size = args.context_parallel_size
+    if args.virtual_pipeline_size:
+        config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_size
+    if args.expert_parallel_size:
+        config.model.expert_model_parallel_size = args.expert_parallel_size
+    if args.expert_tensor_parallel_size:
+        config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
 
     # Optimizer configuration
     if args.lr:
@@ -209,11 +200,15 @@ def apply_args_to_config(config: ConfigContainer, args: argparse.Namespace) -> C
     if args.warmup_iters:
         config.scheduler.lr_warmup_iters = args.warmup_iters
 
-    # PEFT configuration
-    if args.finetune:
+    # PEFT configuration - only override if explicitly provided
+    if args.finetune and args.peft_scheme:
         if args.peft_scheme == "lora":
+            from megatron.bridge.peft.lora import LoRA
+
             config.peft = LoRA()
         elif args.peft_scheme == "dora":
+            from megatron.bridge.peft.dora import DoRA
+
             config.peft = DoRA()
         else:
             raise ValueError(f"Unknown PEFT scheme: {args.peft_scheme}")
@@ -260,6 +255,8 @@ def apply_args_to_config(config: ConfigContainer, args: argparse.Namespace) -> C
     config.train.micro_batch_size = args.mbs
 
     # Tokenizer configuration
+    from megatron.bridge.training.config import TokenizerConfig
+
     if args.tokenizer_type == "NullTokenizer":
         config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
     elif args.tokenizer_type == "HuggingFaceTokenizer":
@@ -310,6 +307,8 @@ def apply_args_to_config(config: ConfigContainer, args: argparse.Namespace) -> C
 
     # Profiling configuration
     if args.nsys or args.mem:
+        from megatron.bridge.training.config import ProfilingConfig
+
         config.profiling = ProfilingConfig(
             use_nsys_profiler=args.nsys,
             record_memory_history=args.mem,
@@ -340,12 +339,15 @@ def main():
     parser.add_argument("--seq-length", type=int, help="Sequence length")
 
     # PEFT configuration
-    parser.add_argument("--peft-scheme", type=str, default="lora", help="PEFT scheme")
+    parser.add_argument("--peft-scheme", type=str, default=None, help="PEFT scheme")
 
     # Parallelism
-    parser.add_argument("--tensor-parallel-size", type=int, default=1, help="Tensor parallel size")
-    parser.add_argument("--pipeline-parallel-size", type=int, default=1, help="Pipeline parallel size")
-    parser.add_argument("--context-parallel-size", type=int, default=1, help="Context parallel size")
+    parser.add_argument("--tensor-parallel-size", type=int, default=None, help="Tensor parallel size")
+    parser.add_argument("--pipeline-parallel-size", type=int, default=None, help="Pipeline parallel size")
+    parser.add_argument("--context-parallel-size", type=int, default=None, help="Context parallel size")
+    parser.add_argument("--virtual-pipeline-size", type=int, default=None, help="Virtual pipeline size")
+    parser.add_argument("--expert-parallel-size", type=int, default=None, help="Expert parallel size")
+    parser.add_argument("--expert-tensor-parallel-size", type=int, default=None, help="Expert tensor parallel size")
 
     # Optimization
     parser.add_argument("--lr", type=float, help="Learning rate")
@@ -434,9 +436,15 @@ def main():
 
     if args.pretrain:
         logging.info("Starting pretraining")
+        from megatron.bridge.training.gpt_step import forward_step
+        from megatron.bridge.training.pretrain import pretrain
+
         pretrain(config=final_config, forward_step_func=forward_step)
     elif args.finetune:
         logging.info("Starting finetuning")
+        from megatron.bridge.training.finetune import finetune
+        from megatron.bridge.training.gpt_step import forward_step
+
         finetune(config=final_config, forward_step_func=forward_step)
     else:
         raise ValueError("Must specify either --pretrain or --finetune")
