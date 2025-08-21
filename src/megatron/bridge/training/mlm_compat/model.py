@@ -148,6 +148,7 @@ def _mamba_provider(
     if config is None:
         config = _transformer_config_from_args(args)
 
+    assert args.spec is not None, "You must provide a valid Mamba layer spec!"
     mamba_stack_spec = import_module(args.spec)
 
     model = MambaModel(

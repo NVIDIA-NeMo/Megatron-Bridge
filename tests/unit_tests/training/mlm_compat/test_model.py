@@ -437,3 +437,18 @@ class TestMambaProvider:
         mock_config_func.assert_not_called()
         call_args = mock_mamba_model_class.call_args
         assert call_args[1]["config"] == mock_transformer_config
+
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    def test_mamba_no_stack_spec(
+        self,
+        mock_config_func,
+        mock_args,
+        mock_transformer_config,
+        mock_mamba_stack_spec,
+    ):
+        """Test failure without stack spec."""
+        mock_config_func.return_value = mock_transformer_config
+        mock_args.spec = None
+
+        with pytest.raises(AssertionError, match="You must provide a valid Mamba layer spec!"):
+            _mamba_provider(mock_args)
