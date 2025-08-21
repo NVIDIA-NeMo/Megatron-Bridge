@@ -251,7 +251,7 @@ def build_and_load_model(
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
             provider = _gpt_provider if model_type == "gpt" else _mamba_provider
-            return _get_model(megatron_args, provider, model_cfg, wrap_with_ddp=False)
+            return _get_model(megatron_args, provider, model_cfg)
 
     # Auto-detect if we should skip temp dist context
     if skip_temp_dist_context is None:

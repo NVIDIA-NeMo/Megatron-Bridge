@@ -297,7 +297,7 @@ class TestLoadMegatronModel:
             mock_load_args.assert_called_once_with(ckpt_path)
             mock_transformer_cfg.assert_called_once_with(mock_args)
             mock_cpu_context.assert_called_once()
-            mock_get_model.assert_called_once_with(mock_args, mock_provider, mock_model_cfg, wrap_with_ddp=False)
+            mock_get_model.assert_called_once_with(mock_args, mock_provider, mock_model_cfg)
             mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
             assert mock_model_cfg.params_dtype == torch.bfloat16
 
