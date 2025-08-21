@@ -210,7 +210,7 @@ def build_and_load_model(
     model_type: Optional[Literal["gpt", "mamba"]] = None,
     megatron_args: Optional[argparse.Namespace] = None,
     return_state_dict: bool = False,
-    use_cpu_init: bool = True,
+    use_cpu_init: bool = False,
     skip_temp_dist_context: Optional[bool] = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
@@ -229,7 +229,7 @@ def build_and_load_model(
         megatron_args: If the checkpoint is from MegatronLM, this is required.
         return_state_dict: If True, return the state dict instead of model instance. Default: False.
         use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
-                     If False, use GPU initialization and NCCL backend. Default: True.
+                     If False, use GPU initialization and NCCL backend. Default: False.
         skip_temp_dist_context: If True, skip temporary distributed context setup.
                                If None, automatically skip if distributed is already initialized.
                                Default: None.
@@ -292,7 +292,7 @@ def load_megatron_model(
     checkpoint_path: str,
     model_type: Optional[Literal["gpt", "mamba"]] = None,
     return_state_dict: bool = False,
-    use_cpu_init: bool = True,
+    use_cpu_init: bool = False,
     skip_temp_dist_context: Optional[bool] = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
@@ -306,7 +306,7 @@ def load_megatron_model(
             only GPT and Mamba models are supported.
         return_state_dict: If True, return the state dict instead of model instance. Default: False.
         use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
-                     If False, use GPU initialization and NCCL backend. Default: True.
+                     If False, use GPU initialization and NCCL backend. Default: False.
         skip_temp_dist_context: If True, skip temporary distributed context setup.
                                If None, automatically skip if distributed is already initialized.
                                Default: None.
