@@ -254,6 +254,7 @@ class TestDoRAFinetune:
     ):
         """Create a complete DoRA finetuning configuration including model."""
         model = self._create_model_provider(seq_length)
+        model.cross_entropy_loss_fusion = False
 
         return ConfigContainer(
             model=model,

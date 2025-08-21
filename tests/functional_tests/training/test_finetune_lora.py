@@ -87,7 +87,51 @@ class TestLoRAFinetune:
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
-                lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+            )
+            finetune(lora_cfg, forward_step)
+            verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
+            verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
+
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_pretrain_then_lora_finetune_with_packed_sequences(self, tmp_path):
+        """Test end to end LoRA finetuning: pretrain -> save checkpoint -> finetune with LoRA using packed sequences."""
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+        pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir = (
+            self._setup_directories(shared_base_dir)
+        )
+
+        torch.distributed.barrier()
+
+        try:
+            pretrain_iters = 10
+            lora_iters = 5
+
+            # Create pretrain config and run
+            pretrain_cfg = self._create_pretrain_config(
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length=512
+            )
+            pretrain(pretrain_cfg, forward_step)
+            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
+
+            # Create LoRA config and run finetuning
+            finetune_seq_length = 4096
+            lora_cfg = self._create_lora_config(
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                finetune_seq_length,
+                packed_sequences=True,
+                target_modules=["linear_proj", "linear_fc1", "linear_fc2"],
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
@@ -308,10 +352,11 @@ class TestLoRAFinetune:
         """Create an RNG configuration."""
         return RNGConfig(seed=seed)
 
-    def _create_lora_peft(self, dim=16, alpha=32, dropout=0.1):
+    def _create_lora_peft(self, dim=16, alpha=32, dropout=0.1, target_modules=None):
         """Create a LoRA PEFT configuration."""
+        target_modules = target_modules or ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
         return LoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+            target_modules=target_modules,
             dim=dim,
             alpha=alpha,
             dropout=dropout,
@@ -354,10 +399,12 @@ class TestLoRAFinetune:
         packed_sequences=False,
         load_checkpoint=None,
         scheduler_total_iters=None,
+        target_modules=None,
     ):
         """Create complete LoRA finetuning configuration with model and PEFT."""
         model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
-        lora_peft = self._create_lora_peft()
+        model.cross_entropy_loss_fusion = False
+        lora_peft = self._create_lora_peft(target_modules=target_modules)
 
         # Use scheduler_total_iters if provided, otherwise use train_iters
         scheduler_iters = scheduler_total_iters if scheduler_total_iters is not None else train_iters
