@@ -204,7 +204,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
         if not torch.distributed.is_initialized():
-            torch.cuda.set_device(torch.distributed.get_rank())
+            torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
         parallel_state.initialize_model_parallel(
