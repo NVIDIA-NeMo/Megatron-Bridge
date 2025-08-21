@@ -44,6 +44,7 @@ from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
+from megatron.bridge.utils.common_utils import get_local_rank_preinit
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
@@ -143,10 +144,11 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
         if not torch.distributed.is_initialized():
-            os.environ["RANK"] = "0"
-            os.environ["WORLD_SIZE"] = "1"
-            os.environ["MASTER_ADDR"] = "localhost"
-            os.environ["MASTER_PORT"] = "12355"
+            os.environ["RANK"] = os.environ.get("RANK", "0")
+            os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
+            os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
+            os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
+            torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
         if not parallel_state.is_initialized():
@@ -202,8 +204,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
         if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group("nccl")
             torch.cuda.set_device(torch.distributed.get_rank())
+            torch.distributed.init_process_group("nccl")
 
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),
