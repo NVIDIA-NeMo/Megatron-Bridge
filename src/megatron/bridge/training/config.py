@@ -101,6 +101,12 @@ class DistributedInitConfig:
     which specifies the SHARP application target groups.
     """
 
+    sharp_enabled_group: Optional[Literal["dp", "dp_replica"]] = None
+    """IB SHARP can be enabled from only one communication group.
+    By default, it is enabled from dp group if not specified and use_sharp=True.
+    Available options: [dp, dp_replica]
+    """
+
     high_priority_stream_groups: Optional[list[str]] = None
     """Specify which communicator groups should use high priority streams during creation.
     Assigning high priority to communication streams ensures that communication kernels
