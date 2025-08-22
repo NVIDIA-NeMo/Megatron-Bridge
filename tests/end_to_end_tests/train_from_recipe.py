@@ -1,52 +1,7 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Training script for Megatron-Bridge recipes.
-
-This script is designed to be run by CI systems and external launchers inside containers.
-It dynamically imports recipe configurations from the megatron.bridge.recipes directory
-and executes training with support for both explicit CLI arguments and Hydra-style
-dot notation overrides.
-
-Key Features:
-- Dynamic recipe loading from megatron.bridge.recipes.{model_family}.{recipe_name}
-- Support for both pretraining (--pretrain) and finetuning (--finetune) modes
-- CLI arguments for common training parameters (batch sizes, learning rates, etc.)
-- Configuration overrides via dot notation (e.g., model.seq_length=4096)
-- Multiple dataset types: mock, rp2, squad, squad_packed
-- Multiple tokenizer types: NullTokenizer, HuggingFaceTokenizer, SentencePieceTokenizer
-- Built-in profiling support (nsys, memory profiling)
-- WandB integration for experiment tracking
-- Convergence mode for testing with optimized logging/checkpointing
-
-Usage Examples:
-    # Basic pretraining with mock data
-    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \
-        --exp-name test_run --pretrain --max-steps 100
-
-    # Finetuning with custom parameters and overrides
-    python train_from_recipe.py --model-family llama --recipe-name llama3_8b \
-        --exp-name finetune_run --finetune --data squad --dataset-root /data/squad \
-        --lr 1e-5 --pretrained_checkpoint /path/to/checkpoint model.seq_length=4096 train.eval_interval=50
-
-Expected Recipe Structure:
-- Recipe modules must be located at: megatron.bridge.recipes.{model_family}.{recipe_name}
-- For pretraining: recipe must have pretrain_config(dir, name, **kwargs) function
-- For finetuning: recipe must have finetune_config(dir, name, pretrained_checkpoint, **kwargs) function
-- Both functions should return a ConfigContainer instance
+This script runs inside the container and handles the actual training execution.
 """
 
 import argparse
@@ -157,7 +112,6 @@ def create_squad_dataset_config(dataset_root, seq_length, packed=False):
         pin_memory=True,
         persistent_workers=False,
         packed_sequence_specs=packed_sequence_specs,
-        # HF-specific parameters
         rewrite=False,  # Rewrite existing processed files
         delete_raw=False,  # Keep raw HF dataset cache
     )
@@ -173,22 +127,6 @@ def apply_args_to_config(config, args):
         config.train.global_batch_size = args.gbs
     if args.mbs:
         config.train.micro_batch_size = args.mbs
-
-    # Model configuration
-    if args.seq_length:
-        config.model.seq_length = args.seq_length
-    if args.tensor_parallel_size:
-        config.model.tensor_model_parallel_size = args.tensor_parallel_size
-    if args.pipeline_parallel_size:
-        config.model.pipeline_model_parallel_size = args.pipeline_parallel_size
-    if args.context_parallel_size:
-        config.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_size:
-        config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_size
-    if args.expert_parallel_size:
-        config.model.expert_model_parallel_size = args.expert_parallel_size
-    if args.expert_tensor_parallel_size:
-        config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
 
     # Optimizer configuration
     if args.lr:
@@ -250,10 +188,6 @@ def apply_args_to_config(config, args):
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
 
-    # Apply training batch sizes
-    config.train.global_batch_size = args.gbs
-    config.train.micro_batch_size = args.mbs
-
     # Tokenizer configuration
     from megatron.bridge.training.config import TokenizerConfig
 
@@ -271,7 +205,25 @@ def apply_args_to_config(config, args):
             tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
         )
 
-    config.logger.timing_log_level = 1
+    # Model configuration
+    if args.seq_length:
+        config.model.seq_length = args.seq_length
+    if args.tensor_parallel_size:
+        config.model.tensor_model_parallel_size = args.tensor_parallel_size
+    if args.pipeline_parallel_size:
+        config.model.pipeline_model_parallel_size = args.pipeline_parallel_size
+    if args.context_parallel_size:
+        config.model.context_parallel_size = args.context_parallel_size
+    if args.virtual_pipeline_size:
+        config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_size
+    if args.expert_parallel_size:
+        config.model.expert_model_parallel_size = args.expert_parallel_size
+    if args.expert_tensor_parallel_size:
+        config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
+    # Use vocab size from tokenizer
+    config.model.vocab_size = config.tokenizer.vocab_size
+
+    # Logging configuration
     config.logger.log_timers_to_tensorboard = True
 
     # WandB configuration
@@ -312,15 +264,15 @@ def apply_args_to_config(config, args):
         config.profiling = ProfilingConfig(
             use_nsys_profiler=args.nsys,
             record_memory_history=args.mem,
-            profile_step_start=10,
-            profile_step_end=min(12, args.max_steps),
+            profile_step_start=5,
+            profile_step_end=min(6, args.max_steps),
         )
 
     return config
 
 
-def main():
-    """Main entry point for the training script."""
+def setup_argument_parser():
+    """Set up and return the argument parser for the training script."""
     parser = argparse.ArgumentParser(description="Megatron-Bridge Recipe Training Script")
 
     # Model specification
@@ -397,6 +349,14 @@ def main():
     parser.add_argument("--wandb-entity", type=str, help="WandB entity name")
     parser.add_argument("--wandb-exp-name", type=str, help="WandB experiment name")
     parser.add_argument("--wandb-save-dir", type=str, help="Directory to save WandB logs locally")
+
+    return parser
+
+
+def main():
+    """Main entry point for the training script."""
+    # Set up argument parser
+    parser = setup_argument_parser()
 
     # Parse known args and capture unknown ones for config overrides
     args, unknown_args = parser.parse_known_args()
