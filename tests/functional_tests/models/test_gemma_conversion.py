@@ -223,7 +223,7 @@ class TestGemmaConversion:
             # Check that the conversion completed successfully
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")            
+                print(f"STDERR: {result.stderr}")
                 assert False, f"Gemma {test_name} conversion failed with return code {result.returncode}"
 
             # Verify that the converted model was saved

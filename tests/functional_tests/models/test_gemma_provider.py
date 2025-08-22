@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -24,6 +25,7 @@ from megatron.bridge.models.gemma import (
 )
 from tests.functional_tests.utils import compare_provider_configs
 
+
 HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     "google/gemma-2b": GemmaModelProvider2B,
     "google/gemma-7b": GemmaModelProvider7B,
@@ -34,7 +36,8 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
 ROOT_PATH: str = "/home/TestData/megatron_bridge/hf_home"
 
 HF_MODEL_ID_PATH_TO_MODEL_PROVIDER = {
-    os.path.join(ROOT_PATH, hf_model_id): provider_class for hf_model_id, provider_class in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()
+    os.path.join(ROOT_PATH, hf_model_id): provider_class
+    for hf_model_id, provider_class in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()
 }
 
 
