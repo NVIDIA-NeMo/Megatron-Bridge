@@ -11,7 +11,6 @@ cd docs/
 uv run --group docs sphinx-build . _build/html
 ```
 
-
 * The resulting HTML files are generated in a `_build/html` folder that is created under the project `docs/` folder.
 * The generated python API docs are placed in `apidocs` under the `docs/` folder.
 
