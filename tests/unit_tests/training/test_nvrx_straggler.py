@@ -32,7 +32,12 @@ def mock_nvidia_resiliency_ext():
     """
     # Store original state
     original_modules = {}
-    modules_to_mock = ["nvidia_resiliency_ext", "nvidia_resiliency_ext.straggler"]
+    modules_to_mock = [
+        "nvidia_resiliency_ext",
+        "nvidia_resiliency_ext.attribution",
+        "nvidia_resiliency_ext.attribution.straggler",
+        "nvidia_resiliency_ext.straggler",
+    ]
 
     for module in modules_to_mock:
         if module in sys.modules:
@@ -40,10 +45,17 @@ def mock_nvidia_resiliency_ext():
 
     # Mock the modules
     mock_module = MagicMock()
+    mock_attribution = MagicMock()
     mock_straggler = MagicMock()
+
+    # Set up the hierarchy: nvidia_resiliency_ext -> attribution -> straggler
+    mock_attribution.straggler = mock_straggler
+    mock_module.attribution = mock_attribution
     mock_module.straggler = mock_straggler
 
     sys.modules["nvidia_resiliency_ext"] = mock_module
+    sys.modules["nvidia_resiliency_ext.attribution"] = mock_attribution
+    sys.modules["nvidia_resiliency_ext.attribution.straggler"] = mock_straggler
     sys.modules["nvidia_resiliency_ext.straggler"] = mock_straggler
 
     yield mock_module
@@ -507,6 +519,29 @@ class TestCheckNVRxStragglerDetection:
 
         assert result is False
         mock_manager.check_stragglers.assert_called_once_with(0)
+
+
+class TestNVRxNotAvailable:
+    """Test behavior when HAVE_NVRX is False (nvidia-resiliency-ext not available)."""
+
+    @pytest.fixture
+    def config(self):
+        """Create a test configuration."""
+        return NVRxStragglerDetectionConfig(
+            enabled=True,
+            report_time_interval=100.0,
+            calc_relative_gpu_perf=True,
+            calc_individual_gpu_perf=True,
+            stop_if_detected=False,
+            logger_name="test_logger",
+        )
+
+    def test_init_raises_import_error_without_nvrx(self, config):
+        """Test that __init__ raises ImportError when HAVE_NVRX is False."""
+        with patch("megatron.bridge.training.nvrx_straggler.HAVE_NVRX", False):
+            # Should raise ImportError during instantiation with the expected message
+            with pytest.raises(ImportError, match="nvidia-resiliency-ext is not available"):
+                NVRxStragglerDetectionManager(config)
 
 
 class TestIntegration:
