@@ -29,10 +29,6 @@ except ImportError:
     run = None
     HAS_NEMO_RUN = False
 
-from megatron.bridge.recipes.utils.fdl_torch import enable as enable_fdl_torch
-
-enable_fdl_torch()
-
 logger: logging.Logger = logging.getLogger(__name__)
 
 
