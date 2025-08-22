@@ -83,44 +83,17 @@ class TestGemmaConversion:
 
         # Download and save tokenizer from a reference Gemma model
         # We use the smallest available Gemma model for tokenizer artifacts
-        try:
+        # First try to load from pre-mounted test data, then fall back to HuggingFace download
+        pre_downloaded_path = "/home/TestData/megatron_bridge/tokenizers/google/gemma-2b"
+        # Try loading from pre-downloaded location first
+        if Path(pre_downloaded_path).exists():
+            print(f"Loading tokenizer from pre-downloaded path: {pre_downloaded_path}")
+            tokenizer = GemmaTokenizer.from_pretrained(pre_downloaded_path)
+        else:
+            # Fall back to downloading from HuggingFace
+            print("Pre-downloaded tokenizer not found, attempting to download from HuggingFace")
             tokenizer = GemmaTokenizer.from_pretrained("google/gemma-2b")
-            tokenizer.save_pretrained(model_dir)
-        except Exception as e:
-            print(f"Warning: Could not download tokenizer, creating minimal tokenizer files: {e}")
-            # Create minimal tokenizer files if download fails
-            # This is a fallback for offline environments
-
-            # Ensure model directory exists before creating tokenizer files
-            model_dir.mkdir(parents=True, exist_ok=True)
-
-            # Use a simple tokenizer that doesn't require SentencePiece model files
-            tokenizer_config = {
-                "tokenizer_class": "PreTrainedTokenizerFast",
-                "vocab_size": 256000,
-                "bos_token": "<bos>",
-                "eos_token": "<eos>",
-                "pad_token": "<pad>",
-                "unk_token": "<unk>",
-                "model_max_length": 8192,
-            }
-
-            # Create a minimal vocab.json for PreTrainedTokenizerFast
-            vocab = {f"<token_{i}>": i for i in range(1000)}  # Minimal vocab
-            vocab.update(
-                {
-                    "<pad>": 0,
-                    "<unk>": 1,
-                    "<bos>": 2,
-                    "<eos>": 3,
-                }
-            )
-
-            with open(model_dir / "vocab.json", "w") as f:
-                json.dump(vocab, f)
-
-            with open(model_dir / "tokenizer_config.json", "w") as f:
-                json.dump(tokenizer_config, f, indent=2)
+        tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
@@ -220,7 +193,6 @@ class TestGemmaConversion:
         test_output_dir = tmp_path / f"gemma_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        # Run multi_gpu_hf.py with specified parallelism configuration on our toy model
         cmd = [
             "python",
             "-m",
@@ -235,7 +207,7 @@ class TestGemmaConversion:
             "--parallel-mode",
             "examples/models/multi_gpu_hf.py",
             "--hf-model-id",
-            gemma_toy_model_path,  # Use our local toy model instead of downloading
+            gemma_toy_model_path,
             "--output-dir",
             str(test_output_dir),
             "--tp",
@@ -248,11 +220,10 @@ class TestGemmaConversion:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
             )
-
             # Check that the conversion completed successfully
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
+                print(f"STDERR: {result.stderr}")            
                 assert False, f"Gemma {test_name} conversion failed with return code {result.returncode}"
 
             # Verify that the converted model was saved
