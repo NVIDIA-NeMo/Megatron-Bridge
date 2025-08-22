@@ -65,6 +65,7 @@ def model_config(
         virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
         context_parallel_size=context_parallelism,
         expert_model_parallel_size=expert_parallelism,
+        expert_tensor_parallel_size=1,
         sequence_parallel=sequence_parallelism,
     )
 
