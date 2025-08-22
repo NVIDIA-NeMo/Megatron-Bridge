@@ -16,7 +16,7 @@ NeMo Megatron Bridge is a PyTorch native library under [NeMo Framework](https://
 
 NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVIDIA/NeMo) by adopting PyTorch native training loop instead of PyTorch Lightning training loop, so as to provide more flexibilty and customizability for developers.
 
-
+![image](Repo-Mbridge)
 
 ## 🔧 Installation
 
