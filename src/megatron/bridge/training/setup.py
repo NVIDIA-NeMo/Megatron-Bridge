@@ -81,8 +81,6 @@ class SetupOutput(NamedTuple):
     checkpointing_context: dict[str, Any]
 
 
-
-
 def setup(
     cfg: ConfigContainer,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
