@@ -216,6 +216,8 @@ def load_megatron_model(
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if mbridge_ckpt:
+            # Skip initializing the weights as they will be overwritten when loading the checkpoint
+            model_cfg.perform_initialization = False
             return model_cfg.provide()
         else:
             provider = _gpt_provider if model_type == "gpt" else _mamba_provider

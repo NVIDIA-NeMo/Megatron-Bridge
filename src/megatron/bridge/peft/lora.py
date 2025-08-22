@@ -152,37 +152,3 @@ class LoRA(PEFT, ModuleMatcher):
             )
             return LoRALinear(module, adapter)
         return module
-
-
-class LoRAMerge(PEFT):
-    """
-    Implements the LoRA weight merge for parameter-efficient fine-tuning.
-    """
-
-    @torch.no_grad()
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
-        """
-        Merges the LoRA adapter with the base model weights.
-
-        Args:
-            m (nn.Module): The module to apply LoRA merge to.
-            name (str, optional): Name of the module to merge. Defaults to None.
-            prefix (str, optional): Prefix for the module name. Defaults to None.
-
-        Returns:
-            nn.Module: The modified module with the LoRA adapter merged into the base model weights.
-        """
-
-        if not isinstance(module, LoRALinear):
-            return module
-        logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_weight = module.to_wrap.weight
-        lora_weight = (
-            module.adapter.alpha
-            / module.adapter.dim
-            * module.adapter.linear_out.weight.to(base_weight.device)
-            @ module.adapter.linear_in.weight.to(base_weight.device)
-        )
-        merged_weight = base_weight + lora_weight
-        module.to_wrap.weight.data = merged_weight
-        return module

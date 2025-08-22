@@ -87,7 +87,7 @@ try:
 except Exception:
     has_nvidia_modelopt = False
 
-TRACKER_PREFIX = "latest"
+TRACKER_PREFIX: str = "latest"
 _CHECKPOINT_VERSION = None
 
 logger = getLogger(__name__)
@@ -928,6 +928,20 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
             print(f"load_return: {load_return}")
 
 
+def _load_state_dict_into_model_list(model: list[MegatronModule], state_dict: dict[str, Any], strict: bool) -> None:
+    """Load state dict into a list of model modules, handling both single and pipeline parallel cases."""
+    if len(model) == 1:
+        _load_model_state_dict(model[0], state_dict["model"], strict)
+    else:
+        for i in range(len(model)):
+            # If there is no corresponding model in the state_dict, it will be ignored.
+            # It means that this is an empty stage.
+            model_key = "model%d" % i
+            if model_key not in state_dict:
+                continue
+            _load_model_state_dict(model[i], state_dict[model_key], strict)
+
+
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -1143,16 +1157,7 @@ def _load_checkpoint_from_path(
     # Model.
     if not skip_load_to_model_and_opt:
         load_strict = False if is_peft_resume else strict
-        if len(model) == 1:
-            _load_model_state_dict(model[0], state_dict["model"], load_strict)
-        else:
-            for i in range(len(model)):
-                # If there is no corresponding model in the state_dict, it will be ignored.
-                # It means that this is an empty stage.
-                model_key = "model%d" % i
-                if model_key not in state_dict:
-                    continue
-                _load_model_state_dict(model[i], state_dict[model_key], load_strict)
+        _load_state_dict_into_model_list(model, state_dict, strict=load_strict)
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
