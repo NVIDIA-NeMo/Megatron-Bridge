@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import logging
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
@@ -175,14 +176,13 @@ def setup(
         make_vocab_size_divisible_by=cfg.model.make_vocab_size_divisible_by,
         tensor_model_parallel_size=cfg.model.tensor_model_parallel_size,
     )
-    if not cfg.model.vocab_size:
-        cfg.model.vocab_size = tokenizer.vocab_size
-    assert cfg.model.vocab_size == tokenizer.vocab_size, (
-        f"Please ensure vocab sizes in model config and tokenizer match. To use "
-        f"tokenizer's vocab size, please ensure that vocab size in model config "
-        f"is None.\nVocab size from model config: {cfg.model.vocab_size}, Vocab "
-        f"size from tokenizer: {tokenizer.vocab_size}"
-    )
+    # Set model vocab_size to the padded tokenizer vocab_size
+    if cfg.model.vocab_size is not None and cfg.model.vocab_size != cfg.tokenizer.padded_vocab_size:
+        logging.warning(
+            f"Model vocab_size ({cfg.model.vocab_size}) differs from tokenizer's padded vocab_size "
+            f"({cfg.tokenizer.padded_vocab_size}). Overriding model vocab_size with tokenizer's padded size."
+        )
+    cfg.model.vocab_size = cfg.tokenizer.padded_vocab_size
 
     cfg.dataset.tokenizer = tokenizer
     timers("tokenizer-setup").stop()
