@@ -169,5 +169,5 @@ def _check_nemo_run_available() -> None:
     """Check if nemo_run is available and raise helpful error if not."""
     if not HAS_NEMO_RUN:
         raise ImportError(
-            "nemo_run is required for recipe functionality. Install it with: pip install megatron-bridge[recipes]"
+            "nemo_run is required for recipe functionality. Install it with: pip install megatron-hub[recipes]"
         )
