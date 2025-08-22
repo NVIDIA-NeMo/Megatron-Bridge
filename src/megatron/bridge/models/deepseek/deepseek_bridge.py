@@ -181,6 +181,9 @@ def register_deepseek_bridge():
         "deepseek-ai/DeepSeek-V2-Lite-Chat",
         "moonshotai/Moonlight-16B-A3B",
         "moonshotai/Moonlight-16B-A3B-Instruct",
+        "deepseek-ai/DeepSeek-V3-Base",
+        "deepseek-ai/DeepSeek-V3",
+        "/lustre/fsw/portfolios/coreai/users/yifuw/hf_checkpoints/dsv3/DeepSeek-V3-BF16",
     ]
     for model_name in deepseek_models:
         model_class = get_causal_lm_class_via_auto_map(model_name_or_path=model_name)
