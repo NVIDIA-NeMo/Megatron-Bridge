@@ -33,6 +33,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, L
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import file_exists
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
@@ -148,14 +149,10 @@ def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
 
     if mbridge_ckpt:
         cfg = instantiate(run_config["tokenizer"])
-        tp_size = run_config["model"]["tensor_model_parallel_size"]
-        vocab_size_divisor = run_config["model"]["make_vocab_size_divisible_by"]
     else:
         cfg = _tokenizer_config_from_args(mlm_args)
-        tp_size = getattr(mlm_args, "tensor_model_parallel_size", 1)
-        vocab_size_divisor = getattr(mlm_args, "make_vocab_size_divisible_by", 128)
 
-    return build_tokenizer(cfg, vocab_size_divisor, tp_size)
+    return build_tokenizer(cfg)
 
 
 def load_model_config(
@@ -250,6 +247,13 @@ def build_and_load_model(
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
+
+            # Re-calculate the padded vocab size based on the model config instead of the args from the checkpoint
+            megatron_args.padded_vocab_size = calculate_padded_vocab_size(
+                megatron_args.vocab_size,
+                model_cfg.make_vocab_size_divisible_by,
+                model_cfg.tensor_model_parallel_size,
+            )
             provider = _gpt_provider if model_type == "gpt" else _mamba_provider
             return _get_model(megatron_args, provider, model_cfg)
 

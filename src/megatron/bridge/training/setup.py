@@ -43,7 +43,6 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.tokenizers.tokenizer import _vocab_size_with_padding
 from megatron.bridge.utils.common_utils import print_rank_0
 
 try:
@@ -172,18 +171,11 @@ def setup(
 
     # Tokenizer
     timers("tokenizer-setup", log_level=0).start(barrier=True)
-    tokenizer = build_tokenizer(
-        cfg.tokenizer,
-        make_vocab_size_divisible_by=cfg.model.make_vocab_size_divisible_by,
-        tensor_model_parallel_size=cfg.model.tensor_model_parallel_size,
-    )
+    tokenizer = build_tokenizer(cfg.tokenizer)
     # Handle model vocab_size configuration with proper validation
     cfg.model.vocab_size = _validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
-        tokenizer_padded_vocab_size=cfg.tokenizer.padded_vocab_size,
-        make_vocab_size_divisible_by=cfg.model.make_vocab_size_divisible_by,
-        tensor_model_parallel_size=cfg.model.tensor_model_parallel_size,
     )
 
     cfg.dataset.tokenizer = tokenizer
@@ -405,31 +397,23 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(
-    model_vocab_size: Optional[int],
-    tokenizer_vocab_size: int,
-    tokenizer_padded_vocab_size: int,
-    make_vocab_size_divisible_by: int,
-    tensor_model_parallel_size: int,
-) -> int:
+def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> int:
     """Validate and determine the correct vocab size for the model.
 
     Args:
         model_vocab_size: Vocab size set in model config (can be None)
-        tokenizer_vocab_size: Raw tokenizer vocab size (before padding)
-        tokenizer_padded_vocab_size: Tokenizer vocab size after padding
-        make_vocab_size_divisible_by: Padding multiple
-        tensor_model_parallel_size: Tensor parallel size
+        tokenizer_vocab_size: Unpadded tokenizer vocab size
 
     Returns:
-        int: The validated vocab size to use for the model
+        int: The validated unpadded vocab size to use for the model
 
     Raises:
-        ValueError: If model vocab size is invalid or not properly padded
+        ValueError: If model vocab size is invalid
     """
     if model_vocab_size is None:
-        # If model vocab size is not set, default to using the tokenizer's padded vocab size
-        return tokenizer_padded_vocab_size
+        # If model vocab size is not set, use the tokenizer's vocab size
+        # Padding will be handled later in the model provider
+        return tokenizer_vocab_size
     elif model_vocab_size < tokenizer_vocab_size:
         # Vocab size smaller than tokenizer
         raise ValueError(
@@ -438,17 +422,9 @@ def _validate_and_set_vocab_size(
         )
     else:
         # Model vocab size is explicitly set and is >= tokenizer vocab size
-        # Validate that the model's vocab size respects divisibility settings for tensor parallelism
-        expected_padded_vocab_size = _vocab_size_with_padding(
-            model_vocab_size,
-            make_vocab_size_divisible_by,
-            tensor_model_parallel_size,
-            logging_enabled=False,
-        )
-        if model_vocab_size != expected_padded_vocab_size:
-            raise ValueError(
-                f"Model vocab_size ({model_vocab_size}) is not properly padded for tensor parallelism. "
-                f"Expected padded size: {expected_padded_vocab_size}. Please set vocab_size to the expected "
-                f"padded value or leave it as None to use tokenizer's padded vocab_size ({tokenizer_padded_vocab_size})."
+        if model_vocab_size > tokenizer_vocab_size:
+            logging.info(
+                f"Using preset vocab_size: {model_vocab_size} over the tokenizer vocab_size: {tokenizer_vocab_size}, dummy tokens:"
+                f" {model_vocab_size - tokenizer_vocab_size}."
             )
         return model_vocab_size

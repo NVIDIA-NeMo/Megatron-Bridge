@@ -15,6 +15,7 @@
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> float:
@@ -79,6 +80,13 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
             # Shared Experts.
             + ((shared_expert_ffn_hidden_size / cfg.model.hidden_size) * gated_linear_multiplier)
             # Logit.
-            + (cfg.tokenizer.padded_vocab_size / (2 * cfg.model.num_layers * cfg.model.hidden_size))
+            + (_get_padded_vocab_size(cfg) / (2 * cfg.model.num_layers * cfg.model.hidden_size))
         )
+    )
+
+
+def _get_padded_vocab_size(cfg: ConfigContainer) -> int:
+    """Get the padded vocabulary size for the given configuration."""
+    return calculate_padded_vocab_size(
+        cfg.model.vocab_size, cfg.model.make_vocab_size_divisible_by, cfg.model.tensor_model_parallel_size
     )

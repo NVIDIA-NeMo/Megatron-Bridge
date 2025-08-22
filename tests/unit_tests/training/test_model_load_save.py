@@ -270,6 +270,7 @@ class TestLoadMegatronModel:
 
         ckpt_path = "/path/to/mock/dist_checkpoint"
         mock_args = Mock()
+        mock_args.vocab_size = 32000  # Add vocab_size for padded vocab calculation
         mock_load_args.return_value = mock_args
 
         mock_model = Mock()
@@ -278,6 +279,8 @@ class TestLoadMegatronModel:
         mock_model_cfg.bf16 = True
         mock_model_cfg.fp16 = False
         mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.make_vocab_size_divisible_by = 128  # Add for padded vocab calculation
+        mock_model_cfg.tensor_model_parallel_size = 1  # Add for padded vocab calculation
         mock_provider = None
         if model_type == "gpt":
             mock_provider = mock_gpt_provider
@@ -512,7 +515,7 @@ class TestLoadTokenizer:
         assert result == mock_tokenizer
         mock_read_cfg.assert_called_once()
         mock_instantiate.assert_called_once_with({})
-        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg, 128, 1)
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
 
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.mlm_compat.arguments._tokenizer_config_from_args")
@@ -538,4 +541,4 @@ class TestLoadTokenizer:
         assert result == mock_tokenizer
         mock_load_args.assert_called_once_with(ckpt_path)
         mock_cfg_from_args.assert_called_once_with(mock_args)
-        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg, 256, 2)
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)

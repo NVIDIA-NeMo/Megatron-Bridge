@@ -63,4 +63,3 @@ class TokenizerConfig:
     tokenizer_prompt_format: Optional[str] = None
     special_tokens: Optional[list[str]] = None
     image_tag_type: Optional[str] = None
-    padded_vocab_size: Optional[int] = None
