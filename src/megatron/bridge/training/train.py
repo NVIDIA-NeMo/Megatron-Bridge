@@ -30,6 +30,7 @@ from megatron.core.num_microbatches_calculator import (
     update_num_microbatches,
 )
 from megatron.core.optimizer import MegatronOptimizer
+from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
@@ -487,6 +488,12 @@ def train_step(
 
         # Optionally inject state into forward step
         wrapped_forward_step = maybe_inject_state(forward_step_func, global_state, num_fw_args=num_fw_args)
+
+        _handle_mxfp8_param_buffer_copy(
+            optimizer=optimizer,
+            reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
+            overlap_param_gather=cfg.ddp.overlap_param_gather,
+        )
 
         # Forward pass.
         forward_backward_func = get_forward_backward_func()
@@ -968,3 +975,23 @@ def _finish_train(global_state: GlobalState):
         global_state.wandb_logger.finish()
 
     destroy_global_state()
+
+
+def _handle_mxfp8_param_buffer_copy(
+    optimizer: MegatronOptimizer, reuse_grad_buf_for_mxfp8_param_ag: bool, overlap_param_gather: bool
+) -> None:
+    """Copy main params to param buffer for mxfp8 with grad buffer reuse.
+
+    For mxfp8_param with reuse_grad_buf_for_mxfp8_param_ag and dp_ag_overlap,
+    we need to call _copy_main_params_to_param_buffer() after the grad buffer
+    is zeroed because param and grad buffer are shared.
+
+    Args:
+        optimizer: The MegatronOptimizer instance
+        reuse_grad_buf_for_mxfp8_param_ag: Config flag for grad buffer reuse
+        overlap_param_gather: Config flag for overlapping param gathering
+    """
+    if reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather:
+        for optim_instance in optimizer.chained_optimizers:
+            if isinstance(optim_instance, DistributedOptimizer):
+                optim_instance._copy_main_params_to_param_buffer()
