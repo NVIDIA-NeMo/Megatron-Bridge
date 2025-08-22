@@ -123,10 +123,6 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
         padded_vocab_size = calculate_padded_vocab_size(
             self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
         )
-        if self.vocab_size != padded_vocab_size:
-            logger.info(
-                f"Padded vocab_size from {self.vocab_size} to {padded_vocab_size} for tensor parallel size {self.tensor_model_parallel_size} and make_vocab_size_divisible_by {self.make_vocab_size_divisible_by}"
-            )
 
         model = MCoreT5Model(
             config=self,
