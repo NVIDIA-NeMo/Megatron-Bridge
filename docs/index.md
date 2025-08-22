@@ -2,7 +2,6 @@
 :relative-docs: docs/
 ```
 
-
 ```{toctree}
 :caption: Guides
 :hidden:
