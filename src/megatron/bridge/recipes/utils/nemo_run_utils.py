@@ -17,7 +17,6 @@ import functools
 import logging
 from typing import Callable
 
-import torch
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -96,7 +95,7 @@ def prepare_config_for_nemo_run(config: ConfigContainer) -> ConfigContainer:
         patched_fields.append("model_config.output_layer_init_method")
 
     # Check for other potential functools.partial objects in the model config
-    for field_name in ("bias_init_method", "weight_init_method", "embedding_init_method"):
+    for field_name in ("bias_init_method", "weight_init_method"):
         if hasattr(model_cfg, field_name):
             field_value = getattr(model_cfg, field_name)
             if isinstance(field_value, functools.partial):
@@ -144,6 +143,23 @@ def _fix_yaml_serialization_issues(config: ConfigContainer) -> None:
             if isinstance(attr_value, enum.Enum):
                 setattr(model_cfg, attr_name, attr_value.value)
                 fixed_fields.append(f"model_config.{attr_name} ({attr_value} -> {attr_value.value})")
+
+    # Handle enum fields in other config sections
+    for config_section_name in ("train", "optimizer", "scheduler"):
+        if hasattr(config, config_section_name):
+            config_section = getattr(config, config_section_name)
+            if config_section is not None:
+                for attr_name in dir(config_section):
+                    if not attr_name.startswith("_"):
+                        try:
+                            attr_value = getattr(config_section, attr_name)
+                            if isinstance(attr_value, enum.Enum):
+                                setattr(config_section, attr_name, attr_value.value)
+                                fixed_fields.append(
+                                    f"{config_section_name}.{attr_name} ({attr_value} -> {attr_value.value})"
+                                )
+                        except (AttributeError, TypeError):
+                            continue
 
     if fixed_fields:
         logger.debug(f"Fixed YAML serialization for enum fields: {', '.join(fixed_fields)}")
