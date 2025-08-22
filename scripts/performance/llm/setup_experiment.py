@@ -12,7 +12,7 @@ except ImportError:
     HAS_NEMO_RUN = False
 
 if HAS_NEMO_RUN:
-    from megatron.bridge.recipes.run_plugins import PerfEnvPlugin
+    from megatron.bridge.recipes.run_plugins import PerfEnvPlugin, NsysPlugin
 
 import fiddle as fdl
 import fiddle._src.experimental.dataclasses as fdl_dc
@@ -46,7 +46,9 @@ if __name__ == "__main__":
         enable_vboost = args.enable_vboost,
         gpu_sm100_or_newer = args.gpu.lower() in ["b200", "gb200"],
         )
-    ]
+    ] if HAS_NEMO_RUN else []
+    if HAS_NEMO_RUN and args.enable_nsys:
+        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11, profile_ranks=[0]))
 
     custom_mounts = args.custom_mounts + [
         f"{config_file_to_use}:{config_file_to_use}",

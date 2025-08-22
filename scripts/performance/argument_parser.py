@@ -216,5 +216,11 @@ def parse_cli_args():
         required=False,
         default="8b",
     )
+    parser.add_argument(
+        "-en",
+        "--enable_nsys",
+        help="Enable Nsys profiling. Diabled by default",
+        action="store_true",
+    )
 
     return parser
