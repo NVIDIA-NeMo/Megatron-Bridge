@@ -119,6 +119,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
     vocab_size: Optional[int] = None
+    # Set if the tokenizer provides the vocab size. In this case, the vocab size will be padded
+    # Controls whether vocab size should be padded for tensor parallelism
+    should_pad_vocab: bool = False
 
     # MoE / FP8
     num_moe_experts: Optional[int] = None
@@ -193,11 +196,13 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
             else:
                 transformer_layer_spec = transformer_layer_spec(self)
 
-        # Calculate padded vocab size for tensor parallelism
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
-        padded_vocab_size = calculate_padded_vocab_size(
-            self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
-        )
+        if self.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
+        else:
+            padded_vocab_size = self.vocab_size
 
         # Initialize model as meta data instead of allocating data on a device
         model_init_device_context = contextlib.nullcontext

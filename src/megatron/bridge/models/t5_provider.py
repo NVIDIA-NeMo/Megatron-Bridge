@@ -89,6 +89,7 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     )
 
     vocab_size: Optional[int] = None
+    should_pad_vocab: bool = False
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreT5Model:
@@ -118,11 +119,13 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
         if not isinstance(transformer_layer_spec, ModuleSpec):
             transformer_layer_spec = transformer_layer_spec(encoder_config=encoder_config, decoder_config=self)
 
-        # Calculate padded vocab size for tensor parallelism
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
-        padded_vocab_size = calculate_padded_vocab_size(
-            self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
-        )
+        if self.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
+        else:
+            padded_vocab_size = self.vocab_size
 
         model = MCoreT5Model(
             config=self,

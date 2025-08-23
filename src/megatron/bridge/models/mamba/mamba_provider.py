@@ -74,6 +74,7 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
         default_factory=lambda: default_mamba_stack_spec
     )
     vocab_size: Optional[int] = None
+    should_pad_vocab: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
@@ -95,11 +96,13 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
             "models due to upstream MCore MambaModel API dependency"
         )
 
-        # Calculate padded vocab size for tensor parallelism
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
-        padded_vocab_size = calculate_padded_vocab_size(
-            self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
-        )
+        if self.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
+        else:
+            padded_vocab_size = self.vocab_size
 
         return MCoreMambaModel(
             self,

@@ -173,7 +173,7 @@ def setup(
     timers("tokenizer-setup", log_level=0).start(barrier=True)
     tokenizer = build_tokenizer(cfg.tokenizer)
     # Handle model vocab_size configuration with proper validation
-    cfg.model.vocab_size = _validate_and_set_vocab_size(
+    cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
     )
@@ -397,7 +397,7 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> int:
+def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
     """Validate and determine the correct vocab size for the model.
 
     Args:
@@ -405,15 +405,17 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
         tokenizer_vocab_size: Unpadded tokenizer vocab size
 
     Returns:
-        int: The validated unpadded vocab size to use for the model
+        tuple[int, bool]: The validated unpadded vocab size and padding flag
+            - vocab_size: The validated unpadded vocab size to use for the model
+            - should_pad_vocab: True if vocab should be padded, False otherwise
 
     Raises:
         ValueError: If model vocab size is invalid
     """
     if model_vocab_size is None:
         # If model vocab size is not set, use the tokenizer's vocab size
-        # Padding will be handled later in the model provider
-        return tokenizer_vocab_size
+        # Enable padding since this came from tokenizer
+        return tokenizer_vocab_size, True
     elif model_vocab_size < tokenizer_vocab_size:
         # Vocab size smaller than tokenizer
         raise ValueError(
@@ -422,9 +424,10 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
         )
     else:
         # Model vocab size is explicitly set and is >= tokenizer vocab size
+        # Disable padding since this was explicitly set
         if model_vocab_size > tokenizer_vocab_size:
             logging.info(
                 f"Using preset vocab_size: {model_vocab_size} over the tokenizer vocab_size: {tokenizer_vocab_size}, dummy tokens:"
                 f" {model_vocab_size - tokenizer_vocab_size}."
             )
-        return model_vocab_size
+        return model_vocab_size, False

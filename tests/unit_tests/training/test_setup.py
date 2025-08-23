@@ -21,12 +21,13 @@ class TestValidateAndSetVocabSize:
     """Test cases for the _validate_and_set_vocab_size function."""
 
     def test_vocab_size_none_uses_tokenizer_vocab_size(self):
-        """Test that None vocab_size uses tokenizer's vocab size."""
-        result = _validate_and_set_vocab_size(
+        """Test that None vocab_size uses tokenizer's vocab size and enables padding."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
             model_vocab_size=None,
             tokenizer_vocab_size=32004,
         )
-        assert result == 32004
+        assert vocab_size == 32004
+        assert should_pad_vocab is True
 
     def test_vocab_size_smaller_than_tokenizer_raises_error(self):
         """Test that vocab_size smaller than tokenizer raises ValueError."""
@@ -37,17 +38,19 @@ class TestValidateAndSetVocabSize:
             )
 
     def test_vocab_size_larger_than_tokenizer_returns_same_value(self):
-        """Test that vocab_size larger than tokenizer returns the same value."""
-        result = _validate_and_set_vocab_size(
+        """Test that vocab_size larger than tokenizer returns the same value and disables padding."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
             model_vocab_size=40960,
             tokenizer_vocab_size=32004,
         )
-        assert result == 40960
+        assert vocab_size == 40960
+        assert should_pad_vocab is False
 
     def test_vocab_size_equal_to_tokenizer_returns_same_value(self):
-        """Test that vocab_size equal to tokenizer returns the same value."""
-        result = _validate_and_set_vocab_size(
+        """Test that vocab_size equal to tokenizer returns the same value and disables padding."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
             model_vocab_size=32004,
             tokenizer_vocab_size=32004,
         )
-        assert result == 32004
+        assert vocab_size == 32004
+        assert should_pad_vocab is False

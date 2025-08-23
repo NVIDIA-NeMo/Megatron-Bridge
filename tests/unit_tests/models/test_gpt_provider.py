@@ -85,7 +85,7 @@ class TestGPTModelProvider:
                     mock_model.assert_called_once()
 
     def test_provide_method_with_vocab_padding(self):
-        """Test provide method calculates padded vocab size."""
+        """Test provide method calculates padded vocab size when padding is enabled."""
         provider = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
@@ -93,6 +93,7 @@ class TestGPTModelProvider:
             vocab_size=50000,
             tensor_model_parallel_size=8,
             make_vocab_size_divisible_by=128,
+            should_pad_vocab=True,  # Enable padding
         )
 
         with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
@@ -112,6 +113,34 @@ class TestGPTModelProvider:
                     # Verify model was created with padded vocab size
                     call_kwargs = mock_model.call_args.kwargs
                     assert call_kwargs["vocab_size"] == 50176
+
+    def test_provide_method_no_vocab_padding(self):
+        """Test provide method uses original vocab size when padding is disabled."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=8,
+            vocab_size=50000,
+            tensor_model_parallel_size=8,
+            make_vocab_size_divisible_by=128,
+            should_pad_vocab=False,  # Disable padding
+        )
+
+        with patch("megatron.bridge.models.gpt_provider.parallel_state") as mock_ps:
+            with patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size") as mock_calc_vocab:
+                with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+                    mock_ps.is_pipeline_first_stage.return_value = True
+                    mock_ps.is_pipeline_last_stage.return_value = True
+                    mock_instance = Mock()
+                    mock_model.return_value = mock_instance
+
+                    _ = provider.provide()
+
+                    # Verify calculate_padded_vocab_size was NOT called
+                    mock_calc_vocab.assert_not_called()
+                    # Verify model was created with original vocab size
+                    call_kwargs = mock_model.call_args.kwargs
+                    assert call_kwargs["vocab_size"] == 50000
 
     def test_provide_method_pipeline_stages(self):
         """Test provide method respects pipeline stage arguments."""

@@ -55,6 +55,7 @@ class Llama3ModelProvider145M(Llama3ModelProvider):
     ffn_hidden_size: int = 2688
     num_attention_heads: int = 16
     make_vocab_size_divisible_by: int = 128
+    vocab_size: int | None = 128256
 
 
 class TestLoRAFinetune:
