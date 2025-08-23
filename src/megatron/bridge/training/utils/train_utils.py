@@ -449,9 +449,9 @@ def training_log(
         if config.model.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
         track_moe_metrics(
-            moe_loss_scale,
-            train_state.step,
-            tb_logger,
+            loss_scale=moe_loss_scale,
+            iteration=train_state.step,
+            tb_logger=tb_logger,
             wandb_writer=wandb_logger,
             total_loss_dict=total_loss_dict,
             per_layer_logging=config.model.moe_per_layer_logging,
