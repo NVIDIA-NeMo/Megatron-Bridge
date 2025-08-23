@@ -153,7 +153,6 @@ class Llama31ModelProvider(Llama3ModelProvider):
             pre_process: Whether to include pre-processing in the model
             post_process: Whether to include post-processing in the model
             vp_stage: Virtual pipeline stage
-            tokenizer: Tokenizer used with the model
 
         Returns:
             MCoreGPTModel: Configured Megatron Core GPT model instance
