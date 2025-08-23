@@ -233,8 +233,6 @@ def apply_args_to_config(config, args):
         config.model.expert_model_parallel_size = args.expert_parallel_size
     if args.expert_tensor_parallel_size:
         config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
-    # Use vocab size from tokenizer
-    config.model.vocab_size = config.tokenizer.vocab_size
 
     # Logging configuration
     config.logger.log_timers_to_tensorboard = True

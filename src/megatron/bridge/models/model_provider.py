@@ -77,7 +77,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     DEFAULT_CONFIG_FORMAT = "json"
 
     @abc.abstractmethod
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> ModelT:
+    def provide(
+        self, pre_process: bool | None = None, post_process: bool | None = None, vp_stage: int | None = None
+    ) -> ModelT:
         """Abstract method to provide the model instance.
 
         Subclasses must implement this method to return the specific Megatron model
@@ -85,8 +87,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         to obtain the base model before it is wrapped for distributed training.
 
         Args:
-            pre_process (callable, optional): A function to be called before model instantiation.
-            post_process (callable, optional): A function to be called after model instantiation.
+            pre_process (bool, optional): Whether to include the embedding layer (used with pipeline parallelism).
+            post_process (bool, optional): Whether to include the output layer (used with pipeline parallelism).
             vp_stage (int, optional): The virtual pipeline stage of the model.
 
         Returns:
