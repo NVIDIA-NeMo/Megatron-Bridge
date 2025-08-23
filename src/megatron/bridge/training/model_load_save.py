@@ -251,7 +251,7 @@ def build_and_load_model(
             # Re-calculate the padded vocab size based on the model config instead of the args from the checkpoint
             megatron_args.padded_vocab_size = calculate_padded_vocab_size(
                 megatron_args.vocab_size,
-                model_cfg.make_vocab_size_divisible_by,
+                megatron_args.make_vocab_size_divisible_by,
                 model_cfg.tensor_model_parallel_size,
             )
             provider = _gpt_provider if model_type == "gpt" else _mamba_provider
