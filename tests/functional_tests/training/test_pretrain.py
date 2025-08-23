@@ -78,6 +78,7 @@ class TestPretrain:
                 bf16=True,
                 seq_length=seq_length,
                 make_vocab_size_divisible_by=128,
+                vocab_size=None,
             )
 
             # Config Container
@@ -198,6 +199,7 @@ class TestPretrain:
                 bf16=True,
                 seq_length=seq_length,
                 make_vocab_size_divisible_by=128,
+                vocab_size=None,
             )
 
             # Create other configurations

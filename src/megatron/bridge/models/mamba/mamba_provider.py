@@ -24,8 +24,8 @@ from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.gpt_provider import get_vocab_size
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
@@ -74,15 +74,15 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
         default_factory=lambda: default_mamba_stack_spec
     )
     vocab_size: Optional[int] = None
+    should_pad_vocab: bool = False
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreMambaModel:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
 
         Args:
             pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
             post_process: Whether to include post-processing in the model, defaults to last pipeline stage
             vp_stage: Virtual pipeline stage
-            tokenizer: Tokenizer used with the model
 
         Returns:
             MCoreMambaModel: Configured Megatron Core Mamba model instance
@@ -96,20 +96,18 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
             "models due to upstream MCore MambaModel API dependency"
         )
 
-        if self.vocab_size is not None:
-            vocab_size = self.vocab_size
-            if tokenizer is not None:
-                logger.info(
-                    f"Use preset vocab_size: {vocab_size}, original vocab_size: {tokenizer.vocab_size}, dummy tokens:"
-                    f" {vocab_size - tokenizer.vocab_size}."
-                )
+        assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
+        if self.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
         else:
-            vocab_size = get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by)
+            padded_vocab_size = self.vocab_size
 
         return MCoreMambaModel(
             self,
             mamba_stack_spec=mamba_stack_spec,
-            vocab_size=vocab_size,
+            vocab_size=padded_vocab_size,
             max_sequence_length=self.seq_length,
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             hybrid_mlp_ratio=self.hybrid_mlp_ratio,

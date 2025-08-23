@@ -144,7 +144,7 @@ class Llama31ModelProvider(Llama3ModelProvider):
     old_context_len: int = 8192
     init_method_std: float = 0.02
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> "MCoreGPTModel":
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Llama 3.1 model.
 
         Extends the base configuration with Llama 3.1 specific RoPE scaling.
@@ -153,14 +153,11 @@ class Llama31ModelProvider(Llama3ModelProvider):
             pre_process: Whether to include pre-processing in the model
             post_process: Whether to include post-processing in the model
             vp_stage: Virtual pipeline stage
-            tokenizer: Tokenizer used with the model
 
         Returns:
             MCoreGPTModel: Configured Megatron Core GPT model instance
         """
-        model = super().provide(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage, tokenizer=tokenizer
-        )
+        model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
         # Apply rope scaling for Llama3.1 model
         model.rotary_pos_emb.inv_freq = apply_rope_scaling(
             model.rotary_pos_emb.inv_freq,

@@ -105,7 +105,6 @@ class TestT5ModelProvider:
 
         sig = inspect.signature(provider.provide)
         params = list(sig.parameters.keys())
-        assert "tokenizer" in params
         assert "pre_process" in params
         assert "post_process" in params
 
