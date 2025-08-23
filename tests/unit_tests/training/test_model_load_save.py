@@ -271,6 +271,8 @@ class TestLoadMegatronModel:
         ckpt_path = "/path/to/mock/dist_checkpoint"
         mock_args = Mock()
         mock_args.vocab_size = 32000  # Add vocab_size for padded vocab calculation
+        mock_args.make_vocab_size_divisible_by = 128  # Add for padded vocab calculation
+        mock_args.tensor_model_parallel_size = 1  # Add for padded vocab calculation
         mock_load_args.return_value = mock_args
 
         mock_model = Mock()
