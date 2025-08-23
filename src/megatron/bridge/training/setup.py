@@ -112,15 +112,8 @@ def setup(
 
     cfg.validate()
 
-    # Apply mixed precision configuration if provided
-    if cfg.mixed_precision is not None:
-        if isinstance(cfg.mixed_precision, str):
-            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Apply communication overlap configuration if provided at the very beginning
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    # Apply runtime configurations that must be set on the compute node before the training loop begins
+    _apply_runtime_configurations(cfg)
 
     state = GlobalState()
     state.cfg = cfg
@@ -395,6 +388,27 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     print_rank_0(f"  Trainable percentage: {100 * trainable_params / total_params:.2f}%")
 
     return transformed_model
+
+
+def _apply_runtime_configurations(cfg: ConfigContainer) -> None:
+    """Apply runtime configurations that must be set early in the setup process.
+
+    This function handles optional configurations that need to be applied before
+    model initialization. It is designed to be extensible for future runtime
+    configurations that follow a similar pattern.
+
+    Args:
+        cfg: The main configuration container that will be modified in place.
+    """
+    # Apply mixed precision configuration if provided
+    if cfg.mixed_precision is not None:
+        if isinstance(cfg.mixed_precision, str):
+            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    # Apply communication overlap configuration if provided at the very beginning
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
 
 def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
