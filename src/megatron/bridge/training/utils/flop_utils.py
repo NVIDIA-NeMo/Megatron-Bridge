@@ -80,20 +80,23 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
             # Shared Experts.
             + ((shared_expert_ffn_hidden_size / cfg.model.hidden_size) * gated_linear_multiplier)
             # Logit.
-            + (_get_padded_vocab_size(cfg.model) / (2 * cfg.model.num_layers * cfg.model.hidden_size))
+            + (_get_vocab_size(cfg.model) / (2 * cfg.model.num_layers * cfg.model.hidden_size))
         )
     )
 
 
-def _get_padded_vocab_size(model_cfg) -> int:
-    """Get the padded vocabulary size for the given configuration.
+def _get_vocab_size(model_cfg) -> int:
+    """Get the potentially padded vocabulary size for the given configuration.
 
     Args:
         cfg: The model provider configuration.
 
     Returns:
-        int: The padded vocabulary size.
+        int: The vocabulary size used.
     """
-    return calculate_padded_vocab_size(
-        model_cfg.vocab_size, model_cfg.make_vocab_size_divisible_by, model_cfg.tensor_model_parallel_size
-    )
+    if model_cfg.should_pad_vocab:
+        return calculate_padded_vocab_size(
+            model_cfg.vocab_size, model_cfg.make_vocab_size_divisible_by, model_cfg.tensor_model_parallel_size
+        )
+    else:
+        return model_cfg.vocab_size
