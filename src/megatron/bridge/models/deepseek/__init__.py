@@ -16,11 +16,15 @@ from megatron.bridge.models.deepseek.deepseek_provider import (
     DeepSeekV2LiteProvider,
     DeepSeekV2Provider,
     DeepSeekV3Provider,
+    MoonlightProvider,
 )
 
+from megatron.bridge.models.deepseek.deepseek_bridge import register_deepseek_bridge
+register_deepseek_bridge()
 
 __all__ = [
     "DeepSeekV2LiteProvider",
     "DeepSeekV2Provider",
     "DeepSeekV3Provider",
+    "MoonlightProvider",
 ]
