@@ -239,8 +239,27 @@ jobs:
     needs: [Nemo_CICD_Test, pre-flight]
     if: needs.pre-flight.outputs.docs_only == 'true' && (success() || !cancelled())
     steps:
-      - name: Create fake coverage report
-        run: echo '<?xml version="1.0"?><coverage branch-rate="0" line-rate="1" version="5.0"><packages></packages></coverage>' > coverage.xml
+      - name: Generate fake coverage report
+        run: |
+          cat > coverage.xml <<'EOF'
+          <?xml version="1.0" ?>
+          <coverage branch-rate="1" line-rate="1" version="5.0">
+            <sources>
+              <source>.</source>
+            </sources>
+            <packages>
+              <package name="megatron.bridge" line-rate="1" branch-rate="1" complexity="0">
+                <classes>
+                  <class name="package_info.py" filename="src/megatron/bridge/package_info.py" line-rate="1" branch-rate="1" complexity="0">
+                    <lines>
+                      <line number="1" hits="1"/>
+                    </lines>
+                  </class>
+                </classes>
+              </package>
+            </packages>
+          </coverage>
+          EOF
 
       - name: Upload fake coverage to Codecov
         uses: codecov/codecov-action@v4
