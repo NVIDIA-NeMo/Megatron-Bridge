@@ -27,6 +27,9 @@ model:
   enable_cuda_graph: false
   use_te_rng_tracker: false
 
+rng:
+  te_rng_tracker: false
+
 train:
   global_batch_size: 128
   micro_batch_size: 1
