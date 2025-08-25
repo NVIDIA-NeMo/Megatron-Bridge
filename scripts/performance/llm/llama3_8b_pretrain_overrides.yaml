@@ -20,9 +20,12 @@
 
 model:
   cross_entropy_fusion_impl: "te"
+  enable_cuda_graph: false
+  use_te_rng_tracker: false
 
 train:
   global_batch_size: 128
+  micro_batch_size: 1
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
