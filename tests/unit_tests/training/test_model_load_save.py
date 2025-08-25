@@ -249,12 +249,16 @@ class TestLoadMegatronModel:
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.mlm_compat.arguments._transformer_config_from_args")
     @patch("megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.training.mlm_compat.arguments._tokenizer_config_from_args")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
     def test_load_mlm_saved_model(
         self,
         mock_dist,
         mock_cpu_context,
+        mock_tokenizer_config_from_args,
+        mock_build_tokenizer,
         mock_load_args,
         mock_transformer_cfg,
         mock_load_weights,
@@ -274,6 +278,14 @@ class TestLoadMegatronModel:
         mock_args.make_vocab_size_divisible_by = 128  # Add for padded vocab calculation
         mock_args.tensor_model_parallel_size = 1  # Add for padded vocab calculation
         mock_load_args.return_value = mock_args
+
+        # Setup tokenizer mocks for MLM compat path
+        mock_tokenizer_cfg = Mock()
+        mock_tokenizer_config_from_args.return_value = mock_tokenizer_cfg
+
+        mock_tokenizer = Mock()
+        mock_tokenizer.vocab_size = 32000  # Unpadded vocab size for calculate_padded_vocab_size
+        mock_build_tokenizer.return_value = mock_tokenizer
 
         mock_model = Mock()
         mock_model_cfg = Mock()
@@ -301,6 +313,10 @@ class TestLoadMegatronModel:
             assert result == expected_result
             mock_load_args.assert_called_once_with(ckpt_path)
             mock_transformer_cfg.assert_called_once_with(mock_args)
+            mock_tokenizer_config_from_args.assert_called_once_with(mock_args)
+            mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
+            # Verify padded vocab size was calculated and set
+            assert mock_args.padded_vocab_size == 32000  # 32000 is already divisible by 128, so no padding
             mock_cpu_context.assert_called_once()
             mock_get_model.assert_called_once_with(mock_args, mock_provider, mock_model_cfg)
             mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
