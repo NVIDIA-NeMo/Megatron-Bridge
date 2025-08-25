@@ -30,6 +30,7 @@ model:
 train:
   global_batch_size: 128
   micro_batch_size: 1
+  train_iters: 100
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
