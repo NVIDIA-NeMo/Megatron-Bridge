@@ -182,6 +182,7 @@ class DeepSeekV3Provider(DeepSeekProvider):
     mscale: float = 1.0
     mscale_all_dim: float = 1.0
 
+
 @dataclass
 class MoonlightProvider(DeepSeekProvider):
     """
@@ -196,9 +197,7 @@ class MoonlightProvider(DeepSeekProvider):
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] * 1 + [1] * 26
-    )  # first layer is dense
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1

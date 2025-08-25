@@ -13,15 +13,13 @@
 # limitations under the License.
 
 import torch
-
 from megatron.core.models.gpt.gpt_model import GPTModel
 
-from megatron.bridge.models.conversion.param_mapping import GatedMLPMapping
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekProvider
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -44,6 +42,15 @@ class DeepSeekBridge(MegatronModelBridge):
         # Not all deepseek configs have aux_loss_alpha
         if hasattr(hf_config, "aux_loss_alpha"):
             optional_kwargs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
+
+        is_v3 = hf_config.model_type == "deepseek_v3"
+        if is_v3:
+            optional_kwargs["moe_router_score_function"] = "sigmoid"
+            optional_kwargs["moe_router_enable_expert_bias"] = True
+            optional_kwargs["moe_router_bias_update_rate"] = 1e-3
+        import pdb
+
+        pdb.set_trace()
 
         n_moe_layers = hf_config.num_hidden_layers - hf_config.first_k_dense_replace
         provider = DeepSeekProvider(
@@ -68,7 +75,7 @@ class DeepSeekBridge(MegatronModelBridge):
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
             gated_linear_unit=True,
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
+            make_vocab_size_divisible_by=1280 if is_v3 else 3200,
             rotary_base=hf_config.rope_theta,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             vocab_size=hf_config.vocab_size,
@@ -77,8 +84,6 @@ class DeepSeekBridge(MegatronModelBridge):
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             generation_config=hf_pretrained.generation_config,
-            qk_layernorm=True,  # Qwen3 MoE uses QK layernorm
-            moe_grouped_gemm=True,
             **optional_kwargs,
         )
 
@@ -106,21 +111,16 @@ class DeepSeekBridge(MegatronModelBridge):
             "model.layers.*.self_attn.kv_a_layernorm.weight": "decoder.layers.*.self_attention.linear_kv_up_proj.layer_norm_weight",
             "model.layers.*.post_attention_layernorm.weight": "decoder.layers.*.pre_mlp_layernorm.weight",
             # Dense MLP
-            # model.layers.*.mlp.{gate|up}_proj.weight: model.layers.*.mlp.linear_fc1.weight
             "model.layers.*.mlp.down_proj.weight": "decoder.layers.*.mlp.linear_fc2.weight",
             # MoE
             "model.layers.*.mlp.gate.weight": "decoder.layers.*.mlp.router.weight",
-            # model.layers.*.mlp.experts.*.{gate|up}_proj.weight: model.layers.*.mlp.experts.linear_fc1.weight*
             "model.layers.*.mlp.experts.*.down_proj.weight": "decoder.layers.*.mlp.experts.linear_fc2.weight*",
-            # model.layers.*.mlp.shared_experts.{gate|up}_proj.weight： model.layers.*.mlp.shared_experts.linear_fc1.weight
             "model.layers.*.mlp.shared_experts.down_proj.weight": "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
             # LM Head
             "model.norm.weight": "decoder.final_layernorm.weight",
             "lm_head.weight": "output_layer.weight",
-
             # DSv2-Lite
             "model.layers.*.self_attn.q_proj.weight": "decoder.layers.*.self_attention.linear_q_proj.weight",
-
             # expert bias
             "model.layers.*.mlp.gate.e_score_correction_bias": "decoder.layers.*.mlp.router.expert_bias",
         }
@@ -138,12 +138,26 @@ class DeepSeekBridge(MegatronModelBridge):
         #  (b) `decoder.layers.*.mlp.linear_fc1.layer_norm_weight`, if the layer is dense
         #
         # (a) is defined in the `param_mappings` above, so we need to add (b) here separately (to avoid dictionary key conflict)
-        mapping_list.append(AutoMapping(hf_param="model.layers.*.post_attention_layernorm.weight", megatron_param="decoder.layers.*.mlp.linear_fc1.layer_norm_weight"))
+        mapping_list.append(
+            AutoMapping(
+                hf_param="model.layers.*.post_attention_layernorm.weight",
+                megatron_param="decoder.layers.*.mlp.linear_fc1.layer_norm_weight",
+            )
+        )
 
         # Mcore local spec
-        mapping_list.append(AutoMapping(hf_param="model.layers.*.self_attn.q_a_layernorm.weight", megatron_param="decoder.layers.*.self_attention.q_layernorm.weight"))
-        mapping_list.append(AutoMapping(hf_param="model.layers.*.self_attn.kv_a_layernorm.weight", megatron_param="decoder.layers.*.self_attention.kv_layernorm.weight"))
-
+        mapping_list.append(
+            AutoMapping(
+                hf_param="model.layers.*.self_attn.q_a_layernorm.weight",
+                megatron_param="decoder.layers.*.self_attention.q_layernorm.weight",
+            )
+        )
+        mapping_list.append(
+            AutoMapping(
+                hf_param="model.layers.*.self_attn.kv_a_layernorm.weight",
+                megatron_param="decoder.layers.*.self_attention.kv_layernorm.weight",
+            )
+        )
 
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(
