@@ -71,6 +71,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         bf16=True,
         seq_length=seq_length,
         make_vocab_size_divisible_by=128,
+        vocab_size=None,
     )
 
     dataset_config = MockGPTDatasetConfig(
