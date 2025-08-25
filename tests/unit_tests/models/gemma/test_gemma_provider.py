@@ -207,43 +207,51 @@ class TestCodeGemmaModelProviders:
     """Test cases for Code Gemma model provider classes."""
 
     def test_code_gemma_2b_configuration(self):
-        """Test that CodeGemmaModelProvider2B inherits from GemmaModelProvider2B."""
+        """Test that CodeGemmaModelProvider2B has correct 2B configuration values."""
         provider = CodeGemmaModelProvider2B()
-        base_provider = GemmaModelProvider2B()
 
-        # Should have identical configuration to base 2B model
-        assert provider.num_layers == base_provider.num_layers
-        assert provider.hidden_size == base_provider.hidden_size
-        assert provider.num_attention_heads == base_provider.num_attention_heads
-        assert provider.num_query_groups == base_provider.num_query_groups
-        assert provider.ffn_hidden_size == base_provider.ffn_hidden_size
-        assert provider.normalization == base_provider.normalization
-        assert provider.activation_func == base_provider.activation_func
+        # Test 2B specific values
+        assert provider.num_layers == 18
+        assert provider.hidden_size == 2048
+        assert provider.num_attention_heads == 8
+        assert provider.num_query_groups == 1
+        assert provider.ffn_hidden_size == 16384
+
+        # Test inherited Gemma defaults
+        assert provider.normalization == "RMSNorm"
+        assert provider.activation_func == openai_gelu
+        assert provider.gated_linear_unit is True
+        assert provider.attention_backend == AttnBackend.flash
 
     def test_code_gemma_7b_configuration(self):
-        """Test that CodeGemmaModelProvider7B inherits from GemmaModelProvider7B."""
+        """Test that CodeGemmaModelProvider7B has correct 7B configuration values."""
         provider = CodeGemmaModelProvider7B()
-        base_provider = GemmaModelProvider7B()
 
-        # Should have identical configuration to base 7B model
-        assert provider.num_layers == base_provider.num_layers
-        assert provider.hidden_size == base_provider.hidden_size
-        assert provider.num_attention_heads == base_provider.num_attention_heads
-        assert provider.num_query_groups == base_provider.num_query_groups
-        assert provider.ffn_hidden_size == base_provider.ffn_hidden_size
-        assert provider.normalization == base_provider.normalization
-        assert provider.activation_func == base_provider.activation_func
+        # Test 7B specific values
+        assert provider.num_layers == 28
+        assert provider.hidden_size == 3072
+        assert provider.num_attention_heads == 16
+        assert provider.num_query_groups == 16
+        assert provider.ffn_hidden_size == 24576
+
+        # Test inherited Gemma defaults
+        assert provider.normalization == "RMSNorm"
+        assert provider.activation_func == openai_gelu
+        assert provider.gated_linear_unit is True
+        assert provider.attention_backend == AttnBackend.flash
 
     def test_code_gemma_inheritance_chain(self):
         """Test the inheritance chain for Code Gemma providers."""
         provider_2b = CodeGemmaModelProvider2B()
         provider_7b = CodeGemmaModelProvider7B()
 
-        # Check inheritance chain
-        assert isinstance(provider_2b, GemmaModelProvider2B)
+        # Check inheritance chain - both should inherit directly from GemmaModelProvider
         assert isinstance(provider_2b, GemmaModelProvider)
-        assert isinstance(provider_7b, GemmaModelProvider7B)
         assert isinstance(provider_7b, GemmaModelProvider)
+
+        # Verify they don't inherit from the size-specific providers
+        assert not isinstance(provider_2b, GemmaModelProvider2B)
+        assert not isinstance(provider_7b, GemmaModelProvider7B)
 
 
 class TestGemmaModelProviderIntegration:
