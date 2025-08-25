@@ -48,7 +48,7 @@ jobs:
 
       - name: Check lint
         run: |
-          pip installx pre-commit==3.6.0
+          pip install pre-commit==3.6.0
           pre-commit install
           pre-commit run --all-files --show-diff-on-failure --color=always
 
