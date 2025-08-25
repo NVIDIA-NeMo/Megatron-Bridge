@@ -241,6 +241,7 @@ jobs:
       (needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
       && !cancelled()
+    environment: nemo-ci
     steps:
       - name: Generate fake coverage report
         uses: actions/github-script@v6
