@@ -19,9 +19,13 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
+  context_parallel_size: 2
   cross_entropy_fusion_impl: "te"
   enable_cuda_graph: false
   use_te_rng_tracker: false
+
+rng:
+  te_rng_tracker: false
 
 train:
   global_batch_size: 128
