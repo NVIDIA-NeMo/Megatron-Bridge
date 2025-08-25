@@ -23,6 +23,7 @@ from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
@@ -277,8 +278,9 @@ def training_log(
     """
     timers = global_state.timers
     train_state = global_state.train_state
-    tb_logger = global_state.tensorboard_logger
-    wandb_logger = global_state.wandb_logger
+    iteration = train_state.step
+    writer = global_state.tensorboard_logger
+    wandb_writer = global_state.wandb_logger
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
@@ -344,15 +346,13 @@ def training_log(
     learning_rate = reduce_max_stat_across_model_parallel_group(learning_rate)
     # Tensorboard values.
     # Timer requires all the ranks to call.
-    if logger_config.log_timers_to_tensorboard and (train_state.step % logger_config.tensorboard_log_interval == 0):
+    if logger_config.log_timers_to_tensorboard and (iteration % logger_config.tensorboard_log_interval == 0):
         reset_in_tb = False if hasattr(timers, "write_to_wandb") else True
-        timers.write(timers_to_log, tb_logger, train_state.step, normalizer=total_iterations, reset=reset_in_tb)
+        timers.write(timers_to_log, writer, iteration, normalizer=total_iterations, reset=reset_in_tb)
         if hasattr(timers, "write_to_wandb"):
-            timers.write_to_wandb(
-                timers_to_log, wandb_logger, train_state.step, normalizer=total_iterations, reset=True
-            )
+            timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
 
-    if tb_logger and (train_state.step % logger_config.tensorboard_log_interval == 0):
+    if writer and (iteration % logger_config.tensorboard_log_interval == 0):
         if config.profiling:
             if config.profiling.record_memory_history and is_last_rank():
                 snapshot = torch.cuda.memory._snapshot()
@@ -361,85 +361,77 @@ def training_log(
                 with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
 
-        if wandb_logger:
-            wandb_logger.log({"samples vs steps": global_state.train_state.consumed_train_samples}, train_state.step)
-        tb_logger.add_scalar("learning-rate", learning_rate, train_state.step)
-        tb_logger.add_scalar(
-            "learning-rate vs samples", learning_rate, global_state.train_state.consumed_train_samples
-        )
-        if wandb_logger:
-            wandb_logger.log({"learning-rate": learning_rate}, train_state.step)
+        if wandb_writer:
+            wandb_writer.log({"samples vs steps": global_state.train_state.consumed_train_samples}, iteration)
+        writer.add_scalar("learning-rate", learning_rate, iteration)
+        writer.add_scalar("learning-rate vs samples", learning_rate, global_state.train_state.consumed_train_samples)
+        if wandb_writer:
+            wandb_writer.log({"learning-rate": learning_rate}, iteration)
         if config.optimizer.decoupled_lr is not None:
-            tb_logger.add_scalar("decoupled-learning-rate", decoupled_learning_rate, train_state.step)
+            writer.add_scalar("decoupled-learning-rate", decoupled_learning_rate, iteration)
         if global_state.train_state.skipped_train_samples > 0:
-            tb_logger.add_scalar(
-                "skipped-train-samples", global_state.train_state.skipped_train_samples, train_state.step
-            )
-            if wandb_logger:
-                wandb_logger.log(
-                    {"skipped-train-samples": global_state.train_state.skipped_train_samples}, train_state.step
-                )
-        tb_logger.add_scalar("batch-size", batch_size, train_state.step)
-        tb_logger.add_scalar("batch-size vs samples", batch_size, global_state.train_state.consumed_train_samples)
-        if wandb_logger:
-            wandb_logger.log({"batch-size": batch_size}, train_state.step)
+            writer.add_scalar("skipped-train-samples", global_state.train_state.skipped_train_samples, iteration)
+            if wandb_writer:
+                wandb_writer.log({"skipped-train-samples": global_state.train_state.skipped_train_samples}, iteration)
+        writer.add_scalar("batch-size", batch_size, iteration)
+        writer.add_scalar("batch-size vs samples", batch_size, global_state.train_state.consumed_train_samples)
+        if wandb_writer:
+            wandb_writer.log({"batch-size": batch_size}, iteration)
         for key in loss_dict:
-            tb_logger.add_scalar(key, loss_dict[key], train_state.step)
-            tb_logger.add_scalar(key + " vs samples", loss_dict[key], global_state.train_state.consumed_train_samples)
-            if wandb_logger:
-                wandb_logger.log({key: loss_dict[key]}, train_state.step)
+            writer.add_scalar(key, loss_dict[key], iteration)
+            writer.add_scalar(key + " vs samples", loss_dict[key], global_state.train_state.consumed_train_samples)
+            if wandb_writer:
+                wandb_writer.log({key: loss_dict[key]}, iteration)
         if logger_config.log_loss_scale_to_tensorboard:
-            tb_logger.add_scalar("loss-scale", loss_scale, train_state.step)
-            tb_logger.add_scalar("loss-scale vs samples", loss_scale, global_state.train_state.consumed_train_samples)
-            if wandb_logger:
-                wandb_logger.log({"loss-scale": loss_scale}, train_state.step)
+            writer.add_scalar("loss-scale", loss_scale, iteration)
+            writer.add_scalar("loss-scale vs samples", loss_scale, global_state.train_state.consumed_train_samples)
+            if wandb_writer:
+                wandb_writer.log({"loss-scale": loss_scale}, iteration)
         if logger_config.log_world_size_to_tensorboard:
-            tb_logger.add_scalar("world-size", get_world_size_safe(), train_state.step)
-            tb_logger.add_scalar(
+            writer.add_scalar("world-size", get_world_size_safe(), iteration)
+            writer.add_scalar(
                 "world-size vs samples", get_world_size_safe(), global_state.train_state.consumed_train_samples
             )
-            if wandb_logger:
-                wandb_logger.log({"world-size": get_world_size_safe()}, train_state.step)
+            if wandb_writer:
+                wandb_writer.log({"world-size": get_world_size_safe()}, iteration)
         if grad_norm is not None:
-            tb_logger.add_scalar("grad-norm", grad_norm, train_state.step)
-            tb_logger.add_scalar("grad-norm vs samples", grad_norm, global_state.train_state.consumed_train_samples)
-            if wandb_logger:
-                wandb_logger.log({"grad-norm": grad_norm}, train_state.step)
+            writer.add_scalar("grad-norm", grad_norm, iteration)
+            writer.add_scalar("grad-norm vs samples", grad_norm, global_state.train_state.consumed_train_samples)
+            if wandb_writer:
+                wandb_writer.log({"grad-norm": grad_norm}, iteration)
         if num_zeros_in_grad is not None:
-            tb_logger.add_scalar("num-zeros", num_zeros_in_grad, train_state.step)
-            tb_logger.add_scalar(
+            writer.add_scalar("num-zeros", num_zeros_in_grad, iteration)
+            writer.add_scalar(
                 "num-zeros vs samples", num_zeros_in_grad, global_state.train_state.consumed_train_samples
             )
-            if wandb_logger:
-                wandb_logger.log({"num-zeros": num_zeros_in_grad}, train_state.step)
+            if wandb_writer:
+                wandb_writer.log({"num-zeros": num_zeros_in_grad}, iteration)
         if params_norm is not None:
-            tb_logger.add_scalar("params-norm", params_norm, train_state.step)
-            tb_logger.add_scalar(
-                "params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples
-            )
-            if wandb_logger:
-                wandb_logger.log({"params-norm": params_norm}, train_state.step)
+            writer.add_scalar("params-norm", params_norm, iteration)
+            writer.add_scalar("params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples)
+            if wandb_writer:
+                wandb_writer.log({"params-norm": params_norm}, iteration)
         if logger_config.log_memory_to_tensorboard:
             mem_stats = torch.cuda.memory_stats()
-            tb_logger.add_scalar(
+            writer.add_scalar(
                 "mem-reserved-bytes",
                 mem_stats["reserved_bytes.all.current"],
-                train_state.step,
+                iteration,
             )
-            tb_logger.add_scalar(
+            writer.add_scalar(
                 "mem-allocated-bytes",
                 mem_stats["allocated_bytes.all.current"],
-                train_state.step,
+                iteration,
             )
-            tb_logger.add_scalar(
+            writer.add_scalar(
                 "mem-max-allocated-bytes",
                 mem_stats["allocated_bytes.all.peak"],
-                train_state.step,
+                iteration,
             )
-            tb_logger.add_scalar(
+            writer.add_scalar(
                 "mem-allocated-count",
                 mem_stats["allocation.all.current"],
-                train_state.step,
+                iteration,
             )
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
@@ -450,9 +442,9 @@ def training_log(
             track_names.append("z_loss")
         track_moe_metrics(
             loss_scale=moe_loss_scale,
-            iteration=train_state.step,
-            writer=tb_logger,
-            wandb_writer=wandb_logger,
+            iteration=iteration,
+            writer=writer,
+            wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
             per_layer_logging=config.model.moe_per_layer_logging,
             force_initialize=True,
@@ -463,11 +455,9 @@ def training_log(
         )
     if config.model.mtp_num_layers is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
-        MTPLossLoggingHelper.track_mtp_metrics(
-            mtp_loss_scale, train_state.step, tb_logger, wandb_logger, total_loss_dict
-        )
+        MTPLossLoggingHelper.track_mtp_metrics(mtp_loss_scale, iteration, writer, wandb_writer, total_loss_dict)
 
-    if train_state.step % logger_config.log_interval == 0:
+    if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
@@ -475,12 +465,12 @@ def training_log(
         #     elapsed_time_per_iteration * 10**12 * get_world_size_safe())  # TODO: implement
 
         if logger_config.log_timers_to_tensorboard:
-            if tb_logger:
-                tb_logger.add_scalar("iteration-time", elapsed_time_per_iteration, train_state.step)
-            if wandb_logger:
-                wandb_logger.log({"iteration-time": elapsed_time_per_iteration}, train_state.step)
+            if writer:
+                writer.add_scalar("iteration-time", elapsed_time_per_iteration, iteration)
+            if wandb_writer:
+                wandb_writer.log({"iteration-time": elapsed_time_per_iteration}, iteration)
         log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
-        log_string += " iteration {:8d}/{:8d} |".format(train_state.step, train_config.train_iters)
+        log_string += " iteration {:8d}/{:8d} |".format(iteration, train_config.train_iters)
         log_string += " consumed samples: {:12d} |".format(global_state.train_state.consumed_train_samples)
         if global_state.train_state.skipped_train_samples > 0:
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
@@ -490,22 +480,22 @@ def training_log(
         # if logger_config.log_throughput:
         #     log_string += f' throughput per GPU (TFLOP/s/GPU): {throughput:.1f} |'
         #     if logger_config.log_timers_to_tensorboard:
-        #         if tb_logger:
-        #             tb_logger.add_scalar('throughput', throughput, train_state.step)
-        #         if wandb_logger:
-        #             wandb_logger.log({'throughput': throughput}, train_state.step)
+        #         if writer:
+        #             writer.add_scalar('throughput', throughput, iteration)
+        #         if wandb_writer:
+        #             wandb_writer.log({'throughput': throughput}, iteration)
 
         if energy_monitor is not None:
             energy = (energy_monitor.lap() / total_iterations) / get_world_size_safe()
             power = energy / elapsed_time_per_iteration
             log_string += f" energy per GPU (J/iter/GPU): {energy:.1f} |"
             log_string += f" power per GPU (W/GPU): {power:.1f} |"
-            if tb_logger:
-                tb_logger.add_scalar("iter-energy/gpu", energy, train_state.step)
-                tb_logger.add_scalar("power/gpu", power, train_state.step)
-            if wandb_logger:
-                wandb_logger.log({"iter-energy/gpu": energy}, train_state.step)
-                wandb_logger.log({"power/gpu": power}, train_state.step)
+            if writer:
+                writer.add_scalar("iter-energy/gpu", energy, iteration)
+                writer.add_scalar("power/gpu", power, iteration)
+            if wandb_writer:
+                wandb_writer.log({"iter-energy/gpu": energy}, iteration)
+                wandb_writer.log({"power/gpu": power}, iteration)
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"
@@ -541,7 +531,7 @@ def training_log(
             if torch.distributed.get_rank() == 0:
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
-            report_memory(f"(after {train_state.step} iterations)")
+            report_memory(f"(after {iteration} iterations)")
             report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
@@ -562,83 +552,6 @@ def report_memory(name: str) -> None:
     string += " | max reserved: {}".format(torch.cuda.max_memory_reserved() / mega_bytes)
     if parallel_state.get_data_parallel_rank() == 0:
         print("[Rank {}] {}".format(torch.distributed.get_rank(), string), flush=True)
-
-
-def track_moe_metrics(
-    loss_scale: float,
-    iteration: int,
-    tb_logger: Any,
-    wandb_logger: Optional[Any] = None,
-    total_loss_dict: Optional[dict] = None,
-    per_layer_logging: bool = False,
-) -> None:
-    """Track and log Mixture of Experts (MoE) specific metrics.
-
-    Reduces auxiliary losses across ranks and logs them to TensorBoard and WandB.
-
-    Args:
-        loss_scale (float): The current loss scale.
-        iteration (int): The current training iteration.
-        tb_logger: The TensorBoard logger instance.
-        wandb_logger: The WandB logger instance (optional).
-        total_loss_dict (Optional[dict]): Dictionary to accumulate total losses (optional).
-        per_layer_logging (bool): If True, logs metrics for each MoE layer individually.
-    """
-    # Aux loss logging
-    reduce_aux_losses_tracker_across_ranks()
-    tracker = parallel_state.get_moe_layer_wise_logging_tracker()
-    if tb_logger is not None:
-        aux_losses = {k: v["values"].float() * loss_scale for k, v in tracker.items()}
-        for name, loss_list in aux_losses.items():
-            if total_loss_dict is not None:
-                if name not in total_loss_dict:
-                    total_loss_dict[name] = loss_list.mean()
-                else:
-                    total_loss_dict[name] += loss_list.mean()
-
-            # currently when using add_scalars,
-            # torch.utils.add_scalars makes each timer its own run, which
-            # polutes the runs list, so we just add each as a scalar
-            tb_logger.add_scalar(name, loss_list.mean(), iteration)
-            if per_layer_logging:
-                for i, loss in enumerate(loss_list.tolist()):
-                    tb_logger.add_scalar(f"moe/{name}_layer_{i}", loss, iteration)
-
-            # W&B logging lacks support for logging multiple scalars simultaneously.
-            # As a workaround, we log each scalar individually first, then we can create
-            # a custom panel to manually group them to a single plot.
-            if wandb_logger:
-                wandb_logger.log({f"{name}": loss_list.mean()}, iteration)
-                if per_layer_logging:
-                    wandb_logger.log(
-                        {f"moe/{name}_layer_{i}": loss for i, loss in enumerate(loss_list.tolist())},
-                        iteration,
-                    )
-
-    clear_aux_losses_tracker()
-
-
-def clear_aux_losses_tracker():
-    """Clear the MoE auxiliary loss tracker in the parallel state."""
-    tracker = parallel_state.get_moe_layer_wise_logging_tracker()
-    for name in tracker:
-        tracker[name]["values"].zero_()
-        tracker[name]["reduce_group"] = None
-        tracker[name]["avg_group"] = None
-
-
-def reduce_aux_losses_tracker_across_ranks():
-    """Reduce the MoE auxiliary losses across pipeline and specified reduction groups."""
-    tracker = parallel_state.get_moe_layer_wise_logging_tracker()
-    for name in tracker:
-        values = tracker[name]["values"]
-        # Collect aux losses across PP.
-        torch.distributed.all_reduce(values, group=parallel_state.get_pipeline_model_parallel_group())
-        # Reduce aux losses across ranks.
-        if tracker[name].get("reduce_group") is not None:
-            torch.distributed.all_reduce(values, group=tracker[name].get("reduce_group"))
-        if tracker[name].get("avg_group") is not None:
-            torch.distributed.all_reduce(values, group=tracker[name]["avg_group"], op=torch.distributed.ReduceOp.AVG)
 
 
 def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_args: Optional[int] = None) -> Callable:
