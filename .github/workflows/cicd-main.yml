@@ -67,7 +67,7 @@ jobs:
   cicd-unit-tests:
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -106,7 +106,7 @@ jobs:
     runs-on: self-hosted-nemo
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -233,6 +233,16 @@ jobs:
           else
             exit 1
           fi
+
+  coverage-placeholder:
+    name: codecov/patch
+    needs:
+      - pre-flight
+    if: needs.pre-flight.outputs.is_deployment_workflow != 'true' && needs.pre-flight.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dummy placeholder
+        run: echo "noop"
 
   Coverage:
     runs-on: ubuntu-latest
