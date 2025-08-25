@@ -238,6 +238,7 @@ def build_and_load_model(
     from megatron.bridge.training.checkpointing import (
         _load_model_weights_from_checkpoint,
     )
+    from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
     from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
 
     def _call_model_provider(model_cfg):
@@ -248,9 +249,15 @@ def build_and_load_model(
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
 
+            # Generate the unpadded vocab size based on the tokenizer from the checkpoint
+            cfg = _tokenizer_config_from_args(megatron_args)
+            tokenizer = build_tokenizer(cfg)
+            vocab_size = tokenizer.vocab_size
+
             # Re-calculate the padded vocab size based on the model config instead of the args from the checkpoint
+            # to accommodate TP overrides
             megatron_args.padded_vocab_size = calculate_padded_vocab_size(
-                megatron_args.vocab_size,
+                vocab_size,
                 megatron_args.make_vocab_size_divisible_by,
                 model_cfg.tensor_model_parallel_size,
             )
