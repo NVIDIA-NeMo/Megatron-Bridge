@@ -49,6 +49,7 @@ class Llama3ModelProvider145M(Llama3ModelProvider):
     hidden_size: int = 768
     ffn_hidden_size: int = 2688
     num_attention_heads: int = 16
+    vocab_size: int | None = None
 
 
 class TestPretrainResume:

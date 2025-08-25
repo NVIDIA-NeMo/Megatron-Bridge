@@ -31,6 +31,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.utils import fusions
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,12 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     generation_config: Optional[Any] = None
 
+    # This represents the unpadded vocab size
+    # The padded vocab size is automatically calculated in the provide() method.
     vocab_size: Optional[int] = None
+    # Set if the tokenizer provides the vocab size. In this case, the vocab size will be padded
+    # Controls whether vocab size should be padded for tensor parallelism
+    should_pad_vocab: bool = False
 
     # MoE / FP8
     num_moe_experts: Optional[int] = None
@@ -144,14 +150,13 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreGPTModel:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 
         Args:
             pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
             post_process: Whether to include post-processing in the model, defaults to last pipeline stage
             vp_stage: Virtual pipeline stage
-            tokenizer: Tokenizer used with the model
 
         Returns:
             MCoreGPTModel: Configured Megatron Core GPT model instance
@@ -191,15 +196,13 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
             else:
                 transformer_layer_spec = transformer_layer_spec(self)
 
-        if self.vocab_size is not None:
-            vocab_size = self.vocab_size
-            if tokenizer is not None:
-                logger.info(
-                    f"Use preset vocab_size: {vocab_size}, original vocab_size: {tokenizer.vocab_size}, dummy tokens:"
-                    f" {vocab_size - tokenizer.vocab_size}."
-                )
+        assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
+        if self.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
         else:
-            vocab_size = get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by)
+            padded_vocab_size = self.vocab_size
 
         # Initialize model as meta data instead of allocating data on a device
         model_init_device_context = contextlib.nullcontext
@@ -215,7 +218,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
             model = MCoreGPTModel(
                 self,
                 transformer_layer_spec=transformer_layer_spec,
-                vocab_size=vocab_size,
+                vocab_size=padded_vocab_size,
                 max_sequence_length=self.seq_length,
                 fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
                 parallel_output=self.parallel_output,
@@ -261,18 +264,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                         )
 
         return model
-
-
-def get_vocab_size(config: TransformerConfig, vocab_size: int, make_vocab_size_divisible_by: int) -> int:
-    """Calculate padded vocab size for tensor parallelism."""
-    after = vocab_size
-    multiple = make_vocab_size_divisible_by * config.tensor_model_parallel_size
-    after = ((after + multiple - 1) // multiple) * multiple
-    logger.info(
-        f"Padded vocab_size from {vocab_size} to {after} for tensor parallel size "
-        f"{config.tensor_model_parallel_size} and make_vocab_size_divisible_by {make_vocab_size_divisible_by}"
-    )
-    return after
 
 
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:

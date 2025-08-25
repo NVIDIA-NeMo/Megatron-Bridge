@@ -21,8 +21,8 @@ from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.gpt_provider import get_vocab_size
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
@@ -89,9 +89,10 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
     )
 
     vocab_size: Optional[int] = None
+    should_pad_vocab: bool = False
     tp_comm_overlap_cfg: Optional[Union[str, dict[str, Any]]] = None
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> MCoreT5Model:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreT5Model:
         """Setup the T5 Model based on config definition."""
 
         assert self.virtual_pipeline_model_parallel_size is None and vp_stage is None, (
@@ -118,22 +119,20 @@ class T5ModelProvider(TransformerConfig, ModelProviderMixin[MCoreT5Model]):
         if not isinstance(transformer_layer_spec, ModuleSpec):
             transformer_layer_spec = transformer_layer_spec(encoder_config=encoder_config, decoder_config=self)
 
-        if self.vocab_size is not None:
-            vocab_size = self.vocab_size
-            if tokenizer is not None:
-                logger.info(
-                    f"Use preset vocab_size: {vocab_size}, original vocab_size: {tokenizer.vocab_size}, dummy tokens:"
-                    f" {vocab_size - tokenizer.vocab_size}."
-                )
+        assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
+        if self.should_pad_vocab:
+            padded_vocab_size = calculate_padded_vocab_size(
+                self.vocab_size, self.make_vocab_size_divisible_by, self.tensor_model_parallel_size
+            )
         else:
-            vocab_size = get_vocab_size(self, tokenizer.vocab_size, self.make_vocab_size_divisible_by)
+            padded_vocab_size = self.vocab_size
 
         model = MCoreT5Model(
             config=self,
             encoder_config=encoder_config,
             transformer_encoder_layer_spec=transformer_layer_spec[0],
             transformer_decoder_layer_spec=transformer_layer_spec[1],
-            vocab_size=vocab_size,
+            vocab_size=padded_vocab_size,
             max_sequence_length=self.max_position_embeddings,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
