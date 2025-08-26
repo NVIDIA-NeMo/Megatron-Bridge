@@ -420,9 +420,6 @@ class PerfEnvPlugin(Plugin):
             assert isinstance(self.nccl_pp_comm_chunksize, int) and self.nccl_pp_comm_chunksize > 1
             executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(self.nccl_pp_comm_chunksize)
 
-        # Make cuda memory dynamically expandable that mitigates GPU memory waste from fragmentation
-        # executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
         # Configure manual garbage collection
         if self.enable_manual_gc:
             if isinstance(task, Script):

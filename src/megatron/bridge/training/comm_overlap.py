@@ -403,7 +403,7 @@ class CommOverlapConfig:
             defer_embedding_wgrad_compute=self.defer_embedding_wgrad_compute,
             wgrad_deferral_limit=self.wgrad_deferral_limit,
         )
-        # self.tp_comm_overlap_cfg = None
+        self.tp_comm_overlap_cfg = None
         self.tp_comm_bootstrap_backend = None
 
     def _get_model_comm_overlap_cfgs(
