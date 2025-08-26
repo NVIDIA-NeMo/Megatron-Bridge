@@ -19,7 +19,10 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
+  tensor_model_parallel_size: 4
+  pipeline_model_parallel_size: 8
   context_parallel_size: 2
+  virtual_pipeline_model_parallel_size: 8
   cross_entropy_fusion_impl: "te"
   enable_cuda_graph: false
   use_te_rng_tracker: false
@@ -28,7 +31,7 @@ rng:
   te_rng_tracker: false
 
 train:
-  global_batch_size: 128
+  global_batch_size: 64
   micro_batch_size: 1
   train_iters: 25
 
@@ -50,6 +53,6 @@ profiling:
   # For optional fields in the config, specify the target to instantiate the object.
   _target_: megatron.bridge.training.config.ProfilingConfig
   use_nsys_profiler: true
-  profile_step_start: 5
-  profile_step_end: 6
+  profile_step_start: 10
+  profile_step_end: 11
   use_pytorch_profiler: false

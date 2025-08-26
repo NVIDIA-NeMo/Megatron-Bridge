@@ -6,6 +6,7 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
+from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed, 
     bf16_with_fp8_mixed, 
@@ -14,8 +15,6 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
 )
 
-import fiddle as fdl
-import fiddle._src.experimental.dataclasses as fdl_dc
 import argparse
 import logging
 
@@ -26,6 +25,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.training.comm_overlap import *
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -40,6 +40,11 @@ def parse_cli_args():
         type=str,
         # default=str(DEFAULT_CONFIG_FILE_PATH),
         help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
+    )
+    parser.add_argument(
+        "--gpu",
+        type=str,
+        help="GPU to use for experiment.",
     )
     parser.add_argument(
         "--compute_dtype",
@@ -93,8 +98,37 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
     
-    return precision_config
 
+comm_overlap_config_map = {
+    "llama3_70b": {
+        "h100": {
+            "bf16": userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192,
+        },
+        "b200": {
+            "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
+        },
+        "gb200": {
+            "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+            "fp8": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+        },
+    },
+    "llama31_405b": {
+        "h100": {
+            "bf16": userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192,
+        },
+        "b200": {
+            "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
+        },
+        "gb200": {
+            "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
+        },
+    }
+}
 
 def main():
     args, cli_overrides = parse_cli_args()
@@ -105,9 +139,16 @@ def main():
         recipe = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "llama3" and args.model_size == "70b":
         recipe = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
+    elif args.model_name == "llama31" and args.model_size == "405b":
+        recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 
+    if (f"{args.model_name}_{args.model_size}" in comm_overlap_config_map and 
+        args.gpu in comm_overlap_config_map[f"{args.model_name}_{args.model_size}"]):
+        ub_cfg = comm_overlap_config_map[f"{args.model_name}_{args.model_size}"][args.gpu][args.compute_dtype]
+        recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
+    
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 

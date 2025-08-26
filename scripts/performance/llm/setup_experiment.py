@@ -44,6 +44,7 @@ if __name__ == "__main__":
     plugins = [
         PerfEnvPlugin(
         enable_vboost = args.enable_vboost,
+        nccl_pp_comm_chunksize = 2097152 if args.model_size in ["70b", "405b"] else None,
         gpu_sm100_or_newer = args.gpu.lower() in ["b200", "gb200"],
         )
     ] if HAS_NEMO_RUN else []
@@ -76,6 +77,8 @@ if __name__ == "__main__":
     target_script_args = [
         "--config_file",
         str(config_file_to_use),
+        "--gpu",
+        args.gpu,
         "--compute_dtype",
         args.compute_dtype,
         "--fp8_recipe",
@@ -92,4 +95,4 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins)
+    run.run(train_script, executor=executor, plugins=plugins, detach=True)
