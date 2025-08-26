@@ -21,7 +21,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.bridge.models.llama import Llama31ModelProvider405B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
     userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
