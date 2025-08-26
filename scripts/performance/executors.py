@@ -81,10 +81,10 @@ def slurm_executor(
         print("\n".join(err_msgs))
         sys.exit(1)
 
-    if gpu.lower() not in ['b200']:
+    # if gpu.lower() not in ['b200']:
         # TODO: we currently disable PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
         # on B200 as it causes an unexpected error. Add back when issue is debugged and fixed.
-        PERF_ENV_VARS["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        # PERF_ENV_VARS["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     PERF_ENV_VARS["NEMORUN_HOME"] = log_dir
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key

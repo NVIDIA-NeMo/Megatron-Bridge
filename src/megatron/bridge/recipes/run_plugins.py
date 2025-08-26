@@ -207,8 +207,8 @@ class NsysPlugin(Plugin):
                 "profiling.use_nsys_profiler=true",
                 f"profiling.profile_step_start={self.profile_step_start}",
                 f"profiling.profile_step_end={self.profile_step_end}",
-                f"profiling.profile_ranks={self.profile_ranks or [0]}",
-                f"profiling.record_shapes={str(self.record_shapes).lower()}",
+                f"+profiling.profile_ranks={self.profile_ranks or [0]}",
+                f"+profiling.record_shapes={str(self.record_shapes).lower()}",
             ]
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
@@ -421,7 +421,7 @@ class PerfEnvPlugin(Plugin):
             executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(self.nccl_pp_comm_chunksize)
 
         # Make cuda memory dynamically expandable that mitigates GPU memory waste from fragmentation
-        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        # executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         # Configure manual garbage collection
         if self.enable_manual_gc:

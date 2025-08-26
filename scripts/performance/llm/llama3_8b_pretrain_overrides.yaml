@@ -52,3 +52,4 @@ profiling:
   use_nsys_profiler: true
   profile_step_start: 5
   profile_step_end: 6
+  use_pytorch_profiler: false

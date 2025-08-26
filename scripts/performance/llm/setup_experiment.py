@@ -48,7 +48,7 @@ if __name__ == "__main__":
         )
     ] if HAS_NEMO_RUN else []
     if HAS_NEMO_RUN and args.enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11, profile_ranks=[0]))
+        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
         f"{config_file_to_use}:{config_file_to_use}",
