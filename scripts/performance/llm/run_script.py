@@ -95,6 +95,7 @@ def parse_cli_args():
 
 
 def get_precision_config(compute_dtype: str, fp8_recipe: str):
+    """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
         if fp8_recipe == "ds":
             return bf16_with_fp8_mixed()
@@ -145,6 +146,7 @@ comm_overlap_config_map = {
 
 
 def main():
+    """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
 
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
