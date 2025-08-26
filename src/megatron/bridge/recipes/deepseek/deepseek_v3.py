@@ -267,7 +267,7 @@ def pretrain_config(
             split=split,
             data_sharding=True,
             dataloader_type="single",
-            num_workers=1,
+            num_workers=8,
         ),
         logger=LoggerConfig(
             log_interval=10,
