@@ -269,14 +269,7 @@ def get_batch(
     if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None, None, None, None
 
-    if isinstance(cfg.dataset, FinetuningDatasetConfig):
-        batch = get_batch_from_iterator(data_iterator, use_mtp)
-    else:
-        # get batches based on the TP rank you are on
-        batch = get_batch_on_this_tp_rank(data_iterator, cfg, use_mtp)
-        batch["cu_seqlens"] = None
-        batch["cu_seqlens_argmin"] = None
-        batch["max_seqlen"] = None
+    batch = get_batch_from_iterator(data_iterator, use_mtp)
 
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)
