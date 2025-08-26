@@ -19,6 +19,7 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
+  seq_length: 8192
   tensor_model_parallel_size: 4
   pipeline_model_parallel_size: 8
   context_parallel_size: 2
@@ -26,6 +27,7 @@ model:
   cross_entropy_fusion_impl: "te"
   enable_cuda_graph: false
   use_te_rng_tracker: false
+  disable_parameter_transpose_cache: true
 
 rng:
   te_rng_tracker: false
