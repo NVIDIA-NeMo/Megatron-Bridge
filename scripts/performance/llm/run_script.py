@@ -163,7 +163,6 @@ def main():
         f"{args.model_name}_{args.model_size}" in comm_overlap_config_map
         and args.gpu in comm_overlap_config_map[f"{args.model_name}_{args.model_size}"]
     ):
-        args.gpu in comm_overlap_config_map[f"{args.model_name}_{args.model_size}"]):
         ub_cfg = comm_overlap_config_map[f"{args.model_name}_{args.model_size}"][args.gpu][args.compute_dtype]
         recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
 
