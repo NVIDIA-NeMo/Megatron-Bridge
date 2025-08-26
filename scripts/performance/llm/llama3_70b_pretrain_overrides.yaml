@@ -34,6 +34,7 @@ train:
   global_batch_size: 128
   micro_batch_size: 1
   train_iters: 25
+  eval_iters: 0
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
