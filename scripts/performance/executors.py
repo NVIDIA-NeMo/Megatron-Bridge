@@ -21,6 +21,7 @@ import nemo_run as run
 from nemo_run.config import get_nemorun_home
 from nemo_run.core.execution.launcher import SlurmTemplate
 
+
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 
@@ -42,6 +43,7 @@ PERF_ENV_VARS = {
     "NVTE_FLASH_ATTN": "1",  # Enable Flash Attention, which is needed to enable cuDNN fused attention
     "NVTE_FUSED_ATTN": "1",  # Enable cuDNN fused attention
 }
+
 
 def slurm_executor(
     gpu: str,

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 import sys
 from os.path import basename, splitext
+from pathlib import Path
 
 from ..argument_parser import parse_cli_args
 from ..executors import slurm_executor

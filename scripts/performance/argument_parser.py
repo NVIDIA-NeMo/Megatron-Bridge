@@ -18,6 +18,7 @@ from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
 
+
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 
@@ -185,6 +186,7 @@ def parse_cli_args():
 
     def list_of_strings(arg):
         return arg.split(",")
+
     parser.add_argument(
         "-cm",
         "--custom_mounts",
