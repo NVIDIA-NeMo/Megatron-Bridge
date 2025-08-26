@@ -19,7 +19,8 @@ from pathlib import Path
 from nemo_run.config import get_nemorun_home
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
-DEFAULT_NEMO_HOME = os.getenv('NEMO_HOME', DEFAULT_NEMO_CACHE_HOME)
+DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
+
 
 def parse_cli_args():
     """
@@ -105,7 +106,7 @@ def parse_cli_args():
         "--finetuning",
         choices=["sft", "lora"],
         help="Finetuning scheme to use. Defaults to 'lora'",
-        default='lora',
+        default="lora",
     )
     parser.add_argument(
         "-hf",
@@ -167,9 +168,9 @@ def parse_cli_args():
     )
 
     def bool_arg(arg):
-        if arg.lower() in ['true', '1', 't', 'yes', 'y']:
+        if arg.lower() in ["true", "1", "t", "yes", "y"]:
             return True
-        elif arg.lower() in ['false', '0', 'f', 'no', 'n']:
+        elif arg.lower() in ["false", "0", "f", "no", "n"]:
             return False
         else:
             raise ValueError(f"Invalid value for boolean argument: {arg}")
@@ -183,7 +184,7 @@ def parse_cli_args():
     )
 
     def list_of_strings(arg):
-        return arg.split(',')
+        return arg.split(",")
     parser.add_argument(
         "-cm",
         "--custom_mounts",

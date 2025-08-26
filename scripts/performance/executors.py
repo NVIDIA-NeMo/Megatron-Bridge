@@ -22,7 +22,7 @@ from nemo_run.config import get_nemorun_home
 from nemo_run.core.execution.launcher import SlurmTemplate
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
-DEFAULT_NEMO_HOME = os.getenv('NEMO_HOME', DEFAULT_NEMO_CACHE_HOME)
+DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 
 # NOTE: If you update this template,
 # PLEASE test it by submitting a job to GPU/node/cluster and verifying the sbatch and bash scripts.
@@ -35,13 +35,13 @@ bash -c '{{ pre_cmds }} {{ command }}'
 """
 
 PERF_ENV_VARS = {
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
-        "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
-        "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
-        "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
-        "NVTE_FLASH_ATTN": "1",  # Enable Flash Attention, which is needed to enable cuDNN fused attention
-        "NVTE_FUSED_ATTN": "1",  # Enable cuDNN fused attention
-    }
+    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
+    "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
+    "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
+    "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
+    "NVTE_FLASH_ATTN": "1",  # Enable Flash Attention, which is needed to enable cuDNN fused attention
+    "NVTE_FUSED_ATTN": "1",  # Enable cuDNN fused attention
+}
 
 def slurm_executor(
     gpu: str,
@@ -71,7 +71,7 @@ def slurm_executor(
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
     srun_args = custom_srun_args.copy() + [
-        "--mpi=pmix", 
+        "--mpi=pmix",
         "--no-container-mount-home",
     ]
 
@@ -85,7 +85,7 @@ def slurm_executor(
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
 
-    if gpu.lower() == 'gb200':
+    if gpu.lower() == "gb200":
         PERF_ENV_VARS["NCCL_NET_GDR_LEVEL"] = "PHB"  # For NCCL 2.25
         PERF_ENV_VARS["NCCL_NET_GDR_C2C"] = "1"  # For NCCL 2.26
 
@@ -106,7 +106,7 @@ def slurm_executor(
                 segment = segment_candidate
                 break
 
-    numa_divisor = 2 if gpu.lower() == 'gb200' else 4
+    numa_divisor = 2 if gpu.lower() == "gb200" else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
 

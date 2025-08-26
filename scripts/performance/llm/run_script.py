@@ -12,36 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
+import logging
 import os
 import sys
-from os.path import basename, splitext
+from omegaconf import OmegaConf
 
-from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
+from megatron.bridge.training.comm_overlap import *
+from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.mixed_precision import (
-    bf16_mixed, 
-    bf16_with_fp8_mixed, 
-    bf16_with_fp8_current_scaling_mixed, 
-    bf16_with_mxfp8_mixed, 
+    bf16_mixed,
+    bf16_with_fp8_current_scaling_mixed,
+    bf16_with_fp8_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
+    bf16_with_mxfp8_mixed,
 )
 
-import argparse
-import logging
-
-from omegaconf import OmegaConf
-
+from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.training.comm_overlap import *
+
 
 logger: logging.Logger = logging.getLogger(__name__)
+
 
 def parse_cli_args():
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
@@ -111,7 +111,7 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
         return bf16_mixed()
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
-    
+
 
 comm_overlap_config_map = {
     "llama3_70b": {
@@ -141,8 +141,9 @@ comm_overlap_config_map = {
             "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
             "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
         },
-    }
+    },
 }
+
 
 def main():
     args, cli_overrides = parse_cli_args()
@@ -158,11 +159,14 @@ def main():
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 
-    if (f"{args.model_name}_{args.model_size}" in comm_overlap_config_map and 
+    if (
+        f"{args.model_name}_{args.model_size}" in comm_overlap_config_map
+        and args.gpu in comm_overlap_config_map[f"{args.model_name}_{args.model_size}"]
+    ):
         args.gpu in comm_overlap_config_map[f"{args.model_name}_{args.model_size}"]):
         ub_cfg = comm_overlap_config_map[f"{args.model_name}_{args.model_size}"][args.gpu][args.compute_dtype]
         recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
-    
+
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
@@ -181,7 +185,7 @@ def main():
         logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
         merged_omega_conf = parse_hydra_overrides(merged_omega_conf, cli_overrides)
         logger.debug("Hydra-style command-line overrides applied successfully.")
-    
+
     # Apply the final merged OmegaConf configuration back to the original ConfigContainer
     logger.debug("Applying final merged configuration back to Python ConfigContainer...")
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
