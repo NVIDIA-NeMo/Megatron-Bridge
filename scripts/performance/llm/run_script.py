@@ -16,9 +16,9 @@ import argparse
 import logging
 import os
 import sys
+
 from omegaconf import OmegaConf
 
-from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
@@ -31,7 +31,6 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
-
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
