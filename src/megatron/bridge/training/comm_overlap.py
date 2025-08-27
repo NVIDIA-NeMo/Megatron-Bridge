@@ -18,6 +18,7 @@ from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.utils import get_te_version, is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
@@ -456,19 +457,29 @@ class CommOverlapConfig:
             comm_overlap_cfg.overlap_p2p_comm = False
             comm_overlap_cfg.batch_p2p_comm = False
 
-        # TODO:MOE expert parallel comm
+        # MOE expert parallel comm overlap
         assert hasattr(model_cfg, "overlap_moe_expert_parallel_comm"), \
             f"model_cfg: {model_cfg} does not have overlap_moe_expert_parallel_comm"
 
         if self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is True:
-            # TODO
-            pass
+            assert model_cfg.expert_model_parallel_size > 1, \
+                f"overlap_moe_expert_parallel_comm is only supported when expert_model_parallel_size > 1"
+            assert model_cfg.num_moe_experts > 1, \
+                f"overlap_moe_expert_parallel_comm is only supported when num_moe_experts > 1, \
+                    but got {model_cfg.num_moe_experts}"
+            assert model_cfg.moe_token_dispatcher_type == "alltoall", \
+                f"overlap_moe_expert_parallel_comm is only supported when moe_token_dispatcher_type == 'alltoall',\
+                      but got {model_cfg.moe_token_dispatcher_type}"
+            assert model_cfg.bf16 or model_cfg.fp16, \
+                f"overlap_moe_expert_parallel_comm is only supported when using bf16 or fp16 models"
 
-        # TE version > 2.7.0 for delay_wgrad_compute
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
             assert HAVE_TE, "TE is required for delay_wgrad_compute"
-            # TODO
-            # assert te_version >= (2, 7, 0), "TE version >= 2.7.0 is required for delay_wgrad_compute"
+            assert is_te_min_version("2.7.0"), f"TE version >= 2.7.0 is required for delay_wgrad_compute, \
+                current TE version: {get_te_version()}"
+            
+            assert model_cfg.overlap_moe_expert_parallel_comm, \
+                "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
 
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
@@ -537,7 +548,8 @@ class CommOverlapConfig:
                     os.environ.pop("CUDA_DEVICE_MAX_CONNECTIONS")
                 logging.info("Unset CUDA_DEVICE_MAX_CONNECTIONS")
         else:
-            if tp_size > 1 or cp_size > 1:
+            # Hopper or earlier generation GPUs
+            if (tp_size > 1 or cp_size > 1) and not model_cfg.overlap_moe_expert_parallel_comm:
                 """
                 Set the device connection to 1 to enforce the kernel queuing
                 order from the host to the execution order on GPU. This is
