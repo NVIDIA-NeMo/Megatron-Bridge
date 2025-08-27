@@ -48,6 +48,14 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
+from megatron.bridge.models.nemotron import (
+    Nemotron3ModelProvider4B,
+    Nemotron3ModelProvider8B,
+    Nemotron3ModelProvider22B,
+    Nemotron4ModelProvider15B,
+    Nemotron4ModelProvider340B,
+    NemotronModelProvider,
+)
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
