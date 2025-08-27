@@ -113,6 +113,56 @@ class TestMegatronMixedPrecisionConfig:
         assert config3.fp8_param is True
         assert config3.fp8_param_gather is True
 
+    def test_mxfp8_param_gather_validation(self):
+        """Test that mxfp8 recipe with fp8_param_gather=True requires reuse_grad_buf_for_mxfp8_param_ag=True."""
+        # Valid configuration: fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=True
+        config_valid = MixedPrecisionConfig(
+            fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=True
+        )
+        # Should not raise any assertion error
+        assert config_valid.fp8_param_gather is True
+        assert config_valid.fp8_recipe == "mxfp8"
+        assert config_valid.reuse_grad_buf_for_mxfp8_param_ag is True
+
+        # Invalid configuration: fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False
+        with pytest.raises(AssertionError, match="When fp8_param_gather=True and fp8_recipe='mxfp8'"):
+            MixedPrecisionConfig(fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False)
+
+        # Valid configuration: fp8_param_gather=False with mxfp8 recipe (assertion doesn't apply)
+        config_param_gather_false = MixedPrecisionConfig(
+            fp8_param_gather=False, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False
+        )
+        assert config_param_gather_false.fp8_param_gather is False
+        assert config_param_gather_false.fp8_recipe == "mxfp8"
+        assert config_param_gather_false.reuse_grad_buf_for_mxfp8_param_ag is False
+
+        # Valid configuration: fp8_param_gather=True with non-mxfp8 recipe (assertion doesn't apply)
+        config_other_recipe = MixedPrecisionConfig(
+            fp8_param_gather=True, fp8_recipe="delayed", reuse_grad_buf_for_mxfp8_param_ag=False
+        )
+        assert config_other_recipe.fp8_param_gather is True
+        assert config_other_recipe.fp8_recipe == "delayed"
+        assert config_other_recipe.reuse_grad_buf_for_mxfp8_param_ag is False
+
+    def test_mxfp8_validation_after_field_modification(self):
+        """Test that the mxfp8 validation works after modifying fields and re-running __post_init__."""
+        # Start with a valid configuration
+        config = MixedPrecisionConfig(
+            fp8_param_gather=True, fp8_recipe="delayed", reuse_grad_buf_for_mxfp8_param_ag=False
+        )
+
+        # Modify to make it invalid (mxfp8 with reuse_grad_buf_for_mxfp8_param_ag=False)
+        config.fp8_recipe = "mxfp8"
+
+        # Re-running __post_init__ should trigger the assertion
+        with pytest.raises(AssertionError, match="When fp8_param_gather=True and fp8_recipe='mxfp8'"):
+            config.__post_init__()
+
+        # Fix the configuration
+        config.reuse_grad_buf_for_mxfp8_param_ag = True
+        # This should not raise any error
+        config.__post_init__()
+
     def test_fp8_param_matching_fp8_param_gather(self):
         """Test that matching values for fp8_param and fp8_param_gather work correctly."""
         # Both True
@@ -511,9 +561,10 @@ class TestMixedPrecisionRecipes:
         # MXFP8 specific settings
         assert config.fp8 == "hybrid"
         assert config.fp8_recipe == "mxfp8"
-        assert config.fp8_param_gather is False
+        assert config.fp8_param_gather is True
+        assert config.reuse_grad_buf_for_mxfp8_param_ag is True
         # Verify fp8_param is initialized from fp8_param_gather
-        assert config.fp8_param is False
+        assert config.fp8_param is True
 
     def test_fp16_with_mxfp8_mixed(self):
         config = fp16_with_mxfp8_mixed()
@@ -525,9 +576,10 @@ class TestMixedPrecisionRecipes:
         # MXFP8 specific settings
         assert config.fp8 == "hybrid"
         assert config.fp8_recipe == "mxfp8"
-        assert config.fp8_param_gather is False
+        assert config.fp8_param_gather is True
+        assert config.reuse_grad_buf_for_mxfp8_param_ag is True
         # Verify fp8_param is initialized from fp8_param_gather
-        assert config.fp8_param is False
+        assert config.fp8_param is True
 
     def test_bf16_with_fp8_current_scaling_mixed(self):
         config = bf16_with_fp8_current_scaling_mixed()

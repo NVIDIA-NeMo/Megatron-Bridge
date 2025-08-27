@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import logging
 import os
 import socket
@@ -23,7 +24,7 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
-from megatron.core.transformer import MegatronModule
+from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -32,6 +33,7 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, L
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import file_exists
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
@@ -147,52 +149,35 @@ def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
 
     if mbridge_ckpt:
         cfg = instantiate(run_config["tokenizer"])
-        tp_size = run_config["model"]["tensor_model_parallel_size"]
-        vocab_size_divisor = run_config["model"]["make_vocab_size_divisible_by"]
     else:
         cfg = _tokenizer_config_from_args(mlm_args)
-        tp_size = getattr(mlm_args, "tensor_model_parallel_size", 1)
-        vocab_size_divisor = getattr(mlm_args, "make_vocab_size_divisible_by", 128)
 
-    return build_tokenizer(cfg, vocab_size_divisor, tp_size)
+    return build_tokenizer(cfg)
 
 
-def load_megatron_model(
+def load_model_config(
     checkpoint_path: str,
-    model_type: Optional[Literal["gpt", "mamba"]] = None,
-    return_state_dict: bool = False,
-    use_cpu_init: bool = True,
-    skip_temp_dist_context: Optional[bool] = None,
-) -> Union[Any, dict[str, torch.Tensor]]:
-    """Load a Megatron model from a distributed checkpoint.
+) -> tuple[TransformerConfig, Optional[argparse.Namespace]]:
+    """Returns the model config saved in the checkpoint.
 
-    Creates a model instance and optionally a minimal distributed environment
-    to load the model weights from `checkpoint_path` into the model.
-    Automatically selects the appropriate distributed backend (Gloo for CPU, NCCL for GPU).
+    Supports checkpoints saved with either Megatron Bridge or MegatronLM.
 
     Args:
         checkpoint_path: path to an MCore distributed checkpoint directory
                           (e.g., /path/to/model/checkpoints/iter_0000001).
-        model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
-            only GPT and Mamba models are supported.
-        return_state_dict: If True, return the state dict instead of model instance. Default: False.
-        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
-                     If False, use GPU initialization and NCCL backend. Default: True.
-        skip_temp_dist_context: If True, skip temporary distributed context setup.
-                               If None, automatically skip if distributed is already initialized.
-                               Default: None.
 
     Returns:
-        The model instance with loaded weights if return_state_dict is False,
-        otherwise returns a dictionary containing the full, unsharded model state_dict.
+        - The model config from the checkpoint. The object returned will be a
+          model provider (e.g. GPTModelProvider) if using a Megatron Bridge
+          checkpoint or a TransformerConfig if using a MegatronLM checkpoint.
+        - If the checkpoint is from MegatronLM, returns the argparse.Namespace
+          object. Otherwise None.
     """
     from megatron.bridge.training.checkpointing import (
-        _load_model_weights_from_checkpoint,
         get_checkpoint_run_config_filename,
         read_run_config,
     )
     from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
-    from megatron.bridge.training.mlm_compat.model import _gpt_provider, _mamba_provider
     from megatron.bridge.utils.instantiate_utils import instantiate
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
@@ -200,6 +185,7 @@ def load_megatron_model(
     if file_exists(run_config_filename):
         run_config = read_run_config(run_config_filename)
         mbridge_ckpt = True
+        mlm_args = None
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
@@ -211,15 +197,72 @@ def load_megatron_model(
         model_cfg = instantiate(run_config["model"])
     else:
         model_cfg = _transformer_config_from_args(mlm_args)
-        assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
+
+    return model_cfg, mlm_args
+
+
+def build_and_load_model(
+    checkpoint_path: str,
+    model_cfg: TransformerConfig,
+    model_type: Optional[Literal["gpt", "mamba"]] = None,
+    megatron_args: Optional[argparse.Namespace] = None,
+    return_state_dict: bool = False,
+    use_cpu_init: bool = False,
+    skip_temp_dist_context: Optional[bool] = None,
+) -> Union[Any, dict[str, torch.Tensor]]:
+    """Load a Megatron model from a distributed checkpoint.
+
+    Creates model instances and optionally a minimal distributed environment
+    to load the model weights from `checkpoint_path` into the model.
+    Automatically selects the appropriate distributed backend (Gloo for CPU, NCCL for GPU).
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory. Used only for
+                    model weights (e.g., /path/to/model/checkpoints/iter_0000001).
+        model_cfg: Model config from load_model_config(). Either a TransformerConfig or
+            a model provider (e.g. GPTModelProvider) depending on source of checkpoint.
+        model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
+            only GPT and Mamba models are supported.
+        megatron_args: If the checkpoint is from MegatronLM, this is required.
+        return_state_dict: If True, return the state dict instead of model instance. Default: False.
+        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
+                     If False, use GPU initialization and NCCL backend. Default: False.
+        skip_temp_dist_context: If True, skip temporary distributed context setup.
+                               If None, automatically skip if distributed is already initialized.
+                               Default: None.
+
+    Returns:
+        The model instance with loaded weights if return_state_dict is False,
+        otherwise returns a dictionary containing the full, unsharded model state_dict.
+    """
+    from megatron.bridge.training.checkpointing import (
+        _load_model_weights_from_checkpoint,
+    )
+    from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
+    from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
-        if mbridge_ckpt:
-            return model_cfg.provide()
+        if isinstance(model_cfg, ModelProviderMixin):
+            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
         else:
+            assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
+            assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
+
+            # Generate the unpadded vocab size based on the tokenizer from the checkpoint
+            cfg = _tokenizer_config_from_args(megatron_args)
+            tokenizer = build_tokenizer(cfg)
+            vocab_size = tokenizer.vocab_size
+
+            # Re-calculate the padded vocab size based on the model config instead of the args from the checkpoint
+            # to accommodate TP overrides
+            megatron_args.padded_vocab_size = calculate_padded_vocab_size(
+                vocab_size,
+                megatron_args.make_vocab_size_divisible_by,
+                model_cfg.tensor_model_parallel_size,
+            )
             provider = _gpt_provider if model_type == "gpt" else _mamba_provider
-            return provider(mlm_args, model_cfg)
+            return _get_model(megatron_args, provider, model_cfg)
 
     # Auto-detect if we should skip temp dist context
     if skip_temp_dist_context is None:
@@ -238,7 +281,7 @@ def load_megatron_model(
             model = _call_model_provider(model_cfg)
 
         maybe_state_dict = _load_model_weights_from_checkpoint(
-            checkpoint_path, [model], return_state_dict=return_state_dict
+            checkpoint_path, model, return_state_dict=return_state_dict
         )
 
         if return_state_dict:
@@ -254,6 +297,40 @@ def load_megatron_model(
         backend = "gloo" if use_cpu_init else "nccl"
         with temporary_distributed_context(backend=backend):
             return _load_checkpoint()
+
+
+def load_megatron_model(
+    checkpoint_path: str,
+    model_type: Optional[Literal["gpt", "mamba"]] = None,
+    return_state_dict: bool = False,
+    use_cpu_init: bool = False,
+    skip_temp_dist_context: Optional[bool] = None,
+) -> Union[Any, dict[str, torch.Tensor]]:
+    """Load a Megatron model from a distributed checkpoint.
+
+    Wrapper around load_model_config() and build_and_load_model() for convenience.
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory
+                          (e.g., /path/to/model/checkpoints/iter_0000001).
+        model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
+            only GPT and Mamba models are supported.
+        return_state_dict: If True, return the state dict instead of model instance. Default: False.
+        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
+                     If False, use GPU initialization and NCCL backend. Default: False.
+        skip_temp_dist_context: If True, skip temporary distributed context setup.
+                               If None, automatically skip if distributed is already initialized.
+                               Default: None.
+
+    Returns:
+        The model instance with loaded weights if return_state_dict is False,
+        otherwise returns a dictionary containing the full, unsharded model state_dict.
+    """
+
+    model_cfg, mlm_args = load_model_config(checkpoint_path)
+    return build_and_load_model(
+        checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
+    )
 
 
 def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckpt_format: str = "torch_dist") -> None:

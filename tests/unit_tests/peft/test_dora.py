@@ -695,7 +695,7 @@ class TestDoRAMegatronIntegration:
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
-            vocab_size=100,
+            vocab_size=128,
             ffn_hidden_size=128,
         )
 

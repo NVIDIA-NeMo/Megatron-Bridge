@@ -447,3 +447,82 @@ class TestMegatronCommOverlapConfig:
         assert isinstance(model_cfg.tp_comm_overlap_cfg, dict)
         assert "qkv_dgrad" in model_cfg.tp_comm_overlap_cfg
         assert "proj_fprop" in model_cfg.tp_comm_overlap_cfg
+
+        # Check that None values were filtered out (TE expectation)
+        for key, value in model_cfg.tp_comm_overlap_cfg.items():
+            assert value is not None, f"Found None value for key '{key}' - should have been filtered out"
+
+    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
+    def test_tp_overlap_with_no_config_provided(self):
+        """Test that TP overlap handles the case when no tp_comm_overlap_cfg is provided."""
+        # Create CommOverlapConfig with tp_comm_overlap=True but no tp_comm_overlap_cfg
+        comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=1,
+            sequence_parallel=True,
+            num_attention_heads=16,
+        )
+
+        optimizer_cfg = OptimizerConfig()
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
+            with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
+                comm_cfg.setup(model_cfg, optimizer_cfg, ddp_cfg)
+
+                # Check that warning was logged for missing tp_comm_overlap_cfg
+                mock_warning.assert_called_with(
+                    "Tensor parallel overlap: No overlap config provided. "
+                    "Initializing TP comm overlap with the default config."
+                )
+
+        # Check that model config was updated correctly
+        assert model_cfg.tp_comm_overlap is True
+        assert model_cfg.tp_comm_overlap_cfg is None
+        assert model_cfg.tp_comm_bootstrap_backend is None
+
+    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
+    def test_tp_overlap_config_filters_none_values(self):
+        """Test that None values are filtered from tp_comm_overlap_cfg dict."""
+        from dataclasses import dataclass
+
+        # Create a mock config with some None values
+        @dataclass
+        class MockTPOverlapCfg:
+            qkv_dgrad: str = "qkv_dgrad"
+            proj_fprop: str = "proj_fprop"
+            none_field1: str = None
+            valid_field: str = "valid"
+            none_field2: int = None
+
+        mock_tp_cfg = MockTPOverlapCfg()
+        comm_cfg = CommOverlapConfig(tp_comm_overlap=True, tp_comm_overlap_cfg=mock_tp_cfg, data_parallel_size=1)
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=1,
+            sequence_parallel=True,
+            num_attention_heads=16,
+        )
+
+        optimizer_cfg = OptimizerConfig()
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with patch("torch.cuda.get_device_capability", return_value=(9, 0)):
+            comm_cfg.setup(model_cfg, optimizer_cfg, ddp_cfg)
+
+        # Check that config was converted to dict and None values filtered
+        assert isinstance(model_cfg.tp_comm_overlap_cfg, dict)
+        expected_keys = {"qkv_dgrad", "proj_fprop", "valid_field"}
+        filtered_keys = {"none_field1", "none_field2"}
+
+        # Check that valid keys are present
+        for key in expected_keys:
+            assert key in model_cfg.tp_comm_overlap_cfg
+            assert model_cfg.tp_comm_overlap_cfg[key] is not None
+
+        # Check that None value keys are filtered out
+        for key in filtered_keys:
+            assert key not in model_cfg.tp_comm_overlap_cfg

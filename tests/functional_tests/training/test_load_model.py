@@ -41,7 +41,7 @@ class TestModelLoad:
             "/home/TestData/megatron_bridge/checkpoints/llama3_145m-mlm_saved-distckpt",
         ],
     )
-    def test_load_from_mbridge_saved(self, ckpt_path: str):
+    def test_model_load_and_forward(self, ckpt_path: str):
         """Load model and tokenizer, run a forward pass, and check outputted token id."""
 
         init_distributed()
@@ -49,6 +49,7 @@ class TestModelLoad:
         try:
             tokenizer = load_tokenizer(ckpt_path)
             model = load_megatron_model(ckpt_path, model_type="gpt", use_cpu_init=False)
+            model = model[0]
 
             # This test expects tokenizer to be a SentencePiece tokenizer
             token_ids = tokenizer.tokenize("NVIDIA NeMo is an end-to-end platform for")

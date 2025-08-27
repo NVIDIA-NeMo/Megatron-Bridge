@@ -211,11 +211,11 @@ class TestLoadMegatronModel:
         mock_run_config.return_value = mock_run_cfg_dict
 
         mock_model = Mock()
-        mock_model_cfg = Mock()
+        mock_model_cfg = Mock(spec=ModelProviderMixin)
         mock_model_cfg.params_dtype = torch.float32
         mock_model_cfg.bf16 = True
         mock_model_cfg.fp16 = False
-        mock_model_cfg.provide.return_value = mock_model
+        mock_model_cfg.provide_distributed_model.return_value = [mock_model]
         mock_model_cfg.use_cpu_initialization = False
 
         mock_instantiate.return_value = mock_model_cfg
@@ -233,30 +233,36 @@ class TestLoadMegatronModel:
         mock_run_config.assert_called_once()
         mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
         mock_cpu_context.assert_called_once()
-        mock_model_cfg.provide.assert_called_once()
+        mock_model_cfg.provide_distributed_model.assert_called_once()
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
-        assert result == mock_model
+        assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
     @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.mlm_compat.model._mamba_provider")
     @patch("megatron.bridge.training.mlm_compat.model._gpt_provider")
+    @patch("megatron.bridge.training.mlm_compat.model._get_model")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.mlm_compat.arguments._transformer_config_from_args")
     @patch("megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.training.mlm_compat.arguments._tokenizer_config_from_args")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
     def test_load_mlm_saved_model(
         self,
         mock_dist,
         mock_cpu_context,
+        mock_tokenizer_config_from_args,
+        mock_build_tokenizer,
         mock_load_args,
         mock_transformer_cfg,
         mock_load_weights,
+        mock_get_model,
         mock_gpt_provider,
         mock_mamba_provider,
         mock_temp_dist,
@@ -268,7 +274,18 @@ class TestLoadMegatronModel:
 
         ckpt_path = "/path/to/mock/dist_checkpoint"
         mock_args = Mock()
+        mock_args.vocab_size = 32000  # Add vocab_size for padded vocab calculation
+        mock_args.make_vocab_size_divisible_by = 128  # Add for padded vocab calculation
+        mock_args.tensor_model_parallel_size = 1  # Add for padded vocab calculation
         mock_load_args.return_value = mock_args
+
+        # Setup tokenizer mocks for MLM compat path
+        mock_tokenizer_cfg = Mock()
+        mock_tokenizer_config_from_args.return_value = mock_tokenizer_cfg
+
+        mock_tokenizer = Mock()
+        mock_tokenizer.vocab_size = 32000  # Unpadded vocab size for calculate_padded_vocab_size
+        mock_build_tokenizer.return_value = mock_tokenizer
 
         mock_model = Mock()
         mock_model_cfg = Mock()
@@ -276,13 +293,14 @@ class TestLoadMegatronModel:
         mock_model_cfg.bf16 = True
         mock_model_cfg.fp16 = False
         mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.make_vocab_size_divisible_by = 128  # Add for padded vocab calculation
+        mock_model_cfg.tensor_model_parallel_size = 1  # Add for padded vocab calculation
         mock_provider = None
         if model_type == "gpt":
             mock_provider = mock_gpt_provider
-            mock_provider.return_value = mock_model
         elif model_type == "mamba":
             mock_provider = mock_mamba_provider
-            mock_provider.return_value = mock_model
+        mock_get_model.return_value = [mock_model]
 
         mock_transformer_cfg.return_value = mock_model_cfg
         expected_result = {"layer.weight": torch.randn(2, 2)}
@@ -295,13 +313,17 @@ class TestLoadMegatronModel:
             assert result == expected_result
             mock_load_args.assert_called_once_with(ckpt_path)
             mock_transformer_cfg.assert_called_once_with(mock_args)
+            mock_tokenizer_config_from_args.assert_called_once_with(mock_args)
+            mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
+            # Verify padded vocab size was calculated and set
+            assert mock_args.padded_vocab_size == 32000  # 32000 is already divisible by 128, so no padding
             mock_cpu_context.assert_called_once()
-            mock_provider.assert_called_once_with(mock_args, mock_model_cfg)
+            mock_get_model.assert_called_once_with(mock_args, mock_provider, mock_model_cfg)
             mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
             assert mock_model_cfg.params_dtype == torch.bfloat16
 
             result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=False, use_cpu_init=True)
-            assert result == mock_model
+            assert result == [mock_model]
             mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
         else:
             with pytest.raises(AssertionError, match=f"model type {model_type} not supported."):
@@ -334,11 +356,11 @@ class TestLoadMegatronModel:
         mock_run_config.return_value = mock_run_cfg_dict
 
         mock_model = Mock()
-        mock_model_cfg = Mock()
+        mock_model_cfg = Mock(spec=ModelProviderMixin)
         mock_model_cfg.params_dtype = torch.bfloat16
         mock_model_cfg.bf16 = True
         mock_model_cfg.fp16 = False
-        mock_model_cfg.provide.return_value = mock_model
+        mock_model_cfg.provide_distributed_model.return_value = mock_model
         mock_model_cfg.use_cpu_initialization = False
 
         mock_instantiate.return_value = mock_model_cfg
@@ -511,7 +533,7 @@ class TestLoadTokenizer:
         assert result == mock_tokenizer
         mock_read_cfg.assert_called_once()
         mock_instantiate.assert_called_once_with({})
-        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg, 128, 1)
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
 
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.mlm_compat.arguments._tokenizer_config_from_args")
@@ -537,4 +559,4 @@ class TestLoadTokenizer:
         assert result == mock_tokenizer
         mock_load_args.assert_called_once_with(ckpt_path)
         mock_cfg_from_args.assert_called_once_with(mock_args)
-        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg, 256, 2)
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)

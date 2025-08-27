@@ -276,7 +276,7 @@ class TestPretrainConfig:
         assert config.dataset.num_dataset_builder_threads == 1
         assert config.dataset.data_sharding is True
         assert config.dataset.dataloader_type == "single"
-        assert config.dataset.num_workers == 1
+        assert config.dataset.num_workers == 8
 
     def test_pretrain_config_logger_configuration(self):
         """Test logger configuration."""

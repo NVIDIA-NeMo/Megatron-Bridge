@@ -190,7 +190,7 @@ def pretrain_config(
             # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
-            num_workers=1,
+            num_workers=8,
         ),
         logger=LoggerConfig(
             log_interval=10,

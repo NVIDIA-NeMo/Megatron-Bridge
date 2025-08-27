@@ -17,10 +17,6 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
-from megatron.bridge.training.config import (
-    FaultToleranceConfig,
-    ProfilingConfig,
-)
 from megatron.bridge.utils.import_utils import MISSING_NEMO_RUN_MSG
 
 
@@ -145,6 +141,8 @@ class FaultTolerancePlugin(Plugin):
             # For run.Partial, modify the task config directly
             # Configure fault tolerance in task config
             if not hasattr(task.config, "ft") or task.config.ft is None:
+                from megatron.bridge.training.config import FaultToleranceConfig
+
                 task.config.ft = FaultToleranceConfig()
 
             task.config.ft.enable_ft_package = self.enable_ft_package
@@ -217,6 +215,8 @@ class NsysPlugin(Plugin):
         elif isinstance(task, Partial):
             # For run.Partial, modify the task config directly
             if not hasattr(task.config, "profiling") or task.config.profiling is None:
+                from megatron.bridge.training.config import ProfilingConfig
+
                 task.config.profiling = ProfilingConfig()
 
             task.config.profiling.use_nsys_profiler = True
@@ -273,6 +273,8 @@ class PyTorchProfilerPlugin(Plugin):
             # For run.Partial, modify the task config directly
             # Configure profiling in task config
             if not hasattr(task.config, "profiling") or task.config.profiling is None:
+                from megatron.bridge.training.config import ProfilingConfig
+
                 task.config.profiling = ProfilingConfig()
 
             task.config.profiling.use_pytorch_profiler = True

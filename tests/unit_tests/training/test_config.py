@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Any, Optional, Union
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -804,6 +805,73 @@ class TestConfigContainerValidation:
                     container.validate()
             else:
                 container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        "gpu_major, moe_enable_deepep, expect_error",
+        [
+            (8, True, False),  # Ampere GPU with DeepEP enabled - should pass
+            (9, True, False),  # Hopper GPU with DeepEP enabled - should pass
+            (7, True, True),  # Volta GPU with DeepEP enabled - should raise ValueError
+            (6, True, True),  # Pascal GPU with DeepEP enabled - should raise ValueError
+            (10, True, True),  # Future unsupported GPU with DeepEP enabled - should raise ValueError
+            (7, False, False),  # Volta GPU with DeepEP disabled - should pass
+            (6, False, False),  # Pascal GPU with DeepEP disabled - should pass
+        ],
+    )
+    @patch("torch.cuda.get_device_properties")
+    def test_deepep_validation(
+        self, mock_get_device_properties, monkeypatch, gpu_major, moe_enable_deepep, expect_error
+    ):
+        """Test DeepEP validation during config container validation."""
+        # Mock GPU device properties
+        mock_properties = MagicMock()
+        mock_properties.major = gpu_major
+        mock_get_device_properties.return_value = mock_properties
+
+        # Create a GPT model config with MoE settings
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            moe_token_dispatcher_type="flex" if moe_enable_deepep else "alltoall",
+            moe_enable_deepep=moe_enable_deepep,
+            moe_shared_expert_overlap=not moe_enable_deepep,  # DeepEP requires this to be False
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            if expect_error:
+                with pytest.raises(ValueError, match="DeepEP is supported for Ampere"):
+                    container.validate()
+            else:
+                container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("torch.cuda.get_device_properties")
+    def test_deepep_validation_disabled_skips_hardware_check(self, mock_get_device_properties, monkeypatch):
+        """Test that DeepEP validation is skipped when DeepEP is disabled, even on unsupported hardware."""
+        # Mock unsupported GPU (should not be called since DeepEP is disabled)
+        mock_properties = MagicMock()
+        mock_properties.major = 7  # Volta
+        mock_get_device_properties.return_value = mock_properties
+
+        # Create a GPT model config with DeepEP disabled
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            moe_enable_deepep=False,  # DeepEP disabled
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            # Should pass without error and without calling get_device_properties
+            container.validate()
+            # Verify get_device_properties was not called since DeepEP is disabled
+            mock_get_device_properties.assert_not_called()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
