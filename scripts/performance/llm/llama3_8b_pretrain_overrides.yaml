@@ -46,4 +46,11 @@ mixed_precision:
   grad_reduce_in_fp32: false
 
 profiling:
+  # For optional fields in the config, specify the target to instantiate the object.
+  _target_: megatron.bridge.training.config.ProfilingConfig
+  use_nsys_profiler: true
+  profile_step_start: 5
+  profile_step_end: 6
+  profile_ranks: [0]
+  record_shapes: false
   use_pytorch_profiler: false
