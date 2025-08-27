@@ -29,11 +29,11 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from argument_parser import parse_cli_args
-from utils.helpers import get_precision_config, COMM_OVERLAP_CONFIG_MAP
+from .argument_parser import parse_cli_args
+from .utils.helpers import get_precision_config, COMM_OVERLAP_CONFIG_MAP
+
 
 logger: logging.Logger = logging.getLogger(__name__)
-
 
 def main():
     """Main function to run the pretraining/finetuning script."""

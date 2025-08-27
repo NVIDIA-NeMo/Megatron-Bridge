@@ -16,8 +16,8 @@ import sys
 from os.path import basename, splitext
 from pathlib import Path
 
-from argument_parser import parse_cli_args
-from utils.executors import slurm_executor
+from .argument_parser import parse_cli_args
+from .utils.executors import slurm_executor
 
 
 try:
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
-        f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
+        f"{SCRIPT_DIR}:{SCRIPT_DIR}",
     ]
     logger.info(f"Custom mounts: {custom_mounts}")
 
@@ -99,7 +99,7 @@ if __name__ == "__main__":
 
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),
-        entrypoint="python",
+        entrypoint="python -m",
         args=target_script_args,
     )
 
