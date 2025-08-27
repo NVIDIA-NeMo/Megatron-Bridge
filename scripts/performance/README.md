@@ -42,7 +42,9 @@ The following line shows an example of how you can launch a pre-training experim
 
 - For creating a virtual env on login node on a Slurm cluster, comment the following lines in `pyproject.toml` present in parent directory of this repo-
 
-`"megatron-core[dev,mlm]>=0.14.0a0,<0.16.0",`
+```
+"megatron-core[dev,mlm]>=0.14.0a0,<0.16.0",
+```
 
 ```
 no-build-isolation-package = [
@@ -58,6 +60,7 @@ no-build-isolation-package = [
 - From the parent directory of this repo, run the following 3 commands-
 
 ```
+git checkout malay/perf_scripts
 python -m venv bridge_venv
 source bridge_venv/bin/activate
 pip install .
