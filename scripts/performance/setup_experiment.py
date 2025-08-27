@@ -16,8 +16,8 @@ import sys
 from os.path import basename, splitext
 from pathlib import Path
 
-from ..argument_parser import parse_cli_args
-from ..executors import slurm_executor
+from argument_parser import parse_cli_args
+from utils.executors import slurm_executor
 
 
 try:
@@ -36,22 +36,22 @@ import logging
 logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
-    args = parse_cli_args().parse_args()
+    args, _ = parse_cli_args()
     exp_name = f"{splitext(basename(__file__))[0]}_{args.compute_dtype}"
 
     SCRIPT_DIR: Path = Path(__file__).parent.resolve()
     RUN_SCRIPT_FILENAME: str = "run_script.py"
     RUN_SCRIPT_PATH: Path = SCRIPT_DIR / RUN_SCRIPT_FILENAME
-    print(f"Run script path: {RUN_SCRIPT_PATH}")
+    logger.info(f"Run script path: {RUN_SCRIPT_PATH}")
     if not RUN_SCRIPT_PATH.is_file():
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
-
-    config_file_to_use = SCRIPT_DIR / f"{args.model_name}_{args.model_size}_pretrain_overrides.yaml"
-    print(f"Config file path: {config_file_to_use}")
-    if not config_file_to_use.is_file():
-        logger.error(f"Specified YAML config file not found: {config_file_to_use}")
+    config_filename = f"{args.model_name}_{args.model_size}_{args.task}_overrides.yaml"
+    config_filepath = SCRIPT_DIR / "llm" / "configs" / config_filename
+    logger.info(f"Config file path: {config_filepath}")
+    if not config_filepath.is_file():
+        logger.error(f"Specified YAML config file not found: {config_filepath}")
         logger.error("Ensure the path passed to --config_file is correct.")
         sys.exit(1)
 
@@ -70,10 +70,10 @@ if __name__ == "__main__":
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
-        f"{config_file_to_use}:{config_file_to_use}",
+        f"{config_filepath}:{config_filepath}",
         f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
     ]
-    print(f"Custom mounts: {custom_mounts}")
+    logger.info(f"Custom mounts: {custom_mounts}")
 
     num_nodes = -(args.num_gpus // -args.gpus_per_node)
     executor = slurm_executor(
@@ -94,17 +94,7 @@ if __name__ == "__main__":
 
     target_script_args = [
         "--config_file",
-        str(config_file_to_use),
-        "--gpu",
-        args.gpu,
-        "--compute_dtype",
-        args.compute_dtype,
-        "--fp8_recipe",
-        args.fp8_recipe,
-        "--model_name",
-        args.model_name,
-        "--model_size",
-        args.model_size,
+        str(config_filepath),
     ]
 
     train_script = run.Script(
@@ -113,4 +103,4 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins, detach=True)
+    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True)

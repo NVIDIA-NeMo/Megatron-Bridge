@@ -28,7 +28,10 @@ def parse_cli_args():
     Command line arguments correspong to Slurm cluster and NeMo2.0 for running pre-training and
     fine-tuning experiments.
     """
-    parser = argparse.ArgumentParser(description="NeMo2.0 Performance Pretraining and Fine-Tuning")
+    parser = argparse.ArgumentParser(
+        description="NeMo2.0 Performance Pretraining and Fine-Tuning",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
 
     parser.add_argument(
         "-a",
@@ -103,11 +106,10 @@ def parse_cli_args():
         default="ds",
     )
     parser.add_argument(
-        "-f",
-        "--finetuning",
-        choices=["sft", "lora"],
-        help="Finetuning scheme to use. Defaults to 'lora'",
-        default="lora",
+        "--task",
+        choices=["pretrain", "sft", "lora"],
+        help="Task to run. Defaults to 'pretrain'",
+        default="pretrain",
     )
     parser.add_argument(
         "-hf",
@@ -159,14 +161,6 @@ def parse_cli_args():
         required=False,
         default=8,
     )
-    parser.add_argument(
-        "-ms",
-        "--max_steps",
-        type=int,
-        help="Number of train steps. Defaults to 100",
-        required=False,
-        default=100,
-    )
 
     def bool_arg(arg):
         if arg.lower() in ["true", "1", "t", "yes", "y"]:
@@ -175,14 +169,6 @@ def parse_cli_args():
             return False
         else:
             raise ValueError(f"Invalid value for boolean argument: {arg}")
-
-    parser.add_argument(
-        "--nccl_communicator_config_path",
-        type=str,
-        help="Path to NCCL communicator config yaml file",
-        required=False,
-        default=None,
-    )
 
     def list_of_strings(arg):
         return arg.split(",")
@@ -226,4 +212,5 @@ def parse_cli_args():
         action="store_true",
     )
 
-    return parser
+    args, cli_dotlist_overrides = parser.parse_known_args()
+    return args, cli_dotlist_overrides
