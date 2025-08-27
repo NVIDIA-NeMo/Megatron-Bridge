@@ -364,6 +364,9 @@ class _CommOverlapConfig:
     # Pipeline bubble overlap
     defer_embedding_wgrad_compute: bool = None
     wgrad_deferral_limit: int = None
+    # MOE expert parallel comm
+    overlap_moe_expert_parallel_comm: bool = None
+    delay_wgrad_compute: bool = None
 
 
 @dataclass(kw_only=True)
@@ -387,6 +390,8 @@ class CommOverlapConfig:
     defer_embedding_wgrad_compute: Optional[bool] = None
     wgrad_deferral_limit: Optional[int] = None
     data_parallel_size: Optional[int] = None
+    overlap_moe_expert_parallel_comm: Optional[bool] = None
+    delay_wgrad_compute: Optional[bool] = None
 
     def __post_init__(self):
         self.user_comm_overlap_cfg = _CommOverlapConfig(
@@ -402,6 +407,8 @@ class CommOverlapConfig:
             bucket_size=self.bucket_size,
             defer_embedding_wgrad_compute=self.defer_embedding_wgrad_compute,
             wgrad_deferral_limit=self.wgrad_deferral_limit,
+            overlap_moe_expert_parallel_comm=self.overlap_moe_expert_parallel_comm,
+            delay_wgrad_compute=self.delay_wgrad_compute,
         )
         self.tp_comm_overlap_cfg = None
         self.tp_comm_bootstrap_backend = None
@@ -422,6 +429,8 @@ class CommOverlapConfig:
         comm_overlap_cfg.tp_comm_bootstrap_backend = None
         comm_overlap_cfg.defer_embedding_wgrad_compute = False
         comm_overlap_cfg.wgrad_deferral_limit = -1
+        comm_overlap_cfg.overlap_moe_expert_parallel_comm = False
+        comm_overlap_cfg.delay_wgrad_compute = False
 
         # Check if TP overlap can be safely enabled
         if self.user_comm_overlap_cfg.tp_comm_overlap is True:
@@ -446,6 +455,20 @@ class CommOverlapConfig:
         else:
             comm_overlap_cfg.overlap_p2p_comm = False
             comm_overlap_cfg.batch_p2p_comm = False
+
+        # TODO:MOE expert parallel comm
+        assert hasattr(model_cfg, "overlap_moe_expert_parallel_comm"), \
+            f"model_cfg: {model_cfg} does not have overlap_moe_expert_parallel_comm"
+
+        if self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is True:
+            # TODO
+            pass
+
+        # TE version > 2.7.0 for delay_wgrad_compute
+        if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
+            assert HAVE_TE, "TE is required for delay_wgrad_compute"
+            # TODO
+            # assert te_version >= (2, 7, 0), "TE version >= 2.7.0 is required for delay_wgrad_compute"
 
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
