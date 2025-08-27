@@ -2,9 +2,8 @@
 
 import os
 import socket
-from dataclasses import dataclass
 from datetime import timedelta
-from typing import Callable, Literal, Optional
+from typing import Callable, Optional
 
 
 try:
@@ -16,72 +15,19 @@ import warnings
 
 import torch
 
+from megatron.bridge.training.config import InProcessRestartConfig
 from megatron.bridge.training.initialize import destroy_global_state
+from megatron.bridge.training.state import GlobalState
 
 
-@dataclass
-class InProcessRestartConfig:
-    """Configuration settings for NVIDIA Resiliency Extension in-process restart functionality."""
-
-    enabled: bool = False
-    """Enable in-process restart mechanism from nvidia-resiliency-ext."""
-
-    max_iterations: Optional[int] = None
-    """Maximum number of in-process restart iterations."""
-
-    monitor_thread_interval: float = 1.0
-    """Monitoring interval (in seconds) for the monitoring thread."""
-
-    monitor_process_interval: float = 1.0
-    """Monitoring interval (in seconds) for the monitoring process."""
-
-    progress_watchdog_interval: float = 1.0
-    """Interval (in seconds) for automatic progress watchdog timestamp updates."""
-
-    heartbeat_interval: float = 30.0
-    """Monitoring interval (in seconds) for detecting unresponsive ranks."""
-
-    soft_timeout: float = 60.0
-    """Soft progress timeout (in seconds)."""
-
-    hard_timeout: float = 90.0
-    """Hard progress timeout (in seconds)."""
-
-    heartbeat_timeout: float = 60.0
-    """Timeout (in seconds) for a missing rank detection heartbeat."""
-
-    barrier_timeout: float = 120.0
-    """Timeout (in seconds) for internal distributed barrier."""
-
-    completion_timeout: float = 120.0
-    """Timeout (in seconds) for barrier on completion on all ranks."""
-
-    last_call_wait: float = 1.0
-    """Time interval (in seconds) for other ranks to report concurrent terminal failures."""
-
-    termination_grace_time: float = 1.0
-    """Interval (in seconds) between SIGTERM and SIGKILL issued on hard timeout."""
-
-    granularity: Literal["node", "rank"] = "node"
-    """Granularity for in-process restart."""
-
-    active_world_size: Optional[int] = None
-    """The number of ranks initially executing the workload.
-    The remaining ranks from the allocation are set aside as warm reserve.
-    If None, defaults to WORLD_SIZE environment variable."""
-
-    empty_cuda_cache: bool = True
-    """Empty CUDA cache during restart finalization."""
-
-
-def inprocess_restart(train_fn, config: InProcessRestartConfig, *, state=None) -> Callable:
+def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, state: GlobalState) -> Callable:
     """
     Wraps the train_fn with in-process restart functionality.
 
     Args:
         train_fn: The training function to wrap.
         config: Configuration settings for in-process restart.
-        state: Optional state object for the training function.
+        state: State object for the training function.
 
     Returns:
         The wrapped training function.
@@ -184,7 +130,7 @@ def inprocess_restart(train_fn, config: InProcessRestartConfig, *, state=None) -
 
 
 def maybe_wrap_for_inprocess_restart(
-    train_fn, config: InProcessRestartConfig, state=None
+    train_fn: Callable, config: InProcessRestartConfig, state: GlobalState
 ) -> tuple[Callable, Optional[torch.distributed.Store]]:
     """Conditionally wrap function for in-process restart."""
 
@@ -192,7 +138,7 @@ def maybe_wrap_for_inprocess_restart(
         return train_fn, None
 
     # Apply inprocess restart wrapper
-    wrapped_train_fn = inprocess_restart(train_fn, config, state=state)
+    wrapped_train_fn = inprocess_restart(train_fn, config, state)
 
     # Create the TCPStore
     store = torch.distributed.TCPStore(
