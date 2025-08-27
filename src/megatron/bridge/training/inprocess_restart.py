@@ -20,14 +20,14 @@ from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.state import GlobalState
 
 
-def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, state: GlobalState) -> Callable:
+def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global_state: GlobalState) -> Callable:
     """
     Wraps the train_fn with in-process restart functionality.
 
     Args:
         train_fn: The training function to wrap.
         config: Configuration settings for in-process restart.
-        state: State object for the training function.
+        global_state: State object for the training function.
 
     Returns:
         The wrapped training function.
@@ -76,20 +76,22 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, state:
         def __call__(self, frozen_state: inprocess.state.FrozenState) -> inprocess.state.FrozenState:
             # Abort persistent async worker processes if present
             try:
-                if state is not None and getattr(state, "async_calls_queue", None) is not None:
-                    queue = state.async_calls_queue
-                    if queue is not None:
-                        queue.close(abort=True)
-                # Attempt to shutdown filesystem async results queue manager if present
-                try:
-                    from megatron.core.dist_checkpointing.strategies.filesystem_async import _results_queue
+                if global_state is not None and global_state.async_calls_queue is not None:
+                    async_calls_queue = global_state.async_calls_queue
+                    async_calls_queue.close(abort=True)
+                    global_state._async_calls_queue = None
 
-                    if _results_queue is not None:
-                        _results_queue._manager.shutdown()
-                except Exception:
-                    pass
+                from megatron.core.dist_checkpointing.strategies.filesystem_async import _results_queue
+
+                global _results_queue
+
+                if _results_queue is not None:
+                    _results_queue._manager.shutdown()
+                    del _results_queue
+
             except Exception:
                 pass
+
             return frozen_state
 
     abort = inprocess.Compose(
