@@ -1470,9 +1470,7 @@ def init_async_checkpoint_worker(global_state: GlobalState) -> None:
         and checkpoint_config.async_save
         and checkpoint_config.use_persistent_ckpt_worker
     ):
-        # Access the async_calls_queue property to trigger lazy initialization
-        # This creates the persistent worker immediately during setup
-        _ = global_state.async_calls_queue
+        global_state.initialize_async_checkpoint_worker()
         print_rank_0("Initialized persistent async checkpoint worker")
 
 
