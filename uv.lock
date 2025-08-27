@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'linux'",
@@ -1984,7 +1984,7 @@ test = [
     { name = "click" },
     { name = "coverage", specifier = ">=7.8.1" },
     { name = "flake8", specifier = ">=7.2.0" },
-    { name = "multi-storage-client" },
+    { name = "multi-storage-client", specifier = ">=0.28.0" },
     { name = "pygithub" },
     { name = "pylint", specifier = ">=3.3.7" },
     { name = "pytest", specifier = ">=8.3.5" },
@@ -2158,7 +2158,7 @@ wheels = [
 
 [[package]]
 name = "multi-storage-client"
-version = "0.25.0"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -2166,18 +2166,30 @@ dependencies = [
     { name = "jsonschema" },
     { name = "lark" },
     { name = "opentelemetry-api" },
+    { name = "prettytable" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
-    { name = "tabulate" },
     { name = "tqdm" },
     { name = "wcmatch" },
     { name = "xattr" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/91/d748ad8faebc79018b5334fcc019426eaa0ce1ab250fc013d87d3f14ce79/multi_storage_client-0.25.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:aefdfeac5558caf00d585688309f344ba637f711709648b8e8e9b99a5d643226", size = 4670834, upload-time = "2025-07-10T23:35:49.784Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/47/858af2b7a879bb01d0f0173c888dab6adeba5a9e42182e6505cd86a69f22/multi_storage_client-0.25.0-cp39-abi3-macosx_11_0_x86_64.whl", hash = "sha256:6fb38fa6c6c8ea98c291117ee5c59056d40fe88b5a3fc70c64bd2c1feafe0851", size = 4772658, upload-time = "2025-07-10T23:36:37.412Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/eb/f129e2eabcabd5e3b185692c1b0f93c2bbe3fb18107b4bd129a80baea8db/multi_storage_client-0.25.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e77b75dd13a57a0dc2fa1d8ccc4c712522216fa6fd0879eb9c107dfd2f7e56fa", size = 2665745, upload-time = "2025-07-10T23:36:14.168Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/8b/c24bd9aea4492bbab7b8f361bf0b4fc8666e903d77ace8224f6705bc3cf1/multi_storage_client-0.25.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:234f4f14033a87af6b29d57a41b193ba371f3dd759730b5b54c37752b30ee094", size = 2812708, upload-time = "2025-07-10T23:35:26.208Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/7b/5c70df13a9e595b57f8d94b0033703af70f134cc3b29f0165c2571ab6f6d/multi_storage_client-0.28.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:0ee1807248d47946592b871491f7bc03cba6048d8556cb026f9373ee8c2cb9ad", size = 5100961, upload-time = "2025-08-28T23:02:00.989Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/08/2a09579eb28f374aee3c4cb75051b66019c2bc3fd3d0a7fb8c1bf48fd23a/multi_storage_client-0.28.0-cp310-cp310-macosx_11_0_x86_64.whl", hash = "sha256:715c39ab7ff3b96a7ba17fa73968d447afde4a0b86350234c8345b971555ef58", size = 5215495, upload-time = "2025-08-28T22:58:38.167Z" },
+    { url = "https://files.pythonhosted.org/packages/13/5a/72df892701e9d420fe153e77ec664bcd2a05779f3b36c1d1cf0c22351bee/multi_storage_client-0.28.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:dcf2628266752a8b7c14d2e221af522c2b5790997a01c9b9d84624403387285c", size = 3012021, upload-time = "2025-08-28T22:57:50.243Z" },
+    { url = "https://files.pythonhosted.org/packages/20/6b/bc2df302195d28350a444b2c27dd3321191281b3034f2ba0982b954ffd49/multi_storage_client-0.28.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:86681ada615c7f881c311a19ba5fb4c94922c353a6a5a3a1955ebfee6196a81b", size = 3181922, upload-time = "2025-08-28T22:55:49.975Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/65/a1f920b8fe5e2437cf7e68d49c359a293789ea82e95a781652c167b982b0/multi_storage_client-0.28.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:77fc0bdd3cd5256b37bcff340a9369dc4c8c05de9dacdb69cf37b6e449824319", size = 5101431, upload-time = "2025-08-28T23:01:07.349Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/df/a9cf92f95e95c0ab9e13f05ee76c73865f9ec705295f1272ff7fe76827f3/multi_storage_client-0.28.0-cp311-cp311-macosx_11_0_x86_64.whl", hash = "sha256:05a4ec25c41ec482579f87eda7ea0c4ea3489725950266f899caf0a921d9192d", size = 5217145, upload-time = "2025-08-28T23:00:43.825Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/02/e66e38a8ca8ec8668eb181781dc34e4a9b3c2d789aee13eb240260b7c778/multi_storage_client-0.28.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3461228b080490d0fcd1f930b5ec5865e73d600bc9cb16a8e356fd96a730de54", size = 3013720, upload-time = "2025-08-28T23:03:16.902Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/77/7b29b9d0befbfd287212c184717fc11d92e21dc177db5184031c3ead210b/multi_storage_client-0.28.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5d5ef13944d561ca964334204f34b8187ffe001c5fcd8f791e85ac50dc52bacf", size = 3182950, upload-time = "2025-08-28T22:56:17.179Z" },
+    { url = "https://files.pythonhosted.org/packages/85/9f/75e3ac2bc47716326ef232aae61aff480a3437fde8d07450894a92828766/multi_storage_client-0.28.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:3723876fb6eb418110b7a100d3481e115539507c3300a91c875f26b6d5d194d1", size = 5096543, upload-time = "2025-08-28T22:59:01.578Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/bd/944fc769ec2a4372f0fa006ecd38064c283addc7d317438872979157732e/multi_storage_client-0.28.0-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:fc09015bcb29e18f61b74480b062a5882c76f0ed9cf39ba3794230a195de0346", size = 5207831, upload-time = "2025-08-28T23:00:13.781Z" },
+    { url = "https://files.pythonhosted.org/packages/62/28/b2a46e39cf246fe004d8e1bb7163c7fa8482f4bed8c701429daf9097511c/multi_storage_client-0.28.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:85ed9e2eb66be4a1de0b6c795a8f630656a1d71c4a8a91766cb86441a8ce9991", size = 3012712, upload-time = "2025-08-28T23:02:53.315Z" },
+    { url = "https://files.pythonhosted.org/packages/af/b0/bd4136f5c6fd9eb7f7a797206608155611c851dc28741d477c580871689e/multi_storage_client-0.28.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:343bd541ef5c1bbe68822a230876bbe9ecbcccacefcbc9dc567aff597c97fa4e", size = 3177604, upload-time = "2025-08-28T22:55:26.377Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/36/5c90762f2498ee64e5f68ccb6e281eb376f9a177678a757cac5f84705103/multi_storage_client-0.28.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f770e7074e7582c5d61f8d2b381191d89b9169a8d3365424cda7c8918f52f0a2", size = 5095056, upload-time = "2025-08-28T22:58:14.466Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/5f/ddba7aabef64f833424589349c53ab9eafc1db37d756b2a11627c25e8359/multi_storage_client-0.28.0-cp313-cp313-macosx_11_0_x86_64.whl", hash = "sha256:db73c1e83f6afe93a13fd0f7b33110d3d61d06bc6e03514278db6b7a2dfdaa43", size = 5206890, upload-time = "2025-08-28T22:59:48.768Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/02/c4c500afc3d28babe4d8bd970f6daf6b98f1a92f1898fe6b29c1403f7eca/multi_storage_client-0.28.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c5a2dd9604f2a6c319fd9900692d245a8be20efb7b1f7e2c43e5aae4282b1da6", size = 3011404, upload-time = "2025-08-28T22:57:26.833Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/f4/5788eb238a4c0de40424097660217e77893137ba6202af6aad810efd874d/multi_storage_client-0.28.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9b57de5ba21475c3002e8a717c62d41a88323b4675c2848b620e49cce048592c", size = 3176232, upload-time = "2025-08-28T22:57:03.859Z" },
 ]
 
 [[package]]
@@ -3109,6 +3121,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ff/29/7cf5bbc236333876e4b41f56e06857a87937ce4bf91e117a6991a2dbb02a/pre_commit-4.3.0.tar.gz", hash = "sha256:499fe450cc9d42e9d58e606262795ecb64dd05438943c62b66f6a8673da30b16", size = 193792, upload-time = "2025-08-09T18:56:14.651Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5b/a5/987a405322d78a73b66e39e4a90e4ef156fd7141bf71df987e50717c321b/pre_commit-4.3.0-py2.py3-none-any.whl", hash = "sha256:2b0747ad7e6e967169136edffee14c16e148a778a54e4f967921aa1ebf2308d8", size = 220965, upload-time = "2025-08-09T18:56:13.192Z" },
+]
+
+[[package]]
+name = "prettytable"
+version = "3.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/99/b1/85e18ac92afd08c533603e3393977b6bc1443043115a47bb094f3b98f94f/prettytable-3.16.0.tar.gz", hash = "sha256:3c64b31719d961bf69c9a7e03d0c1e477320906a98da63952bc6698d6164ff57", size = 66276, upload-time = "2025-03-24T19:39:04.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/c7/5613524e606ea1688b3bdbf48aa64bafb6d0a4ac3750274c43b6158a390f/prettytable-3.16.0-py3-none-any.whl", hash = "sha256:b5eccfabb82222f5aa46b798ff02a8452cf530a352c31bddfa29be41242863aa", size = 33863, upload-time = "2025-03-24T19:39:02.359Z" },
 ]
 
 [[package]]

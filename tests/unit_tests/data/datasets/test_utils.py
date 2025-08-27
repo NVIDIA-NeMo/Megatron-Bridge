@@ -13,19 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import tempfile
+
 import numpy as np
 import pytest
 import torch
+from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.utils import (
     _add_speaker_and_signal,
+    _build_memmap_index_files,
     _deallocate_indexed_dataset_memory,
     _get_header_conversation_type_mask_role,
     _identify_start_index_of_subsequence,
     _index_file_exists,
+    _index_fn,
+    _JSONLMemMapDataset,
     _make_indexed_dataset_compatibility,
     _OnlineSampleMapping,
     _response_value_formater,
+    build_index_from_memdata,
     handle_index,
 )
 
@@ -196,3 +204,107 @@ class TestDataUtils:
             index = None
 
         assert expected == index
+
+    def test_index_fn(self):
+        MultiStorageClientFeature.enable()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Test case 1: Simple filename with index_mapping_dir
+            index_fn = _index_fn("test", "test")
+            assert index_fn == "test/test.idx"
+
+            # Test case 2: Simple filename without index_mapping_dir (None)
+            index_fn = _index_fn("test", None)
+            assert index_fn == "test.idx"
+
+            # Test case 3: Relative path with index_mapping_dir
+            index_fn = _index_fn("relative/path/to/data.jsonl", "mapping_dir")
+            assert index_fn == "mapping_dir/relative/path/to/data.jsonl.idx"
+
+            # Test case 4: Absolute path with index_mapping_dir (should strip leading /)
+            index_fn = _index_fn("/absolute/path/to/data.jsonl", "mapping_dir")
+            assert index_fn == "mapping_dir/absolute/path/to/data.jsonl.idx"
+
+            # Test case 5: Path with leading .. (should strip)
+            index_fn = _index_fn("../../path/to/data.jsonl", "mapping_dir")
+            assert index_fn == "mapping_dir/path/to/data.jsonl.idx"
+
+            # Test case 6: File with MSC URL (should strip leading /)
+            index_fn = _index_fn("data.jsonl", f"msc://default{temp_dir}/index_mapping_dir")
+            assert index_fn == f"msc://default{temp_dir}/index_mapping_dir/data.jsonl.idx"
+
+    def test_jsonl_memmap_dataset(self):
+        jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with open(f"{temp_dir}/training.jsonl", "w") as f:
+                for i in range(10):
+                    f.write(jsonl_example)
+
+            ds = _JSONLMemMapDataset(
+                dataset_paths=[f"{temp_dir}/training.jsonl"],
+            )
+
+            assert len(ds) > 0
+            assert ds[0] is not None
+            assert os.path.exists(f"{temp_dir}/training.jsonl.idx.npy")
+            assert os.path.exists(f"{temp_dir}/training.jsonl.idx.info")
+
+    def test_jsonl_memmap_dataset_with_msc_url(self):
+        jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            MultiStorageClientFeature.enable()
+            msc = MultiStorageClientFeature.import_package()
+
+            with open(f"{temp_dir}/test.jsonl", "w") as f:
+                for i in range(10):
+                    f.write(jsonl_example)
+
+            ds = _JSONLMemMapDataset(
+                dataset_paths=[f"msc://default{temp_dir}/test.jsonl"],
+            )
+
+            assert len(ds) > 0
+            assert ds[0] is not None
+            assert msc.Path(f"{temp_dir}/test.jsonl.idx.npy").exists()
+            assert msc.Path(f"{temp_dir}/test.jsonl.idx.info").exists()
+
+    def test_build_memmap_index_files(self):
+        jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with open(f"{temp_dir}/training.jsonl", "w") as f:
+                for i in range(10):
+                    f.write(jsonl_example)
+
+            assert _build_memmap_index_files(
+                10,
+                build_index_from_memdata,
+                f"{temp_dir}/training.jsonl",
+                None,
+            )
+
+            assert os.path.exists(f"{temp_dir}/training.jsonl.idx.npy")
+            assert os.path.exists(f"{temp_dir}/training.jsonl.idx.info")
+
+    def test_build_memmap_index_files_with_msc_url(self):
+        jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            MultiStorageClientFeature.enable()
+            msc = MultiStorageClientFeature.import_package()
+
+            with open(f"{temp_dir}/training.jsonl", "w") as f:
+                for i in range(10):
+                    f.write(jsonl_example)
+
+            assert _build_memmap_index_files(
+                10,
+                build_index_from_memdata,
+                f"msc://default{temp_dir}/training.jsonl",
+                None,
+            )
+
+            assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.npy")
+            assert msc.Path(f"msc://default{temp_dir}/training.jsonl.idx.info")
