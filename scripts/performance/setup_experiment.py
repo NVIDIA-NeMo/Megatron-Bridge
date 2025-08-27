@@ -71,6 +71,7 @@ if __name__ == "__main__":
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
+        f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
         f"{SCRIPT_DIR}:{SCRIPT_DIR}",
     ]
     logger.info(f"Custom mounts: {custom_mounts}")
@@ -96,10 +97,18 @@ if __name__ == "__main__":
         "--config_file",
         str(config_filepath),
     ]
+    # Forward relevant args that run_script.py needs
+    args_to_forward = ['model_name', 'model_size', 'compute_dtype', 'fp8_recipe', 'gpu']
+    for arg_name in args_to_forward:
+        if hasattr(args, arg_name):
+            arg_value = getattr(args, arg_name)
+            if arg_value is not None:
+                target_script_args.extend([f"--{arg_name}", str(arg_value)])
+    target_script_args.extend(["-a", "dummy", "-p", "dummy"])
 
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),
-        entrypoint="python -m",
+        entrypoint="python",
         args=target_script_args,
     )
 

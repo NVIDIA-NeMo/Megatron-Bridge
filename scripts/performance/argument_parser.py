@@ -211,6 +211,13 @@ def parse_cli_args():
         help="Enable Nsys profiling. Diabled by default",
         action="store_true",
     )
+    parser.add_argument(
+        "--config_file",
+        type=str,
+        help="Path to the config yaml file to use for the experiment.",
+        required=False,
+        default=None,
+    )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides

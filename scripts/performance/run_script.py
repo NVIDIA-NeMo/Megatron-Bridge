@@ -15,13 +15,13 @@
 import logging
 import os
 import sys
-from torch.distributed import get_rank
 
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -29,8 +29,8 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from .argument_parser import parse_cli_args
-from .utils.helpers import get_precision_config, COMM_OVERLAP_CONFIG_MAP
+from argument_parser import parse_cli_args
+from utils.helpers import get_precision_config, COMM_OVERLAP_CONFIG_MAP
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -47,6 +47,16 @@ def main():
         recipe = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "llama31" and args.model_size == "405b":
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
+    elif args.model_name == "deepseek" and args.model_size == "v3":
+        recipe = deepseek_v3_pretrain_config(
+            mock=True,
+            precision_config=precision_config,
+            # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
+            pipeline_parallelism=4,
+            virtual_pipeline_parallelism=1,
+        )
+        from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+        recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 
@@ -83,12 +93,11 @@ def main():
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
     # Display final configuration
 
-    if get_rank() == 0:
-        logger.info("--- Final Merged Configuration ---")
-        recipe.to_yaml()
-        logger.info("----------------------------------")
-        # Start training
-        logger.info("Starting pretraining...")
+    logger.info("--- Final Merged Configuration ---")
+    recipe.to_yaml()
+    logger.info("----------------------------------")
+    # Start training
+    logger.info("Starting pretraining...")
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
