@@ -25,6 +25,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.deepseek import (
+    DeepSeekV2LiteProvider,
+    DeepSeekV2Provider,
+    DeepSeekV3Provider,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
     CodeLlamaModelProvider7B,
@@ -130,4 +135,7 @@ __all__ = [
     "Qwen3MoEModelProvider",
     "Qwen3MoEModelProvider30B_A3B",
     "Qwen3MoEModelProvider235B_A22B",
+    "DeepSeekV2LiteProvider",
+    "DeepSeekV2Provider",
+    "DeepSeekV3Provider",
 ]

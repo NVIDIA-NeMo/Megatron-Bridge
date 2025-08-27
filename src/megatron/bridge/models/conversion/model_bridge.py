@@ -297,21 +297,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
-            for local_param_name, _ in model.named_parameters():
+            for local_param_name in model.state_dict().keys():
+                if "_extra_state" in local_param_name:
+                    continue
                 local_param_name = self._unwrap_name(local_param_name)
                 global_param_name = _megatron_local_name_to_global(
                     models_list, model_config, local_param_name, vp_stage
                 )
                 global_param_names.append(global_param_name)
-
-            # Process state_dict for expert_bias parameters for this specific model and vp_stage
-            for local_param_name in model.state_dict().keys():
-                if "_extra_state" not in local_param_name and "expert_bias" in local_param_name:
-                    local_param_name = self._unwrap_name(local_param_name)
-                    global_param_name = _megatron_local_name_to_global(
-                        models_list, model_config, local_param_name, vp_stage
-                    )
-                    global_param_names.append(global_param_name)
 
         gathered_global_param_names = [None] * pp_group.size()
         torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
@@ -791,7 +784,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
-            for local_name, _ in model.named_parameters():
+            for local_name in model.state_dict().keys():
                 if "_extra_state" in local_name:
                     continue
 
@@ -799,6 +792,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
                 # if name removed due to some reason, continue. e.g. embeddings_are_tied
                 if global_name not in global_names_index_dict:
+                    print(f"WARNING: {global_name} not in global_names_index_dict")
                     continue
                 global_name_idx = global_names_index_dict[global_name]
                 mapping = mapping_registry.megatron_to_hf_lookup(global_name)
@@ -849,7 +843,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
     @classmethod
     def register_bridge(
-        cls, *, source: Type[PreTrainedModel], target: Type[MegatronModel]
+        cls, *, source: Type[PreTrainedModel] | str, target: Type[MegatronModel]
     ) -> Callable[[_BridgeImplClass], _BridgeImplClass]:
         """Class decorator for registering bridge implementations.
 
@@ -858,8 +852,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         HuggingFace model type and target Megatron model type.
 
         Args:
-            source (Type[PreTrainedModel]): HuggingFace PreTrainedModel class
-                (e.g., LlamaForCausalLM).
+            source (Type[PreTrainedModel] | str): HuggingFace PreTrainedModel class
+                (e.g., LlamaForCausalLM) or the class name as a string. Using a
+                string allows registering bridges for architectures that are only
+                available via auto_map.
             target (Type[MegatronModel]): Megatron model class (e.g., GPTModel).
 
         Returns:
@@ -878,6 +874,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     def mapping_registry(self):
                         # Implementation
                         pass
+
+            String-based registration is also supported:
+
+            .. code-block:: python
+
+                @MegatronModelBridge.register_bridge(source="DeepseekV3ForCausalLM", target=GPTModel)
+                class MegatronDeepseekV3Bridge(MegatronModelBridge):
+                    ...
 
         Note:
             The decorated class is registered with multiple dispatchers to handle
@@ -915,14 +919,16 @@ def stream_weights_megatron_to_hf(
 
 def register_bridge_implementation(
     *,
-    source: Type["PreTrainedModel"],
+    source: Type["PreTrainedModel"] | str,
     target: Type["MegatronModule"],
     bridge_class: Type["MegatronModelBridge"],
 ) -> None:
     """Register a bridge implementation with the dispatch system.
 
     Args:
-        source: HuggingFace PreTrainedModel class (e.g., LlamaForCausalLM)
+        source: HuggingFace PreTrainedModel class or the class name as a string.
+            Using a string allows registering bridges for architectures that are
+            available only via auto_map.
         target: Megatron model class (e.g., GPTModel)
         bridge_class: MegatronModelBridge implementation class
     """
@@ -953,12 +959,13 @@ def register_bridge_implementation(
 
 
 def create_bridge_decorator(
-    *, source: Type["PreTrainedModel"], target: Type["MegatronModule"]
+    *, source: Type["PreTrainedModel"] | str, target: Type["MegatronModule"]
 ) -> Callable[[Type["MegatronModelBridge"]], Type["MegatronModelBridge"]]:
     """Create a decorator for registering bridge implementations.
 
     Args:
-        source: HuggingFace PreTrainedModel class
+        source: HuggingFace PreTrainedModel class or the class name as a string
+            (useful for auto_map architectures)
         target: Megatron model class
 
     Returns:

@@ -21,6 +21,8 @@ from typing import List, Optional, Tuple
 import torch
 from megatron.core.transformer.module import MegatronModule
 from rich.table import Table
+from transformers import AutoConfig
+from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.utils.common_utils import unwrap_model
 
@@ -244,3 +246,41 @@ def extract_sort_key(param_name: str):
         numbers.append(-1)
     numbers = numbers[:2]  # Keep at most 2 numbers
     return numbers, param_name
+
+
+def get_causal_lm_class_via_auto_map(
+    model_name_or_path: str,
+) -> type | None:
+    """Return CausalLM class via config.auto_map if available; otherwise None.
+
+    Loads the config with AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
+    and, if auto_map["AutoModelForCausalLM"] is present, returns the dynamically loaded class.
+    Returns None when auto_map is absent or loading fails. Does not download weights.
+    """
+    config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
+
+    auto_map = getattr(config, "auto_map", None)
+    if auto_map and "AutoModelForCausalLM" in auto_map:
+        auto_map_class = auto_map["AutoModelForCausalLM"]
+        repo_id = model_name_or_path or getattr(config, "_name_or_path", None)
+        if not repo_id:
+            return None
+        try:
+            from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+            return get_class_from_dynamic_module(
+                class_reference=auto_map_class,
+                pretrained_model_name_or_path=repo_id,
+                cache_dir=None,
+                force_download=False,
+                resume_download=True,
+                proxies=None,
+                use_auth_token=None,
+                revision=None,
+                local_files_only=False,
+                repo_id=repo_id,
+            )
+        except Exception:
+            return None
+
+    return None
