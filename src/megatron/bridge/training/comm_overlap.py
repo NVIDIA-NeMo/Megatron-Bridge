@@ -477,6 +477,10 @@ class CommOverlapConfig:
             assert model_cfg.bf16 or model_cfg.fp16, (
                 "overlap_moe_expert_parallel_comm is only supported when using bf16 or fp16 models"
             )
+            assert model_cfg.pipeline_model_parallel_size == 1 or model_cfg.virtual_pipeline_model_parallel_size > 1, (
+                "overlap_moe_expert_parallel_comm is only supported when pipeline_model_parallel_size == 1 or \
+                    virtual_pipeline_model_parallel_size > 1"
+            )
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
             assert HAVE_TE, "TE is required for delay_wgrad_compute"
