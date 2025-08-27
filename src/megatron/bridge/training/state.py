@@ -261,16 +261,14 @@ class GlobalState:
             self._straggler_timer = StragglerDetector()
         return self._straggler_timer
 
+    def initialize_async_checkpoint_worker(self) -> None:
+        """Initializes the async checkpoint worker."""
+        if self._async_calls_queue is None and self.cfg and self.cfg.checkpoint.async_save:
+            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+
     @property
     def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
-        """The AsyncCallsQueue instance for handling asynchronous checkpoint saves.
-
-        Creates a persistent AsyncCallsQueue when async_save is enabled in the checkpoint config.
-        Returns None if async_save is disabled.
-        """
-        if self._async_calls_queue is None and self.cfg and self.cfg.checkpoint.async_save:
-            # Create persistent queue by default when async_save is enabled
-            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+        """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
     @property

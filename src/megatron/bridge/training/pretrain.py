@@ -12,13 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from typing import Callable, Optional
+
+import torch.distributed as dist
+
+
+try:
+    from nvidia_resiliency_ext.inprocess import CallWrapper
+except ImportError:
+    CallWrapper = type(None)
 
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.setup import setup
+from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -30,7 +40,7 @@ def pretrain(
     config: ConfigContainer,
     forward_step_func: Callable,
 ) -> None:
-    """Main function to run the pretraining pipeline.
+    """Main function to run the training pipeline.
 
     Sets up the environment, model, optimizer, scheduler, and data iterators.
     Performs training, validation, and optionally testing based on the provided
@@ -45,8 +55,49 @@ def pretrain(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    dataset_provider = get_dataset_provider(config.dataset)
-    setup_output = setup(config, dataset_provider)
+    # Apply runtime config updates prior to creating/attaching GlobalState
+    runtime_config_update(config)
+
+    # Create a single GlobalState instance regardless of restart path
+    state = GlobalState()
+    state.cfg = config
+
+    if config.inprocess_restart and config.inprocess_restart.enabled:
+        # Apply in-process restart wrapper directly to _pretrain
+        from megatron.bridge.training.inprocess_restart import maybe_wrap_for_inprocess_restart
+
+        # Wrap _pretrain directly and get the store; state is captured for abort
+        wrapped_pretrain, store = maybe_wrap_for_inprocess_restart(_pretrain, config.inprocess_restart, state)
+
+        # Execute the wrapped function - nvidia-resiliency-ext will inject inprocess_call_wrapper
+        wrapped_pretrain(state, forward_step_func, store=store)
+    else:
+        # Normal execution without in-process restart
+        _pretrain(state, forward_step_func)
+
+
+def _pretrain(
+    state: GlobalState,
+    forward_step_func: Callable,
+    store: Optional[dist.Store] = None,
+    inprocess_call_wrapper: Optional[CallWrapper] = None,
+) -> None:
+    """Internal function containing the actual pretrain logic.
+
+    Args:
+        state: Global training state containing the validated configuration and runtime objects
+        forward_step_func: Function that performs a single forward/backward step
+        store: Optional distributed Store used by in-process restart for coordination
+        inprocess_call_wrapper: Optional wrapper injected by nvrx to expose restart iteration
+    """
+    # Handle in-process restart store prefix
+    if inprocess_call_wrapper is not None:
+        iteration = inprocess_call_wrapper.iteration
+        store = dist.PrefixStore(str(iteration), store)
+
+    cfg = state.cfg
+    dataset_provider = get_dataset_provider(cfg.dataset)
+    setup_output = setup(state, dataset_provider, restart_store=store)
     state = setup_output.state
     model = setup_output.model
     optimizer = setup_output.optimizer
@@ -57,9 +108,9 @@ def pretrain(
     ckpt_context = setup_output.checkpointing_context
 
     # TRAINING
-    if not config.train.skip_train:
+    if not cfg.train.skip_train:
         print_rank_0("Training ...")
-        if state.train_state.do_train and config.train.train_iters > 0:
+        if state.train_state.do_train and cfg.train.train_iters > 0:
             train(
                 forward_step_func,
                 model,
@@ -72,7 +123,7 @@ def pretrain(
             )
 
         barrier_and_log("after training is done")
-        ckpt_config = config.checkpoint
+        ckpt_config = cfg.checkpoint
         if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
             save_checkpoint(
                 state,
@@ -98,9 +149,9 @@ def pretrain(
             forward_step_func,
             valid_data_iterator,
             model,
-            config.model,
+            cfg.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not cfg.train.skip_train,
         )
     if state.train_state.do_test:
         prefix = f"iteration {iteration} on test set"
@@ -110,9 +161,30 @@ def pretrain(
             forward_step_func,
             test_data_iterator,
             model,
-            config.model,
+            cfg.model,
             verbose=True,
-            write_to_tensorboard=not config.train.skip_train,
+            write_to_tensorboard=not cfg.train.skip_train,
         )
 
     _finish_train(state)
+
+
+def runtime_config_update(cfg: ConfigContainer) -> None:
+    """Apply runtime configuration updates prior to initialization.
+
+    - Validate configuration
+    - Resolve mixed precision configuration
+    - Apply communication overlap configuration
+    """
+    # Validate
+    cfg.validate()
+
+    # Mixed precision
+    if cfg.mixed_precision is not None:
+        if isinstance(cfg.mixed_precision, str):
+            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    # Communication overlap
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
