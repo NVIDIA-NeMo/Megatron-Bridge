@@ -286,7 +286,9 @@ def get_batch(
     )
 
 
-def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False) -> tuple[torch.Tensor, partial]:
+def forward_step(
+    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
+) -> tuple[torch.Tensor, partial]:
     """Forward training step.
 
     Args:
@@ -329,8 +331,9 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel, r
 
     with straggler_timer:
         if return_schedule_plan:
-            assert config.overlap_moe_expert_parallel_comm, \
+            assert config.overlap_moe_expert_parallel_comm, (
                 "overlap_moe_expert_parallel_comm must be enabled to return the schedule plan"
+            )
             schedule_plan = model.build_schedule_plan(
                 tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
             )

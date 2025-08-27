@@ -572,7 +572,7 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
     """
     if not num_fw_args:
         num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    if num_fw_args == 4: # megatron bridge gpt_step.py forward_step has 4 args
+    if num_fw_args == 4:  # megatron bridge gpt_step.py forward_step has 4 args
         # inject global_state
         return partial(forward_step_func, state)
     else:
