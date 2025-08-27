@@ -207,8 +207,8 @@ class NsysPlugin(Plugin):
                 "profiling.use_nsys_profiler=true",
                 f"profiling.profile_step_start={self.profile_step_start}",
                 f"profiling.profile_step_end={self.profile_step_end}",
-                f"+profiling.profile_ranks={self.profile_ranks or [0]}",
-                f"+profiling.record_shapes={str(self.record_shapes).lower()}",
+                f"profiling.profile_ranks={self.profile_ranks or [0]}",
+                f"profiling.record_shapes={str(self.record_shapes).lower()}",
             ]
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
