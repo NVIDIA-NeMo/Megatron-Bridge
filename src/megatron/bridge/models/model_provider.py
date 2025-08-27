@@ -114,6 +114,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         ]
         | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
+        wrap_cast_model_output_to_fp32: bool = True,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -138,6 +139,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 If a list is provided, hooks will be executed in order.
             post_wrap_hook: A single callable to modify the model after it's wrapped. If provided,
                 this will override all hooks registered via `register_post_wrap_hook`.
+            wrap_cast_model_output_to_fp32: Defer casting modules to fp16.
 
         Returns:
             A list containing the wrapped model instance.
@@ -183,6 +185,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             use_cpu_initialization=use_cpu_initialization,
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
+            wrap_cast_model_output_to_fp32=wrap_cast_model_output_to_fp32,
         )
 
         if final_post_wrap_hook:
@@ -400,6 +403,7 @@ class GetModelKwargs(TypedDict, total=False):
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
+        wrap_cast_model_output_to_fp32: Defer casting modules to fp16.
     """
 
     ddp_config: DistributedDataParallelConfig | None
@@ -420,6 +424,7 @@ class GetModelKwargs(TypedDict, total=False):
         | None
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
+    wrap_cast_model_output_to_fp32: bool
 
 
 def get_model(
@@ -439,6 +444,7 @@ def get_model(
         list[Callable[[list[MegatronModule]], list[MegatronModule]]],
     ]
     | None = None,
+    wrap_cast_model_output_to_fp32: bool = True,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -468,6 +474,7 @@ def get_model(
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
             hooks will be executed in order.
+        wrap_cast_model_output_to_fp32: Defer casting modules to fp16.
 
     Returns:
         list[MegatronModule]: List of model modules. Contains multiple modules
@@ -519,7 +526,7 @@ def get_model(
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 
-    if model_config.fp16 or model_config.bf16:
+    if (model_config.fp16 or model_config.bf16) and wrap_cast_model_output_to_fp32:
         model = [Float16Module(model_config, model_module) for model_module in model]
 
     if correct_amax_history_if_needed is not None:
