@@ -95,8 +95,8 @@ def _pretrain(
         iteration = inprocess_call_wrapper.iteration
         store = dist.PrefixStore(str(iteration), store)
 
-    cfg = state.cfg
-    dataset_provider = get_dataset_provider(cfg.dataset)
+    config = state.cfg
+    dataset_provider = get_dataset_provider(config.dataset)
     setup_output = setup(state, dataset_provider, restart_store=store)
     state = setup_output.state
     model = setup_output.model
@@ -108,9 +108,9 @@ def _pretrain(
     ckpt_context = setup_output.checkpointing_context
 
     # TRAINING
-    if not cfg.train.skip_train:
+    if not config.train.skip_train:
         print_rank_0("Training ...")
-        if state.train_state.do_train and cfg.train.train_iters > 0:
+        if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
                 model,
@@ -123,7 +123,7 @@ def _pretrain(
             )
 
         barrier_and_log("after training is done")
-        ckpt_config = cfg.checkpoint
+        ckpt_config = config.checkpoint
         if ckpt_config.save and state.train_state.step != 0 and ckpt_config.save_interval != 0:
             save_checkpoint(
                 state,
@@ -149,9 +149,9 @@ def _pretrain(
             forward_step_func,
             valid_data_iterator,
             model,
-            cfg.model,
+            config.model,
             verbose=True,
-            write_to_tensorboard=not cfg.train.skip_train,
+            write_to_tensorboard=not config.train.skip_train,
         )
     if state.train_state.do_test:
         prefix = f"iteration {iteration} on test set"
@@ -161,9 +161,9 @@ def _pretrain(
             forward_step_func,
             test_data_iterator,
             model,
-            cfg.model,
+            config.model,
             verbose=True,
-            write_to_tensorboard=not cfg.train.skip_train,
+            write_to_tensorboard=not config.train.skip_train,
         )
 
     _finish_train(state)

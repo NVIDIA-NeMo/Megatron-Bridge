@@ -35,7 +35,6 @@ from megatron.bridge.training.checkpointing import (
     checkpoint_exists,
     init_checkpointing_context,
     load_checkpoint,
-    init_async_checkpoint_worker,
 )
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -109,7 +108,7 @@ def setup(
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
 
     # Initialize async checkpoint worker if enabled (idempotent if already initialized)
-    init_async_checkpoint_worker(state)
+    state.initialize_async_checkpoint_worker()
 
     setup_logging(
         logging_level=cfg.logger.logging_level,

@@ -263,7 +263,12 @@ class GlobalState:
 
     def initialize_async_checkpoint_worker(self) -> None:
         """Initializes the async checkpoint worker."""
-        if self._async_calls_queue is None and self.cfg and self.cfg.checkpoint.async_save:
+        if (
+            self._async_calls_queue is None
+            and self.cfg
+            and self.cfg.checkpoint.save is not None
+            and self.cfg.checkpoint.async_save
+        ):
             self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
     @property

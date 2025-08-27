@@ -368,7 +368,7 @@ def _initialize_distributed(
 
         # Force NCCL backend initialization if using in-process restart
         if use_inprocess_restart:
-            maybe_force_nccl_backend_init(torch.cuda.current_device())
+            force_nccl_backend_init(torch.cuda.current_device())
 
         if dist_config.external_gpu_device_mapping:
             torch.distributed.barrier(device_ids=[0])
@@ -511,7 +511,7 @@ def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro
     torch.cuda.empty_cache()
 
 
-def maybe_force_nccl_backend_init(device_id) -> None:
+def force_nccl_backend_init(device_id: torch.device) -> None:
     """Force NCCL backend initialization for in-process restart compatibility.
 
     The nvidia-resiliency-ext in-process restart uses destroy_process_group to
