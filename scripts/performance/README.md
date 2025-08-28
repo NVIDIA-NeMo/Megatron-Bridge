@@ -60,7 +60,6 @@ no-build-isolation-package = [
 - From the parent directory of this repo, run the following 3 commands-
 
 ```
-git checkout malay/perf_scripts
 python -m venv bridge_venv
 source bridge_venv/bin/activate
 pip install .
