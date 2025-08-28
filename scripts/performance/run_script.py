@@ -16,12 +16,14 @@ import logging
 import os
 import sys
 
+from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
+from utils.helpers import COMM_OVERLAP_CONFIG_MAP, get_precision_config
 
+from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
-from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -29,11 +31,10 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from argument_parser import parse_cli_args
-from utils.helpers import get_precision_config, COMM_OVERLAP_CONFIG_MAP
 
 
 logger: logging.Logger = logging.getLogger(__name__)
+
 
 def main():
     """Main function to run the pretraining/finetuning script."""
@@ -56,6 +57,7 @@ def main():
             virtual_pipeline_parallelism=1,
         )
         from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+
         recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")

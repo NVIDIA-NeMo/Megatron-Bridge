@@ -67,5 +67,5 @@ pip install .
 pip install git+https://github.com/NVIDIA-NeMo/Run.git
 ```
 
-- GOOD NEWS: You DO NOT need have version parity for NeMo/Run and Megatron-LM between the venv and NeMo container image. 
+- GOOD NEWS: You DO NOT need have version parity (for configs in YAML files) for NeMo/Run and Megatron-LM between the venv and NeMo container image. 
   - The YAML config files are resolved on compute node inside the container. Feel free to use any Megatron-LM configs present in the container version regardless of the version in your venv
