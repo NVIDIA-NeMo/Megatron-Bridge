@@ -18,7 +18,7 @@ from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
-from megatron.core.utils import get_te_version, is_te_min_version
+from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
@@ -477,9 +477,26 @@ class CommOverlapConfig:
             assert model_cfg.bf16 or model_cfg.fp16, (
                 "overlap_moe_expert_parallel_comm is only supported when using bf16 or fp16 models"
             )
-            assert model_cfg.pipeline_model_parallel_size == 1 or model_cfg.virtual_pipeline_model_parallel_size > 1, (
-                "overlap_moe_expert_parallel_comm is only supported when pipeline_model_parallel_size == 1 or \
-                    virtual_pipeline_model_parallel_size > 1"
+            assert is_torch_min_version("2.6.0"), "A2A Overlap encounters hang issue with torch version < 2.6.0"
+            if model_cfg.pipeline_model_parallel_size > 1:
+                assert model_cfg.virtual_pipeline_model_parallel_size is not None, (
+                    "If enabling EP A2A overlap, virtual_pipeline_model_parallel_size "
+                    "must be specified when pipeline_model_parallel_size > 1"
+                )
+            assert model_cfg.recompute_granularity != "full", (
+                "disable full recomputation when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert model_cfg.recompute_method is None, (
+                "disable recomputation method when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert model_cfg.recompute_num_layers is None, (
+                "recompute_num_layers must be None when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert not model_cfg.moe_shared_expert_overlap, (
+                "disable moe_shared_expert_overlap when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert model_cfg.mtp_num_layers is None or model_cfg.mtp_num_layers == 1, (
+                "MTP layernum only supports 1 when enabling overlap_moe_expert_parallel_comm."
             )
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
@@ -488,9 +505,11 @@ class CommOverlapConfig:
                 f"TE version >= 2.7.0 is required for delay_wgrad_compute, \
                 current TE version: {get_te_version()}"
             )
-
             assert model_cfg.overlap_moe_expert_parallel_comm, (
                 "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
+            )
+            assert not model_cfg.moe_use_legacy_grouped_gemm, (
+                "delay_wgrad_compute is not supported with legacy groupedgemm implementation"
             )
 
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
