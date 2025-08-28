@@ -94,6 +94,7 @@ def pretrain_config(
     virtual_pipeline_parallelism: Optional[int] = 2,
     context_parallelism: int = 4,
     sequence_parallelism: bool = True,
+    use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = True,
     account_for_loss_in_pipeline_split: bool = True,
     # Training hyperparameters
@@ -192,6 +193,7 @@ def pretrain_config(
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
+            use_megatron_fsdp=use_megatron_fsdp, # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
