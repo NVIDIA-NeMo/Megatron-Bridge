@@ -483,7 +483,6 @@ class TestMegatronCommOverlapConfig:
         assert model_cfg.tp_comm_overlap_cfg is None
         assert model_cfg.tp_comm_bootstrap_backend is None
 
-    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
     def test_tp_overlap_config_filters_none_values(self):
         """Test that None values are filtered from tp_comm_overlap_cfg dict."""
         from dataclasses import dataclass
@@ -551,6 +550,7 @@ class TestMegatronCommOverlapConfig:
             moe_shared_expert_overlap=False,
             mtp_num_layers=None,
             moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
         )
 
         with patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True):
@@ -558,7 +558,6 @@ class TestMegatronCommOverlapConfig:
 
         assert result.overlap_moe_expert_parallel_comm is True
 
-    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
     def test_delay_wgrad_config_validation(self):
         """delay_wgrad_compute passes when TE and EP overlap conditions are met."""
         comm_cfg = CommOverlapConfig(
@@ -578,13 +577,13 @@ class TestMegatronCommOverlapConfig:
             moe_token_dispatcher_type="alltoall",
             bf16=True,
             moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
         )
 
         with patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True):
             result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
             assert result.delay_wgrad_compute is True
 
-    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
     def test_delay_wgrad_requires_ep_overlap(self):
         """delay_wgrad_compute requires EP overlap to be enabled."""
         comm_cfg = CommOverlapConfig(
@@ -604,6 +603,7 @@ class TestMegatronCommOverlapConfig:
             moe_token_dispatcher_type="alltoall",
             bf16=True,
             moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
         )
 
         with patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True):

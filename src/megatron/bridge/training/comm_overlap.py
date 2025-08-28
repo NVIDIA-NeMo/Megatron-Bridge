@@ -500,7 +500,6 @@ class CommOverlapConfig:
             )
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
-            assert HAVE_TE, "TE is required for delay_wgrad_compute"
             assert is_te_min_version("2.7.0"), (
                 f"TE version >= 2.7.0 is required for delay_wgrad_compute, \
                 current TE version: {get_te_version()}"
