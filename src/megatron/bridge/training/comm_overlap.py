@@ -504,9 +504,10 @@ class CommOverlapConfig:
                 f"TE version >= 2.7.0 is required for delay_wgrad_compute, \
                 current TE version: {get_te_version()}"
             )
-            assert model_cfg.overlap_moe_expert_parallel_comm, (
-                "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
-            )
+            assert (
+                model_cfg.overlap_moe_expert_parallel_comm
+                or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
+            ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
             assert not model_cfg.moe_use_legacy_grouped_gemm, (
                 "delay_wgrad_compute is not supported with legacy groupedgemm implementation"
             )
