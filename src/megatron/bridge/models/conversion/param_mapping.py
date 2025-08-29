@@ -27,11 +27,21 @@ from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
 )
+from megatron.core.fp8_utils import (
+    FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
+)
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
+
+
+def maybe_dequantize(tensor: torch.Tensor) -> torch.Tensor:
+    """Dequantize FP8 tensor if needed."""
+    if HAVE_TE_FP8_TENSOR_CLASS and isinstance(tensor, FP8_TENSOR_CLASS):
+        return tensor.dequantize(dtype=tensor.dtype)
+    return tensor
 
 
 class MegatronParamMapping(ABC, Generic[WeightType]):
@@ -575,6 +585,9 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
+        # Dequantize if needed
+        megatron_weights = maybe_dequantize(megatron_weights)
+
         return {str(self.hf_param): megatron_weights}
 
 
@@ -671,6 +684,9 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
+        # Dequantize if needed
+        megatron_weights = maybe_dequantize(megatron_weights)
+
         if self.tp_size == 1:
             full_weights = megatron_weights
         else:
@@ -766,6 +782,9 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
+        # Dequantize if needed
+        megatron_weights = maybe_dequantize(megatron_weights)
+
         if self.tp_size == 1:
             full_weights = megatron_weights
         else:
@@ -823,6 +842,9 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = maybe_dequantize(megatron_weights)
 
         if self.is_expert:
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
@@ -1260,6 +1282,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = maybe_dequantize(megatron_weights)
 
         # Handle TP gathering
         if self.tp_size == 1:
