@@ -24,8 +24,9 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.peft.lora import LoRA, LoRAMerge
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_merge import LoRAMerge
 
 
 class SimpleModel(nn.Module):
