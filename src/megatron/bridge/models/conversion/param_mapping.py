@@ -360,7 +360,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         return obj_list[0]
 
-
     def broadcast_tensor_to_tp_ranks(self, tensor: torch.Tensor, src_rank: int = 0) -> torch.Tensor:
         """Broadcast a tensor to all TP ranks.
 
