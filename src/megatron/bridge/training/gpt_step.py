@@ -74,7 +74,7 @@ def get_batch_from_iterator(
     Args:
         data_iterator: The data iterator to get the batch from.
         use_mtp: Whether Multi-Token Prediction layers are enabled.
-        get_attention_mask_from_fusion: If set, the dataset will not pass a None attention mask
+        get_attention_mask_from_fusion: If set, the dataset will pass a None attention mask.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
