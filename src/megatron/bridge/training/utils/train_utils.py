@@ -572,7 +572,7 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
     """
     if not num_fw_args:
         num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    if num_fw_args == 3:
+    if num_fw_args == 4:  # megatron bridge gpt_step.py forward_step has 4 args
         # inject global_state
         return partial(forward_step_func, state)
     else:
@@ -582,9 +582,9 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
 def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
     """Check if the forward step function has a supported number of arguments.
 
-    Currently supports 2 or 3 arguments:
+    Currently supports 2 or 4 arguments:
     - func(data_iterator, model)
-    - func(state, data_iterator, model)
+    - func(state, data_iterator, model, return_schedule_plan: bool = False)
 
     Args:
         forward_step_func: The function to check.
@@ -593,14 +593,14 @@ def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
         The number of arguments the function takes.
 
     Raises:
-        AssertionError: If the function does not have 2 or 3 arguments.
+        AssertionError: If the function does not have 2 or 4 arguments.
     """
     num_fw_args = len(inspect.signature(forward_step_func).parameters)
     fail_msg = f"""
     forward_step_func has {num_fw_args} arguments. Only the following signatures are supported:
         2 args: forward_step_func(data_iterator: Iterable, model: GPTModel)
-        3 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel)
+        4 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
     """
-    assert num_fw_args in (2, 3), fail_msg
+    assert num_fw_args in (2, 4), fail_msg
 
     return num_fw_args
