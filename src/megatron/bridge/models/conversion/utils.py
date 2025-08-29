@@ -16,13 +16,12 @@ import copy
 import functools
 import re
 import types
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import torch
 from megatron.core.transformer.module import MegatronModule
 from rich.table import Table
 from transformers import AutoConfig
-from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.utils.common_utils import unwrap_model
 
@@ -284,3 +283,14 @@ def get_causal_lm_class_via_auto_map(
             return None
 
     return None
+
+
+def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:
+    """Return an iterator over persistent module buffers, yielding both the name of the buffer as well as the buffer itself."""
+
+    for mod_prefix, mod in model.named_modules():
+        # only local buffers; we'll add the prefix ourselves
+        for local_name, buffer in mod.named_buffers(recurse=False):
+            if local_name not in getattr(mod, "_non_persistent_buffers_set", set()):
+                full_name = f"{mod_prefix + '.' if mod_prefix else ''}{local_name}"
+                yield full_name, buffer

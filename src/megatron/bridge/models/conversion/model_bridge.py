@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import itertools
 import logging
 import re
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
-from megatron.bridge.models.conversion.utils import extract_sort_key, get_module_and_param_from_name
+from megatron.bridge.models.conversion.utils import extract_sort_key, get_module_and_param_from_name, persistent_buffers
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.utils.common_utils import unwrap_model
@@ -297,7 +298,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
-            for local_param_name in model.state_dict().keys():
+            for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_param_name:
                     continue
                 local_param_name = self._unwrap_name(local_param_name)
@@ -784,7 +785,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
-            for local_name in model.state_dict().keys():
+            for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_name:
                     continue
 
