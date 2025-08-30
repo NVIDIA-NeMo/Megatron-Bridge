@@ -640,7 +640,11 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
-    if ckpt_cfg.save_retain_interval > 1 and ckpt_cfg.save_retain_interval > ckpt_cfg.save_interval:
+    if (
+        ckpt_cfg.save_retain_interval > 1
+        and ckpt_cfg.save_retain_interval > ckpt_cfg.save_interval
+        and ckpt_cfg.save_retain_interval % ckpt_cfg.save_interval == 0
+    ):
         previous_step = train_state.step - ckpt_cfg.save_interval
         cleanup_old_non_persistent_checkpoint(
             save_dir,
@@ -687,9 +691,12 @@ def cleanup_old_non_persistent_checkpoint(
 
     rm_iter_ckpts = None
     if retain_interval > 1:
-        if len(sorted_iter_ckpts) > 1:
-            if previous_step % retain_interval != 0 and previous_step == extract_iter(sorted_iter_ckpts[-2]):
-                rm_iter_ckpts = [sorted_iter_ckpts[-2]]
+        if (
+            previous_step > 0
+            and previous_step % retain_interval != 0
+            and previous_step == extract_iter(sorted_iter_ckpts[-2])
+        ):
+            rm_iter_ckpts = [sorted_iter_ckpts[-2]]
     else:
         rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
 
