@@ -20,7 +20,6 @@ behavior for different types using the `impl` decorator.
 
 from functools import _find_impl  # type: ignore
 from typing import Any, Callable, Dict, Optional, TypeVar
-from weakref import WeakKeyDictionary
 
 
 _SignatureType = TypeVar("_SignatureType", bound=Callable)
@@ -42,7 +41,7 @@ class _Dispatch:
         self._signature = signature
         self._name = signature.__name__
         self._exact_types: Dict[Any, Callable] = {}
-        self._dispatch_cache: WeakKeyDictionary = WeakKeyDictionary()
+        self._dispatch_cache: Dict[Any, Callable] = {}
 
         # Extract docstring and module info for rich repr
         self._doc = signature.__doc__
@@ -94,22 +93,25 @@ class _Dispatch:
             error_msg = self._format_no_implementation_error(instance)
             raise NotImplementedError(error_msg)
 
-        # For class dispatch, we use the class itself as the key
+        # For class dispatch, we use the class (or string of class name) itself as the key
         if isinstance(instance, type):
+            cache_key = instance
             instance_type = instance
+        elif isinstance(instance, str):
+            cache_key = instance
+            instance_type = str
         else:
-            instance_type = type(instance)
+            cache_key = type(instance)
+            instance_type = cache_key
 
         # Try cache
-        try:
-            impl = self._dispatch_cache[instance_type]
-        except KeyError:
+        impl = self._dispatch_cache.get(cache_key)
+        if impl is None:
             impl = self._dispatch(instance, instance_type)
             if impl is None:
-                # Generate automatic error with nice formatting
                 error_msg = self._format_no_implementation_error(instance)
                 raise NotImplementedError(error_msg)
-            self._dispatch_cache[instance_type] = impl
+            self._dispatch_cache[cache_key] = impl
 
         return impl(instance, *args, **kwargs)
 

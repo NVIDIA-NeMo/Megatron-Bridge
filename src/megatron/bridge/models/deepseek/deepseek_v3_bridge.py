@@ -47,8 +47,9 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         configs["make_vocab_size_divisible_by"] = 1280
         configs["moe_router_score_function"] = "sigmoid"
         configs["moe_router_enable_expert_bias"] = True
-        # aux_loss_alpha is not set in all DSv3 HF configs, but defaults to 1e-4 from the DeepSeek-V3 paper
-        configs["moe_aux_loss_coeff"] = getattr(hf_config, "aux_loss_alpha", 1e-4)
+        # aux_loss_alpha is not set in all DSv3 HF configs
+        if hasattr(hf_config, "aux_loss_alpha"):
+            configs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
 
         # TODO: mtp
 

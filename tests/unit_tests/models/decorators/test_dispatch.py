@@ -230,6 +230,24 @@ class TestDispatch:
         assert "(int):" in repr_str
         assert "_int_impl" in repr_str
 
+    def test_string_single_arg_multiple_values(self):
+        """Strings should not be cached by type; distinct names resolve separately."""
+
+        @dispatch
+        def arch_to_impl(arch):
+            pass
+
+        @arch_to_impl.impl("Dog")
+        def _dog(_):
+            return "woof"
+
+        @arch_to_impl.impl("Cat")
+        def _cat(_):
+            return "meow"
+
+        assert arch_to_impl("Dog") == "woof"
+        assert arch_to_impl("Cat") == "meow"
+
     def test_string_single_arg_dispatch(self):
         """Test single-arg dispatch registered and called with string."""
 

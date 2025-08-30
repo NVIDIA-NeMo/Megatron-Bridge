@@ -130,6 +130,7 @@ class DeepSeekV2Provider(DeepSeekProvider):
     moe_aux_loss_coeff: float = 1e-3
     mscale: float = 0.707
     mscale_all_dim: float = 0.707
+    vocab_size: int = 102400
 
 
 @dataclass
@@ -153,6 +154,7 @@ class DeepSeekV2LiteProvider(DeepSeekV2Provider):
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1
     moe_router_topk_scaling_factor: float = 1.0
+    vocab_size: int = 102400
 
 
 @dataclass
@@ -174,13 +176,13 @@ class DeepSeekV3Provider(DeepSeekProvider):
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 4
     moe_router_topk_scaling_factor: float = 2.5
-    moe_aux_loss_coeff: float = 1e-4
     make_vocab_size_divisible_by: int = 1280
     moe_router_score_function: str = "sigmoid"
     moe_router_enable_expert_bias: bool = True
     moe_router_bias_update_rate: float = 1e-3
     mscale: float = 1.0
     mscale_all_dim: float = 1.0
+    vocab_size: int = 129280
 
 
 @dataclass
@@ -193,6 +195,8 @@ class MoonlightProvider(DeepSeekV3Provider):
     num_layers: int = 27
     hidden_size: int = 2048
     ffn_hidden_size: int = 11264
+    num_attention_heads: int = 16
+    kv_channels: int = 16
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared expert
@@ -208,10 +212,10 @@ class MoonlightProvider(DeepSeekV3Provider):
     rotary_scaling_factor: float = 1.0
     mscale: float = 1.0
     mscale_all_dim: float = 1.0
-    rope_type: str = "rope"
     rotary_base: float = 50000
     layernorm_epsilon: float = 1e-5
     q_lora_rank: int = None
     init_method_std: float = 0.02
     moe_router_bias_update_rate: float = 1e-3
     rotary_percent: float = 1.0
+    vocab_size: int = 163840

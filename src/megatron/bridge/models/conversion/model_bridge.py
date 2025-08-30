@@ -42,7 +42,11 @@ from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
-from megatron.bridge.models.conversion.utils import extract_sort_key, get_module_and_param_from_name, persistent_buffers
+from megatron.bridge.models.conversion.utils import (
+    extract_sort_key,
+    get_module_and_param_from_name,
+    persistent_buffers,
+)
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.utils.common_utils import unwrap_model
