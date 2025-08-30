@@ -71,3 +71,44 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
         return bf16_mixed()
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
+
+
+def set_mcore_fsdp_configs(recipe):
+    """
+    Set Mcore FSDP related configs.
+    """
+    recipe.ddp.use_custom_fsdp = True
+    recipe.model.init_model_with_meta_device = True
+    recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    # At fp32 gradient, `recipe.trainer.strategy.ddp.gradient_reduce_div_fusion` is used for fusion
+    if recipe.mixed_precision.grad_reduce_in_fp32:
+        recipe.ddp.average_in_collective = False
+    recipe.ddp.keep_fp8_transpose_cache_when_using_custom_fsdp = False
+    recipe.model.gradient_accumulation_fusion = False
+    if (
+        recipe.comm_overlap is not None
+        and recipe.model.defer_embedding_wgrad_compute
+    ):
+        logging.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
+        recipe.model.defer_embedding_wgrad_compute = False
+
+    if recipe.model.enable_cuda_graph:
+        logging.warning("Disabling CUDA graph because it cannot work with FSDP together.")
+        recipe.model.enable_cuda_graph = False
+        recipe.model.use_te_rng_tracker = False
+        recipe.rng.te_rng_tracker = False
+
+    return recipe
+
+def set_recompute_configs(recipe):
+    """
+    Set recompute related configs.
+    """
+    if recipe.model.recompute_num_layers is not None:
+        recipe.model.recompute_method = "block"
+        recipe.model.recompute_granularity = "full"
+    if recipe.model.cpu_offloading_num_layers > 0:
+        recipe.model.cpu_offloafding = True
+        recipe.model.cpu_offloading_weights = False
+
+    return recipe

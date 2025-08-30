@@ -18,7 +18,12 @@ import sys
 
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
-from utils.helpers import COMM_OVERLAP_CONFIG_MAP, get_precision_config
+from utils.helpers import (
+    COMM_OVERLAP_CONFIG_MAP,
+    get_precision_config,
+    set_mcore_fsdp_configs,
+    set_recompute_configs,
+)
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
@@ -93,8 +98,13 @@ def main():
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
-    # Display final configuration
 
+    if recipe.ddp.use_custom_fsdp:
+        recipe = set_mcore_fsdp_configs(recipe)
+    if recipe.model.recompute_num_layers is not None or recipe.model.cpu_offloading_num_layers > 0:
+        recipe = set_recompute_configs(recipe)
+
+    # Display final configuration
     logger.info("--- Final Merged Configuration ---")
     recipe.to_yaml()
     logger.info("----------------------------------")

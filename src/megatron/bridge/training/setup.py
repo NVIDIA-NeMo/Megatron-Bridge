@@ -110,8 +110,6 @@ def setup(
     """
     # TODO: Freeze state.cfg
 
-    cfg.validate()
-
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):
@@ -121,6 +119,8 @@ def setup(
     # Apply communication overlap configuration if provided at the very beginning
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    cfg.validate()
 
     state = GlobalState()
     state.cfg = cfg
