@@ -96,6 +96,8 @@ def pretrain_config(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    # Checkpoint
+    ckpt_format: str = "torch_dist",
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3 8B model.
@@ -204,7 +206,7 @@ def pretrain_config(
             save_interval=500,
             save=checkpoint_dir,
             load=checkpoint_dir,
-            ckpt_format="torch_dist",
+            ckpt_format=ckpt_format,
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
