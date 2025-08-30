@@ -16,6 +16,7 @@
 
 import contextlib
 import os
+import re
 import random
 import shutil
 import sys
@@ -381,7 +382,6 @@ def save_checkpoint(
     start_ckpt = time()
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
-
     if ckpt_cfg.async_save and not is_empty_async_queue(state):
         print_rank_0(
             "WARNING: Starting a checkpoint save before previous has finished. "
@@ -640,8 +640,26 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
+    if ckpt_cfg.save_retain_interval > 1 and ckpt_cfg.save_retain_interval > ckpt_cfg.save_interval:
+        previous_step = train_state.step - ckpt_cfg.save_interval
+        cleanup_old_non_persistent_checkpoint(
+            save_dir,
+            retain_interval=ckpt_cfg.save_retain_interval,
+            previous_step=previous_step,
+            do_async=ckpt_cfg.async_save,
+        )
 
-def cleanup_old_non_persistent_checkpoint(save_dir: str, leave_ckpt_num: int = 1, do_async: bool = False) -> None:
+    if ckpt_cfg.save_top_k > 0:
+        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=ckpt_cfg.save_top_k, do_async=ckpt_cfg.async_save)
+
+
+def cleanup_old_non_persistent_checkpoint(
+    save_dir: str,
+    leave_ckpt_num: int = 1,
+    retain_interval: int = 1,
+    previous_step: int = None,
+    do_async: bool = False,
+) -> None:
     """Clean up old non-persistent checkpoints in a directory.
 
     Keeps the specified number of latest checkpoints and removes older ones.
@@ -661,7 +679,23 @@ def cleanup_old_non_persistent_checkpoint(save_dir: str, leave_ckpt_num: int = 1
     sorted_iter_ckpts = sorted(iter_ckpts, key=lambda ckpt_name: int(ckpt_name.name[len(iter_prefix) :]))
     if not sorted_iter_ckpts:
         return
-    rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
+
+    def extract_iter(path) -> int:
+        match = re.search(r"iter_(\d+)$", path.name)
+        if match:
+            return int(match.group(1))
+
+    rm_iter_ckpts = None
+    if retain_interval > 1:
+        if len(sorted_iter_ckpts) > 1:
+            if previous_step % retain_interval != 0 and previous_step == extract_iter(sorted_iter_ckpts[-2]):
+                rm_iter_ckpts = [sorted_iter_ckpts[-2]]
+    else:
+        rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
+
+    if not rm_iter_ckpts:
+        return
+
     print_rank_0(f"Non-persistent checkpoints scheduled for removal: {rm_iter_ckpts}")
     print_rank_0(f"Non-persistent checkpoints to be kept: {sorted_iter_ckpts[-leave_ckpt_num:]}")
 
