@@ -631,10 +631,6 @@ def save_checkpoint(
         schedule_async_save(state, async_save_request)
         print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
 
-    # Wait so everyone is done (not necessary)
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-
     end_misc = time()
     logger.debug(f"rank: {rank}, takes {end_misc - start_misc} to finalize ckpt save ")
 
@@ -657,6 +653,10 @@ def save_checkpoint(
     # keep only last k checkpoints
     if ckpt_cfg.save_top_k > -1:
         cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=ckpt_cfg.save_top_k, do_async=ckpt_cfg.async_save)
+
+    # Wait so everyone is done (not necessary)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
 
 
 def cleanup_old_non_persistent_checkpoint(
