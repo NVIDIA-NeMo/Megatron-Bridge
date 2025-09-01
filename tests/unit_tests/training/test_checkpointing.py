@@ -783,6 +783,58 @@ class TestCleanupNonPersistentCheckpoints:
             cleanup_old_non_persistent_checkpoint("/fake/dir", leave_ckpt_num=1)
             mock_rmtree.assert_not_called()
 
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_rank")
+    def test_cleanup_old_non_persistent_checkpoint_retain_interval(self, mock_get_rank, mock_dist_init):
+        """Test cleanup of old checkpoints."""
+        mock_dist_init.return_value = True
+        mock_get_rank.return_value = 0
+
+        def get_ckpt_nums(path, return_ckpts=False):
+            count = 0
+            ckpts = []
+            for root, dirs, files in os.walk(path):
+                count += len(dirs)
+                ckpts.append(dirs)
+            
+            if return_ckpts:
+                return count, sorted(ckpts[0])
+            else:
+                return count
+
+        # save ckpt every 10 steps with max_steps=200 with retain_inverval=20
+        save_interval = 10
+        retain_interval = 20
+        max_steps = 200
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create mock checkpoint directories
+            save_dir = Path(temp_dir)
+            for i in range(10, (max_steps + 10), save_interval):
+                if i <= 100:
+                    old_ckpt = save_dir / f"iter_00000{i}"
+                else:
+                    old_ckpt = save_dir / f"iter_0000{i}"
+                old_ckpt.mkdir()
+
+                if i > 10:
+                    previous_step = i - save_interval
+                    cleanup_old_non_persistent_checkpoint(
+                        str(save_dir),
+                        retain_interval=retain_interval,
+                        previous_step=previous_step,
+                        do_async=False,
+                    )
+            
+            # expected number of kept ckpts is 10
+            assert get_ckpt_nums(str(save_dir)) == 10
+            
+            # save last top 3 ckpts
+            cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=3, do_async=False)
+            assert get_ckpt_nums(str(save_dir), return_ckpts=True) == (
+                3,
+                ["iter_0000160", "iter_0000180", "iter_0000200"],
+            )
+
 
 class TestLoadBaseCheckpoint:
     """Test base checkpoint loading logic."""
