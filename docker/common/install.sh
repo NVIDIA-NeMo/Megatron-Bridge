@@ -126,7 +126,8 @@ main() {
         . $UV_PROJECT_ENVIRONMENT/bin/activate
 
         pip install --pre --no-cache-dir --upgrade pip
-        pip install --pre --no-cache-dir torch pybind11 wheel_stub ninja wheel packaging "setuptools>=77.0.0"
+        pip install --pre --no-cache-dir torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+        pip install --pre --no-cache-dir pybind11 wheel_stub ninja wheel packaging "setuptools>=77.0.0"
         pip install --pre --no-cache-dir --no-build-isolation .
     fi
 
