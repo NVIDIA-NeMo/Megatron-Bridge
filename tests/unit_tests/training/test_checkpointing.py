@@ -385,7 +385,6 @@ class TestSaveCheckpoint:
         mock_torch_save.return_value = None  # Mock file save
         mock_shutil_copy.return_value = None  # Mock file copy
 
-
         # Add wandb logger to state
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
 
