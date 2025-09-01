@@ -796,7 +796,7 @@ class TestCleanupNonPersistentCheckpoints:
             for root, dirs, files in os.walk(path):
                 count += len(dirs)
                 ckpts.append(dirs)
-            
+
             if return_ckpts:
                 return count, sorted(ckpts[0])
             else:
@@ -824,10 +824,10 @@ class TestCleanupNonPersistentCheckpoints:
                         previous_step=previous_step,
                         do_async=False,
                     )
-            
+
             # expected number of kept ckpts is 10
             assert get_ckpt_nums(str(save_dir)) == 10
-            
+
             # save last top 3 ckpts
             cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=3, do_async=False)
             assert get_ckpt_nums(str(save_dir), return_ckpts=True) == (

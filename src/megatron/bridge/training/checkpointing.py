@@ -16,8 +16,8 @@
 
 import contextlib
 import os
-import re
 import random
+import re
 import shutil
 import sys
 import threading
@@ -652,7 +652,9 @@ def save_checkpoint(
 
     # keep only last k checkpoints
     if ckpt_cfg.save_top_k > -1:
-        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=ckpt_cfg.save_top_k, do_async=ckpt_cfg.async_save)
+        cleanup_old_non_persistent_checkpoint(
+            save_dir, leave_ckpt_num=ckpt_cfg.save_top_k, do_async=ckpt_cfg.async_save
+        )
 
     # Wait so everyone is done (not necessary)
     if torch.distributed.is_initialized():
@@ -709,9 +711,9 @@ def cleanup_old_non_persistent_checkpoint(
 
     if not rm_iter_ckpts:
         return
-    
+
     print_rank_0(f"Non-persistent checkpoints scheduled for removal: {rm_iter_ckpts}")
-    
+
     def remove_iter_ckpts(_iter_ckpts):
         for ckpt in _iter_ckpts:
             shutil.rmtree(ckpt)
