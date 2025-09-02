@@ -286,13 +286,16 @@ def get_batch(
     )
 
 
-def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -> tuple[torch.Tensor, partial]:
+def forward_step(
+    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
+) -> tuple[torch.Tensor, partial]:
     """Forward training step.
 
     Args:
         state: Global state for the run
         data_iterator: Input data iterator
         model: The GPT Model
+        return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
 
     Returns:
         tuple containing the output tensor and the loss function
@@ -327,6 +330,15 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     with straggler_timer:
-        output_tensor = model(**forward_args)
+        if return_schedule_plan:
+            assert config.overlap_moe_expert_parallel_comm, (
+                "overlap_moe_expert_parallel_comm must be enabled to return the schedule plan"
+            )
+            schedule_plan = model.build_schedule_plan(
+                tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
+            )
+            return schedule_plan, partial(masked_next_token_loss, loss_mask)
+        else:
+            output_tensor = model(**forward_args)
 
     return output_tensor, partial(masked_next_token_loss, loss_mask)

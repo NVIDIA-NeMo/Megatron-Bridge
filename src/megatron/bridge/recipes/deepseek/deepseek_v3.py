@@ -91,9 +91,6 @@ def model_config(
         recompute_granularity=recompute_granularity,
     )
 
-    # Some deployments expect a list of modules for selective recomputation
-    if recompute_modules is None:
-        recompute_modules = ["mla_up_proj", "layernorm"]
     # Set attribute defensively in case downstream supports selective recomputation lists
     try:
         cfg.recompute_granularity = "selective"
@@ -101,6 +98,14 @@ def model_config(
     except Exception:
         pass
         logger.warning(f"Failed to set recompute_modules: {recompute_modules}")
+
+    # Some deployments expect a list of modules for selective recomputation
+    if recompute_modules is None:
+        # recompute_modules = ["mla_up_proj", "layernorm"]
+        cfg.recompute_granularity = None
+        cfg.recompute_method = None
+        cfg.recompute_num_layers = None
+        cfg.recompute_modules = None
 
     # Pipeline split for asymmetric stages as used in NeMo recipe
     cfg.account_for_embedding_in_pipeline_split = False

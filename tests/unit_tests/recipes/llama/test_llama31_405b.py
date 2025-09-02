@@ -21,7 +21,6 @@ import torch
 
 from megatron.bridge.models.llama import Llama31ModelProvider405B
 from megatron.bridge.recipes.llama.llama31_405b import model_config, pretrain_config
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
     userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
@@ -348,12 +347,13 @@ class TestPretrainConfig:
         assert config.scheduler.lr_decay_iters == 50000  # Should match train_iters
         assert config.scheduler.override_opt_param_scheduler is True
 
-    def test_pretrain_config_tokenizer_configuration(self):
+    @pytest.mark.parametrize("vocab_size", [2048, 4096, 8192, 16384])
+    def test_pretrain_config_tokenizer_configuration(self, vocab_size):
         """Test tokenizer configuration."""
-        config = pretrain_config()
+        config = pretrain_config(vocab_size=vocab_size)
 
         assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.vocab_size == DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+        assert config.tokenizer.vocab_size == vocab_size
 
     def test_pretrain_config_rng_configuration(self):
         """Test RNG configuration."""
