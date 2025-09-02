@@ -75,18 +75,18 @@ class Qwen2Bridge(MegatronModelBridge):
         # Dictionary maps HF parameter names -> Megatron parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
-            "model.embed_tokens.weight": "embedding.word_embeddings.weight",
-            "lm_head.weight": "output_layer.weight",
-            "model.norm.weight": "decoder.final_layernorm.weight",
-            "model.layers.*.input_layernorm.weight": "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight",
-            "model.layers.*.post_attention_layernorm.weight": "decoder.layers.*.mlp.linear_fc1.layer_norm_weight",
-            "model.layers.*.self_attn.o_proj.weight": "decoder.layers.*.self_attention.linear_proj.weight",
-            "model.layers.*.mlp.down_proj.weight": "decoder.layers.*.mlp.linear_fc2.weight",
+            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+            "output_layer.weight": "lm_head.weight",
+            "decoder.final_layernorm.weight": "model.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
-        for hf_param, megatron_param in param_mappings.items():
+        for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(hf_param=hf_param, megatron_param=megatron_param))
 
         # Add special mappings that require parameter concatenation/transformation
