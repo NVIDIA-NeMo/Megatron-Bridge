@@ -194,49 +194,10 @@ class TestSupervisedFinetuning:
         return pretrain_checkpoint_dir, pretrain_tensorboard_dir, finetune_checkpoint_dir, finetune_tensorboard_dir
 
 
-class TestSupervisedFinetuningMegatronFSDP:
+class TestSupervisedFinetuningMegatronFSDP(TestSupervisedFinetuning):
     """
     Test end to end supervised finetuning: pretrain -> save checkpoint -> finetune using pretrained checkpoint.
     """
-
-    @pytest.mark.run_only_on("GPU")
-    def test_pretrain_then_finetune(self, tmp_path):
-        """Test end to end supervised finetuning: pretrain -> save checkpoint -> finetune using pretrained checkpoint."""
-        initialize_distributed()
-        shared_base_dir = broadcast_path(tmp_path)
-        pretrain_checkpoint_dir, pretrain_tensorboard_dir, finetune_checkpoint_dir, finetune_tensorboard_dir = (
-            self._setup_directories(shared_base_dir)
-        )
-
-        torch.distributed.barrier()
-
-        try:
-            seq_length = 512
-            pretrain_iters = 10
-            finetune_iters = 5
-
-            # Create pretrain config and run
-            pretrain_cfg = self._create_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
-            )
-            pretrain(pretrain_cfg, forward_step)
-            verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
-
-            # Create finetune config and run (lower LR, different seed, use pretrained checkpoint)
-            finetune_cfg = self._create_config(
-                finetune_iters,
-                finetune_checkpoint_dir,
-                finetune_tensorboard_dir,
-                seq_length,
-                lr=1e-4,
-                seed=5678,
-                pretrained_checkpoint=pretrain_checkpoint_dir,
-            )
-            finetune(finetune_cfg, forward_step)
-            verify_checkpoint_files(finetune_checkpoint_dir, finetune_iters)
-
-        finally:
-            clear_directories(shared_base_dir)
 
     def _create_config(
         self,
@@ -326,18 +287,3 @@ class TestSupervisedFinetuningMegatronFSDP:
             ),
             rng=RNGConfig(seed=seed),
         )
-
-    def _setup_directories(self, base_dir):
-        """Setup test directories."""
-        pretrain_checkpoint_dir = os.path.join(base_dir, "pretrain_checkpoints")
-        pretrain_tensorboard_dir = os.path.join(base_dir, "pretrain_tensorboard")
-        finetune_checkpoint_dir = os.path.join(base_dir, "finetune_checkpoints")
-        finetune_tensorboard_dir = os.path.join(base_dir, "finetune_tensorboard")
-
-        if torch.distributed.get_rank() == 0:
-            os.makedirs(pretrain_checkpoint_dir, exist_ok=True)
-            os.makedirs(finetune_checkpoint_dir, exist_ok=True)
-            os.makedirs(pretrain_tensorboard_dir, exist_ok=True)
-            os.makedirs(finetune_tensorboard_dir, exist_ok=True)
-
-        return pretrain_checkpoint_dir, pretrain_tensorboard_dir, finetune_checkpoint_dir, finetune_tensorboard_dir
