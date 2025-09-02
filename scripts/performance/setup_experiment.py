@@ -66,7 +66,7 @@ if __name__ == "__main__":
         if HAS_NEMO_RUN
         else []
     )
-    if HAS_NEMO_RUN and args.enable_nsys:
+    if HAS_NEMO_RUN and args.enable_nsys and not args.localrun:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
@@ -77,21 +77,25 @@ if __name__ == "__main__":
     logger.info(f"Custom mounts: {custom_mounts}")
 
     num_nodes = -(args.num_gpus // -args.gpus_per_node)
-    executor = slurm_executor(
-        args.gpu.lower(),
-        args.account,
-        args.partition,
-        args.log_dir,
-        num_nodes,
-        args.gpus_per_node,
-        args.time_limit,
-        args.container_image,
-        custom_mounts=custom_mounts,
-        custom_env_vars={},
-        hf_token=args.hf_token,
-        nemo_home=args.nemo_home,
-        wandb_key=args.wandb_key,
-    )
+    if not args.localrun:
+        executor = slurm_executor(
+            args.gpu.lower(),
+            args.account,
+            args.partition,
+            args.log_dir,
+            num_nodes,
+            args.gpus_per_node,
+            args.time_limit,
+            args.container_image,
+            custom_mounts=custom_mounts,
+            custom_env_vars={},
+            hf_token=args.hf_token,
+            nemo_home=args.nemo_home,
+            wandb_key=args.wandb_key,
+        )
+    else:
+        executor=run.LocalExecutor(ntasks_per_node=8, launcher="torchrun", env_vars={})
+
 
     target_script_args = [
         "--config_file",

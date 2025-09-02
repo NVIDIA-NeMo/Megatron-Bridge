@@ -118,6 +118,12 @@ def setup(
             cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
         cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
+    from dataclasses import dataclass, field, fields
+
+    for f in fields(cfg):
+        sub_cfg = getattr(cfg, f.name)
+        if hasattr(sub_cfg, "__post_init__"):
+            sub_cfg.__post_init__()
     # Apply communication overlap configuration if provided at the very beginning
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
