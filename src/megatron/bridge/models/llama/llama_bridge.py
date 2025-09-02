@@ -93,25 +93,25 @@ class LlamaBridge(MegatronModelBridge):
         }
 
         mapping_list = []
-        # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
+        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(hf_param=hf_param, megatron_param=megatron_param))
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(
             [
                 # QKV: Combine separate Q, K, V matrices into single QKV matrix
                 QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",
                     k="model.layers.*.self_attn.k_proj.weight",
                     v="model.layers.*.self_attn.v_proj.weight",
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                 ),
                 # Gated MLP: Combine gate and up projection matrices into single FC1 matrix
                 GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                     gate="model.layers.*.mlp.gate_proj.weight",
                     up="model.layers.*.mlp.up_proj.weight",
-                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                 ),
             ]
         )
