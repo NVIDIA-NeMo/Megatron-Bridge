@@ -116,6 +116,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     generation_config: Optional[Any] = None
 
+    # Parallel backend
+    use_megatron_fsdp: bool = False
+
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
     vocab_size: Optional[int] = None

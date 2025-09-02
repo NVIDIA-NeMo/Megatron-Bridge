@@ -648,8 +648,9 @@ def enable_forward_pre_hook(model: list[DDP]) -> None:
         model: list of model chunks wrapped in DDP
     """
     for model_chunk in model:
-        assert isinstance(model_chunk, DDP)
-        model_chunk.enable_forward_pre_hook()
+        # only works for DDP, Megatron FSDP or FSDP2 does not have this method
+        if isinstance(model_chunk, DDP):
+            model_chunk.enable_forward_pre_hook()
 
 
 def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
@@ -660,8 +661,9 @@ def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
         param_sync: Whether to synchronize parameters across model chunks
     """
     for model_chunk in model:
-        assert isinstance(model_chunk, DDP)
-        model_chunk.disable_forward_pre_hook(param_sync=param_sync)
+        # only works for DDP, Megatron FSDP or FSDP2 does not have this method
+        if isinstance(model_chunk, DDP):
+            model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
 def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, float]:

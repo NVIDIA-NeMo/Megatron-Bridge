@@ -20,6 +20,7 @@
 
 model:
   seq_length: 4096
+  init_model_with_meta_device: true
 
 train:
   train_iters: 20
@@ -39,7 +40,7 @@ checkpoint:
   save: null
 
 dist:
-  use_megatron_fsdp: false
+  use_megatron_fsdp: true
   use_torch_fsdp2: false
 
 logger:
@@ -53,6 +54,7 @@ rng:
 
 ddp:
   grad_reduce_in_fp32: true
+  data_parallel_sharding_strategy: "optim_grads_params" # for Megatron FSDP ZeRO-3 like sharding
 
 profiling:
   # For optional fields in the config, specify the target to instantiate the object.
