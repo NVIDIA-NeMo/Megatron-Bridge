@@ -23,7 +23,7 @@ from megatron.bridge.models.llama import Llama32ModelProvider1B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    DistConfig,
+    DistributedInitConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     RNGConfig,
@@ -343,7 +343,7 @@ class TestPretrainMegatronFSDP:
             # Config Container
             cfg = ConfigContainer(
                 model=model_cfg,
-                dist=DistConfig(
+                dist=DistributedInitConfig(
                     use_megatron_fsdp=True,
                 ),
                 train=TrainingConfig(
