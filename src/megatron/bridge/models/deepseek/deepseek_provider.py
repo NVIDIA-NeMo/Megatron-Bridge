@@ -186,9 +186,11 @@ class DeepSeekV3Provider(DeepSeekProvider):
 
 
 @dataclass
-class MoonlightProvider(DeepSeekV3Provider):
+class MoonlightProvider(DeepSeekProvider):
     """
     Moonlight-16B-A3B Model: https://github.com/moonshotai/Moonlight-16B-A3B
+
+    Moonlight is based on DeepSeek-V3.
     """
 
     max_position_embeddings: int = 4096

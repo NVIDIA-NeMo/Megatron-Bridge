@@ -49,7 +49,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.utils.common_utils import unwrap_model
+from megatron.bridge.utils.common_utils import print_rank_0, unwrap_model
 
 
 logger = logging.getLogger(__name__)
@@ -302,6 +302,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
+            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
             for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_param_name:
                     continue
@@ -789,6 +790,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
+            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_name:
                     continue
@@ -797,7 +799,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
                 # if name removed due to some reason, continue. e.g. embeddings_are_tied
                 if global_name not in global_names_index_dict:
-                    print(f"WARNING: {global_name} not in global_names_index_dict")
+                    print_rank_0(f"WARNING: {global_name} not in global_names_index_dict")
                     continue
                 global_name_idx = global_names_index_dict[global_name]
                 mapping = mapping_registry.megatron_to_hf_lookup(global_name)

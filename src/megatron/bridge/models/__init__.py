@@ -29,6 +29,7 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2LiteProvider,
     DeepSeekV2Provider,
     DeepSeekV3Provider,
+    MoonlightProvider,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
@@ -138,4 +139,5 @@ __all__ = [
     "DeepSeekV2LiteProvider",
     "DeepSeekV2Provider",
     "DeepSeekV3Provider",
+    "MoonlightProvider",
 ]

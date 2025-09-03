@@ -61,10 +61,10 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
         param_mappings = {
             # expert bias
-            "model.layers.*.mlp.gate.e_score_correction_bias": "decoder.layers.*.mlp.router.expert_bias",
+            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
         }
 
-        for hf_param, megatron_param in param_mappings.items():
-            mapping_list.append(AutoMapping(hf_param=hf_param, megatron_param=megatron_param))
+        for megatron_param, hf_param in param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         return MegatronMappingRegistry(*mapping_list)
