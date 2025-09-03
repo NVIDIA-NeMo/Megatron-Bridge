@@ -773,6 +773,11 @@ class ConfigContainer(Container):
         world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
 
+        if self.checkpoint.ckpt_format == "fsdp_dtensor":
+            assert self.dist.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
+                "fsdp_dtensor checkpoint format only supports Megatron FSDP"
+            )
+
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp:
             assert self.dist.use_torch_fsdp2 is False, (
