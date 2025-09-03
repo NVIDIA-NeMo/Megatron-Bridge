@@ -99,13 +99,6 @@ def main():
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
-    # Display final configuration
-
-    logger.info("--- Final Merged Configuration ---")
-    recipe.to_yaml()
-    logger.info("----------------------------------")
-    # Start training
-    logger.info("Starting pretraining...")
 
     # Apply GPU/precision-specific performance overrides from perf_matrix, if present
     if yaml_overrides_omega is not None:
