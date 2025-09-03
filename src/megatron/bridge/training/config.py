@@ -143,6 +143,12 @@ class RerunStateMachineConfig:
     """Use re-run engine to validate results (default) or to emit stats
     on variability of computations due to non-deterministic algorithms."""
 
+    check_for_nan_in_loss: bool = True
+    """Check for NaN in the loss."""
+
+    check_for_spiky_loss: bool = False
+    """Check for spiky loss."""
+
 
 @dataclass(kw_only=True)
 class DataloaderConfig:
