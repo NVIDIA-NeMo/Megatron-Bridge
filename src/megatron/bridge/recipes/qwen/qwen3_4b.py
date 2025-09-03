@@ -175,7 +175,7 @@ def pretrain_config(
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
-            average_in_collective=False,  # Not supported for Megatron FSDP for now, need to be set to False if using Megatron FSDP
+            average_in_collective=True,  # Not supported for Megatron FSDP for now, need to be set to False if using Megatron FSDP
             data_parallel_sharding_strategy="optim_grads_params",  # For Megatron FSDP only
             use_distributed_optimizer=True,
             use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True

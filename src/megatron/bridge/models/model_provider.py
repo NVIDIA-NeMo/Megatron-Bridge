@@ -619,11 +619,11 @@ def _create_model(
 
 def _ddp_wrap(
     model: list[MegatronModule],
-    use_megatron_fsdp: bool,
-    use_torch_fsdp2: bool,
     data_parallel_random_init: bool,
     ddp_config: DistributedDataParallelConfig,
     overlap_param_gather_with_optimizer_step: bool,
+    use_megatron_fsdp: bool = False,
+    use_torch_fsdp2: bool = False,
 ) -> list[MegatronModule]:
     """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
 
