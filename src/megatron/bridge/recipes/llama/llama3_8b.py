@@ -97,8 +97,6 @@ def pretrain_config(
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     vocab_size: int = 128256,
-    # Checkpoint
-    ckpt_format: str = "torch_dist",
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 8B model.
@@ -207,7 +205,7 @@ def pretrain_config(
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
-            ckpt_format=ckpt_format,
+            ckpt_format="fsdp_dtensor",
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
