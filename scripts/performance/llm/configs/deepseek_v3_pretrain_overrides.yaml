@@ -27,6 +27,7 @@ model:
   cross_entropy_fusion_impl: "te"
   enable_cuda_graph: true
   use_te_rng_tracker: true
+  moe_router_fusion: true
 
 rng:
   te_rng_tracker: true
