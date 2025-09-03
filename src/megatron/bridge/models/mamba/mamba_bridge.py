@@ -1,0 +1,112 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Optional
+
+import torch
+import torch.nn as nn
+from megatron.core.models.mamba import MambaModel
+from transformers import AutoModelForCausalLM
+
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
+
+
+class PrunedVocabMapping(AutoMapping):
+    """
+    Smart mapping like AutoMapping that additionally prunes vocab padding.
+
+    Intended for embedding and output layers.
+    """
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> dict[str, torch.Tensor]:
+        """Prune padding from weight in vocab size dimension, if vocab size is accessible."""
+        mapping = super().megatron_to_hf(megatron_weights, megatron_module)
+
+        if megatron_module is not None:
+            weight = mapping[str(self.hf_param)]
+            mapping[str(self.hf_param)] = weight[: megatron_module.vocab_size, :]
+
+        return mapping
+
+
+@MegatronModelBridge.register_bridge(source=AutoModelForCausalLM, target=MambaModel)
+class MambaBridge(MegatronModelBridge):
+    """
+    Megatron Bridge for Mamba and Nemotron-H Causal LM.
+
+    This bridge handles the conversion between HuggingFace NemotronHForCausalLM/MambaForCausalLM
+    and Megatron-Core MambaModel formats, including weight mappings and
+    configuration translation.
+
+    Example:
+        >>> from megatron.bridge import AutoBridge
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K")
+        >>> provider = bridge.to_megatron_provider()
+    """
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
+        # First create simple 1:1 parameter mappings using a dictionary for readability
+
+        # Dictionary maps Megatron parameter names -> HF parameter names
+        # Supports wildcard (*) patterns for layer-specific parameters
+        param_mappings = {
+            "decoder.layers.*.mixer.A_log": "backbone.layers.*.mixer.A_log",
+            "decoder.layers.*.mixer.D": "backbone.layers.*.mixer.D",
+            "decoder.layers.*.mixer.conv1d.weight": "backbone.layers.*.mixer.conv1d.weight",
+            "decoder.layers.*.mixer.conv1d.bias": "backbone.layers.*.mixer.conv1d.bias",
+            "decoder.layers.*.mixer.in_proj.weight": "backbone.layers.*.mixer.in_proj.weight",
+            "decoder.layers.*.mixer.dt_bias": "backbone.layers.*.mixer.dt_bias",
+            "decoder.layers.*.mixer.out_proj.weight": "backbone.layers.*.mixer.out_proj.weight",
+            "decoder.layers.*.mixer.norm.weight": "backbone.layers.*.mixer.norm.weight",
+            "decoder.layers.*.mlp.linear_fc1.weight": "backbone.layers.*.mixer.up_proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
+            "decoder.final_norm.weight": "backbone.norm_f.weight",
+            # if the megatron key does not exist for a given layer it will be ignored,
+            # so only one of these will be used per layer
+            "decoder.layers.*.mixer.in_proj.layer_norm_weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "backbone.layers.*.norm.weight",
+        }
+
+        mapping_list = []
+        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
+        for hf_param, megatron_param in param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        # Add special mappings that require parameter concatenation/transformation, pruning, etc.
+        mapping_list.extend(
+            [
+                # QKV: Combine separate Q, K, V matrices into single QKV matrix
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="backbone.layers.*.mixer.q_proj.weight",
+                    k="backbone.layers.*.mixer.k_proj.weight",
+                    v="backbone.layers.*.mixer.v_proj.weight",
+                ),
+                PrunedVocabMapping(
+                    megatron_param="embedding.word_embeddings.weight", hf_param="backbone.embeddings.weight"
+                ),
+                PrunedVocabMapping(megatron_param="output_layer.weight", hf_param="lm_head.weight"),
+            ]
+        )
+
+        return MegatronMappingRegistry(*mapping_list)
