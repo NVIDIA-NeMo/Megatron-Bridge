@@ -307,6 +307,22 @@ class GlobalState:
         if self.cfg.train is not None:
             self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal)
 
+    def reset_for_restart(self) -> None:
+        """Reset GlobalState components for in-process restart.
+
+        This cleans up all stateful components that need to be reinitialized between restart iterations.
+        """
+        self._timers = None
+        self._train_state = None
+        self._tensorboard_logger = None
+        self._wandb_logger = None
+        self._energy_monitor = None
+        self._energy_monitor_created = False
+        self._signal_handler = None
+        self._straggler_timer = None
+        self._nvrx_straggler_manager = None
+        self._nvrx_straggler_created = False
+
 
 def _timers_write_to_wandb(
     self: Timers,

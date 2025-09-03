@@ -1,23 +1,32 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+import logging
 import os
 import socket
+import warnings
 from datetime import timedelta
 from typing import Callable, Optional
 
-
-try:
-    import nvidia_resiliency_ext.inprocess as inprocess
-except ImportError:
-    inprocess = None
-
-import warnings
-
+import nvidia_resiliency_ext.inprocess as inprocess
 import torch
 
 from megatron.bridge.training.config import InProcessRestartConfig
-from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.state import GlobalState
+
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global_state: GlobalState) -> Callable:
@@ -62,7 +71,19 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
             )
         )
 
-    finalize = [inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=destroy_global_state)]
+    def destroy_state():
+        """Comprehensive state cleanup for in-process restart."""
+
+        from megatron.bridge.training.initialize import destroy_global_state
+
+        try:
+            # Clean up Megatron global state
+            destroy_global_state()
+            global_state.reset_for_restart()
+        except Exception as e:
+            logger.error(f"destroy_state failed: {type(e).__name__}: {e}", exc_info=True)
+
+    finalize = [inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=destroy_state)]
 
     if config.empty_cuda_cache:
         finalize.append(inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=torch.cuda.empty_cache))
@@ -103,6 +124,25 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     completion = inprocess.nested_restarter.NestedRestarterFinalized()
     terminate = inprocess.nested_restarter.NestedRestarterAborted()
 
+    # Adapter function to bridge nvidia-resiliency-ext 0.4.1 calling convention
+    # with Megatron-Bridge function signatures.
+    #
+    # Why this is needed:
+    # - NVRx 0.4.1 calls wrapped functions via CallWrapper.__call__(fn, args, kwargs)
+    # - NVRx injects the active CallWrapper instance for parameters annotated with
+    #   Optional[CallWrapper] or CallWrapper after binding arguments
+    # - Our _pretrain function expects the CallWrapper as a keyword argument named
+    #   'inprocess_call_wrapper', but NVRx may pass it differently
+    # - This adapter ensures compatibility by extracting the CallWrapper and passing
+    #   it correctly to the actual training function
+    def _adapter(*args, **kwargs):
+        # Extract the injected CallWrapper from kwargs if NVRx placed it there
+        call_wrapper = kwargs.pop("inprocess_call_wrapper", None)
+
+        # Call the actual training function with the CallWrapper as expected keyword arg
+        result = train_fn(*args, inprocess_call_wrapper=call_wrapper, **kwargs)
+        return result
+
     new_train_fn = inprocess.Wrapper(
         store_kwargs={
             "timeout": timedelta(seconds=300),
@@ -126,7 +166,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
         hard_timeout=timedelta(seconds=config.hard_timeout),
         termination_grace_time=timedelta(seconds=config.termination_grace_time),
         enabled=True,
-    )(train_fn)
+    )(_adapter)
 
     return new_train_fn
 
@@ -139,10 +179,7 @@ def maybe_wrap_for_inprocess_restart(
     if not config.enabled:
         return train_fn, None
 
-    # Apply inprocess restart wrapper
-    wrapped_train_fn = inprocess_restart(train_fn, config, state)
-
-    # Create the TCPStore
+    # Create the coordination TCPStore first
     store = torch.distributed.TCPStore(
         host_name=os.environ["MASTER_ADDR"],
         port=int(os.environ["MASTER_PORT"]) + 1,
@@ -152,5 +189,8 @@ def maybe_wrap_for_inprocess_restart(
         wait_for_workers=True,
         use_libuv=True,
     )
+
+    # Apply inprocess restart wrapper
+    wrapped_train_fn = inprocess_restart(train_fn, config, state)
 
     return wrapped_train_fn, store

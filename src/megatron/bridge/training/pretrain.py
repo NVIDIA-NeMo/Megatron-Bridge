@@ -15,12 +15,7 @@
 from typing import Callable, Optional
 
 import torch.distributed as dist
-
-
-try:
-    from nvidia_resiliency_ext.inprocess import CallWrapper
-except ImportError:
-    CallWrapper = type(None)
+from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.checkpointing import save_checkpoint
@@ -56,7 +51,7 @@ def pretrain(
         incompatible ways without notice.
     """
     # Apply runtime config updates prior to creating/attaching GlobalState
-    runtime_config_update(config)
+    _runtime_config_update(config)
 
     # Create a single GlobalState instance regardless of restart path
     state = GlobalState()
@@ -70,10 +65,11 @@ def pretrain(
         wrapped_pretrain, store = maybe_wrap_for_inprocess_restart(_pretrain, config.inprocess_restart, state)
 
         # Execute the wrapped function - nvidia-resiliency-ext will inject inprocess_call_wrapper
+        # Call with positional args matching the adapter signature: (state, forward_step_func, store=None, inprocess_call_wrapper=None)
         wrapped_pretrain(state, forward_step_func, store=store)
     else:
         # Normal execution without in-process restart
-        _pretrain(state, forward_step_func)
+        _pretrain(state=state, forward_step_func=forward_step_func)
 
 
 def _pretrain(
@@ -169,7 +165,7 @@ def _pretrain(
     _finish_train(state)
 
 
-def runtime_config_update(cfg: ConfigContainer) -> None:
+def _runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
     - Validate configuration
