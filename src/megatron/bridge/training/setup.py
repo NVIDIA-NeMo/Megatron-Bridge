@@ -117,6 +117,8 @@ def setup(
 
     cfg.validate()
 
+    cfg.validate()
+
     state = GlobalState()
     state.cfg = cfg
 
@@ -257,6 +259,11 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
+    if get_rank_safe() == 0:
+        # Print final resolved/updated/overridden configs
+        print("------- Task Configuration -------")
+        cfg.to_yaml()
+        print("----------------------------------")
     if get_rank_safe() == 0:
         # Print final resolved/updated/overridden configs
         print("------- Task Configuration -------")
