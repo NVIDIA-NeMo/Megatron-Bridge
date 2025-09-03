@@ -37,13 +37,6 @@ from megatron.bridge.models.conversion.utils import get_module_and_param_from_na
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
 
 
-def maybe_dequantize(tensor: torch.Tensor) -> torch.Tensor:
-    """Dequantize FP8 tensor if needed."""
-    if HAVE_TE_FP8_TENSOR_CLASS and isinstance(tensor, FP8_TENSOR_CLASS):
-        return tensor.dequantize(dtype=tensor.dtype)
-    return tensor
-
-
 class MegatronParamMapping(ABC, Generic[WeightType]):
     """
     Abstract base class for weight conversion between Megatron and external formats.
@@ -370,6 +363,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         return obj_list[0]
 
+
     def broadcast_tensor_to_tp_ranks(self, tensor: torch.Tensor, src_rank: int = 0) -> torch.Tensor:
         """Broadcast a tensor to all TP ranks.
 
@@ -561,6 +555,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Return dictionary mapping HF parameter names to weights
         return {param_name: gathered_weights[i] for i, param_name in enumerate(gathered_expert_param_names)}
 
+    def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Dequantize FP8 tensor if needed."""
+        if HAVE_TE_FP8_TENSOR_CLASS and isinstance(tensor, FP8_TENSOR_CLASS):
+            return tensor.dequantize(dtype=tensor.dtype)
+        return tensor
+
 
 class DirectMapping(MegatronParamMapping[torch.Tensor]):
     """Direct 1:1 weight mapping with no transformation or tensor parallelism."""
@@ -586,7 +586,7 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
             return {}
 
         # Dequantize if needed
-        megatron_weights = maybe_dequantize(megatron_weights)
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         return {str(self.hf_param): megatron_weights}
 
@@ -685,7 +685,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             return {}
 
         # Dequantize if needed
-        megatron_weights = maybe_dequantize(megatron_weights)
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.tp_size == 1:
             full_weights = megatron_weights
@@ -783,7 +783,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             return {}
 
         # Dequantize if needed
-        megatron_weights = maybe_dequantize(megatron_weights)
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.tp_size == 1:
             full_weights = megatron_weights
@@ -844,7 +844,7 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
             return {}
 
         # Dequantize if needed
-        megatron_weights = maybe_dequantize(megatron_weights)
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.is_expert:
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
@@ -1139,6 +1139,10 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather QKV shards and split into Q, K, V."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
         # ------------------------------------------------------------------
         # Broadcast / retrieve the transformer configuration so that every PP
         # rank (also the ones that will early-return) participates in the
@@ -1284,7 +1288,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             return {}
 
         # Dequantize if needed
-        megatron_weights = maybe_dequantize(megatron_weights)
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         # Handle TP gathering
         if self.tp_size == 1:
