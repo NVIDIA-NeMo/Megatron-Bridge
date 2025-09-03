@@ -773,10 +773,13 @@ class ConfigContainer(Container):
         world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
 
-        if self.checkpoint.ckpt_format == "fsdp_dtensor":
-            assert self.dist.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
-                "fsdp_dtensor checkpoint format only supports Megatron FSDP"
-            )
+        # Checkpoint
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            # only check if saving or loading
+            if self.checkpoint.ckpt_format == "fsdp_dtensor":
+                assert self.dist.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
+                    "fsdp_dtensor checkpoint format only supports Megatron FSDP"
+                )
 
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp:
@@ -789,9 +792,11 @@ class ConfigContainer(Container):
             self.optimizer.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
 
-            assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
-                "Megatron FSDP only supports fsdp_dtensor checkpoint format"
-            )
+            if self.checkpoint.save is not None or self.checkpoint.load is not None:
+                # only check if saving or loading
+                assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
+                    "Megatron FSDP only supports fsdp_dtensor checkpoint format"
+                )
 
             if self.model.gradient_accumulation_fusion == True:
                 print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
