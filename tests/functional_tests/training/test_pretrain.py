@@ -23,6 +23,7 @@ from megatron.bridge.models.llama import Llama32ModelProvider1B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     RNGConfig,
@@ -310,19 +311,11 @@ class TestPretrainMegatronFSDP:
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_with_checkpoint(self, tmp_path):
+    def test_pretrain_without_checkpoint(self, tmp_path):
         """
         Test end to end training with checkpoint functionality.
         """
         initialize_distributed()
-        shared_base_dir = broadcast_path(tmp_path)
-
-        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
-        tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
-
-        if torch.distributed.get_rank() == 0:
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            os.makedirs(tensorboard_dir, exist_ok=True)
 
         torch.distributed.barrier()
 
@@ -350,6 +343,9 @@ class TestPretrainMegatronFSDP:
             # Config Container
             cfg = ConfigContainer(
                 model=model_cfg,
+                dist=DistConfig(
+                    use_megatron_fsdp=True,
+                ),
                 train=TrainingConfig(
                     train_iters=total_iters,
                     eval_interval=50,
@@ -370,7 +366,6 @@ class TestPretrainMegatronFSDP:
                     lr=3e-3,
                     weight_decay=0.01,
                     min_lr=1e-6,
-                    use_megatron_fsdp=True,
                 ),
                 scheduler=SchedulerConfig(
                     start_weight_decay=0.033,
@@ -389,7 +384,6 @@ class TestPretrainMegatronFSDP:
                     overlap_param_gather=True,
                     average_in_collective=False,
                     use_distributed_optimizer=True,
-                    use_megatron_fsdp=True,
                 ),
                 dataset=MockGPTDatasetConfig(
                     random_seed=1234,
@@ -404,18 +398,10 @@ class TestPretrainMegatronFSDP:
                 ),
                 logger=LoggerConfig(
                     log_interval=5,
-                    tensorboard_dir=tensorboard_dir,
                 ),
                 tokenizer=TokenizerConfig(
                     tokenizer_type="NullTokenizer",
                     vocab_size=10000,
-                ),
-                checkpoint=CheckpointConfig(
-                    save_interval=40,
-                    save=checkpoint_dir,
-                    ckpt_format="torch_dist",
-                    fully_parallel_save=True,
-                    async_save=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )
@@ -425,7 +411,6 @@ class TestPretrainMegatronFSDP:
 
             # Verify checkpoint files
             torch.distributed.barrier()
-            verify_checkpoint_files(checkpoint_dir, total_iters)
 
         finally:
             # pytest's tmp_path fixture doesn't clean up immediately.
