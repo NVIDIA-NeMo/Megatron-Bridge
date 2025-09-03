@@ -185,7 +185,11 @@ def train(
         prof.start()
 
     start_iteration = global_state.train_state.step
-    should_toggle_forward_pre_hook = config.optimizer.use_distributed_optimizer and config.ddp.overlap_param_gather
+    # Megatron FSDP and FSDP2 does not have this hook
+    should_toggle_forward_pre_hook = (
+        config.optimizer.use_distributed_optimizer and config.ddp.overlap_param_gather and 
+        not (config.dist.use_megatron_fsdp or config.dist.use_torch_fsdp2)
+    )
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -648,9 +652,7 @@ def enable_forward_pre_hook(model: list[DDP]) -> None:
         model: list of model chunks wrapped in DDP
     """
     for model_chunk in model:
-        # only works for DDP, Megatron FSDP or FSDP2 does not have this method
-        if isinstance(model_chunk, DDP):
-            model_chunk.enable_forward_pre_hook()
+        model_chunk.enable_forward_pre_hook()
 
 
 def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
@@ -661,9 +663,7 @@ def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
         param_sync: Whether to synchronize parameters across model chunks
     """
     for model_chunk in model:
-        # only works for DDP, Megatron FSDP or FSDP2 does not have this method
-        if isinstance(model_chunk, DDP):
-            model_chunk.disable_forward_pre_hook(param_sync=param_sync)
+        model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
 def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, float]:

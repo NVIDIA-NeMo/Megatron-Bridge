@@ -539,11 +539,11 @@ def get_model(
     if wrap_with_ddp:
         model = _ddp_wrap(
             model,
-            use_megatron_fsdp,
-            use_torch_fsdp2,
             data_parallel_random_init,
             ddp_config,
             overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=use_megatron_fsdp,
+            use_torch_fsdp2=use_torch_fsdp2,
         )
 
     return model
