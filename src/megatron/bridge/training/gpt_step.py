@@ -64,12 +64,17 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     )
 
 
-def get_batch_from_iterator(data_iterator: Iterable, use_mtp: bool = False) -> dict[str, torch.Tensor]:
+def get_batch_from_iterator(
+    data_iterator: Iterable,
+    use_mtp: bool = False,
+    skip_getting_attention_mask_from_dataset: bool = True,
+) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
     Args:
         data_iterator: The data iterator to get the batch from.
         use_mtp: Whether Multi-Token Prediction layers are enabled.
+        skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -79,7 +84,9 @@ def get_batch_from_iterator(data_iterator: Iterable, use_mtp: bool = False) -> d
     required_device_keys = set()
     required_host_keys = set()
 
-    required_device_keys.add("attention_mask")
+    if not skip_getting_attention_mask_from_dataset:
+        required_device_keys.add("attention_mask")
+
     if "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
         required_host_keys.add("cu_seqlens_argmin")
@@ -269,7 +276,11 @@ def get_batch(
     if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None, None, None, None
 
-    batch = get_batch_from_iterator(data_iterator, use_mtp)
+    batch = get_batch_from_iterator(
+        data_iterator,
+        use_mtp,
+        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+    )
 
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)
