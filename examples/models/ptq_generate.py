@@ -23,7 +23,7 @@ The process is as follows:
 3. Text generation is performed using the loaded quantized model.
 
 Usage:
-torchrun --nproc_per_node 2 examples/models/ptq_generate.py --megatron-load-path ./megatron_checkpoint --prompts "Hello!|Born in California, Soyer trained as a"
+torchrun --nproc_per_node 2 examples/models/ptq_generate.py --megatron-load-path ./megatron_checkpoint
 """
 
 import argparse
@@ -32,34 +32,18 @@ import sys
 import warnings
 
 import torch
+from quantize import _custom_prompt_forward_loop_func
 from rich.console import Console
-from rich.table import Table
-from tqdm import tqdm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.core.transformer.moe.router import TopKRouter
-from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
-from megatron.training.utils import unwrap_model
-from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
+from megatron.bridge.utils.common_utils import unwrap_model
 
-warnings.filterwarnings('ignore')
 
-HF_MODEL_ID = "/models/Llama-3.2-1B"
+warnings.filterwarnings("ignore")
+
+HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 console = Console()
-
-
-def _custom_prompt_forward_loop_func(model, prompts, tokenizer, is_rank_0, osl=32):
-    """Forward loop function for testing quantized model with custom prompts."""
-    all_prompts = prompts.split("|")
-    
-    for idx, prompt in tqdm(enumerate(all_prompts), disable=torch.distributed.get_rank()):
-        tokens = tokenizer(prompt, return_tensors="pt")
-        generated_ids = megatron_generate(model, tokens.input_ids.cuda(0), osl=osl, enable_kv_cache=False)
-        generated_texts = tokenizer.batch_decode(generated_ids)
-        if is_rank_0:
-            console.print(f"[green]Prompt {idx + 1}: {prompt}[/green]")
-            console.print(f"[green]Generated: {generated_texts}[/green]")
 
 
 @torchrun_main
@@ -78,39 +62,25 @@ def main(
         console.print("This script must be launched with torchrun. Please run:")
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
         sys.exit(1)
-    
+
     # Check if the checkpoint path exists
     if not os.path.exists(megatron_load_path):
         console.print(f"[red]Error: Checkpoint path {megatron_load_path} does not exist![/red]")
         sys.exit(1)
-    
+
     # Initialize bridge from HF model to get tokenizer and model structure
     bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-    
+
     # Get model provider and configure for multi-GPU execution
     model_provider = bridge.to_megatron_provider(load_weights=False)
     model_provider.tensor_model_parallel_size = tp
     model_provider.pipeline_model_parallel_size = pp
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
-    model_provider.transformer_layer_spec = lambda config: get_gpt_modelopt_spec(
-        config=config,
-        local_core_attention=False,
-        remap_te_layernorm=False,
-        real_quant_cfg="None",
-        use_arbitrary_attention_mask=True,
-    )
     model_provider.initialize_model_parallel(seed=0)
-    
-    # Create the model using the provider (this ensures the correct transformer_layer_spec)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
-    
-    # Load weights from the checkpoint into the existing model
-    from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
-    _load_model_weights_from_checkpoint(megatron_load_path, megatron_model)
-    
+    megatron_model = bridge.load_megatron_model(megatron_load_path, wrap_with_ddp=False)
     megatron_model = [m.cuda() for m in megatron_model]
-    
+
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
 
@@ -128,8 +98,8 @@ def main(
     # Test quantized model with custom prompts
     if is_rank_0:
         console.print("[green]Testing quantized model with custom prompts...[/green]")
-    
-    _custom_prompt_forward_loop_func(unwrapped_model, prompts, bridge.tokenizer, is_rank_0, osl)
+
+    _custom_prompt_forward_loop_func(unwrapped_model, prompts, bridge.hf_pretrained.tokenizer, is_rank_0, osl)
 
     if is_rank_0:
         console.print("[green]Generation completed successfully![/green]")
@@ -139,7 +109,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Load a quantized Megatron-LM checkpoint and perform text generation on multiple GPUs"
     )
-    parser.add_argument("--hf-model-id", type=str, default=HF_MODEL_ID, help="HuggingFace model ID for tokenizer and model structure")
+    parser.add_argument(
+        "--hf-model-id", type=str, default=HF_MODEL_ID, help="HuggingFace model ID for tokenizer and model structure"
+    )
 
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
@@ -163,7 +135,7 @@ if __name__ == "__main__":
         default=32,
         help="Output sequence length for generation.",
     )
-    
+
     args = parser.parse_args()
     main(
         args.hf_model_id,
