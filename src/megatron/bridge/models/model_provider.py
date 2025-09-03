@@ -215,7 +215,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             virtual_pipeline_model_parallel_size=getattr(self, "virtual_pipeline_model_parallel_size", None),
             context_parallel_size=getattr(self, "context_parallel_size", 1) or 1,
             expert_model_parallel_size=getattr(self, "expert_model_parallel_size", 1) or 1,
-            expert_tensor_parallel_size=getattr(self, "tensor_model_parallel_size", None),
+            expert_tensor_parallel_size=getattr(self, "expert_tensor_parallel_size", None),
             **model_parallel_kwargs,
         )
         if seed is not None:
