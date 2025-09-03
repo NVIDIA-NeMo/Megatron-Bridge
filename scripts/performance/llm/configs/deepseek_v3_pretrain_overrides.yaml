@@ -25,8 +25,8 @@ model:
   expert_model_parallel_size: 8
   expert_tensor_parallel_size: 1
   cross_entropy_fusion_impl: "te"
-  enable_cuda_graph: false
-  use_te_rng_tracker: false
+  enable_cuda_graph: true
+  use_te_rng_tracker: true
   num_moe_experts: 8
   num_layers: 3
   moe_layer_freq: [0, 1, 1]
@@ -35,9 +35,10 @@ model:
   moe_router_group_topk: 1
   moe_router_fusion: true
   moe_permute_fusion: true
+  apply_rope_fusion: true
 
 rng:
-  te_rng_tracker: false
+  te_rng_tracker: true
 
 train:
   global_batch_size: 32
