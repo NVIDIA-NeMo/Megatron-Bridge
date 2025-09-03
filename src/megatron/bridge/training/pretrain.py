@@ -175,6 +175,7 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     - Validate configuration
     - Resolve mixed precision configuration
     - Apply communication overlap configuration
+    - Validate configuration again after resolving mixed precision and communication overlap
     """
     # Validate
     cfg.validate()
@@ -188,3 +189,5 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # Communication overlap
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    cfg.validate()
