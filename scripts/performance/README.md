@@ -16,11 +16,11 @@ There are YAML configuration files for supported models in `scripts/performance/
 
 The following line shows an example of how you can launch a pre-training experiment-
 
-`python -m scripts.performance.llm.pretrain_llama3_8b --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200`
+`python -m scripts.performance.setup_experiment --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_name <model name> --model_size <model_size>`
 
 ## Configuration Options
 
-- Slurm account, partition and gpu are mandatory arguments for launching the experiment.
+- Slurm account, partition, gpu, model name and model size are mandatory arguments for launching the experiment.
 - You can use the following optional arguments as needed-
 
 - You can use the following optional arguments as needed-
@@ -37,6 +37,8 @@ The following line shows an example of how you can launch a pre-training experim
   - -ng/--num_gpus: Number of gpus.
   - -gn/--gpus_per_node: Number of gpus per node. Defaults to 8.
   - -cm/--custom_mounts: Comma separated string of mounts.
+  - -m/--model_name: model name you want to run the job for. e.g. "llama3"
+  - -s/--model_size: model size you want to use for a model (family)- e.g. "8b"
 
 ## Virtual Environment
 

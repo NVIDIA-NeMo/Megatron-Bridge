@@ -194,16 +194,14 @@ def parse_cli_args():
         "--model_name",
         type=str,
         help="Model to use for experiment. Default: llama3",
-        required=False,
-        default="llama3",
+        required=True,
     )
     parser.add_argument(
         "-s",
         "--model_size",
         type=str,
         help="Model size to use for experiment. Default: 8b",
-        required=False,
-        default="8b",
+        required=True,
     )
     parser.add_argument(
         "-en",
