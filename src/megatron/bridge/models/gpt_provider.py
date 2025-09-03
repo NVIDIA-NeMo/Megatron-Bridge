@@ -26,6 +26,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -83,9 +84,22 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
+def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Layer specification for quantization with ModelOpt."""
+    return get_gpt_modelopt_spec(
+        config=config,
+        local_core_attention=False,
+        remap_te_layernorm=True,
+        real_quant_cfg="None",
+        use_arbitrary_attention_mask=True,
+    )
+
+
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.use_transformer_engine_full_layer_spec:
+    if config.use_modelopt:
+        return quantization_layer_spec(config)
+    elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
         return transformer_engine_layer_spec(config)
@@ -155,6 +169,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     persist_layer_norm: bool = False
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+
+    # add modelopt attribute
+    use_modelopt: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.

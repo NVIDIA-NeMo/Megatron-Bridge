@@ -240,6 +240,10 @@ def build_and_load_model(
     )
     from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
     from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
+    from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
+
+    if has_modelopt_state(checkpoint_path):
+        model_cfg.use_modelopt = True
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
@@ -281,6 +285,15 @@ def build_and_load_model(
                 model = _call_model_provider(model_cfg)
         else:
             model = _call_model_provider(model_cfg)
+
+        if model_cfg.use_modelopt == True:
+            from megatron.bridge.training.post_training.checkpointing import (
+                load_modelopt_checkpoint,
+                load_modelopt_state,
+            )
+
+            load_modelopt_checkpoint(model, checkpoint_path)
+            load_modelopt_state(model, checkpoint_path)
 
         maybe_state_dict = _load_model_weights_from_checkpoint(
             checkpoint_path, model, return_state_dict=return_state_dict

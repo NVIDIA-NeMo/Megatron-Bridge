@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from functools import partial
 
 import torch
@@ -79,6 +80,7 @@ class LlamaBridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
+        use_te = os.environ.get("MEGATRON_USE_TE", "true").lower() in ("true")
 
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
@@ -91,6 +93,21 @@ class LlamaBridge(MegatronModelBridge):
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
+
+        if use_te:
+            param_mappings.update(
+                {
+                    "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+                    "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+                }
+            )
+        else:
+            param_mappings.update(
+                {
+                    "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
+                    "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
+                }
+            )
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
