@@ -340,6 +340,9 @@ def forward_step(
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
+    check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
+    check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
+
     with straggler_timer:
         if return_schedule_plan:
             assert config.overlap_moe_expert_parallel_comm, (
@@ -348,8 +351,30 @@ def forward_step(
             schedule_plan = model.build_schedule_plan(
                 tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
             )
-            return schedule_plan, partial(masked_next_token_loss, loss_mask)
+            loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+            return schedule_plan, loss_function
         else:
             output_tensor = model(**forward_args)
 
-    return output_tensor, partial(masked_next_token_loss, loss_mask)
+    loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+
+    return output_tensor, loss_function
+
+
+def _create_loss_function(loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool) -> partial:
+    """Create a partial loss function with the specified configuration.
+
+    Args:
+        loss_mask: Used to mask out some portions of the loss
+        check_for_nan_in_loss: Whether to check for NaN values in the loss
+        check_for_spiky_loss: Whether to check for spiky loss values
+
+    Returns:
+        A partial function that can be called with output_tensor to compute the loss
+    """
+    return partial(
+        masked_next_token_loss,
+        loss_mask,
+        check_for_nan_in_loss=check_for_nan_in_loss,
+        check_for_spiky_loss=check_for_spiky_loss,
+    )
