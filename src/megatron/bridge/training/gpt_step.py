@@ -67,7 +67,7 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
 def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
-    skip_getting_attention_mask_from_dataset: bool = False,
+    skip_getting_attention_mask_from_dataset: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
@@ -279,7 +279,7 @@ def get_batch(
     batch = get_batch_from_iterator(
         data_iterator,
         use_mtp,
-        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", False),
+        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
     )
 
     # slice batch along sequence dimension for context parallelism
