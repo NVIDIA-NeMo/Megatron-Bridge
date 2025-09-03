@@ -205,7 +205,7 @@ def pretrain_config(
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
-            ckpt_format="fsdp_dtensor",
+            ckpt_format="torch_dist",
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
@@ -219,6 +219,3 @@ def pretrain_config(
         )
 
     return cfg
-
-
-# python pretrain_llama3_8b.py train.use_megatron_fsdp=True train.ckpt_format="fsdp_dtensor"

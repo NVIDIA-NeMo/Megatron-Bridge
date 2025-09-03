@@ -204,7 +204,7 @@ def pretrain_config(
             save_interval=500,
             save=checkpoint_dir,
             load=checkpoint_dir,
-            ckpt_format="fsdp_dtensor",
+            ckpt_format="torch_dist",
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
