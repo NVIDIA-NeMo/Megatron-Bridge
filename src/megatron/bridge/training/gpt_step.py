@@ -341,4 +341,28 @@ def forward_step(
         else:
             output_tensor = model(**forward_args)
 
-    return output_tensor, partial(masked_next_token_loss, loss_mask)
+    check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
+    check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
+
+    loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+
+    return output_tensor, loss_function
+
+
+def _create_loss_function(loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool) -> partial:
+    """Create a partial loss function with the specified configuration.
+
+    Args:
+        loss_mask: Used to mask out some portions of the loss
+        check_for_nan_in_loss: Whether to check for NaN values in the loss
+        check_for_spiky_loss: Whether to check for spiky loss values
+
+    Returns:
+        A partial function that can be called with output_tensor to compute the loss
+    """
+    return partial(
+        masked_next_token_loss,
+        loss_mask,
+        check_for_nan_in_loss=check_for_nan_in_loss,
+        check_for_spiky_loss=check_for_spiky_loss,
+    )
