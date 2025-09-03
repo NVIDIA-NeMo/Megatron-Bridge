@@ -303,6 +303,7 @@ class TestPretrain:
             # Clean up manually.
             clear_directories(tmp_path)
 
+
 class TestPretrainMegatronFSDP:
     """
     Test end to end training with checkpoint functionality for Megatron FSDP.

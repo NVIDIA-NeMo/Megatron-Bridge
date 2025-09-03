@@ -36,8 +36,8 @@ from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
     DistributedDataParallel,
     DistributedDataParallelConfig,
+    FullyShardedDataParallel,
     TorchFullyShardedDataParallel,
-    FullyShardedDataParallel
 )
 from megatron.core.enums import ModelType
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -523,7 +523,10 @@ def get_model(
     # GPU allocation.
     # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
     # in the fully_shard function of FSDP2 instead.
-    if not (use_megatron_fsdp or use_torch_fsdp2 or model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
+    if (
+        not (use_megatron_fsdp or use_torch_fsdp2 or model_config.use_cpu_initialization)
+        and not model_config.init_model_with_meta_device
+    ):
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 

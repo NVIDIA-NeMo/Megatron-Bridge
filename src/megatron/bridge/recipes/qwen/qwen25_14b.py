@@ -173,7 +173,7 @@ def pretrain_config(
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp, # need use_distributed_optimizer=True
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,

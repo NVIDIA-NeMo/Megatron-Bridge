@@ -182,7 +182,7 @@ def pretrain_config(
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp, # need use_distributed_optimizer=True
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -221,5 +221,6 @@ def pretrain_config(
         )
 
     return cfg
+
 
 # python pretrain_llama3_8b.py train.use_megatron_fsdp=True train.ckpt_format="fsdp_dtensor"
