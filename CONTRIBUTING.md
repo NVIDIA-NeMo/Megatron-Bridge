@@ -15,12 +15,6 @@ uv sync --only-group build  # Installs build dependencies required by Transforme
 uv sync
 ```
 
-On a machine with CUDA, you can additionally sync TE:
-
-```bash
-uv sync --extra te
-```
-
 ### Alternative: Development Container
 
 For containerized development, use our Dockerfile for building your own container. There are three flavors: `INFERENCE_FRAMEWORK=inframework`, `INFERENCE_FRAMEWORK=trtllm` and `INFERENCE_FRAMEWORK=vllm`:
