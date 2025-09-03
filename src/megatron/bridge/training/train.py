@@ -187,8 +187,9 @@ def train(
     start_iteration = global_state.train_state.step
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = (
-        config.optimizer.use_distributed_optimizer and config.ddp.overlap_param_gather and 
-        not (config.dist.use_megatron_fsdp or config.dist.use_torch_fsdp2)
+        config.optimizer.use_distributed_optimizer
+        and config.ddp.overlap_param_gather
+        and not (config.dist.use_megatron_fsdp or config.dist.use_torch_fsdp2)
     )
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
