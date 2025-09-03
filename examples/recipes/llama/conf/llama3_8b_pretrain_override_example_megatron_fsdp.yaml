@@ -38,6 +38,7 @@ scheduler:
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
   save: null
+  ckpt_format: "fsdp_dtensor"
 
 dist:
   use_megatron_fsdp: true

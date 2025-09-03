@@ -32,7 +32,7 @@ from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
-from megatron.bridge.utils.common_utils import get_world_size_safe
+from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 @dataclass(kw_only=True)
@@ -772,6 +772,29 @@ class ConfigContainer(Container):
         # Distributed
         world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
+
+        # Megatron FSDP Config checks
+        if self.dist.use_megatron_fsdp:
+            assert self.dist.use_torch_fsdp2 is False, (
+                "use_megatron_fsdp and use_torch_fsdp2 cannot be True at the same time"
+            )
+
+            # Set Megatron FSDP Configs
+            self.model.use_megatron_fsdp = True
+            self.optimizer.use_megatron_fsdp = True
+            self.ddp.use_megatron_fsdp = True
+
+            assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
+                "Megatron FSDP only supports fsdp_dtensor checkpoint format"
+            )
+
+            if self.model.gradient_accumulation_fusion == True:
+                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
+                self.model.gradient_accumulation_fusion = False
+
+            if self.ddp.average_in_collective == True:
+                print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
+                self.ddp.average_in_collective = False
 
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:

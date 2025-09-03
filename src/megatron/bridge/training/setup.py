@@ -183,23 +183,6 @@ def setup(
         cfg.model.register_pre_wrap_hook(peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
-    # Megatron FSDP Config checks
-    if cfg.dist.use_megatron_fsdp:
-        assert cfg.dist.use_torch_fsdp2 is False, "use_megatron_fsdp and use_torch_fsdp2 cannot be True at the same time"
-
-        # Set Megatron FSDP Configs
-        cfg.model.use_megatron_fsdp = True
-        cfg.optimizer.use_megatron_fsdp = True
-        cfg.ddp.use_megatron_fsdp = True
-
-        if cfg.model.gradient_accumulation_fusion == True:
-            print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-            cfg.model.gradient_accumulation_fusion = False
-
-        if cfg.ddp.average_in_collective == True:
-            print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
-            cfg.ddp.average_in_collective = False
-
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
         use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
