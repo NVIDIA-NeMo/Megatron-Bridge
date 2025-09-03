@@ -21,14 +21,12 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from megatron.core import mpu
+from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
     get_pg_rank,
     get_pg_size,
-)
-from megatron.core.fp8_utils import (
-    FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 )
 
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, remove_non_pickleables
@@ -362,7 +360,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.broadcast_object_list(obj_list, src=global_src, group=self.pp_group)
 
         return obj_list[0]
-
 
     def broadcast_tensor_to_tp_ranks(self, tensor: torch.Tensor, src_rank: int = 0) -> torch.Tensor:
         """Broadcast a tensor to all TP ranks.
