@@ -16,12 +16,15 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from megatron.core.models.mamba import MambaModel
-from transformers import AutoModelForCausalLM
+from transformers import MambaForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mamba.mamba_provider import MambaProvider
 
 
 class PrunedVocabMapping(AutoMapping):
@@ -46,20 +49,41 @@ class PrunedVocabMapping(AutoMapping):
         return mapping
 
 
-@MegatronModelBridge.register_bridge(source=AutoModelForCausalLM, target=MambaModel)
+@MegatronModelBridge.register_bridge(source=MambaForCausalLM, target=MambaModel)
 class MambaBridge(MegatronModelBridge):
     """
-    Megatron Bridge for Mamba and Nemotron-H Causal LM.
+    Megatron Bridge for Mamba Causal LM.
 
-    This bridge handles the conversion between HuggingFace NemotronHForCausalLM/MambaForCausalLM
+    This bridge handles the conversion between HuggingFace MambaForCausalLM
     and Megatron-Core MambaModel formats, including weight mappings and
     configuration translation.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K")
+        >>> bridge = AutoBridge.from_hf_pretrained("state-spaces/mamba-130m-hf")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MambaProvider:
+        hf_config = hf_pretrained.config
+
+        return MambaProvider(
+            num_layers=hf_config.num_hidden_layers,
+            hybrid_override_pattern="M" * hf_config.num_hidden_layers,
+            hidden_size=hf_config.hidden_size,
+            ffn_hidden_size=hf_config.intermediate_size,
+            add_bias_linear=hf_config.use_bias,
+            init_method_std=hf_config.initializer_range,
+            layernorm_epsilon=hf_config.layer_norm_epsilon,
+            make_vocab_size_divisible_by=hf_config.pad_vocab_size_multiple,
+            vocab_size=hf_config.vocab_size,
+            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
+            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
+            fp32_residual_connection=hf_config.residual_in_fp32,
+            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
+            activation_func=F.silu,
+            mamba_state_dim=hf_config.state_size,
+        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
