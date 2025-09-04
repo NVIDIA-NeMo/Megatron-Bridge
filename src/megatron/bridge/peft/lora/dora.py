@@ -163,3 +163,69 @@ class DoRA(PEFT, ModuleMatcher):
             setattr(module, name, unwrapped_child)
         
         return module
+
+
+class DoRAMerge(PEFT):
+    """
+    Implements the DoRA weight merge for parameter-efficient fine-tuning.
+    """
+
+    @torch.no_grad()
+    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+        """
+        Merges the DoRA adapter with the base model weights.
+        
+        DoRA decomposition: W = m * (W0 + BA) / ||W0 + BA||
+        Where:
+        - m: magnitude vector
+        - W0: base weight
+        - BA: low-rank adaptation
+        - ||.||: L2 norm along appropriate dimension
+
+        Args:
+            module (nn.Module): The module to apply DoRA merge to.
+            name (str, optional): Name of the module to merge. Defaults to None.
+            prefix (str, optional): Prefix for the module name. Defaults to None.
+
+        Returns:
+            nn.Module: The modified module with the DoRA adapter merged into the base model weights.
+        """
+        if isinstance(module, DoRALinear):
+            logging.info(f"merging DoRALinear {(prefix if prefix else '') + '.' + (name if name else '')}")
+            base_weight = module.to_wrap.weight
+            adapter = module.adapter
+            
+            # Calculate low-rank adaptation: BA
+            lora_delta = (
+                adapter.alpha
+                / adapter.dim
+                * adapter.linear_out.weight.to(base_weight.device)
+                @ adapter.linear_in.weight.to(base_weight.device)
+            )
+            
+            # Calculate directional component: W0 + BA
+            directional = base_weight + lora_delta
+            
+            # Calculate magnitude scaling: m / ||W0 + BA||
+            if hasattr(adapter, 'weight_magnitude'):
+                # Get magnitude vector
+                magnitude = adapter.weight_magnitude.to(base_weight.device)
+                
+                # Calculate L2 norm along the output dimension (dim=1 for weight matrices)
+                direction_norms = torch.norm(directional, dim=1, keepdim=True)
+                
+                # Avoid division by zero
+                direction_norms = torch.clamp(direction_norms, min=1e-8)
+                
+                # Apply magnitude scaling: W = m * (W0 + BA) / ||W0 + BA||
+                merged_weight = magnitude.unsqueeze(1) * directional / direction_norms
+            else:
+                # Fallback: if no magnitude vector, use directional component
+                logging.warning(f"No magnitude vector found for DoRA module {name}, using directional component only")
+                merged_weight = directional
+            
+            # Update base weight with merged result
+            module.to_wrap.weight.data = merged_weight
+            return module
+        
+        return module
