@@ -49,7 +49,8 @@ def main(adapter_id: str = ADAPTER_ID, output_dir: str = None) -> bool:
     if output_dir:
         save_path = os.path.join(output_dir, f"{adapter_name}_verified")
     else:
-        save_path = f"{adapter_name}_verified"
+        # Default to outputs directory (not tracked by git)
+        save_path = os.path.join("outputs", f"{adapter_name}_verified")
 
     console.print(f"Loading PEFT adapters from [bold green]{adapter_id}[/bold green]...")
     peft_bridge = AutoPEFTBridge.from_hf_pretrained(adapter_id)
@@ -66,6 +67,9 @@ def main(adapter_id: str = ADAPTER_ID, output_dir: str = None) -> bool:
     except Exception as e:
         console.print(f"⚠️  Could not verify adapter mappings: {e}")
 
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
+    
     # Perform round-trip save and reload to verify conversion accuracy
     console.print(f"\nSaving PEFT adapters in {save_path}...")
     peft_bridge.save_hf_pretrained(peft_model, save_path)
