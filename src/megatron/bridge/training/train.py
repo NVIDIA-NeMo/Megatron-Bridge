@@ -23,6 +23,7 @@ import torch
 import torch.profiler
 from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
     get_current_running_global_batch_size,
@@ -496,7 +497,11 @@ def train_step(
         )
 
         # Forward pass.
-        forward_backward_func = get_forward_backward_func()
+        if cfg.model.enable_cuda_graph and cfg.model.cuda_graph_scope == "full_iteration":
+            forward_backward_func = FullCudaGraphWrapper(get_forward_backward_func())
+        else:
+            forward_backward_func = get_forward_backward_func()
+
         losses_reduced = forward_backward_func(
             forward_step_func=wrapped_forward_step,
             data_iterator=data_iterator,

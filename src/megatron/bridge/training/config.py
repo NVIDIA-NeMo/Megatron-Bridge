@@ -759,6 +759,33 @@ class ConfigContainer(Container):
         """
         return world_size // total_model_size
 
+    def validate_full_cuda_graph(self) -> None:
+        """Validate the configuration for full iteration cuda graph."""
+
+        if not self.model.enable_cuda_graph or self.model.cuda_graph_scope != "full_iteration":
+            return
+
+        # For full iteration cuda graph
+        if self.ddp.check_for_nan_in_grad:
+            raise ValueError("check_for_nan_in_grad must be False for full iteration cuda graph")
+        
+        if self.model.pipeline_model_parallel_size > 1:
+            if self.model.variable_seq_lengths:
+                raise ValueError("variable_seq_lengths must be False for full iteration cuda graph")
+            
+            if self.model.batch_p2p_sync:
+                raise ValueError("batch_p2p_sync must be False for full iteration cuda graph")
+
+        if self.comm_overlap:
+            if self.model.pipeline_model_parallel_size > 1:
+                if self.comm_overlap.batch_p2p_comm:
+                    raise ValueError("batch_p2p_comm must be False for full iteration cuda graph")
+                
+            if self.model.virtual_pipeline_model_parallel_size and self.model.virtual_pipeline_model_parallel_size > 1:
+                if self.comm_overlap.overlap_param_gather_with_optimizer_step:
+                    raise ValueError("overlap_param_gather_with_optimizer_step must be False for full iteration cuda graph")                
+
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -858,3 +885,5 @@ class ConfigContainer(Container):
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
+
+        self.validate_full_cuda_graph()
