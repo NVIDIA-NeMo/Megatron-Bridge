@@ -69,6 +69,11 @@ def main():
         ub_cfg = COMM_OVERLAP_CONFIG_MAP[f"{args.model_name}_{args.model_size}"][args.gpu][args.compute_dtype]
         recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
 
+    recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+    recipe.comm_overlap.delay_wgrad_compute = False
+    recipe.comm_overlap.overlap_grad_reduce = True
+    recipe.comm_overlap.overlap_param_gather = True
+
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 

@@ -19,27 +19,27 @@
 model:
   seq_length: 4096
   tensor_model_parallel_size: 2
-  pipeline_model_parallel_size: 2
+  pipeline_model_parallel_size: 1
   context_parallel_size: 1
-  virtual_pipeline_model_parallel_size: 1
-  expert_model_parallel_size: 4
+  virtual_pipeline_model_parallel_size: null
+  expert_model_parallel_size: 8
   expert_tensor_parallel_size: 1
   cross_entropy_fusion_impl: "te"
-  enable_cuda_graph: false
-  use_te_rng_tracker: false
+  use_te_rng_tracker: true
+  external_cuda_graph: true
+  cuda_graph_scope: "attn"
   num_moe_experts: 8
-  num_layers: 4
-  moe_layer_freq: [0, 1, 1, 1]
+  num_layers: 3
+  moe_layer_freq: [0, 1, 1]
   pipeline_model_parallel_layout: null
   moe_router_num_groups: 1
   moe_router_group_topk: 1
   moe_router_fusion: true
   moe_permute_fusion: true
   apply_rope_fusion: true
-  moe_shared_expert_overlap: false
 
 rng:
-  te_rng_tracker: false
+  te_rng_tracker: true
 
 train:
   global_batch_size: 32
