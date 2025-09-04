@@ -25,8 +25,9 @@ model:
   expert_model_parallel_size: 8
   expert_tensor_parallel_size: 1
   cross_entropy_fusion_impl: "te"
-  enable_cuda_graph: true
   use_te_rng_tracker: true
+  external_cuda_graph: true
+  cuda_graph_scope: "attn"
   num_moe_experts: 8
   num_layers: 3
   moe_layer_freq: [0, 1, 1]

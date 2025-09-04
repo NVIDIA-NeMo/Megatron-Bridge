@@ -38,14 +38,14 @@ def parse_cli_args():
         "--account",
         type=str,
         help="Slurm account to use for experiment",
-        required=True,
+        #required=True,
     )
     parser.add_argument(
         "-p",
         "--partition",
         type=str,
         help="Slurm partition to use for experiment",
-        required=True,
+        #required=True,
     )
     parser.add_argument(
         "-g",
@@ -53,7 +53,7 @@ def parse_cli_args():
         type=str,
         choices=["h100", "b200", "gb200"],
         help="Target gpu type.",
-        required=True,
+        #required=True,
     )
     parser.add_argument(
         "-l",
@@ -144,6 +144,12 @@ def parse_cli_args():
         help="If true, prints sbatch script to terminal without launching experiment.",
         required=False,
         action="store_true",
+    )
+    parser.add_argument(
+    "--localrun",
+    help="If true, prints sbatch script to terminal without launching experiment.",
+    required=False,
+    action="store_true",
     )
     parser.add_argument(
         "-ng",
