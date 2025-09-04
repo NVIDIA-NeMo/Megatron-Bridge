@@ -94,8 +94,7 @@ if __name__ == "__main__":
             wandb_key=args.wandb_key,
         )
     else:
-        executor=run.LocalExecutor(ntasks_per_node=8, launcher="torchrun", env_vars={})
-
+        executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun", env_vars={})
 
     target_script_args = [
         "--config_file",

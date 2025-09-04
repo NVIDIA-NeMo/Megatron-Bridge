@@ -146,10 +146,10 @@ def parse_cli_args():
         action="store_true",
     )
     parser.add_argument(
-    "--localrun",
-    help="If true, prints sbatch script to terminal without launching experiment.",
-    required=False,
-    action="store_true",
+        "--localrun",
+        help="If true, prints sbatch script to terminal without launching experiment.",
+        required=False,
+        action="store_true",
     )
     parser.add_argument(
         "-ng",
