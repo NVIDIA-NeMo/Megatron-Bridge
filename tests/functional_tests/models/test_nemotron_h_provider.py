@@ -42,7 +42,7 @@ class TestNemotronHModelProviderMapping:
     def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
         """Test that bridge converted provider config matches predefined provider config."""
         # Create bridge from HF model
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+        bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
         converted_provider = bridge.to_megatron_provider(load_weights=False)
 
         # Create predefined provider
