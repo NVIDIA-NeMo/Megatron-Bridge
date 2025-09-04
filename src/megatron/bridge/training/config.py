@@ -789,10 +789,6 @@ class ConfigContainer(Container):
 
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp:
-            assert self.dist.use_torch_fsdp2 is False, (
-                "use_megatron_fsdp and use_torch_fsdp2 cannot be True at the same time"
-            )
-
             # Set Megatron FSDP Configs
             self.model.use_megatron_fsdp = True
             self.optimizer.use_megatron_fsdp = True
