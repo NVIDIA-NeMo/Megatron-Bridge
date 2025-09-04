@@ -91,15 +91,9 @@ def main(
 
     # Demonstrate merge functionality
     console.print("\n🔄 Demonstrating merge and unload:")
-    try:
-        _ = peft_model.merge_and_unload()  # Demonstrate merge functionality
-        console.print("  ✓ Successfully merged adapters into base weights")
-        console.print("    Model can now be saved as a standard fine-tuned model")
-    except NotImplementedError as e:
-        console.print(f"  ⚠️  Merge not implemented: {e}")
-    except RuntimeError as e:
-        console.print(f"  ⚠️  Merge failed: {e}")
-        console.print("    Note: Some merge operations may have shape mismatches that are now handled gracefully")
+    _ = peft_model.merge_and_unload()  # Demonstrate merge functionality
+    console.print("  ✓ Successfully merged adapters into base weights")
+    console.print("    Model can now be saved as a standard fine-tuned model")
 
     # Save back to HuggingFace format
     if output_dir:

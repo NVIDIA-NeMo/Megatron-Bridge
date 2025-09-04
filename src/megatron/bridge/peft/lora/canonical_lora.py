@@ -270,14 +270,18 @@ class CanonicalLoRAMerge(PEFT):
                 if base_weight.data[start_idx:end_idx].shape == lora_weight.shape:
                     base_weight.data[start_idx:end_idx] += lora_weight
                 else:
-                    logger.warning(f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}")
+                    logger.warning(
+                        f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}"
+                    )
 
             # Set merged flag to gate future adapter computation
             setattr(module, "_merged", True)
             return module
 
         elif isinstance(module, LoRALinearSplitFC1UpGate):
-            logging.info(f"merging LoRALinearSplitFC1UpGate {(prefix if prefix else '') + '.' + (name if name else '')}")
+            logging.info(
+                f"merging LoRALinearSplitFC1UpGate {(prefix if prefix else '') + '.' + (name if name else '')}"
+            )
             base_weight = module.to_wrap.weight
 
             # Merge each adapter if it exists
@@ -307,7 +311,9 @@ class CanonicalLoRAMerge(PEFT):
                 if base_weight.data[start_idx:end_idx].shape == lora_weight.shape:
                     base_weight.data[start_idx:end_idx] += lora_weight
                 else:
-                    logger.warning(f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}")
+                    logger.warning(
+                        f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}"
+                    )
 
             # Set merged flag to gate future adapter computation
             setattr(module, "_merged", True)
