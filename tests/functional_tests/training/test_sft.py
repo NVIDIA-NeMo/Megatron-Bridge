@@ -24,7 +24,6 @@ from megatron.bridge.models.llama import Llama3ModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    DistributedInitConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     RNGConfig,
