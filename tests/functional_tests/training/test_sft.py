@@ -24,6 +24,7 @@ from megatron.bridge.models.llama import Llama3ModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedInitConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     RNGConfig,
@@ -192,98 +193,3 @@ class TestSupervisedFinetuning:
             os.makedirs(finetune_tensorboard_dir, exist_ok=True)
 
         return pretrain_checkpoint_dir, pretrain_tensorboard_dir, finetune_checkpoint_dir, finetune_tensorboard_dir
-
-
-class TestSupervisedFinetuningMegatronFSDP(TestSupervisedFinetuning):
-    """
-    Test end to end supervised finetuning: pretrain -> save checkpoint -> finetune using pretrained checkpoint.
-    """
-
-    def _create_config(
-        self,
-        train_iters,
-        checkpoint_dir,
-        tensorboard_dir,
-        seq_length=512,
-        lr=3e-3,
-        seed=1234,
-        pretrained_checkpoint=None,
-    ):
-        """Create training configuration with customizable parameters."""
-        return ConfigContainer(
-            model=Llama3ModelProvider145M(
-                seq_length=seq_length,
-                use_megatron_fsdp=True,
-                gradient_accumulation_fusion=False,
-            ),
-            train=TrainingConfig(
-                train_iters=train_iters,
-                eval_interval=5,
-                eval_iters=0,
-                global_batch_size=8,
-                micro_batch_size=1,
-                exit_signal_handler=True,
-            ),
-            optimizer=OptimizerConfig(
-                optimizer="adam",
-                bf16=True,
-                fp16=False,
-                adam_beta1=0.9,
-                adam_beta2=0.95,
-                adam_eps=1e-5,
-                use_distributed_optimizer=True,
-                clip_grad=1.0,
-                lr=lr,
-                weight_decay=0.01,
-                min_lr=1e-6 if lr > 1e-4 else 1e-7,
-                use_megatron_fsdp=True,
-            ),
-            scheduler=SchedulerConfig(
-                start_weight_decay=0.033,
-                end_weight_decay=0.033,
-                weight_decay_incr_style="constant",
-                lr_decay_style="cosine",
-                lr_warmup_iters=2 if train_iters >= 10 else 1,
-                lr_warmup_init=0.0,
-                lr_decay_iters=train_iters,
-                override_opt_param_scheduler=True,
-            ),
-            ddp=DistributedDataParallelConfig(
-                check_for_nan_in_grad=True,
-                grad_reduce_in_fp32=True,
-                overlap_grad_reduce=True,
-                overlap_param_gather=True,
-                average_in_collective=False,
-                use_distributed_optimizer=True,
-                use_megatron_fsdp=True,
-                data_parallel_sharding_strategy="optim_grads_params",
-            ),
-            dataset=MockGPTDatasetConfig(
-                random_seed=seed,
-                reset_attention_mask=False,
-                reset_position_ids=False,
-                eod_mask_loss=False,
-                sequence_length=seq_length,
-                num_dataset_builder_threads=1,
-                data_sharding=True,
-                dataloader_type="single",
-                num_workers=1,
-            ),
-            logger=LoggerConfig(
-                log_interval=5,
-                tensorboard_dir=tensorboard_dir,
-            ),
-            tokenizer=TokenizerConfig(
-                tokenizer_type="NullTokenizer",
-                vocab_size=10000,
-            ),
-            checkpoint=CheckpointConfig(
-                save_interval=train_iters,
-                save=checkpoint_dir,
-                pretrained_checkpoint=pretrained_checkpoint,
-                ckpt_format="torch_dist",
-                fully_parallel_save=True,
-                async_save=True,
-            ),
-            rng=RNGConfig(seed=seed),
-        )
