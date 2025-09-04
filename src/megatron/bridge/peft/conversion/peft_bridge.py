@@ -24,6 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Type, Union, TYPE_CHECKING
 
 import torch
+from torch.nn import ModuleList
 from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_size
@@ -80,7 +81,7 @@ class MegatronPEFTBridge(ABC):
     def peft_bridge(self, adapters: PreTrainedAdapters) -> PEFT:
         """Convert HF adapter config to Megatron PEFT transform."""
         pass
-    
+
     @abstractmethod
     def create_peft_mapping(
         self,
@@ -88,16 +89,16 @@ class MegatronPEFTBridge(ABC):
         adapter_megatron_param: str
     ) -> MegatronParamMapping:
         """Create adapter mapping from base mapping.
-        
+
         Each bridge implements this method to handle the conversion from
         base model parameter mappings to adapter parameter mappings.
         Bridge determines the appropriate HF parameter suffix based on
         the adapter parameter name and PEFT type.
-        
+
         Args:
             base_mapping: Base model parameter mapping to adapt
             adapter_megatron_param: Megatron adapter parameter name
-            
+
         Returns:
             Appropriate adapter mapping instance
         """
@@ -105,21 +106,21 @@ class MegatronPEFTBridge(ABC):
 
     def mapping_registry(self, adapters: PreTrainedAdapters) -> MegatronMappingRegistry:
         """Universal algorithm that infers adapter mappings automatically.
-        
+
         This method differs from the model bridge pattern where mappings are manually defined.
         Instead, it algorithmically derives adapter mappings by combining:
         - Base model mappings (from self.base_mapping_registry)
         - PEFT target modules and parameter patterns (from self.peft)
         """
         adapter_mappings = []
-        
+
         # Get PEFT instance and base mappings
         peft = self.peft_bridge(adapters)
         base_mapping_registry = self.base_bridge._model_bridge.mapping_registry()
-        
+
         # Set temporary PEFT context for the mapping conversion
         self._current_peft = peft
-        
+
         try:
             # Iterate through base model parameter mappings
             for base_mapping in base_mapping_registry.get_all_mappings():
@@ -127,7 +128,7 @@ class MegatronPEFTBridge(ABC):
                     # Convert base mapping to adapter mappings using PEFT knowledge
                     converted = self._convert_base_to_adapter_mapping(base_mapping)
                     adapter_mappings.extend(converted)
-            
+
             if not adapter_mappings:
                 raise ValueError(
                     f"No compatible mappings found for {peft.__class__.__name__} "
@@ -137,15 +138,15 @@ class MegatronPEFTBridge(ABC):
         finally:
             # Clean up temporary PEFT context
             delattr(self, '_current_peft')
-        
+
         return MegatronMappingRegistry(*adapter_mappings)
-    
-    
+
+
     def _unsupported_mapping_error(self, base_mapping: MegatronParamMapping) -> ValueError:
         """Generate expressive error for unsupported mapping types."""
         bridge_name = self.__class__.__name__
         mapping_type = type(base_mapping).__name__
-        
+
         return ValueError(
             f"\n✗ {bridge_name} does not support {mapping_type}\n\n"
             f"The {bridge_name} implementation does not include adapter mapping "
@@ -159,27 +160,27 @@ class MegatronPEFTBridge(ABC):
             f"          base_mapping, adapter_megatron_param, hf_suffix\n"
             f"      )"
         )
-    
+
     def _parse_dtype(self, dtype_str: Optional[str]) -> Optional[torch.dtype]:
         """Parse dtype string to torch.dtype using elegant getattr approach."""
         if dtype_str is None:
             return None
-        
+
         # Use getattr to dynamically get the dtype from torch module
         try:
             return getattr(torch, dtype_str.lower())
         except AttributeError:
             # Fallback for common aliases or invalid types
             return None
-    
+
     def _convert_base_to_adapter_mapping(self, base_mapping: MegatronParamMapping) -> List[MegatronParamMapping]:
         """Convert base mapping to adapter mappings using PEFT and HF-specific logic."""
         # Get Megatron adapter parameters from PEFT
         base_megatron = base_mapping.megatron_param
         adapter_megatron_params = self._current_peft.get_megatron_adapter_params(base_megatron)
-        
+
         adapter_mappings = []
-        
+
         # Let bridge handle the parameter-to-mapping conversion
         for adapter_megatron_param in adapter_megatron_params:
             # Bridge determines adapter type and creates mapping directly
@@ -188,7 +189,7 @@ class MegatronPEFTBridge(ABC):
             )
             adapter_mappings.append(adapter_mapping)
         return adapter_mappings
-    
+
 
     def _megatron_global_param_names_all_pp_ranks(
         self, megatron_model: Union[MegatronModule, List[MegatronModule]]
@@ -207,7 +208,12 @@ class MegatronPEFTBridge(ABC):
         global_param_names = []
 
         # Ensure megatron_model is a list for consistent handling
-        models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+        if hasattr(megatron_model, 'stages'):
+            # PEFTModel case - use the stages
+            models_list = megatron_model.stages
+        else:
+            # List of MegatronModule or single MegatronModule case
+            models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
             for local_param_name, _ in model.named_parameters():
@@ -271,6 +277,7 @@ class MegatronPEFTBridge(ABC):
             raise ValueError("adapters.state.source is required for weight ordering")
 
         hf_keys: Iterable[str] = adapters.state.source.get_all_keys()
+
         model_config = unwrap_model(megatron_model)[0].config
         mapping_registry = self.mapping_registry(adapters)
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
@@ -281,8 +288,14 @@ class MegatronPEFTBridge(ABC):
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
 
-        for vp_stage, model in enumerate(megatron_model):
-            for local_name, _ in model.named_parameters():
+        # Handle both PEFTModel and list of MegatronModule for parameter iteration
+        if hasattr(megatron_model, '__len__') and len(megatron_model) > 0:
+            models_to_iterate = megatron_model
+        else:
+            models_to_iterate = [megatron_model]
+
+        for vp_stage, model in enumerate(models_to_iterate):
+            for local_name, param in model.named_parameters():
                 # Skip non-adapter parameters
                 if ".adapter." not in local_name:
                     continue
@@ -291,7 +304,7 @@ class MegatronPEFTBridge(ABC):
                     continue
 
                 local_name = self._unwrap_name(local_name)
-                global_name = self._megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
+                global_name = self._megatron_local_name_to_global(models_to_iterate, model_config, local_name, vp_stage)
 
                 if global_name not in global_names_index_dict:
                     continue
@@ -306,7 +319,7 @@ class MegatronPEFTBridge(ABC):
                 # Ensure HF weights exist
                 if isinstance(mapping.hf_param, str):
                     if mapping.hf_param not in hf_keys:
-                        logger.warning(f"Can't find {mapping.hf_param} in HF adapter weights")
+                        logger.debug(f"Skipping {mapping.hf_param} - not in adapter target modules")
                         continue
                 else:
                     # Handle Dict[str, str] mappings
@@ -315,8 +328,16 @@ class MegatronPEFTBridge(ABC):
                         logger.warning(f"Can't find HF adapter parameters: {missing_params}")
                         continue
 
-                # Get the local module and weight using battle-tested utility
-                local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
+                # For export, we already have the parameter from named_parameters() iteration
+                # No need for get_module_and_param_from_name lookup
+                local_module = model
+                local_weights = param  # We got this from model.named_parameters()
+
+                # Debug export weight finding
+                if local_weights is None:
+                    print(f"⚠️  Warning: Parameter {local_name} has None value")
+                else:
+                    print(f"✅ Found weights for {local_name}: shape {local_weights.shape}")
 
                 tasks[global_name_idx] = WeightConversionTask(
                     pp_rank=pp_rank,
@@ -340,6 +361,86 @@ class MegatronPEFTBridge(ABC):
                     mapping=mapping,
                 )
 
+        # Debug: Count how many tasks have actual weights
+        tasks_with_weights = sum(1 for task in tasks if task and task.param_weight is not None)
+        print(f"🔍 Build conversion tasks: {len(tasks)} total, {tasks_with_weights} with weights on rank {pp_rank}")
+
+        return tasks
+
+    def build_export_conversion_tasks(
+        self,
+        adapters: PreTrainedAdapters,
+        megatron_model: List[MegatronModule]
+    ) -> List[Optional[WeightConversionTask]]:
+        """Build conversion tasks for export (Megatron → HF) direction.
+
+        This method is specifically designed for export and directly uses parameters
+        from the Megatron model without HF weight validation.
+        """
+        mapping_registry = self.mapping_registry(adapters)
+        model_config = unwrap_model(megatron_model)[0].config
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+
+        # Get all adapter parameter names across PP ranks
+        sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
+        global_names_index_dict = {name: idx for idx, name in enumerate(sorted_global_param_names_all_pp_ranks)}
+
+        tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
+
+        # Handle both PEFTModel and list of MegatronModule for parameter iteration
+        models_to_iterate = unwrap_model(megatron_model)
+        if not isinstance(models_to_iterate, (list, ModuleList)):
+            models_to_iterate = [models_to_iterate]
+
+        for vp_stage, model in enumerate(models_to_iterate):
+            for local_name, param in model.named_parameters():
+                # Skip non-adapter parameters
+                if ".adapter." not in local_name:
+                    continue
+
+                if "_extra_state" in local_name:
+                    continue
+
+                local_name = self._unwrap_name(local_name)
+                global_name = self._megatron_local_name_to_global(models_to_iterate, model_config, local_name, vp_stage)
+
+                if global_name not in global_names_index_dict:
+                    continue
+
+                global_name_idx = global_names_index_dict[global_name]
+                mapping = mapping_registry.megatron_to_hf_lookup(global_name)
+
+                if not mapping:
+                    logger.debug(f"No mapping found for export parameter: {global_name}")
+                    continue
+
+                # For export, we have the parameter directly - no HF validation needed
+                tasks[global_name_idx] = WeightConversionTask(
+                    pp_rank=pp_rank,
+                    vp_stage=vp_stage,
+                    param_name=local_name,
+                    megatron_module=model,
+                    param_weight=param,  # Direct parameter reference
+                    mapping=mapping,
+                )
+
+        # Fill remaining slots for PP communication
+        for idx, global_name in enumerate(sorted_global_param_names_all_pp_ranks):
+            mapping = mapping_registry.megatron_to_hf_lookup(global_name)
+            if tasks[idx] is None:
+                tasks[idx] = WeightConversionTask(
+                    pp_rank=pp_rank,
+                    vp_stage=None,
+                    param_name=global_name,
+                    megatron_module=None,
+                    param_weight=None,
+                    mapping=mapping,
+                )
+
+        # Debug: Count tasks with weights
+        tasks_with_weights = sum(1 for task in tasks if task and task.param_weight is not None)
+        print(f"💾 Export tasks: {len(tasks)} total, {tasks_with_weights} with weights on rank {pp_rank}")
+
         return tasks
 
     def load_adapters_hf_to_megatron(
@@ -349,7 +450,7 @@ class MegatronPEFTBridge(ABC):
         base_bridge: Optional['AutoBridge'] = None
     ) -> None:
         """Load HF adapter weights into Megatron model following model bridge patterns."""
-        if not isinstance(megatron_model, list):
+        if not isinstance(megatron_model, (list, ModuleList)):
             megatron_model = [megatron_model]
 
         hf_to_megatron_tasks = self.build_conversion_tasks(adapters, megatron_model, base_bridge)
@@ -402,23 +503,31 @@ class MegatronPEFTBridge(ABC):
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
     ) -> Iterable[HFWeightTuple]:
         """Stream adapter weights from Megatron to HF format following model bridge patterns."""
-        if not isinstance(megatron_model, list):
+        if not isinstance(megatron_model, (list, ModuleList)):
             megatron_model = [megatron_model]
 
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(adapters, megatron_model)
+            # For export, we need to build tasks differently than for import
+            conversion_tasks = self.build_export_conversion_tasks(adapters, megatron_model)
+
+        tasks_with_weights = 0
+        tasks_total = len(conversion_tasks)
 
         for task in self._with_progress_tracking(conversion_tasks, "Converting adapters to HuggingFace", show_progress):
             if task.param_weight is None:
                 continue
 
+            tasks_with_weights += 1
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
 
             # All ranks get the full tensor
             for hf_name, tensor in converted_weights_dict.items():
                 final_tensor = tensor.cpu() if cpu else tensor
                 yield HFWeightTuple(hf_name, final_tensor)
+
+        if tasks_with_weights == 0:
+            print(f"⚠️  Warning: {tasks_total} conversion tasks created but 0 had weights on this rank")
 
     def _megatron_local_name_to_global(
         self,
@@ -453,7 +562,7 @@ def register_bridge_implementation(
     bridge_class: Type[MegatronPEFTBridge]
 ) -> None:
     """Register a PEFT bridge implementation with the dispatch system.
-    
+
     Args:
         source: PEFT config class (e.g., LoraConfig)
         target: Megatron PEFT class (e.g., LoRA)
@@ -461,12 +570,12 @@ def register_bridge_implementation(
     """
     _BRIDGE_REGISTRY[source] = bridge_class
     bridge_class_name = bridge_class.__name__
-    
+
     @get_peft_bridge.impl(source)
     def _get_peft_bridge_impl(_) -> "MegatronPEFTBridge":
         bridge = bridge_class()
         return bridge
-    
+
     @stream_adapters_megatron_to_hf.impl((source, target))
     def _adapters_to_hf_registered_impl(
         _,
@@ -480,7 +589,7 @@ def register_bridge_implementation(
         return bridge.stream_adapters_megatron_to_hf(
             megatron_model, adapters, cpu=cpu, show_progress=show_progress, conversion_tasks=conversion_tasks
         )
-    
+
     # Set meaningful names for debugging
     _get_peft_bridge_impl.__name__ = f"_peft_bridge_with_{bridge_class_name}"
     _adapters_to_hf_registered_impl.__name__ = f"_adapters_to_hf_with_{bridge_class_name}"
