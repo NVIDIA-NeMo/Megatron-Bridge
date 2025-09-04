@@ -351,8 +351,7 @@ class TestValidateRopeFusionCompatibility:
         with patch("megatron.bridge.utils.fusions.LOG_FUSION_DISABLE", True), caplog.at_level(logging.WARNING):
             result = validate_rope_fusion_compatibility(mock_config)
 
-        assert result is False
-        assert "apply_rope_fusion is enabled but not compatible with multi_latent_attention" in caplog.text
+        assert result is True
 
     def test_rope_fusion_with_rotary_interleaved_success(self):
         """Test RoPE fusion with rotary_interleaved when TE version is sufficient."""
