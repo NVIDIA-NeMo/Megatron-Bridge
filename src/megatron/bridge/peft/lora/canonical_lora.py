@@ -22,7 +22,7 @@ from torch import nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora.lora_layers import LinearAdapter, LoRALinear
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -275,3 +275,114 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 return LoRALinearSplitFC1UpGate(m, adapters)
 
         return m
+    
+    def merge(self, model):
+        """Merge canonical LoRA adapter weights into base model weights.
+        
+        This method implements merging for canonical LoRA adapters, which have
+        separate adapters for Q, K, V and Up/Gate projections.
+        
+        Args:
+            model: The model with canonical LoRA adapters applied
+            
+        Returns:
+            The model with canonical LoRA adapters merged into base weights
+        """
+        from megatron.bridge.peft.walk_utils import walk
+        
+        @torch.no_grad()
+        def merge_canonical_adapter(module, name=None, prefix=None):
+            """Merge canonical LoRA adapters into base weights."""
+            if isinstance(module, LoRALinearSplitQKV):
+                # Merge Q, K, V adapters into the QKV linear layer
+                base_weight = module.to_wrap.weight
+                config = module.to_wrap.config
+                
+                # Calculate dimensions for Q, K, V slices
+                kv_channels = config.kv_channels
+                num_query_groups = config.num_query_groups
+                num_attention_heads = config.num_attention_heads
+                heads_per_group = num_attention_heads // num_query_groups
+                
+                # Merge each adapter if it exists
+                for adapter_name, adapter in module.adapter.items():
+                    if adapter is None:
+                        continue
+                        
+                    # Calculate LoRA delta
+                    lora_delta = (adapter.alpha / adapter.dim *
+                                adapter.linear_out.weight.to(base_weight.device) @
+                                adapter.linear_in.weight.to(base_weight.device))
+                    
+                    # Determine which slice to merge into
+                    if adapter_name == "adapter_q":
+                        # Q slice: first part of QKV
+                        q_size = heads_per_group * kv_channels
+                        start_idx = 0
+                        end_idx = q_size
+                    elif adapter_name == "adapter_k":
+                        # K slice: middle part
+                        start_idx = heads_per_group * kv_channels
+                        end_idx = start_idx + kv_channels
+                    elif adapter_name == "adapter_v":
+                        # V slice: last part
+                        start_idx = heads_per_group * kv_channels + kv_channels
+                        end_idx = start_idx + kv_channels
+                    else:
+                        continue
+                    
+                    # Merge into appropriate slice
+                    base_weight.data[start_idx:end_idx] += lora_delta
+                    
+                return module.to_wrap
+                
+            elif isinstance(module, LoRALinearSplitFC1UpGate):
+                # Merge Up/Gate adapters into FC1 linear layer
+                base_weight = module.to_wrap.weight
+                
+                for adapter_name, adapter in module.adapter.items():
+                    if adapter is None:
+                        continue
+                        
+                    # Calculate LoRA delta
+                    lora_delta = (adapter.alpha / adapter.dim *
+                                adapter.linear_out.weight.to(base_weight.device) @
+                                adapter.linear_in.weight.to(base_weight.device))
+                    
+                    # Determine which slice to merge into
+                    if adapter_name == "adapter_gate":
+                        # Gate projection: first half
+                        start_idx = 0
+                        end_idx = base_weight.size(0) // 2
+                    elif adapter_name == "adapter_up":
+                        # Up projection: second half
+                        start_idx = base_weight.size(0) // 2
+                        end_idx = base_weight.size(0)
+                    else:
+                        continue
+                        
+                    # Merge into appropriate slice
+                    base_weight.data[start_idx:end_idx] += lora_delta
+                    
+                return module.to_wrap
+                
+            elif isinstance(module, LoRALinear):
+                # Standard LoRA linear merge (for linear_proj, linear_fc2, etc.)
+                base_weight = module.to_wrap.weight
+                adapter = module.adapter
+                lora_delta = (adapter.alpha / adapter.dim *
+                            adapter.linear_out.weight.to(base_weight.device) @
+                            adapter.linear_in.weight.to(base_weight.device))
+                base_weight.data += lora_delta
+                return module.to_wrap
+                
+            return module
+        
+        # Apply merge transform to each model stage
+        if isinstance(model, list):
+            for model_chunk in model:
+                walk(model_chunk, merge_canonical_adapter)
+        else:
+            walk(model, merge_canonical_adapter)
+        
+        return model

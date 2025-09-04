@@ -14,14 +14,14 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
 
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
+from megatron.bridge.peft.lora.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
@@ -152,6 +152,36 @@ class LoRA(PEFT, ModuleMatcher):
             )
             return LoRALinear(module, adapter)
         return module
+    
+    def get_adapter_parameter_patterns(self) -> Dict[str, List[str]]:
+        """LoRA creates A and B matrices for each weight parameter."""
+        return {
+            ".weight": [".adapter.linear_in.weight", ".adapter.linear_out.weight"],
+            ".bias": [".adapter.bias"]  # If LoRA supports bias
+        }
+    
+    def merge(self, model):
+        """Merge LoRA adapter weights into base model weights.
+        
+        Args:
+            model: The model with LoRA adapters applied
+            
+        Returns:
+            The model with LoRA adapters merged into base weights
+        """
+        from megatron.bridge.peft.walk_utils import walk
+        
+        # Use the existing LoRAMerge transform
+        merge_transform = LoRAMerge()
+        
+        # Apply merge transform to each model stage
+        if isinstance(model, list):
+            for model_chunk in model:
+                walk(model_chunk, merge_transform.transform)
+        else:
+            walk(model, merge_transform.transform)
+        
+        return model
 
 
 class LoRAMerge(PEFT):
@@ -173,16 +203,29 @@ class LoRAMerge(PEFT):
             nn.Module: The modified module with the LoRA adapter merged into the base model weights.
         """
 
-        if not isinstance(module, LoRALinear):
+        # Handle all LoRA wrapper types
+        if isinstance(module, LoRALinear):
+            logging.info(f"merging LoRALinear {(prefix if prefix else '') + '.' + (name if name else '')}")
+            base_weight = module.to_wrap.weight
+            lora_weight = (
+                module.adapter.alpha
+                / module.adapter.dim
+                * module.adapter.linear_out.weight.to(base_weight.device)
+                @ module.adapter.linear_in.weight.to(base_weight.device)
+            )
+            merged_weight = base_weight + lora_weight
+            module.to_wrap.weight.data = merged_weight
             return module
-        logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_weight = module.to_wrap.weight
-        lora_weight = (
-            module.adapter.alpha
-            / module.adapter.dim
-            * module.adapter.linear_out.weight.to(base_weight.device)
-            @ module.adapter.linear_in.weight.to(base_weight.device)
-        )
-        merged_weight = base_weight + lora_weight
-        module.to_wrap.weight.data = merged_weight
+        
+        elif isinstance(module, (LinearAdapter, TELinearAdapter)):
+            logging.info(f"merging {type(module).__name__} {(prefix if prefix else '') + '.' + (name if name else '')}")
+            base_weight = module.weight
+            lora_weight = (
+                module.scale
+                * module.lora_b.weight.to(base_weight.device)
+                @ module.lora_a.weight.to(base_weight.device)
+            )
+            module.weight.data = base_weight + lora_weight
+            return module
+        
         return module

@@ -14,12 +14,12 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from torch import nn
 
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.peft.dora.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
 
@@ -114,3 +114,35 @@ class DoRA(PEFT, ModuleMatcher):
             )
             return DoRALinear(m, adapter)
         return m
+    
+    def get_adapter_parameter_patterns(self) -> Dict[str, List[str]]:
+        """DoRA has A, B matrices plus magnitude vectors."""
+        return {
+            ".weight": [
+                ".adapter.linear_in.weight",
+                ".adapter.linear_out.weight",
+                ".adapter.weight_magnitude"  # DoRA-specific
+            ]
+        }
+    
+    def merge(self, model):
+        """Merge DoRA adapter weights into base model weights.
+        
+        DoRA merging is more complex than LoRA as it involves both magnitude and
+        direction components. For now, we don't implement merge for DoRA as it's
+        marked as experimental.
+        
+        Args:
+            model: The model with DoRA adapters applied
+            
+        Returns:
+            The model (DoRA merge not implemented)
+            
+        Raises:
+            NotImplementedError: DoRA merging is not yet implemented
+        """
+        raise NotImplementedError(
+            "DoRA merge is not yet implemented. DoRA involves complex magnitude and "
+            "direction decomposition that requires careful handling during merge. "
+            "This feature is planned for a future release."
+        )
