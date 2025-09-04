@@ -783,20 +783,11 @@ class ConfigContainer(Container):
         world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
 
-        # Checkpoint
-        if self.checkpoint.save is not None or self.checkpoint.load is not None:
-            # only check if saving or loading
-            if self.checkpoint.ckpt_format == "fsdp_dtensor":
-                assert self.dist.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
-                    "fsdp_dtensor checkpoint format only supports Megatron FSDP"
-                )
-
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
             # Set Megatron FSDP Configs
             self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
-            self.optimizer.use_megatron_fsdp = True
 
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading
@@ -811,6 +802,14 @@ class ConfigContainer(Container):
             if self.ddp.average_in_collective:
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
+
+                # Checkpoint
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            # only check if saving or loading
+            if self.checkpoint.ckpt_format == "fsdp_dtensor":
+                assert self.ddp.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
+                    "fsdp_dtensor checkpoint format only supports Megatron FSDP"
+                )
 
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
