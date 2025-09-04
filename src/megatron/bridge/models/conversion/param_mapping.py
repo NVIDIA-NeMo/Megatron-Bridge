@@ -977,8 +977,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         if any(norm in module_type for norm in ["Norm", "Normalization"]):
             return "replicated"
 
-        # Check parallel_mode (e.g. for TELinear)
-        if hasattr(module, "parallel_mode"):
+        # Check parallel_mode for TELinear
+        if module_type == "TELinear":
             if module.parallel_mode == "column":
                 return "column"
             elif module.parallel_mode == "row":
