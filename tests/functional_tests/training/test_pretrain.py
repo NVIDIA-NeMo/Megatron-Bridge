@@ -404,6 +404,7 @@ class TestPretrainMegatronFSDP:
                     vocab_size=10000,
                 ),
                 rng=RNGConfig(seed=1234),
+                checkpoint=CheckpointConfig(),
             )
 
             # Run training
