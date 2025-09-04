@@ -152,7 +152,7 @@ def validate_rope_fusion_compatibility(config: TransformerConfig) -> bool:
         if LOG_FUSION_DISABLE:
             logger.warning(
                 "apply_rope_fusion for multi-latent attention only supports training. "
-                    "It is experimental and may change in future versions."
+                "It is experimental and may change in future versions."
             )
         return True
 
