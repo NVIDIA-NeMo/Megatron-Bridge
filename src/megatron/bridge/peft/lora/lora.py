@@ -152,35 +152,35 @@ class LoRA(PEFT, ModuleMatcher):
             )
             return LoRALinear(module, adapter)
         return module
-    
+
     def get_adapter_parameter_patterns(self) -> Dict[str, List[str]]:
         """LoRA creates A and B matrices for each weight parameter."""
         return {
             ".weight": [".adapter.linear_in.weight", ".adapter.linear_out.weight"],
-            ".bias": [".adapter.bias"]  # If LoRA supports bias
+            ".bias": [".adapter.bias"],  # If LoRA supports bias
         }
-    
+
     def merge(self, model):
         """Merge LoRA adapter weights into base model weights.
-        
+
         Args:
             model: The model with LoRA adapters applied
-            
+
         Returns:
             The model with LoRA adapters merged into base weights
         """
         from megatron.bridge.peft.walk_utils import walk
-        
+
         # Use the existing LoRAMerge transform
         merge_transform = LoRAMerge()
-        
+
         # Apply merge transform to each model stage
         if isinstance(model, list):
             for model_chunk in model:
                 walk(model_chunk, merge_transform.transform)
         else:
             walk(model, merge_transform.transform)
-        
+
         return model
 
 
@@ -216,9 +216,11 @@ class LoRAMerge(PEFT):
             merged_weight = base_weight + lora_weight
             module.to_wrap.weight.data = merged_weight
             return module
-        
+
         elif isinstance(module, (LinearAdapter, TELinearAdapter)):
-            logging.info(f"merging {type(module).__name__} {(prefix if prefix else '') + '.' + (name if name else '')}")
+            logging.info(
+                f"merging {type(module).__name__} {(prefix if prefix else '') + '.' + (name if name else '')}"
+            )
             base_weight = module.weight
             lora_weight = (
                 module.scale
@@ -227,5 +229,5 @@ class LoRAMerge(PEFT):
             )
             module.weight.data = base_weight + lora_weight
             return module
-        
+
         return module

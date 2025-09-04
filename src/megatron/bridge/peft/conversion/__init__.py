@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.peft.conversion.param_mapping import AdapterAutoMapping, AdapterGatedMLPMapping, AdapterQKVMapping
 from megatron.bridge.peft.conversion.peft_bridge import MegatronPEFTBridge
-from megatron.bridge.peft.conversion.param_mapping

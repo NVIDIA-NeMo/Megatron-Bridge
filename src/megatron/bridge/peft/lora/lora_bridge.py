@@ -1,6 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-# Check if this is DoRA based on use_dora flag
-if config.get("use_dora", False):
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
@@ -12,9 +12,8 @@ if config.get("use_dora", False):
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Union
+from typing import List, Union
 
-import torch
 from peft import LoraConfig
 
 from megatron.bridge.models.conversion.param_mapping import (
@@ -30,16 +29,16 @@ from megatron.bridge.peft.conversion.param_mapping import (
 )
 from megatron.bridge.peft.conversion.peft_bridge import MegatronPEFTBridge
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
+from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora.dora import DoRA
 from megatron.bridge.peft.lora.lora import LoRA
-from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 
 
 @MegatronPEFTBridge.register_bridge(source=LoraConfig, target=LoRA)  # Handles both LoRA and DoRA
 class LoRABridge(MegatronPEFTBridge):
     """
     Unified Megatron Bridge for LoRA, DoRA, and Canonical LoRA adapters.
-    
+
     This bridge automatically detects the adapter type based on configuration:
     - DoRA: 'use_dora' flag set to True
     - Canonical LoRA: Target modules use individual projections (q_proj, k_proj, etc.)
@@ -64,24 +63,28 @@ class LoRABridge(MegatronPEFTBridge):
 
     def peft_bridge(self, adapters: PreTrainedAdapters) -> Union[LoRA, DoRA, CanonicalLoRA]:
         """Convert HF adapter config to Megatron LoRA, DoRA, or Canonical LoRA transform.
-        
+
         Automatically detects adapter type based on configuration:
         - DoRA: 'use_dora' flag set to True
         - Canonical LoRA: Target modules use individual projections
         - Fused LoRA: Default case
         """
         config = adapters.config
-        hf_target_modules = getattr(config, "target_modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
-        
+        hf_target_modules = getattr(
+            config, "target_modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        )
+
         # Detect canonical LoRA by checking if target modules use individual projections
         canonical_indicators = {"q_proj", "k_proj", "v_proj", "gate_proj", "up_proj"}
         is_canonical = any(target in canonical_indicators for target in hf_target_modules)
-        
-        print(f"📋 Adapter Analysis:")
+
+        print("📋 Adapter Analysis:")
         print(f"   • Target modules: {hf_target_modules}")
-        print(f"   • Detected as: {'DoRA' if getattr(config, 'use_dora', False) else 'Canonical LoRA' if is_canonical else 'Fused LoRA'}")
+        print(
+            f"   • Detected as: {'DoRA' if getattr(config, 'use_dora', False) else 'Canonical LoRA' if is_canonical else 'Fused LoRA'}"
+        )
         print(f"   • Config attributes: r={config.r}, alpha={config.lora_alpha}, dropout={config.lora_dropout}")
-        
+
         if config.get("use_dora", False):
             # DoRA: LoRA + magnitude vectors
             megatron_target_modules = self._hf_to_megatron_target_modules(hf_target_modules)
@@ -127,21 +130,19 @@ class LoRABridge(MegatronPEFTBridge):
             )
 
     def create_peft_mapping(
-        self,
-        base_mapping: MegatronParamMapping,
-        adapter_megatron_param: str
+        self, base_mapping: MegatronParamMapping, adapter_megatron_param: str
     ) -> MegatronParamMapping:
         """Create LoRA/DoRA/Canonical adapter mapping from base mapping.
-        
+
         Uses different mapping strategies based on canonical vs fused mode:
         - Canonical: Uses only AutoMapping (no fusion)
         - Fused: Uses specialized QKV/GatedMLP mappings
         """
         adapter_type = self._get_adapter_type_from_param(adapter_megatron_param)
         hf_suffix = self._get_hf_suffix_for_adapter_type(adapter_type)
-        
+
         # Different mapping strategy for canonical vs fused
-        if getattr(self, '_canonical_mode', False):
+        if getattr(self, "_canonical_mode", False):
             # Canonical LoRA: Always use AutoMapping (no fusion)
             match base_mapping:
                 case QKVMapping() | GatedMLPMapping():
@@ -152,42 +153,31 @@ class LoRABridge(MegatronPEFTBridge):
                     else:
                         # Auto mapping - use the hf_param directly
                         template_hf = base_mapping.hf_param
-                    
+
                     # Replace .weight with adapter suffix to preserve wildcards
-                    canonical_hf_param = template_hf.replace('.weight', hf_suffix)
-                    
+                    canonical_hf_param = template_hf.replace(".weight", hf_suffix)
+
                     return AdapterAutoMapping.from_base_mapping(
-                        AutoMapping(
-                            hf_param=canonical_hf_param,
-                            megatron_param=adapter_megatron_param
-                        ),
+                        AutoMapping(hf_param=canonical_hf_param, megatron_param=adapter_megatron_param),
                         adapter_megatron_param,
-                        hf_suffix
+                        hf_suffix,
                     )
                 case AutoMapping():
-                    return AdapterAutoMapping.from_base_mapping(
-                        base_mapping, adapter_megatron_param, hf_suffix
-                    )
+                    return AdapterAutoMapping.from_base_mapping(base_mapping, adapter_megatron_param, hf_suffix)
                 case _:
                     raise self._unsupported_mapping_error(base_mapping)
         else:
             # Fused LoRA/DoRA: Use specialized mappings
             match base_mapping:
                 case QKVMapping():
-                    return AdapterQKVMapping.from_base_mapping(
-                        base_mapping, adapter_megatron_param, hf_suffix
-                    )
+                    return AdapterQKVMapping.from_base_mapping(base_mapping, adapter_megatron_param, hf_suffix)
                 case GatedMLPMapping():
-                    return AdapterGatedMLPMapping.from_base_mapping(
-                        base_mapping, adapter_megatron_param, hf_suffix
-                    )
+                    return AdapterGatedMLPMapping.from_base_mapping(base_mapping, adapter_megatron_param, hf_suffix)
                 case AutoMapping():
-                    return AdapterAutoMapping.from_base_mapping(
-                        base_mapping, adapter_megatron_param, hf_suffix
-                    )
+                    return AdapterAutoMapping.from_base_mapping(base_mapping, adapter_megatron_param, hf_suffix)
                 case _:
                     raise self._unsupported_mapping_error(base_mapping)
-    
+
     def _get_adapter_type_from_param(self, adapter_param: str) -> str:
         """Determine LoRA/DoRA adapter parameter type from parameter name."""
         match adapter_param:
@@ -199,7 +189,7 @@ class LoRABridge(MegatronPEFTBridge):
                 return "magnitude"
             case _:
                 return "unknown"
-    
+
     def _get_hf_suffix_for_adapter_type(self, adapter_type: str) -> str:
         """Get HuggingFace suffix for LoRA/DoRA adapter parameter type."""
         match adapter_type:
@@ -234,10 +224,10 @@ class LoRABridge(MegatronPEFTBridge):
                 megatron_targets.add(hf_target)
 
         return list(megatron_targets)
-    
+
     def _hf_to_canonical_target_modules(self, hf_targets: List[str]) -> List[str]:
         """Convert HF target module names to canonical Megatron target module names.
-        
+
         For canonical LoRA, convert to individual projection names.
         """
         hf_to_canonical_map = {
@@ -249,7 +239,7 @@ class LoRABridge(MegatronPEFTBridge):
             "up_proj": "linear_fc1_up",
             "down_proj": "linear_fc2",
         }
-        
+
         canonical_targets = []
         for hf_target in hf_targets:
             if hf_target in hf_to_canonical_map:
@@ -257,5 +247,5 @@ class LoRABridge(MegatronPEFTBridge):
             else:
                 # Pass through unknown targets (might already be canonical)
                 canonical_targets.append(hf_target)
-        
+
         return canonical_targets

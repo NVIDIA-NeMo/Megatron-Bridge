@@ -24,7 +24,12 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA, LoRALinearSplitFC1UpGate, LoRALinearSplitQKV, ModuleDict
+from megatron.bridge.peft.lora.canonical_lora import (
+    CanonicalLoRA,
+    LoRALinearSplitFC1UpGate,
+    LoRALinearSplitQKV,
+    ModuleDict,
+)
 from megatron.bridge.peft.lora.lora_layers import LinearAdapter, LoRALinear
 
 

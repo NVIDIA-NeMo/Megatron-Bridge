@@ -13,16 +13,14 @@
 # limitations under the License.
 
 import json
-from functools import partial
 from pathlib import Path
-from typing import Dict, List, Iterable, Optional, Union
+from typing import Dict, Iterable, List, Optional, Union
 
 import torch
 from peft import PeftConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.conversion.model_bridge import WeightConversionTask, HFWeightTuple
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
 from megatron.bridge.peft.api import PEFTModel
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.conversion import peft_bridge
@@ -139,9 +137,7 @@ class AutoPEFTBridge:
         """
         # Use the base bridge that was provided at load time
         if self._base_bridge is None:
-            raise RuntimeError(
-                "Base bridge not available. This should have been set during from_hf_pretrained()."
-            )
+            raise RuntimeError("Base bridge not available. This should have been set during from_hf_pretrained().")
 
         # Get the PEFT bridge implementation
         bridge = self._peft_bridge_impl
@@ -164,8 +160,7 @@ class AutoPEFTBridge:
 
         provider.register_pre_wrap_hook(_apply_peft_hook)
         stages = provider.provide_distributed_model(
-            wrap_with_ddp=wrap_with_ddp,
-            use_cpu_initialization=use_cpu_initialization
+            wrap_with_ddp=wrap_with_ddp, use_cpu_initialization=use_cpu_initialization
         )
 
         return PEFTModel(stages, peft)
@@ -187,7 +182,7 @@ class AutoPEFTBridge:
     def _auto_detect_base_bridge(adapters: PreTrainedAdapters) -> AutoBridge:
         """Auto-detect base model from adapter config."""
         config = adapters.config
-        base_model_path = getattr(config, 'base_model_name_or_path', None)
+        base_model_path = getattr(config, "base_model_name_or_path", None)
 
         if base_model_path is None:
             raise ValueError(
@@ -321,8 +316,9 @@ class AutoPEFTBridge:
     @classmethod
     def supports(cls, adapter_config: Dict) -> bool:
         """Check if this bridge supports the given adapter configuration."""
-        from megatron.bridge.peft.conversion.peft_bridge import list_registered_bridges
         from peft import PeftConfig
+
+        from megatron.bridge.peft.conversion.peft_bridge import list_registered_bridges
 
         try:
             config_obj = PeftConfig.from_dict(adapter_config)
@@ -332,12 +328,7 @@ class AutoPEFTBridge:
         except Exception:
             return False
 
-    def save_hf_pretrained(
-        self,
-        peft_model: PEFTModel,
-        path: Union[str, Path],
-        show_progress: bool = True
-    ) -> None:
+    def save_hf_pretrained(self, peft_model: PEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
         """Save a PEFT model adapters in HuggingFace format."""
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             if torch.distributed.get_rank() == 0:
@@ -353,7 +344,7 @@ class AutoPEFTBridge:
         out.mkdir(parents=True, exist_ok=True)
 
         # Convert config to dict and make it JSON serializable
-        if hasattr(self.adapters.config, 'to_dict'):
+        if hasattr(self.adapters.config, "to_dict"):
             config_dict = self.adapters.config.to_dict()
         else:
             config_dict = dict(self.adapters.config)
@@ -374,12 +365,7 @@ class AutoPEFTBridge:
         with open(out / "adapter_config.json", "w") as f:
             json.dump(config_dict, f, indent=2)
 
-    def _save_adapter_weights(
-        self,
-        peft_model: PEFTModel,
-        path: Union[str, Path],
-        show_progress: bool = True
-    ) -> None:
+    def _save_adapter_weights(self, peft_model: PEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
         """Save adapter weights in HuggingFace safetensors format."""
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
@@ -400,11 +386,9 @@ class AutoPEFTBridge:
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             print(f"💾 Saving {len(gathered_weights)} adapter weights to {Path(path) / 'adapter_model.safetensors'}")
             import safetensors.torch
-            safetensors.torch.save_file(
-                gathered_weights,
-                Path(path) / "adapter_model.safetensors"
-            )
-            print(f"✅ Adapter weights saved successfully")
+
+            safetensors.torch.save_file(gathered_weights, Path(path) / "adapter_model.safetensors")
+            print("✅ Adapter weights saved successfully")
 
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()

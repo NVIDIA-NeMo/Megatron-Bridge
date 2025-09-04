@@ -21,24 +21,26 @@ patterns as the model bridge infrastructure.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Type, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Iterable, List, Mapping, Optional, Type, Union
 
 import torch
-from torch.nn import ModuleList
 from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_size
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+from torch.nn import ModuleList
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import WeightConversionTask, HFWeightTuple
-from megatron.bridge.models.conversion.param_mapping import QKVMapping, GatedMLPMapping, AutoMapping, MegatronParamMapping
-from megatron.bridge.models.conversion.utils import extract_sort_key, get_module_and_param_from_name
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
+from megatron.bridge.models.conversion.param_mapping import (
+    MegatronParamMapping,
+)
+from megatron.bridge.models.conversion.utils import extract_sort_key
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.conversion.param_mapping import AdapterAutoMapping, AdapterQKVMapping, AdapterGatedMLPMapping
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
 from megatron.bridge.utils.common_utils import unwrap_model
+
 
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -46,7 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Registry for bridge implementations
-_BRIDGE_REGISTRY: Dict[Type, Type['MegatronPEFTBridge']] = {}
+_BRIDGE_REGISTRY: Dict[Type, Type["MegatronPEFTBridge"]] = {}
 
 
 class MegatronPEFTBridge(ABC):
@@ -57,7 +59,7 @@ class MegatronPEFTBridge(ABC):
     PEFT implementations with full distributed training support.
     """
 
-    def __init__(self, base_bridge: Optional['AutoBridge'] = None) -> None:
+    def __init__(self, base_bridge: Optional["AutoBridge"] = None) -> None:
         """Initialize PEFT bridge with optional base model bridge.
 
         Args:
@@ -68,13 +70,11 @@ class MegatronPEFTBridge(ABC):
     @classmethod
     def register_bridge(cls, *, source: Type, target: Type[PEFT]):
         """Decorator for registering PEFT bridge implementations."""
-        def decorator(bridge_class: Type['MegatronPEFTBridge']) -> Type['MegatronPEFTBridge']:
-            register_bridge_implementation(
-                source=source,
-                target=target,
-                bridge_class=bridge_class
-            )
+
+        def decorator(bridge_class: Type["MegatronPEFTBridge"]) -> Type["MegatronPEFTBridge"]:
+            register_bridge_implementation(source=source, target=target, bridge_class=bridge_class)
             return bridge_class
+
         return decorator
 
     @abstractmethod
@@ -84,9 +84,7 @@ class MegatronPEFTBridge(ABC):
 
     @abstractmethod
     def create_peft_mapping(
-        self,
-        base_mapping: MegatronParamMapping,
-        adapter_megatron_param: str
+        self, base_mapping: MegatronParamMapping, adapter_megatron_param: str
     ) -> MegatronParamMapping:
         """Create adapter mapping from base mapping.
 
@@ -137,10 +135,9 @@ class MegatronPEFTBridge(ABC):
                 )
         finally:
             # Clean up temporary PEFT context
-            delattr(self, '_current_peft')
+            delattr(self, "_current_peft")
 
         return MegatronMappingRegistry(*adapter_mappings)
-
 
     def _unsupported_mapping_error(self, base_mapping: MegatronParamMapping) -> ValueError:
         """Generate expressive error for unsupported mapping types."""
@@ -184,12 +181,9 @@ class MegatronPEFTBridge(ABC):
         # Let bridge handle the parameter-to-mapping conversion
         for adapter_megatron_param in adapter_megatron_params:
             # Bridge determines adapter type and creates mapping directly
-            adapter_mapping = self.create_peft_mapping(
-                base_mapping, adapter_megatron_param
-            )
+            adapter_mapping = self.create_peft_mapping(base_mapping, adapter_megatron_param)
             adapter_mappings.append(adapter_mapping)
         return adapter_mappings
-
 
     def _megatron_global_param_names_all_pp_ranks(
         self, megatron_model: Union[MegatronModule, List[MegatronModule]]
@@ -208,7 +202,7 @@ class MegatronPEFTBridge(ABC):
         global_param_names = []
 
         # Ensure megatron_model is a list for consistent handling
-        if hasattr(megatron_model, 'stages'):
+        if hasattr(megatron_model, "stages"):
             # PEFTModel case - use the stages
             models_list = megatron_model.stages
         else:
@@ -265,7 +259,7 @@ class MegatronPEFTBridge(ABC):
         self,
         adapters: PreTrainedAdapters,
         megatron_model: List[MegatronModule],
-        base_bridge: Optional['AutoBridge'] = None
+        base_bridge: Optional["AutoBridge"] = None,
     ) -> List[Optional[WeightConversionTask]]:
         """Build conversion tasks following the battle-tested model bridge pattern.
 
@@ -289,7 +283,7 @@ class MegatronPEFTBridge(ABC):
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
 
         # Handle both PEFTModel and list of MegatronModule for parameter iteration
-        if hasattr(megatron_model, '__len__') and len(megatron_model) > 0:
+        if hasattr(megatron_model, "__len__") and len(megatron_model) > 0:
             models_to_iterate = megatron_model
         else:
             models_to_iterate = [megatron_model]
@@ -304,7 +298,9 @@ class MegatronPEFTBridge(ABC):
                     continue
 
                 local_name = self._unwrap_name(local_name)
-                global_name = self._megatron_local_name_to_global(models_to_iterate, model_config, local_name, vp_stage)
+                global_name = self._megatron_local_name_to_global(
+                    models_to_iterate, model_config, local_name, vp_stage
+                )
 
                 if global_name not in global_names_index_dict:
                     continue
@@ -368,9 +364,7 @@ class MegatronPEFTBridge(ABC):
         return tasks
 
     def build_export_conversion_tasks(
-        self,
-        adapters: PreTrainedAdapters,
-        megatron_model: List[MegatronModule]
+        self, adapters: PreTrainedAdapters, megatron_model: List[MegatronModule]
     ) -> List[Optional[WeightConversionTask]]:
         """Build conversion tasks for export (Megatron → HF) direction.
 
@@ -402,7 +396,9 @@ class MegatronPEFTBridge(ABC):
                     continue
 
                 local_name = self._unwrap_name(local_name)
-                global_name = self._megatron_local_name_to_global(models_to_iterate, model_config, local_name, vp_stage)
+                global_name = self._megatron_local_name_to_global(
+                    models_to_iterate, model_config, local_name, vp_stage
+                )
 
                 if global_name not in global_names_index_dict:
                     continue
@@ -447,7 +443,7 @@ class MegatronPEFTBridge(ABC):
         self,
         adapters: PreTrainedAdapters,
         megatron_model: Union[MegatronModule, List[MegatronModule]],
-        base_bridge: Optional['AutoBridge'] = None
+        base_bridge: Optional["AutoBridge"] = None,
     ) -> None:
         """Load HF adapter weights into Megatron model following model bridge patterns."""
         if not isinstance(megatron_model, (list, ModuleList)):
@@ -514,7 +510,9 @@ class MegatronPEFTBridge(ABC):
         tasks_with_weights = 0
         tasks_total = len(conversion_tasks)
 
-        for task in self._with_progress_tracking(conversion_tasks, "Converting adapters to HuggingFace", show_progress):
+        for task in self._with_progress_tracking(
+            conversion_tasks, "Converting adapters to HuggingFace", show_progress
+        ):
             if task.param_weight is None:
                 continue
 
@@ -542,6 +540,7 @@ class MegatronPEFTBridge(ABC):
         """
         # Import here to avoid circular imports
         from megatron.bridge.models.conversion.model_bridge import _megatron_local_name_to_global
+
         return _megatron_local_name_to_global(models, config, param_name, vp_stage)
 
     def _unwrap_name(self, name: str) -> str:
@@ -550,16 +549,12 @@ class MegatronPEFTBridge(ABC):
             raise ValueError(f"name must be a string, got {type(name)}")
 
         while name.startswith("module."):
-            name = name[len("module."):]
+            name = name[len("module.") :]
         return name
 
 
-
 def register_bridge_implementation(
-    *,
-    source: Type,
-    target: Type[PEFT],
-    bridge_class: Type[MegatronPEFTBridge]
+    *, source: Type, target: Type[PEFT], bridge_class: Type[MegatronPEFTBridge]
 ) -> None:
     """Register a PEFT bridge implementation with the dispatch system.
 

@@ -14,8 +14,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Union
 
 import torch
 import torch.distributed as dist
@@ -24,8 +23,6 @@ from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.peft.base import PEFT  # low-level transform base
-from megatron.bridge.peft.adapter_wrapper import AdapterWrapper  # low-level wrapper
-from megatron.bridge.peft.walk_utils import walk
 
 
 def get_peft_model(
@@ -139,7 +136,9 @@ class PEFTModel(nn.ModuleList):
                     local_trainable += n
 
         if dist.is_available() and dist.is_initialized():
-            t_total = torch.tensor([local_total], dtype=torch.long, device="cuda" if torch.cuda.is_available() else "cpu")
+            t_total = torch.tensor(
+                [local_total], dtype=torch.long, device="cuda" if torch.cuda.is_available() else "cpu"
+            )
             t_train = torch.tensor([local_trainable], dtype=torch.long, device=t_total.device)
             dist.all_reduce(t_total)
             dist.all_reduce(t_train)
@@ -300,9 +299,7 @@ def _barrier_if_needed() -> None:
         dist.barrier()
 
 
-def _iterate_modules(
-    stages: Union[List[MegatronModule], MegatronModule]
-) -> Iterable[MegatronModule]:
+def _iterate_modules(stages: Union[List[MegatronModule], MegatronModule]) -> Iterable[MegatronModule]:
     """Iterate over model stages, handling both single modules and lists of modules.
 
     Args:

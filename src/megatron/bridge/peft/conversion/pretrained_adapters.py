@@ -15,19 +15,19 @@
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Generic, List, Optional, TypeVar, Union
+from typing import Generic, List, Optional, TypeVar, Union
 
-import torch
 from peft import PeftConfig
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 
+
 # Python 3.12+ supports PEP 692 (TypedDict Unpack)
 if sys.version_info >= (3, 12):
-    from typing import TypedDict, Unpack
+    from typing import TypedDict
 else:
-    from typing_extensions import TypedDict, Unpack
+    from typing_extensions import TypedDict
 
 
 AdapterConfigType = TypeVar("AdapterConfigType", bound=PeftConfig)
@@ -38,7 +38,7 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
     A generic class for pretrained PEFT adapters with lazy loading.
 
     Allows type-safe access to specific adapter implementations like LoraConfig.
-    
+
     Examples:
         Basic usage with lazy loading:
         >>> from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
@@ -79,7 +79,7 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
         model_name_or_path: Optional[Union[str, Path]] = None,
         trust_remote_code: bool = False,
         strict: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize PreTrainedAdapters with lazy loading.
@@ -103,23 +103,22 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
         """Load the adapter config."""
         if self.model_name_or_path is None:
             raise ValueError("model_name_or_path must be provided to load adapter config")
-        
+
         path = self._resolve_path(self.model_name_or_path)
         config_file = path / "adapter_config.json"
-        
+
         if not config_file.exists():
             raise FileNotFoundError(
-                f"No adapter_config.json found in {path}. "
-                f"This does not appear to be a valid PEFT adapter directory."
+                f"No adapter_config.json found in {path}. This does not appear to be a valid PEFT adapter directory."
             )
-        
+
         with open(config_file, "r") as f:
             config_dict = json.load(f)
-        
+
         # Validate required fields
         if "peft_type" not in config_dict:
             raise ValueError("adapter_config.json must contain 'peft_type' field")
-        
+
         # Convert to PeftConfig object
         return PeftConfig.from_dict(config_dict)
 
@@ -154,32 +153,28 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
         if self._state_dict_accessor is None:
             if self.model_name_or_path is None:
                 raise ValueError("model_name_or_path must be provided to load adapter state")
-            
+
             path = self._resolve_path(self.model_name_or_path)
             source = SafeTensorsStateSource(path)
-            
+
             # Validate at least one expected key exists
             if self.strict:
                 keys = source.get_all_keys()
                 if not keys:
                     raise ValueError(f"No adapter weights found in {path}")
-                
+
                 # Basic validation for LoRA-style keys
                 lora_keys = [k for k in keys if any(x in k for x in ["lora_A", "lora_B", "adapters"])]
                 if not lora_keys:
                     raise ValueError(f"No recognizable PEFT adapter keys found in {path}")
-            
+
             self._state_dict_accessor = StateDict(source)
-        
+
         return self._state_dict_accessor
 
     @classmethod
     def from_pretrained(
-        cls,
-        model_name_or_path: Union[str, Path],
-        trust_remote_code: bool = False,
-        strict: bool = True,
-        **kwargs
+        cls, model_name_or_path: Union[str, Path], trust_remote_code: bool = False, strict: bool = True, **kwargs
     ) -> "PreTrainedAdapters[AdapterConfigType]":
         """
         Create a PreTrainedAdapters instance for lazy loading.
@@ -193,12 +188,7 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
         Returns:
             PreTrainedAdapters instance configured for lazy loading
         """
-        return cls(
-            model_name_or_path=model_name_or_path,
-            trust_remote_code=trust_remote_code,
-            strict=strict,
-            **kwargs
-        )
+        return cls(model_name_or_path=model_name_or_path, trust_remote_code=trust_remote_code, strict=strict, **kwargs)
 
     def get_target_modules(self) -> List[str]:
         """Get the list of target modules from the configuration."""
@@ -231,8 +221,7 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
         """
         target_modules = self.get_target_modules()
 
-        canonical_modules = {"q_proj", "k_proj", "v_proj", "o_proj",
-                           "gate_proj", "up_proj", "down_proj"}
+        canonical_modules = {"q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"}
         fused_modules = {"linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"}
 
         has_canonical = any(t in canonical_modules for t in target_modules)
@@ -256,9 +245,9 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
             # Try to download from HuggingFace Hub
             try:
                 from huggingface_hub import snapshot_download
+
                 cache_dir = snapshot_download(
-                    repo_id=str(model_name_or_path),
-                    allow_patterns=["*.json", "*.safetensors", "*.bin"]
+                    repo_id=str(model_name_or_path), allow_patterns=["*.json", "*.safetensors", "*.bin"]
                 )
                 return Path(cache_dir)
             except Exception as e:
@@ -277,7 +266,7 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
             pass
 
         lines = [f"{self.__class__.__name__}("]
-        
+
         # Add config info
         if hasattr(self, "_config") and self._config is not None:
             config = self._config
@@ -287,7 +276,7 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
             lines.append(f"  (config): {config.__class__.__name__} [peft_type={peft_type}, r={rank}, alpha={alpha}]")
         else:
             lines.append("  (config): PeftConfig [not loaded]")
-        
+
         # Add state info
         if hasattr(self, "_state_dict_accessor") and self._state_dict_accessor is not None:
             try:
@@ -297,17 +286,17 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
                 lines.append("  (state): StateDict [loaded]")
         else:
             lines.append("  (state): StateDict [not loaded]")
-        
+
         lines.append(f"  (path): {self.model_name_or_path}")
         lines.append(")")
-        
+
         return "\n".join(lines)
 
 
 # TypedDict definitions for method parameters
 class LoadAdaptersKwargs(TypedDict, total=False):
     """TypedDict for adapter loading parameters."""
-    
+
     trust_remote_code: bool
     strict: bool
     force_download: bool

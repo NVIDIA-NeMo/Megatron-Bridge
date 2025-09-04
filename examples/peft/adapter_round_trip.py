@@ -31,14 +31,12 @@ This workflow validates:
 
 import argparse
 import os
-from pathlib import Path
 
 import torch
 from rich.console import Console
 
-from megatron.bridge import AutoBridge
-from megatron.bridge.peft import AutoPEFTBridge
 from megatron.bridge.models.conversion import weights_verification_table
+from megatron.bridge.peft import AutoPEFTBridge
 
 
 console = Console()

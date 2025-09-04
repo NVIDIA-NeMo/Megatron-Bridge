@@ -182,10 +182,10 @@ class PEFT(ABC):
     def affects_module(self, module_name: str) -> bool:
         """Check if this PEFT method affects the given module type."""
         return any(target in module_name for target in self.target_modules)
-        
+
     def get_adapter_parameter_patterns(self) -> Dict[str, List[str]]:
         """Return Megatron adapter parameter patterns created by this PEFT type.
-        
+
         Returns:
             Dictionary mapping base parameter suffixes to adapter parameter suffixes.
             Example: {".weight": [".adapter.linear_in.weight", ".adapter.linear_out.weight"]}
@@ -193,36 +193,36 @@ class PEFT(ABC):
         return {
             ".weight": [".adapter.linear_in.weight", ".adapter.linear_out.weight"],
         }
-    
+
     def get_megatron_adapter_params(self, base_megatron_param: str) -> List[str]:
         """Convert base Megatron parameter to adapter Megatron parameters.
-        
+
         Args:
             base_megatron_param: Base parameter name (e.g., "decoder.layers.0.linear_qkv.weight")
-            
+
         Returns:
             List of adapter parameter names this PEFT type creates for the base parameter
         """
         patterns = self.get_adapter_parameter_patterns()
         adapter_params = []
-        
+
         for base_suffix, adapter_suffixes in patterns.items():
             if base_megatron_param.endswith(base_suffix):
                 for adapter_suffix in adapter_suffixes:
                     adapter_params.append(base_megatron_param.replace(base_suffix, adapter_suffix))
-        
+
         return adapter_params
-    
+
     def merge(self, model: ModelType) -> ModelType:
         """Merge adapter weights into base model weights.
-        
+
         This method should be implemented by subclasses to define how adapter weights
         are merged into the base model weights. The default implementation raises
         NotImplementedError.
-        
+
         Args:
             model: The model with PEFT adapters applied
-            
+
         Returns:
             The model with adapters merged into base weights
         """
@@ -230,7 +230,7 @@ class PEFT(ABC):
             f"Merge operation not implemented for {type(self).__name__}. "
             f"Each PEFT implementation should provide its own merge method."
         )
-    
+
     def adapter_key_filter(self, key) -> bool:
         """Filter function for adapter parameters during checkpointing.
 

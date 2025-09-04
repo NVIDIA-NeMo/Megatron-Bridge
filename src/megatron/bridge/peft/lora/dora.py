@@ -114,30 +114,30 @@ class DoRA(PEFT, ModuleMatcher):
             )
             return DoRALinear(m, adapter)
         return m
-    
+
     def get_adapter_parameter_patterns(self) -> Dict[str, List[str]]:
         """DoRA has A, B matrices plus magnitude vectors."""
         return {
             ".weight": [
                 ".adapter.linear_in.weight",
                 ".adapter.linear_out.weight",
-                ".adapter.weight_magnitude"  # DoRA-specific
+                ".adapter.weight_magnitude",  # DoRA-specific
             ]
         }
-    
+
     def merge(self, model):
         """Merge DoRA adapter weights into base model weights.
-        
+
         DoRA merging is more complex than LoRA as it involves both magnitude and
         direction components. For now, we don't implement merge for DoRA as it's
         marked as experimental.
-        
+
         Args:
             model: The model with DoRA adapters applied
-            
+
         Returns:
             The model (DoRA merge not implemented)
-            
+
         Raises:
             NotImplementedError: DoRA merging is not yet implemented
         """

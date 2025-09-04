@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.peft.lora.lora import LoRA
 from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora.dora import DoRA
+from megatron.bridge.peft.lora.lora import LoRA
+
 
 try:
-    from megatron.bridge.peft.lora.lora_bridge import LoRABridge   # noqa: F401
+    from megatron.bridge.peft.lora.lora_bridge import LoRABridge  # noqa: F401
 except ImportError:
     pass
 
