@@ -21,7 +21,7 @@ from peft import PeftConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
-from megatron.bridge.peft.api import PEFTModel
+from megatron.bridge.peft.api import MegatronPEFTModel
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.conversion import peft_bridge
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
@@ -120,7 +120,7 @@ class AutoPEFTBridge:
         training: bool = True,
         wrap_with_ddp: bool = True,
         use_cpu_initialization: bool = False,
-    ) -> PEFTModel:
+    ) -> MegatronPEFTModel:
         """Convert adapters to Megatron PEFT model.
 
         Args:
@@ -163,7 +163,7 @@ class AutoPEFTBridge:
             wrap_with_ddp=wrap_with_ddp, use_cpu_initialization=use_cpu_initialization
         )
 
-        return PEFTModel(stages, peft)
+        return MegatronPEFTModel(stages, peft)
 
     @property
     def peft_config(self) -> PeftConfig:
@@ -202,7 +202,7 @@ class AutoPEFTBridge:
 
     def export_adapter_weights(
         self,
-        model: PEFTModel,
+        model: MegatronPEFTModel,
         cpu: bool = False,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
@@ -249,7 +249,7 @@ class AutoPEFTBridge:
             conversion_tasks=conversion_tasks,
         )
 
-    def save_adapter_weights(self, model: PEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
+    def save_adapter_weights(self, model: MegatronPEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
         """
         Save PEFT model adapter weights in HuggingFace safetensors format.
 
@@ -328,7 +328,7 @@ class AutoPEFTBridge:
         except Exception:
             return False
 
-    def save_hf_pretrained(self, peft_model: PEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
+    def save_hf_pretrained(self, peft_model: MegatronPEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
         """Save a PEFT model adapters in HuggingFace format."""
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             if torch.distributed.get_rank() == 0:
@@ -365,7 +365,7 @@ class AutoPEFTBridge:
         with open(out / "adapter_config.json", "w") as f:
             json.dump(config_dict, f, indent=2)
 
-    def _save_adapter_weights(self, peft_model: PEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
+    def _save_adapter_weights(self, peft_model: MegatronPEFTModel, path: Union[str, Path], show_progress: bool = True) -> None:
         """Save adapter weights in HuggingFace safetensors format."""
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()

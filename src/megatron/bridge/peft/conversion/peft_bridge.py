@@ -203,7 +203,7 @@ class MegatronPEFTBridge(ABC):
 
         # Ensure megatron_model is a list for consistent handling
         if hasattr(megatron_model, "stages"):
-            # PEFTModel case - use the stages
+            # MegatronPEFTModel case - use the stages
             models_list = megatron_model.stages
         else:
             # List of MegatronModule or single MegatronModule case
@@ -282,7 +282,7 @@ class MegatronPEFTBridge(ABC):
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
 
-        # Handle both PEFTModel and list of MegatronModule for parameter iteration
+        # Handle both MegatronPEFTModel and list of MegatronModule for parameter iteration
         if hasattr(megatron_model, "__len__") and len(megatron_model) > 0:
             models_to_iterate = megatron_model
         else:
@@ -381,7 +381,7 @@ class MegatronPEFTBridge(ABC):
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
 
-        # Handle both PEFTModel and list of MegatronModule for parameter iteration
+        # Handle both MegatronPEFTModel and list of MegatronModule for parameter iteration
         models_to_iterate = unwrap_model(megatron_model)
         if not isinstance(models_to_iterate, (list, ModuleList)):
             models_to_iterate = [models_to_iterate]
