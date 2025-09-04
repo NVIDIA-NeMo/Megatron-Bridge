@@ -18,24 +18,16 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoTokenizer, NemotronHConfig, NemotronHForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
 
 
-HF_NEMOTRONH_TOY_MODEL_CONFIG = {
-    "architectures": ["NemotronHForCausalLM"],
-    "attention_bias": False,
-    "attention_dropout": 0.0,
+# Overrides for 8B size
+HF_NEMOTRONH_TOY_MODEL_OVERRIDES = {
     "attention_head_dim": 48,
-    "auto_map": {
-        "AutoConfig": "configuration_nemotron_h.NemotronHConfig",
-        "AutoModelForCausalLM": "modeling_nemotron_h.NemotronHForCausalLM",
-    },
-    "bos_token_id": 1,
     "chunk_size": 48,
-    "conv_kernel": 4,
-    "eos_token_id": 2,
     "expand": 2,
-    "hidden_dropout": 0.0,
     "hidden_size": 768,
     "hybrid_override_pattern": "M*M-",
     "initializer_range": 0.02,
@@ -44,29 +36,12 @@ HF_NEMOTRONH_TOY_MODEL_CONFIG = {
     "mamba_head_dim": 64,
     "mamba_hidden_act": "silu",
     "mamba_num_heads": 24,
-    "mamba_proj_bias": False,
     "max_position_embeddings": 8192,
-    "mlp_bias": False,
-    "mlp_hidden_act": "relu2",
-    "model_type": "nemotron_h",
     "n_groups": 8,
     "num_attention_heads": 16,
     "num_hidden_layers": 4,
     "num_key_value_heads": 8,
-    "num_logits_to_keep": 1,
-    "pad_token_id": 0,
-    "rescale_prenorm_residual": True,
-    "residual_in_fp32": False,
-    "rms_norm_eps": 1e-05,
-    "sliding_window": None,
     "ssm_state_size": 128,
-    "tie_word_embeddings": False,
-    "torch_dtype": "bfloat16",
-    "transformers_version": "4.48.0.dev0",
-    "use_bias": False,
-    "use_cache": True,
-    "use_conv_bias": True,
-    "use_mamba_kernels": True,
     "vocab_size": 131072,
 }
 
@@ -91,26 +66,28 @@ class TestNemotronHConversion:
         temp_dir = tmp_path_factory.mktemp("nemotronh_toy_model")
         model_dir = temp_dir / "nemotronh_toy"
 
-        # Create NemotronH config from the toy model config
-        config = NemotronHConfig(**HF_NEMOTRONH_TOY_MODEL_CONFIG)
-        config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
+        # Create NemotronH toy model config by starting with 8B and applying overrides
+        # This avoids attempting import of NemotronHConfig from Transformers
+        config = AutoConfig.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        for k, v in HF_NEMOTRONH_TOY_MODEL_OVERRIDES.items():
+            setattr(config, k, v)
 
         # Create model with random weights and convert to bfloat16
-        model = NemotronHForCausalLM(config)
-        model = model.bfloat16()  # Use .bfloat16() method instead of .to()
+        model_class = get_causal_lm_class_via_auto_map("nvidia/Nemotron-H-8B-Base-8K")
+        model = model_class(config)
+        model = model.bfloat16() if hasattr(model, "bfloat16") else model
 
         # Download and save tokenizer from a reference NemotronH model
-        tokenizer = AutoTokenizer.from_pretrained("nvidia/Nemotron-H-8B-Base-8K")
+        tokenizer = AutoTokenizer.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
 
-        # Also save config.json explicitly to ensure compatibility with correct torch_dtype
-        config_to_save = HF_NEMOTRONH_TOY_MODEL_CONFIG.copy()
+        # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
-            json.dump(config_to_save, f, indent=2)
+            json.dump(model.config.to_dict(), f, indent=2)
 
         return str(model_dir)
 
@@ -152,7 +129,7 @@ class TestNemotronHConversion:
 
         # Try loading the model to verify it's valid
         try:
-            model = NemotronHForCausalLM.from_pretrained(
+            model = AutoModelForCausalLM.from_pretrained(
                 nemotronh_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading

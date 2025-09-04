@@ -14,7 +14,6 @@
 
 import torch
 from megatron.core.models.mamba import MambaModel
-from transformers import NemotronHForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -22,7 +21,7 @@ from megatron.bridge.models.mamba.mamba_bridge import MambaBridge
 from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=NemotronHForCausalLM, target=MambaModel)
+@MegatronModelBridge.register_bridge(source="NemotronHForCausalLM", target=MambaModel)
 class NemotronHBridge(MambaBridge):
     """
     Megatron Bridge for Nemotron-H Causal LM.
@@ -33,7 +32,7 @@ class NemotronHBridge(MambaBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K")
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
 
