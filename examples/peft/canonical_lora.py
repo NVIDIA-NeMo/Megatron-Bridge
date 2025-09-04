@@ -49,7 +49,7 @@ def main(
     alpha: int = 32,
     dropout: float = 0.05,
     output_dir: str = None,
-    do_merge: bool = False,
+    do_merge: bool = True,
 ) -> bool:
     """Create and demonstrate canonical LoRA configuration."""
     
@@ -91,9 +91,9 @@ def main(
     console.print("\n📊 Parameter Statistics:")
     peft_model.print_trainable_parameters()
     
-    # Optional merge demonstration
+    # Merge demonstration (default behavior)
     if do_merge:
-        console.print("\n🔄 Demonstrating merge functionality:")
+        console.print("\n🔄 Merging adapters into base weights:")
         try:
             merged_model = peft_model.merge_and_unload()
             console.print("  ✓ Successfully merged adapters and unwrapped modules")
@@ -118,7 +118,7 @@ def main(
     console.print("Next steps:")
     console.print(f"  • Train the PEFT model with your training loop")
     console.print(f"  • Save adapter weights after training")
-    console.print(f"  • {'Merge was demonstrated above' if do_merge else 'Use --merge to demonstrate merge functionality'}")
+    console.print(f"  • {'Merge was demonstrated above' if do_merge else 'Use --no-merge to skip merge demonstration'}")
     
     return True
 
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha", type=int, default=32, help="LoRA alpha scaling parameter")
     parser.add_argument("--dropout", type=float, default=0.05, help="LoRA dropout rate")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for output files")
-    parser.add_argument("--merge", action="store_true", help="Demonstrate merge functionality")
+    parser.add_argument("--no-merge", action="store_true", help="Skip merge demonstration")
 
     args = parser.parse_args()
     success = main(
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         args.alpha,
         args.dropout,
         args.output_dir,
-        args.merge,
+        not args.no_merge,
     )
 
     if torch.distributed.is_initialized():

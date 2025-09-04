@@ -46,7 +46,7 @@ def main(
     alpha: int = 64,  # DoRA typically uses higher alpha
     dropout: float = 0.05,
     output_dir: str = None,
-    do_merge: bool = False,
+    do_merge: bool = True,
 ) -> bool:
     """Create and demonstrate DoRA configuration."""
     
@@ -88,9 +88,9 @@ def main(
     console.print("\n📊 Parameter Statistics:")
     peft_model.print_trainable_parameters()
     
-    # Optional merge demonstration
+    # Merge demonstration (default behavior)
     if do_merge:
-        console.print("\n🔄 Demonstrating merge functionality:")
+        console.print("\n🔄 Unwrapping DoRA modules:")
         try:
             merged_model = peft_model.merge_and_unload()
             console.print("  ✓ Successfully unwrapped DoRA modules")
@@ -116,6 +116,7 @@ def main(
     console.print("Next steps:")
     console.print(f"  • Train the PEFT model with your training loop")
     console.print(f"  • Save adapter weights after training")
+    console.print(f"  • {'Unwrap was demonstrated above' if do_merge else 'Use --no-merge to skip unwrap demonstration'}")
     console.print(f"  • DoRA merge implementation coming in future release")
     
     return True
@@ -128,7 +129,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha", type=int, default=64, help="DoRA alpha scaling parameter")
     parser.add_argument("--dropout", type=float, default=0.05, help="DoRA dropout rate")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for output files")
-    parser.add_argument("--merge", action="store_true", help="Demonstrate merge functionality (unwrap only for DoRA)")
+    parser.add_argument("--no-merge", action="store_true", help="Skip merge demonstration (unwrap only for DoRA)")
 
     args = parser.parse_args()
     success = main(
@@ -137,7 +138,7 @@ if __name__ == "__main__":
         args.alpha,
         args.dropout,
         args.output_dir,
-        args.merge,
+        not args.no_merge,
     )
 
     if torch.distributed.is_initialized():
