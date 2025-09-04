@@ -169,17 +169,9 @@ class LoRA(PEFT, ModuleMatcher):
         Returns:
             The model with LoRA adapters merged into base weights
         """
-        from megatron.bridge.peft.walk_utils import walk
-
-        # Use the existing LoRAMerge transform
+        # Use the PEFT base class __call__ method which handles walking for us
         merge_transform = LoRAMerge()
-
-        # Apply merge transform to each model stage
-        if isinstance(model, list):
-            for model_chunk in model:
-                walk(model_chunk, merge_transform.transform)
-        else:
-            walk(model, merge_transform.transform)
+        merge_transform(model, training=False)  # training=False for merge operation
 
         return model
 

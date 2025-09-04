@@ -69,7 +69,7 @@ def main(adapter_id: str = ADAPTER_ID, output_dir: str = None) -> bool:
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
-    
+
     # Perform round-trip save and reload to verify conversion accuracy
     console.print(f"\nSaving PEFT adapters in {save_path}...")
     peft_bridge.save_hf_pretrained(peft_model, save_path)
