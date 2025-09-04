@@ -11,120 +11,100 @@ pip install megatron-bridge[peft]
 
 ## Examples Overview
 
-### 1. List Supported Adapters
-**File:** `list_supported_adapters.py`
+### 1. Fused LoRA
+**File:** `lora.py`
 
-Lists all PEFT adapter types currently supported by the bridge system.
+Demonstrates creating and applying fused LoRA adapters to efficient fused projection layers.
 
 ```bash
-python examples/peft/list_supported_adapters.py
+# Basic fused LoRA
+python examples/peft/lora.py --rank 16 --alpha 32
+
+# With merge demonstration
+python examples/peft/lora.py --rank 32 --alpha 64 --merge
 ```
 
-**Output:**
-- Supported adapter types (LoRA, DoRA, etc.)
-- Usage instructions and documentation references
+**Features:**
+- Fused target modules: `linear_qkv`, `linear_proj`, `linear_fc1`, `linear_fc2`
+- Most efficient LoRA variant
+- Working merge functionality
+- Parameter efficiency statistics
 
-### 2. Apply Existing LoRA Adapters
+### 2. Canonical LoRA
+**File:** `canonical_lora.py`
+
+Demonstrates creating and applying canonical LoRA adapters to individual projection layers.
+
+```bash
+# Basic canonical LoRA
+python examples/peft/canonical_lora.py --rank 16 --alpha 32
+
+# With merge demonstration
+python examples/peft/canonical_lora.py --rank 32 --merge
+```
+
+**Features:**
+- Individual target modules: `linear_q`, `linear_k`, `linear_v`, `linear_fc1_gate`, etc.
+- HuggingFace PEFT compatible layout
+- Merge and unwrap functionality
+- Follows HF PEFT conventions
+
+### 3. DoRA (Experimental)
+**File:** `dora.py`
+
+Demonstrates creating and applying DoRA adapters with magnitude vector decomposition.
+
+```bash
+# Basic DoRA
+python examples/peft/dora.py --rank 16 --alpha 64
+
+# With unwrap demonstration
+python examples/peft/dora.py --rank 32 --alpha 128 --merge
+```
+
+**Features:**
+- Weight decomposition into magnitude and direction
+- Same target modules as fused LoRA but with magnitude vectors
+- Unwrap functionality (merge weights not yet implemented)
+- Higher alpha values typical for DoRA
+
+### 4. Apply Existing Adapters
 **File:** `apply_lora_adapters.py`
 
-Demonstrates how to load pretrained LoRA adapters from HuggingFace and apply them to a Megatron model.
+Demonstrates loading and applying pretrained adapters from HuggingFace Hub.
 
 ```bash
-# Basic usage
-python examples/peft/apply_lora_adapters.py \
-    --base-model-id "meta-llama/Llama-3.1-8B" \
-    --adapter-model-id "username/llama-lora-math"
+# Auto-detect base model from adapter config
+python examples/peft/apply_lora_adapters.py
 
-# With custom output directory
-python examples/peft/apply_lora_adapters.py \
-    --base-model-id "microsoft/phi-2" \
-    --adapter-model-id "username/phi-2-code-lora" \
-    --output-dir "./converted_adapters"
+# Specify custom adapter
+python examples/peft/apply_lora_adapters.py --adapter-id "username/my-lora"
 ```
 
-**Features demonstrated:**
-- Loading adapters from HuggingFace Hub or local paths
-- Adapter configuration inspection
-- Parameter statistics and trainable parameter counting
-- Adapter enable/disable functionality
-- Saving adapters back to HuggingFace format
+**Features:**
+- Auto-detection of base model from adapter config
+- Merge functionality with validation
+- Weight mapping verification
+- Save merged model as standard HuggingFace model
 
-### 3. Create New LoRA Configuration
-**File:** `create_new_lora.py`
+### 5. HuggingFace Round-Trip Conversion
+**File:** `adapter_round_trip_hf.py`
 
-Shows how to create a new LoRA configuration from scratch and apply it to a base model.
+Validates bidirectional conversion between HuggingFace and Megatron adapter formats.
 
 ```bash
-# Create fused LoRA (default)
-python examples/peft/create_new_lora.py \
-    --base-model-id "meta-llama/Llama-3.1-8B" \
-    --lora-rank 16 \
-    --lora-alpha 32 \
-    --lora-dropout 0.05
+# Test with default adapter
+python examples/peft/adapter_round_trip_hf.py
 
-# Create canonical LoRA
-python examples/peft/create_new_lora.py \
-    --base-model-id "microsoft/phi-2" \
-    --lora-rank 8 \
-    --lora-alpha 16 \
-    --use-canonical \
-    --target-modules "attention"
+# Test with custom adapter
+python examples/peft/adapter_round_trip_hf.py --adapter-id "username/my-adapter"
 ```
 
-**Features demonstrated:**
-- Creating LoRA and CanonicalLoRA configurations
-- Choosing between fused and canonical layouts
-- Configuring target modules (all, attention, mlp, custom)
-- Parameter efficiency comparison
-- Adapter state extraction
-
-### 4. Round-Trip Conversion Test
-**File:** `adapter_round_trip.py`
-
-Validates bidirectional conversion accuracy between HuggingFace and Megatron adapter formats.
-
-```bash
-# Test conversion accuracy
-python examples/peft/adapter_round_trip.py \
-    --base-model-id "meta-llama/Llama-3.1-8B" \
-    --adapter-model-id "username/llama-lora-math" \
-    --tolerance 1e-5
-
-# Save verified adapters
-python examples/peft/adapter_round_trip.py \
-    --adapter-model-id "username/my-lora" \
-    --output-dir "./verified_adapters"
-```
-
-**Features demonstrated:**
-- Weight preservation validation
-- Numerical tolerance testing
-- Format conversion verification
-- Automatic cleanup of temporary files
-
-### 5. Merge Adapters into Full Model
-**File:** `merge_and_save_full_model.py`
-
-Demonstrates merging trained adapters into the base model weights to create a complete fine-tuned model.
-
-```bash
-# Merge and save complete model
-python examples/peft/merge_and_save_full_model.py \
-    --base-model-id "meta-llama/Llama-3.1-8B" \
-    --adapter-model-id "username/trained-math-lora" \
-    --output-dir "./merged_models"
-
-# Quick merge without verification
-python examples/peft/merge_and_save_full_model.py \
-    --adapter-model-id "username/my-lora" \
-    --no-verify
-```
-
-**Features demonstrated:**
-- Adapter merging into base weights
-- Merge verification and validation
-- Saving merged models as standard HuggingFace models
-- Error handling for unsupported merge operations
+**Features:**
+- Auto-detection of base model
+- Weight mapping verification table
+- Conversion validation
+- Git-safe output directory
 
 ## Common Usage Patterns
 
@@ -184,11 +164,11 @@ torchrun --nproc_per_node=2 examples/peft/apply_lora_adapters.py \
     --adapter-model-id "username/llama-lora"
 ```
 
-## Supported Adapter Types
+## PEFT Variants
 
-- **LoRA (Fused)**: Applies adapters to fused linear layers (`linear_qkv`, `linear_fc1`)
-- **LoRA (Canonical)**: Applies adapters to individual projections (`q_proj`, `k_proj`, etc.)
-- **DoRA (Experimental)**: Includes magnitude vectors for enhanced adaptation
+- **Fused LoRA**: Most efficient, applies to fused layers (`linear_qkv`, `linear_fc1`)
+- **Canonical LoRA**: HuggingFace compatible, individual projections (`linear_q`, `linear_k`, etc.)
+- **DoRA**: Experimental, adds magnitude vectors to LoRA for enhanced adaptation
 
 ## Troubleshooting
 
@@ -203,14 +183,15 @@ pip install megatron-bridge[peft]
 - Check that adapter type is supported with `list_supported_adapters.py`
 - Verify target modules are compatible with the base model architecture
 
-### Merge Failures  
-- DoRA adapters don't support merging yet (experimental)
-- Some adapter configurations may not support merging
-- Check error messages for specific guidance on supported operations
+### Merge Functionality
+- **Fused LoRA**: Full merge and unwrap support
+- **Canonical LoRA**: Full merge and unwrap support
+- **DoRA**: Unwrap only (merge weights not yet implemented)
+- Use `--merge` flag in examples to test merge functionality
 
 ## See Also
 
 - **Main PEFT API Documentation**: `src/megatron/bridge/peft/`
-- **Bridge Implementations**: `src/megatron/bridge/peft/lora/`, `src/megatron/bridge/peft/dora/`
+- **Bridge Implementations**: `src/megatron/bridge/peft/lora/`
 - **Model Examples**: `examples/models/` for base model usage patterns
 - **Training Recipes**: `examples/recipes/` for complete training workflows

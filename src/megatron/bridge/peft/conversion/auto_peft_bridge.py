@@ -171,6 +171,11 @@ class AutoPEFTBridge:
         return self.adapters.config
 
     @property
+    def base_bridge(self) -> AutoBridge:
+        """Get the PEFT bridge."""
+        return self._base_bridge
+
+    @property
     def _peft_bridge_impl(self):
         """Get the underlying PEFT bridge implementation."""
         if self._peft_bridge is None:

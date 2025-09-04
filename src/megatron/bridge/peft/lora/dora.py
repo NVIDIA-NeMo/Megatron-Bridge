@@ -129,20 +129,38 @@ class DoRA(PEFT, ModuleMatcher):
         """Merge DoRA adapter weights into base model weights.
 
         DoRA merging is more complex than LoRA as it involves both magnitude and
-        direction components. For now, we don't implement merge for DoRA as it's
-        marked as experimental.
+        direction components. For now, we implement a simple unwrapping without
+        actual weight merging.
 
         Args:
             model: The model with DoRA adapters applied
 
         Returns:
-            The model (DoRA merge not implemented)
-
-        Raises:
-            NotImplementedError: DoRA merging is not yet implemented
+            The model with DoRA adapters unwrapped (weights not merged)
+            
+        Note:
+            This is a placeholder implementation that only unwraps modules.
+            True DoRA merge requires complex magnitude/direction handling.
         """
-        raise NotImplementedError(
-            "DoRA merge is not yet implemented. DoRA involves complex magnitude and "
-            "direction decomposition that requires careful handling during merge. "
-            "This feature is planned for a future release."
-        )
+        # For now, just unwrap DoRA modules without merging weights
+        # True DoRA merge would require magnitude vector handling
+        unwrapped_model = []
+        for stage in (model if isinstance(model, list) else [model]):
+            unwrapped_stage = self._unwrap_dora_modules(stage)
+            unwrapped_model.append(unwrapped_stage)
+        
+        return unwrapped_model
+    
+    def _unwrap_dora_modules(self, module):
+        """Recursively unwrap DoRA adapter modules."""
+        # Handle DoRA wrapper types
+        if isinstance(module, DoRALinear):
+            # Return the unwrapped base module (no weight merge for now)
+            return module.to_wrap
+        
+        # For non-adapter modules, recursively unwrap children
+        for name, child in list(module.named_children()):
+            unwrapped_child = self._unwrap_dora_modules(child)
+            setattr(module, name, unwrapped_child)
+        
+        return module

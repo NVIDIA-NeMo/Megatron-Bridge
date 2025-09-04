@@ -267,8 +267,9 @@ class MegatronPEFTModel(nn.ModuleList):
             deployment where you want a single model without adapter overhead.
         """
         # Delegate to the PEFT instance's merge method
-        merged_model = self.peft.merge(self)
-
+        # The PEFT merge method should handle both merging and unwrapping
+        merged_model = self.peft.merge(list(self))
+        
         # Ensure we return a list
         if isinstance(merged_model, list):
             return merged_model
