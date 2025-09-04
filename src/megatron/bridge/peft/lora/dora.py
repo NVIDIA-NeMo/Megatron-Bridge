@@ -128,22 +128,21 @@ class DoRA(PEFT, ModuleMatcher):
     def merge(self, model):
         """Merge DoRA adapter weights into base model weights.
 
-        DoRA merging is more complex than LoRA as it involves both magnitude and
-        direction components. For now, we implement a simple unwrapping without
-        actual weight merging.
+        DoRA merging involves both magnitude and direction components.
+        The merge process reconstructs the full weight matrix from the
+        decomposed components.
 
         Args:
             model: The model with DoRA adapters applied
 
         Returns:
-            The model with DoRA adapters unwrapped (weights not merged)
-            
-        Note:
-            This is a placeholder implementation that only unwraps modules.
-            True DoRA merge requires complex magnitude/direction handling.
+            The model with DoRA adapters merged and unwrapped
         """
-        # For now, just unwrap DoRA modules without merging weights
-        # True DoRA merge would require magnitude vector handling
+        # First merge DoRA weights using the DoRAMerge transform
+        merge_transform = DoRAMerge()
+        merge_transform(model, training=False)
+        
+        # Then unwrap adapter modules to return clean base structure
         unwrapped_model = []
         for stage in (model if isinstance(model, list) else [model]):
             unwrapped_stage = self._unwrap_dora_modules(stage)

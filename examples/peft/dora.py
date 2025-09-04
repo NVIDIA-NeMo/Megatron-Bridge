@@ -49,7 +49,7 @@ def main(
     do_merge: bool = True,
 ) -> bool:
     """Create and demonstrate DoRA configuration."""
-    
+
     # Create output path
     model_name = base_model_id.split("/")[-1]
     if output_dir:
@@ -58,13 +58,13 @@ def main(
         save_path = os.path.join("outputs", f"{model_name}_dora_r{rank}")
 
     console.print(f"Creating DoRA adapters for [bold blue]{base_model_id}[/bold blue]")
-    
+
     # Load base model
     base_bridge = AutoBridge.from_hf_pretrained(base_model_id)
-    
+
     # DoRA target modules (uses fused layers like LoRA)
     targets = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
-    
+
     # Create DoRA configuration
     console.print(f"\n🔧 DoRA Configuration:")
     console.print(f"  • Rank (r): {rank}")
@@ -72,53 +72,50 @@ def main(
     console.print(f"  • Dropout: {dropout}")
     console.print(f"  • Target Modules: {targets}")
     console.print(f"  • Features: Low-rank adaptation + magnitude vectors")
-    
+
     dora = DoRA(
         target_modules=targets,
         dim=rank,
         alpha=alpha,
         dropout=dropout
     )
-    
+
     # Apply DoRA to model
     console.print("\n⚙️  Creating PEFT model...")
     provider = base_bridge.to_megatron_provider()
     peft_model = get_peft_model(provider, dora, training=True, wrap_with_ddp=False)
-    
+
     console.print("\n📊 Parameter Statistics:")
     peft_model.print_trainable_parameters()
-    
+
     # Merge demonstration (default behavior)
     if do_merge:
-        console.print("\n🔄 Unwrapping DoRA modules:")
+        console.print("\n🔄 Merging DoRA adapters into base weights:")
         try:
             merged_model = peft_model.merge_and_unload()
-            console.print("  ✓ Successfully unwrapped DoRA modules")
-            console.print("  ⚠️  Note: DoRA weight merge not yet implemented (complex magnitude handling)")
-            
+            console.print("  ✓ Successfully merged DoRA adapters into base weights")
+            console.print("  ✓ DoRA magnitude and direction components properly handled")
+
             # Save unwrapped model
             os.makedirs(os.path.dirname(f"{save_path}_unwrapped") if os.path.dirname(f"{save_path}_unwrapped") else ".", exist_ok=True)
             console.print(f"  💾 Saving unwrapped model to {save_path}_unwrapped...")
             base_bridge.save_hf_pretrained(merged_model, f"{save_path}_unwrapped")
-            console.print("  ✓ Unwrapped model saved (no DoRA weights merged)")
+            console.print("  ✓ Merged model saved as standard HuggingFace model")
         except Exception as e:
             console.print(f"  ⚠️  Merge failed: {e}")
-    
+
     # Save PEFT adapters
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
     console.print(f"\n💾 Saving DoRA adapters to {save_path}...")
-    
+
     # For demonstration purposes
     console.print("  ℹ️  Note: In practice, save adapters after training with actual weights")
     console.print(f"      peft_bridge.save_hf_pretrained(peft_model, '{save_path}')")
-    
+
     console.print("\n✨ DoRA example completed successfully!")
     console.print("Next steps:")
     console.print(f"  • Train the PEFT model with your training loop")
-    console.print(f"  • Save adapter weights after training")
-    console.print(f"  • {'Unwrap was demonstrated above' if do_merge else 'Use --no-merge to skip unwrap demonstration'}")
-    console.print(f"  • DoRA merge implementation coming in future release")
-    
+
     return True
 
 
@@ -129,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha", type=int, default=64, help="DoRA alpha scaling parameter")
     parser.add_argument("--dropout", type=float, default=0.05, help="DoRA dropout rate")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory for output files")
-    parser.add_argument("--no-merge", action="store_true", help="Skip merge demonstration (unwrap only for DoRA)")
+    parser.add_argument("--no-merge", action="store_true", help="Skip merge demonstration")
 
     args = parser.parse_args()
     success = main(
@@ -143,5 +140,5 @@ if __name__ == "__main__":
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
-    
+
     exit(0 if success else 1)
