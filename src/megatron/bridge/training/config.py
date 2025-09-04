@@ -792,11 +792,11 @@ class ConfigContainer(Container):
                 )
 
         # Megatron FSDP Config checks
-        if self.dist.use_megatron_fsdp:
+        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
             # Set Megatron FSDP Configs
-            self.model.use_megatron_fsdp = True
-            self.optimizer.use_megatron_fsdp = True
+            self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
+            self.optimizer.use_megatron_fsdp = True
 
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading
