@@ -331,6 +331,10 @@ def _call_target(
 ) -> Any:
     """Call target (type) with args and kwargs."""
     args, kwargs = _extract_pos_args(args, kwargs)
+
+    # Filter out init=False fields for dataclass constructors
+    kwargs = _filter_init_false_fields(_target_, kwargs)
+
     if _partial_:
         try:
             return functools.partial(_target_, *args, **kwargs)
@@ -347,6 +351,23 @@ def _call_target(
             if full_key:
                 msg += f"\nfull_key: {full_key}"
             raise InstantiationException(msg) from e
+
+
+def _filter_init_false_fields(target: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Filter out fields marked with init=False from kwargs for dataclass constructors."""
+    from dataclasses import fields, is_dataclass
+
+    # Only filter for dataclasses
+    if not is_dataclass(target):
+        return kwargs
+
+    # Get fields that should not be passed to constructor (init=False)
+    init_false_fields = {field.name for field in fields(target) if not field.init}
+
+    # Filter out init=False fields from kwargs
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key not in init_false_fields}
+
+    return filtered_kwargs
 
 
 def _convert_target_to_string(t: Any) -> Any:

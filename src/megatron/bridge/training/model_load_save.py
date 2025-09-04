@@ -244,6 +244,9 @@ def build_and_load_model(
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if isinstance(model_cfg, ModelProviderMixin):
+            if mbridge_ckpt:
+                # Skip initializing the weights as they will be overwritten when loading the checkpoint
+                model_cfg.perform_initialization = False
             return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."

@@ -26,9 +26,9 @@ from megatron.bridge.training.state import TrainState
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 
-TRAIN_STATE_FILE = "train_state.pt"
-TRACKER_PREFIX = "latest"
-CONFIG_FILE = "run_config.yaml"
+TRAIN_STATE_FILE: str = "train_state.pt"
+TRACKER_PREFIX: str = "latest"
+CONFIG_FILE: str = "run_config.yaml"
 
 logger = logging.getLogger(__name__)
 
