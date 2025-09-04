@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
 
