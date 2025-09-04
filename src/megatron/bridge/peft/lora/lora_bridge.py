@@ -85,7 +85,7 @@ class LoRABridge(MegatronPEFTBridge):
         )
         print(f"   • Config attributes: r={config.r}, alpha={config.lora_alpha}, dropout={config.lora_dropout}")
 
-        if config.get("use_dora", False):
+        if config.use_dora:
             # DoRA: LoRA + magnitude vectors
             megatron_target_modules = self._hf_to_megatron_target_modules(hf_target_modules)
             print(f"   • Converted to Megatron targets: {megatron_target_modules}")

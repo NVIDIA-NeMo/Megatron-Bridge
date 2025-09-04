@@ -112,15 +112,8 @@ class PreTrainedAdapters(PreTrainedBase, Generic[AdapterConfigType]):
                 f"No adapter_config.json found in {path}. This does not appear to be a valid PEFT adapter directory."
             )
 
-        with open(config_file, "r") as f:
-            config_dict = json.load(f)
-
-        # Validate required fields
-        if "peft_type" not in config_dict:
-            raise ValueError("adapter_config.json must contain 'peft_type' field")
-
         # Convert to PeftConfig object
-        return PeftConfig.from_dict(config_dict)
+        return PeftConfig.from_pretrained(path)
 
     @property
     def model_name_or_path(self) -> Optional[Union[str, Path]]:
