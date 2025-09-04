@@ -43,7 +43,7 @@ except ImportError as e:
     ) from e
 
 # Import main API components
-from megatron.bridge.peft.api import PEFTModel, get_peft_model
+from megatron.bridge.peft.api import MegatronPEFTModel, get_peft_model
 from megatron.bridge.peft.conversion.auto_peft_bridge import AutoPEFTBridge
 from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora.dora import DoRA
@@ -55,7 +55,7 @@ from megatron.bridge.peft.lora.lora import LoRA
 __all__ = [
     # Main API
     "get_peft_model",
-    "PEFTModel",
+    "MegatronPEFTModel",
     "AutoPEFTBridge",
     # PEFT implementations
     "LoRA",

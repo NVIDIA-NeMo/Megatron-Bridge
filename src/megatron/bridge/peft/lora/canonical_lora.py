@@ -212,31 +212,18 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         Returns:
             The model with canonical LoRA adapters merged into base weights
         """
-        # Use the PEFT base class __call__ method which handles walking for us
+        # Use the same pattern as LoRAMerge
         merge_transform = CanonicalLoRAMerge()
-        merge_transform(model, training=False)  # training=False for merge operation
 
-        return list(model)
+        return merge_transform(model, training=False)
 
 
 class CanonicalLoRAMerge(PEFT):
-    """
-    Implements the canonical LoRA weight merge for parameter-efficient fine-tuning.
-    """
+    """Implements the canonical LoRA weight merge for parameter-efficient fine-tuning."""
 
     @torch.no_grad()
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
-        """
-        Merges the canonical LoRA adapters with the base model weights.
-
-        Args:
-            module (nn.Module): The module to apply canonical LoRA merge to.
-            name (str, optional): Name of the module to merge. Defaults to None.
-            prefix (str, optional): Prefix for the module name. Defaults to None.
-
-        Returns:
-            nn.Module: The modified module with the canonical LoRA adapters merged into the base model weights.
-        """
+        """Merge canonical LoRA adapters with base model weights."""
         if isinstance(module, LoRALinearSplitQKV):
             logging.info(f"merging LoRALinearSplitQKV {(prefix if prefix else '') + '.' + (name if name else '')}")
             base_weight = module.to_wrap.weight
@@ -263,18 +250,15 @@ class CanonicalLoRAMerge(PEFT):
 
                 # Determine which slice to merge into
                 if adapter_name == "adapter_q":
-                    # Q slice: first part of QKV
                     q_size = heads_per_group * num_query_groups * kv_channels
                     start_idx = 0
                     end_idx = q_size
                 elif adapter_name == "adapter_k":
-                    # K slice: middle part
                     q_size = heads_per_group * num_query_groups * kv_channels
                     k_size = num_query_groups * kv_channels
                     start_idx = q_size
                     end_idx = start_idx + k_size
                 elif adapter_name == "adapter_v":
-                    # V slice: last part
                     q_size = heads_per_group * num_query_groups * kv_channels
                     k_size = num_query_groups * kv_channels
                     start_idx = q_size + k_size
@@ -286,18 +270,14 @@ class CanonicalLoRAMerge(PEFT):
                 if base_weight.data[start_idx:end_idx].shape == lora_weight.shape:
                     base_weight.data[start_idx:end_idx] += lora_weight
                 else:
-                    logger.warning(
-                        f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}"
-                    )
+                    logger.warning(f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}")
 
             # Set merged flag to gate future adapter computation
             setattr(module, "_merged", True)
             return module
 
         elif isinstance(module, LoRALinearSplitFC1UpGate):
-            logging.info(
-                f"merging LoRALinearSplitFC1UpGate {(prefix if prefix else '') + '.' + (name if name else '')}"
-            )
+            logging.info(f"merging LoRALinearSplitFC1UpGate {(prefix if prefix else '') + '.' + (name if name else '')}")
             base_weight = module.to_wrap.weight
 
             # Merge each adapter if it exists
@@ -315,11 +295,9 @@ class CanonicalLoRAMerge(PEFT):
 
                 # Determine slice for gate vs up
                 if adapter_name == "adapter_gate":
-                    # Gate: first half
                     start_idx = 0
                     end_idx = base_weight.shape[0] // 2
                 elif adapter_name == "adapter_up":
-                    # Up: second half
                     start_idx = base_weight.shape[0] // 2
                     end_idx = base_weight.shape[0]
                 else:
@@ -329,9 +307,7 @@ class CanonicalLoRAMerge(PEFT):
                 if base_weight.data[start_idx:end_idx].shape == lora_weight.shape:
                     base_weight.data[start_idx:end_idx] += lora_weight
                 else:
-                    logger.warning(
-                        f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}"
-                    )
+                    logger.warning(f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}")
 
             # Set merged flag to gate future adapter computation
             setattr(module, "_merged", True)

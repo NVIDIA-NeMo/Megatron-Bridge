@@ -31,8 +31,8 @@ def get_peft_model(
     *,
     training: bool = True,
     wrap_with_ddp: bool = True,
-) -> "PEFTModel":
-    """Apply a PEFT transform at the correct point in the provider pipeline and return a PEFTModel.
+) -> "MegatronPEFTModel":
+    """Apply a PEFT transform at the correct point in the provider pipeline and return a MegatronPEFTModel.
 
     This function applies Parameter-Efficient Fine-Tuning (PEFT) adaptations to a Megatron model
     by hooking into the provider's pre-wrap stage, ensuring PEFT is applied before DDP wrapping.
@@ -46,7 +46,7 @@ def get_peft_model(
         wrap_with_ddp: Whether to wrap the model with DistributedDataParallel. Defaults to True.
 
     Returns:
-        PEFTModel: A wrapped model with PEFT adaptations applied.
+        MegatronPEFTModel: A wrapped model with PEFT adaptations applied.
 
     Raises:
         TypeError: If provider is not a ModelProviderMixin instance.
@@ -81,10 +81,10 @@ def get_peft_model(
 
     # Materialize Megatron model (list of stages or a single module depending on VP config)
     stages = provider.provide_distributed_model(wrap_with_ddp=wrap_with_ddp)
-    return PEFTModel(stages, peft)
+    return MegatronPEFTModel(stages, peft)
 
 
-class PEFTModel(nn.ModuleList):
+class MegatronPEFTModel(nn.ModuleList):
     """Wrapper for PEFT-adapted Megatron models.
 
     This class wraps PEFT-adapted Megatron models and maintains compatibility with the
@@ -104,7 +104,6 @@ class PEFTModel(nn.ModuleList):
     def __init__(self, stages: Union[List[MegatronModule], MegatronModule], peft: PEFT):
         super().__init__(stages if isinstance(stages, list) else [stages])
         self.peft: PEFT = peft
-        self.stages: "PEFTModel" = self  # alias: self acts as ModuleList of stages
         self.adapter_name: str = "default"  # placeholder for future multi-adapter support
 
     # ------------------------------------------------------------
@@ -268,13 +267,17 @@ class PEFTModel(nn.ModuleList):
             deployment where you want a single model without adapter overhead.
         """
         # Delegate to the PEFT instance's merge method
-        merged_model = self.peft.merge(list(self.stages))
+        merged_model = self.peft.merge(self)
 
         # Ensure we return a list
         if isinstance(merged_model, list):
             return merged_model
         else:
             return [merged_model]
+
+    @property
+    def stages(self) -> list[MegatronModule]:
+        return list(self)
 
 
 def _is_main_rank() -> bool:
