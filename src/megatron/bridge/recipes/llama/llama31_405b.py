@@ -21,7 +21,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.bridge.models.llama import Llama31ModelProvider405B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
     userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
@@ -106,6 +105,7 @@ def pretrain_config(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    vocab_size: int = 128256,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3.1 405B model.
@@ -212,7 +212,7 @@ def pretrain_config(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=vocab_size),
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,

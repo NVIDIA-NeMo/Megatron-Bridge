@@ -73,27 +73,27 @@ class Qwen3MoEBridge(MegatronModelBridge):
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        # Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format
+        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
 
-        # Dictionary maps HF parameter names -> Megatron parameter names
+        # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
-            "model.embed_tokens.weight": "embedding.word_embeddings.weight",
-            "lm_head.weight": "output_layer.weight",
-            "model.norm.weight": "decoder.final_layernorm.weight",
-            "model.layers.*.input_layernorm.weight": "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight",
-            "model.layers.*.mlp.gate.weight": "decoder.layers.*.mlp.router.weight",
-            "model.layers.*.post_attention_layernorm.weight": "decoder.layers.*.pre_mlp_layernorm.weight",
-            "model.layers.*.self_attn.q_norm.weight": "decoder.layers.*.self_attention.q_layernorm.weight",
-            "model.layers.*.self_attn.k_norm.weight": "decoder.layers.*.self_attention.k_layernorm.weight",
-            "model.layers.*.self_attn.o_proj.weight": "decoder.layers.*.self_attention.linear_proj.weight",
+            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+            "output_layer.weight": "lm_head.weight",
+            "decoder.final_layernorm.weight": "model.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
+            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
+            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
         }
 
         mapping_list = []
-        # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
-        for hf_param, megatron_param in param_mappings.items():
-            mapping_list.append(AutoMapping(hf_param=hf_param, megatron_param=megatron_param))
+        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
+        for megatron_param, hf_param in param_mappings.items():
+            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(
@@ -101,19 +101,19 @@ class Qwen3MoEBridge(MegatronModelBridge):
                 # QKV: Combine separate Q, K, V matrices into single QKV matrix
                 # Note: Qwen3 MoE does NOT have bias in QKV projections
                 QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",
                     k="model.layers.*.self_attn.k_proj.weight",
                     v="model.layers.*.self_attn.v_proj.weight",
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                 ),
                 GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
                     gate="model.layers.*.mlp.experts.*.gate_proj.weight",
                     up="model.layers.*.mlp.experts.*.up_proj.weight",
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
                 ),
                 AutoMapping(
-                    hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
             ]
         )

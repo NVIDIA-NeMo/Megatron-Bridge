@@ -18,6 +18,7 @@ import torch
 
 from megatron.bridge.models.llama import Llama3ModelProvider70B
 from megatron.bridge.recipes.llama import llama3_70b
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -154,6 +155,7 @@ def pretrain_config(
         min_lr=min_lr,
         lr_warmup_iters=lr_warmup_iters,
         precision_config=precision_config,
+        vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
     )
 
     # Override the model configuration to use 64k sequence length

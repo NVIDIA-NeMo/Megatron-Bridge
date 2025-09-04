@@ -185,12 +185,12 @@ def create_timed_forward_step_func(sleep_time: float = 1.0):
         A forward step function compatible with megatron training
     """
 
-    def timed_forward_step_func(state: GlobalState, data_iterator, model):
+    def timed_forward_step_func(state: GlobalState, data_iterator, model, return_schedule_plan: bool = False):
         if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
             time.sleep(sleep_time)
             print(f"Rank {torch.distributed.get_rank()}: Simulated slow forward step (slept {sleep_time}s)")
 
-        return forward_step(state, data_iterator, model)
+        return forward_step(state, data_iterator, model, return_schedule_plan=return_schedule_plan)
 
     return timed_forward_step_func
 
