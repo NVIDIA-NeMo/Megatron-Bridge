@@ -106,7 +106,7 @@ def main(
         adapter_name = adapter_model_id.split("/")[-1]
         save_path = os.path.join(output_dir, f"{adapter_name}_converted")
     else:
-        save_path = "converted_adapters"
+        save_path = "outputs/converted_adapters"
 
     console.print(f"\n💾 Saving adapters to HuggingFace format: [bold cyan]{save_path}[/bold cyan]")
     peft_bridge.save_hf_pretrained(peft_model, save_path)

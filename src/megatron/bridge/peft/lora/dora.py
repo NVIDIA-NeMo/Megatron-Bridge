@@ -19,7 +19,7 @@ from typing import Dict, List, Literal, Optional
 from torch import nn
 
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.dora.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.peft.lora.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
 
