@@ -90,6 +90,7 @@ class TestNemotronHBridge:
         cfg = Mock()
         for k, v in nemotronh_8b_config_dict.items():
             setattr(cfg, k, v)
+        return cfg
 
     @pytest.fixture
     def mock_pretrained_nemotronh(self, mock_nemotronh_config):
@@ -274,6 +275,7 @@ class TestAutoBridgeIntegration:
         cfg = Mock(spec=PretrainedConfig)
         for k, v in nemotronh_config_dict.items():
             setattr(cfg, k, v)
+        return cfg
 
     def create_mock_model_files(self, config_dict, save_dir):
         """Create mock model files in a directory."""
