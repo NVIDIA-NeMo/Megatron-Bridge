@@ -93,13 +93,6 @@ def main():
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
-    # Display final configuration
-
-    logger.info("--- Final Merged Configuration ---")
-    recipe.to_yaml()
-    logger.info("----------------------------------")
-    # Start training
-    logger.info("Starting pretraining...")
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
