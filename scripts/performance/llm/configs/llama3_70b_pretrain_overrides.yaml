@@ -34,6 +34,9 @@ train:
   train_iters: 25
   eval_iters: 0
 
+rerun_state_machine:
+  check_for_nan_in_loss: false
+
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
   save: null

@@ -219,6 +219,7 @@ def pretrain_config(
             data_sharding=True,
             dataloader_type="single",
             num_workers=8,
+            skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir, log_timers_to_tensorboard=True),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),

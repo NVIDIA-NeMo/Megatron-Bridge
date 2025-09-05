@@ -30,6 +30,9 @@ model:
 rng:
   te_rng_tracker: false
 
+rerun_state_machine:
+  check_for_nan_in_loss: false
+
 train:
   global_batch_size: 64
   micro_batch_size: 1

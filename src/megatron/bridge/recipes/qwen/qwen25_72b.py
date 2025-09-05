@@ -183,6 +183,7 @@ def pretrain_config(
             # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
+            skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(
             log_interval=10,
