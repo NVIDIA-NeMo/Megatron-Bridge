@@ -21,6 +21,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from megatron.core import mpu
+from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -154,20 +155,53 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return ".mlp.experts.linear_fc" in self.megatron_param
 
     def _resolve_names(self, captures: Tuple[str, ...]) -> Tuple[str, Union[str, Dict[str, str]]]:
+        """Resolve wildcard patterns with captured values.
+
+        Handles both ** (any characters) and * (digits) wildcards in order.
+        ** patterns are processed before * patterns to avoid conflicts.
+        """
         resolved_megatron_param = self.megatron_param
-        for value in captures:
-            resolved_megatron_param = resolved_megatron_param.replace("*", value, 1)
+        capture_index = 0
+
+        # First pass: resolve ** wildcards
+        while "**" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("**", captures[capture_index], 1)
+            capture_index += 1
+
+        # Second pass: resolve * wildcards
+        while "*" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("*", captures[capture_index], 1)
+            capture_index += 1
 
         if isinstance(self.hf_param, str):
             resolved_hf_param = self.hf_param
-            for value in captures:
-                resolved_hf_param = resolved_hf_param.replace("*", value, 1)
+            capture_index = 0
+
+            # First pass: resolve ** wildcards
+            while "**" in resolved_hf_param and capture_index < len(captures):
+                resolved_hf_param = resolved_hf_param.replace("**", captures[capture_index], 1)
+                capture_index += 1
+
+            # Second pass: resolve * wildcards
+            while "*" in resolved_hf_param and capture_index < len(captures):
+                resolved_hf_param = resolved_hf_param.replace("*", captures[capture_index], 1)
+                capture_index += 1
         else:
             resolved_hf_param = {}
             for k, v in self.hf_param.items():
                 resolved_v = v
-                for value in captures:
-                    resolved_v = resolved_v.replace("*", value, 1)
+                capture_index = 0
+
+                # First pass: resolve ** wildcards
+                while "**" in resolved_v and capture_index < len(captures):
+                    resolved_v = resolved_v.replace("**", captures[capture_index], 1)
+                    capture_index += 1
+
+                # Second pass: resolve * wildcards
+                while "*" in resolved_v and capture_index < len(captures):
+                    resolved_v = resolved_v.replace("*", captures[capture_index], 1)
+                    capture_index += 1
+
                 resolved_hf_param[k] = resolved_v
 
         return resolved_megatron_param, resolved_hf_param
@@ -435,11 +469,37 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
+    def _count_wildcard_groups(self, pattern: str) -> int:
+        """Count the number of wildcard capture groups in a pattern.
+
+        Args:
+            pattern: Pattern string with * and ** wildcards
+
+        Returns:
+            Number of capture groups that will be generated
+
+        Note:
+            ** counts as 1 group, * counts as 1 group
+            ** must be counted before * to avoid double-counting
+        """
+        count = 0
+        remaining = pattern
+
+        # Count ** patterns first
+        while "**" in remaining:
+            count += 1
+            remaining = remaining.replace("**", "", 1)
+
+        # Count remaining * patterns
+        count += remaining.count("*")
+
+        return count
+
     def _validate_patterns(self):
         """Validate wildcard consistency between patterns."""
-        megatron_param_wildcards = self.megatron_param.count("*")
+        megatron_param_wildcards = self._count_wildcard_groups(self.megatron_param)
         if isinstance(self.hf_param, str):
-            hf_param_wildcards = self.hf_param.count("*")
+            hf_param_wildcards = self._count_wildcard_groups(self.hf_param)
             if megatron_param_wildcards != hf_param_wildcards:
                 raise ValueError(
                     f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
@@ -447,7 +507,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 )
         else:
             for key, pattern in self.hf_param.items():
-                hf_param_wildcards = pattern.count("*")
+                hf_param_wildcards = self._count_wildcard_groups(pattern)
                 if megatron_param_wildcards != hf_param_wildcards:
                     raise ValueError(
                         f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
@@ -551,6 +611,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Return dictionary mapping HF parameter names to weights
         return {param_name: gathered_weights[i] for i, param_name in enumerate(gathered_expert_param_names)}
 
+    def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Dequantize FP8 tensor if needed."""
+        if HAVE_TE_FP8_TENSOR_CLASS and isinstance(tensor, FP8_TENSOR_CLASS):
+            return tensor.dequantize(dtype=tensor.dtype)
+        return tensor
+
 
 class DirectMapping(MegatronParamMapping[torch.Tensor]):
     """Direct 1:1 weight mapping with no transformation or tensor parallelism."""
@@ -574,6 +640,9 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         return {str(self.hf_param): megatron_weights}
 
@@ -671,6 +740,9 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
+
         if self.tp_size == 1:
             full_weights = megatron_weights
         else:
@@ -766,6 +838,9 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
+
         if self.tp_size == 1:
             full_weights = megatron_weights
         else:
@@ -823,6 +898,9 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.is_expert:
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
@@ -1117,6 +1195,10 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather QKV shards and split into Q, K, V."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
         # ------------------------------------------------------------------
         # Broadcast / retrieve the transformer configuration so that every PP
         # rank (also the ones that will early-return) participates in the
@@ -1260,6 +1342,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         # Handle TP gathering
         if self.tp_size == 1:

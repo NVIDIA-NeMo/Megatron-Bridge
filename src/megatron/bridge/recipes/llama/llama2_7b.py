@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge import AutoBridge
 
 
 def model_config(
@@ -57,14 +58,23 @@ def model_config(
     Returns:
         Llama2ModelProvider7B: Configuration for the Llama2 7B model.
     """
-    return Llama2ModelProvider7B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-    )
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    return provider
+    # return Llama2ModelProvider7B(
+    #     tensor_model_parallel_size=tensor_parallelism,
+    #     pipeline_model_parallel_size=pipeline_parallelism,
+    #     pipeline_dtype=pipeline_parallelism_dtype,
+    #     virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
+    #     context_parallel_size=context_parallelism,
+    #     sequence_parallel=sequence_parallelism,
+    # )
 
 
 def pretrain_config(
