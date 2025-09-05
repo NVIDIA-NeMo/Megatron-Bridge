@@ -22,6 +22,7 @@ import torch
 from megatron.core.transformer.module import MegatronModule
 from rich.table import Table
 from transformers import AutoConfig
+from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.utils.common_utils import unwrap_model
 
@@ -249,15 +250,13 @@ def extract_sort_key(param_name: str):
 
 def get_causal_lm_class_via_auto_map(
     model_name_or_path: str,
+    config: PretrainedConfig,
 ) -> type | None:
     """Return CausalLM class via config.auto_map if available; otherwise None.
 
-    Loads the config with AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
-    and, if auto_map["AutoModelForCausalLM"] is present, returns the dynamically loaded class.
+    If auto_map["AutoModelForCausalLM"] is present in the config, returns the dynamically loaded class.
     Returns None when auto_map is absent or loading fails. Does not download weights.
     """
-    config = AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
-
     auto_map = getattr(config, "auto_map", None)
     if auto_map and "AutoModelForCausalLM" in auto_map:
         auto_map_class = auto_map["AutoModelForCausalLM"]

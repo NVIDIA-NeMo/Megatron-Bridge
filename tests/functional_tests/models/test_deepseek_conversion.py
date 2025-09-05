@@ -62,7 +62,7 @@ class TestDeepSeekConversion:
 
         # Fallback to a generic small model; for conversion flows we only need keys/config
         # Some environments may not have DeepSeek classes; we just ensure a valid HF directory
-        model_class = get_causal_lm_class_via_auto_map("deepseek-ai/DeepSeek-V3")
+        model_class = get_causal_lm_class_via_auto_map("deepseek-ai/DeepSeek-V3", config)
         model = model_class(config)
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import dataclasses
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
@@ -343,7 +343,7 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     cpu=True
             ... ))
         """
-        dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
+        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance,
             model,
@@ -424,7 +424,7 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
-        dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
+        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
         )
@@ -780,9 +780,10 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        return model_bridge.get_model_bridge(self._get_causal_lm_architecture())
+        return model_bridge.get_model_bridge(self._causal_lm_architecture)
 
-    def _get_causal_lm_architecture(self):
+    @cached_property
+    def _causal_lm_architecture(self):
         """Resolve the model's CausalLM architecture for dispatch.
 
         Behavior:
@@ -830,7 +831,7 @@ class AutoBridge(Generic[MegatronModelT]):
             )
 
         # Try auto_map first
-        cls = get_causal_lm_class_via_auto_map(model_name_or_path=model_name_or_path)
+        cls = get_causal_lm_class_via_auto_map(model_name_or_path=model_name_or_path, config=config)
         if cls is not None:
             # For auto_map models, return the class name as a string
             return getattr(cls, "__name__", str(cls))
@@ -871,7 +872,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if architecture:
             # Try auto_map first
-            arch_class = get_causal_lm_class_via_auto_map(model_name_or_path=path) if path else None
+            arch_class = get_causal_lm_class_via_auto_map(model_name_or_path=path, config=config) if path else None
             if arch_class is not None:
                 # For auto_map models, use class-name string
                 arch_key = getattr(arch_class, "__name__", str(arch_class))
