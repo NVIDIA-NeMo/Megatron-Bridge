@@ -649,7 +649,7 @@ def save_checkpoint(
 
 def cleanup_old_non_persistent_checkpoint(
     save_dir: str,
-    leave_ckpt_num: int = -1,
+    leave_ckpt_num: int = 1,
     do_async: bool = False,
 ) -> None:
     """Clean up old non-persistent checkpoints in a directory.
