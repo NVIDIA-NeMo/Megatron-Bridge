@@ -637,9 +637,9 @@ def save_checkpoint(
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
     # keep only last k checkpoints
-    if ckpt_cfg.save_top_k > -1:
+    if ckpt_cfg.most_recent_k > -1:
         cleanup_old_non_persistent_checkpoint(
-            save_dir, leave_ckpt_num=ckpt_cfg.save_top_k, do_async=ckpt_cfg.async_save
+            save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
         )
 
     # Wait so everyone is done (not necessary)
