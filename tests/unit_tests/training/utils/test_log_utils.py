@@ -28,6 +28,15 @@ class TestSetupLogging:
         self.original_root_level = logging.getLogger().level
         self.original_env = os.environ.get("MEGATRON_BRIDGE_LOGGING_LEVEL")
 
+        # Store original filters for all loggers
+        self.original_filters = {}
+        root_logger = logging.getLogger()
+        self.original_filters["root"] = root_logger.filters[:]
+
+        for logger_name in logging.root.manager.loggerDict:
+            logger = logging.getLogger(logger_name)
+            self.original_filters[logger_name] = logger.filters[:]
+
         # Clean up any existing test loggers
         for logger_name in list(logging.root.manager.loggerDict.keys()):
             if logger_name.startswith("test_") or logger_name.startswith("megatron.bridge.test"):
@@ -43,6 +52,20 @@ class TestSetupLogging:
             os.environ["MEGATRON_BRIDGE_LOGGING_LEVEL"] = self.original_env
         elif "MEGATRON_BRIDGE_LOGGING_LEVEL" in os.environ:
             del os.environ["MEGATRON_BRIDGE_LOGGING_LEVEL"]
+
+        # Restore original filters for all loggers
+        for logger_name, original_filters in self.original_filters.items():
+            if logger_name == "root":
+                logger = logging.getLogger()
+            else:
+                logger = logging.getLogger(logger_name)
+
+            # Clear all current filters
+            logger.filters.clear()
+
+            # Restore original filters
+            for filter_obj in original_filters:
+                logger.addFilter(filter_obj)
 
         # Clean up test loggers
         for logger_name in list(logging.root.manager.loggerDict.keys()):
