@@ -243,7 +243,7 @@ class TestPretrainConfig:
 
         assert config.train.train_iters == train_iters
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_pretrain_config_precision_string(self, precision):
         """Test precision configuration with string values."""
         config = pretrain_config(precision_config=precision)
@@ -251,7 +251,7 @@ class TestPretrainConfig:
         assert isinstance(config, ConfigContainer)
         assert config.mixed_precision == precision
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_pretrain_config_precision_object(self, precision):
         """Test precision configuration with MixedPrecisionConfig object."""
         precision_config = get_mixed_precision_config(precision)

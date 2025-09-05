@@ -368,7 +368,7 @@ class TestPretrainConfig:
         # Check dataset defaults
         assert config.dataset.sequence_length == 8192  # Hardcoded sequence length
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_precision_recipes(self, precision):
         cfg = pretrain_config(precision_config=precision)
         assert cfg.mixed_precision == precision
