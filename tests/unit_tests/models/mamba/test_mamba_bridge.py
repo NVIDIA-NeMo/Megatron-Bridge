@@ -148,12 +148,12 @@ class TestMegatronMambaBridge:
         # Check normalization settings
         assert result.layernorm_epsilon == mamba_config.layer_norm_epsilon
 
-    def test_provider_bridge_dtype_handling(self, mamba_config):
+    def test_provider_bridge_dtype_handling(self, mamba_130m_config_dict):
         """Test dtype handling in provider_bridge."""
         # Create model with specific dtype
+        mamba_130m_config_dict["torch_dtype"] = "bfloat16"
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = mamba_config
-        mock_pretrained.config["torch_dtype"] = "bfloat16"
+        mock_pretrained.config = MambaConfig(**mamba_130m_config_dict)
         mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = MambaBridge()

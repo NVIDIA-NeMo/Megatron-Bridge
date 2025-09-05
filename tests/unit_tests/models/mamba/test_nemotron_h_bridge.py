@@ -177,8 +177,8 @@ class TestNemotronHBridge:
         """Test dtype handling in provider_bridge."""
         # Create model with specific dtype
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_nemotronh_config.torch_dtype = "bfloat16"
         mock_pretrained.config = mock_nemotronh_config
-        mock_pretrained.config["torch_dtype"] = "bfloat16"
         mock_pretrained.generation_config = Mock(spec=GenerationConfig)
 
         bridge = NemotronHBridge()
