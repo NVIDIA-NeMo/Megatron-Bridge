@@ -41,7 +41,9 @@ class MixedPrecisionConfig:
     grad_reduce_in_fp32: bool = True
     # fp8 related
     fp8: Optional[str] = None
-    fp8_recipe: str = "delayed"  # "tensorwise", "delayed", "mxfp8" (for Blackwell only)
+    fp8_recipe: str = (
+        "tensorwise"  # "tensorwise", "delayed", "mxfp8" (for Blackwell only), "blockwise" (for Hopper only)
+    )
     first_last_layers_bf16: bool = False
     fp8_margin: int = 0
     fp8_amax_history_len: int = 1
@@ -178,7 +180,7 @@ def fp16_mixed() -> MixedPrecisionConfig:
 
 
 @register
-def bf16_with_fp8_mixed() -> MixedPrecisionConfig:
+def bf16_with_fp8_delayed_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8.
 
     Note: FP8 recipes are experimental and have not been tested for training convergence.
@@ -197,7 +199,7 @@ def bf16_with_fp8_mixed() -> MixedPrecisionConfig:
 
 
 @register
-def fp16_with_fp8_mixed() -> MixedPrecisionConfig:
+def fp16_with_fp8_delayed_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16 with FP8.
 
     Note: FP8 recipes are experimental and have not been tested for training convergence.
