@@ -336,7 +336,6 @@ class TestPretrainMegatronFSDP:
                 seq_length=seq_length,
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
-                use_megatron_fsdp=True,
                 gradient_accumulation_fusion=False,
             )
 
@@ -398,6 +397,7 @@ class TestPretrainMegatronFSDP:
                 ),
                 logger=LoggerConfig(
                     log_interval=5,
+                    log_params_norm=True,
                 ),
                 tokenizer=TokenizerConfig(
                     tokenizer_type="NullTokenizer",
