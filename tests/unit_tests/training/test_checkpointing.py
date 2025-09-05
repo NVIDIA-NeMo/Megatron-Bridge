@@ -810,10 +810,7 @@ class TestCleanupNonPersistentCheckpoints:
             # Create mock checkpoint directories
             save_dir = Path(temp_dir)
             for i in range(10, (max_steps + 10), save_interval):
-                if i <= 100:
-                    old_ckpt = save_dir / f"iter_00000{i}"
-                else:
-                    old_ckpt = save_dir / f"iter_0000{i}"
+                old_ckpt = save_dir / "iter_{:07d}".format(i)
                 old_ckpt.mkdir()
 
             # save last top 5 ckpts
