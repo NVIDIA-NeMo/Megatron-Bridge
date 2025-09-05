@@ -99,7 +99,7 @@ def setup_logging(
         modules_to_filter: An optional list of module name prefixes to filter out.
         set_level_for_all_loggers: If True, sets the logging level for all existing
                                    loggers. If False (default), only sets the level
-                                   for the root logger and loggers starting with 'nemo'.
+                                   for the root logger and loggers starting with 'megatron.bridge'.
     """
     env_logging_level = os.getenv("MEGATRON_BRIDGE_LOGGING_LEVEL", None)
     if env_logging_level is not None:
@@ -109,7 +109,7 @@ def setup_logging(
     logging.getLogger().setLevel(logging_level)
 
     for _logger_name in logging.root.manager.loggerDict:
-        if _logger_name.startswith("nemo") or set_level_for_all_loggers:
+        if _logger_name.startswith("megatron.bridge") or set_level_for_all_loggers:
             _logger = logging.getLogger(_logger_name)
             _logger.setLevel(logging_level)
 
