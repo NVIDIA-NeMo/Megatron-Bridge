@@ -17,7 +17,6 @@
 import contextlib
 import os
 import random
-import re
 import shutil
 import sys
 import threading
@@ -655,7 +654,6 @@ def cleanup_old_non_persistent_checkpoint(
     """Clean up old non-persistent checkpoints in a directory.
 
     Keeps the specified number of latest checkpoints and removes older ones.
-    Keeps checkpoints which fit into save_retain_interval.
     Currently only cleans up directories matching "iter_*".
 
     Args:
