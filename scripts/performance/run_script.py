@@ -18,7 +18,12 @@ import sys
 
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
-from utils.helpers import COMM_OVERLAP_CONFIG_MAP, get_precision_config
+from utils.helpers import (
+    COMM_OVERLAP_CONFIG_MAP,
+    get_precision_config,
+    set_mcore_fsdp_configs,
+    set_recompute_configs,
+)
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
@@ -26,6 +31,7 @@ from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_7
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -72,7 +78,7 @@ def main():
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    recipe.to_yaml()
+    # recipe.to_yaml()
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     # Load and merge YAML overrides if a config file is provided
     if args.config_file:
@@ -93,6 +99,18 @@ def main():
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
+
+    if recipe.ddp.use_custom_fsdp:
+        recipe = set_mcore_fsdp_configs(recipe)
+    if recipe.model.recompute_num_layers is not None or recipe.model.cpu_offloading_num_layers > 0:
+        recipe = set_recompute_configs(recipe)
+
+    if args.model_name in ["deepseek", "llama3"] and args.model_size in ["v3", "70b"]:
+        tp = recipe.model.tensor_model_parallel_size
+        pp = recipe.model.pipeline_model_parallel_size
+        vp = recipe.model.virtual_pipeline_model_parallel_size if recipe.model.virtual_pipeline_model_parallel_size is not None else 1
+        dp = args.num_gpus / (tp * pp * vp)
+        recipe.comm_overlap.data_parallel_size = dp
 
     pretrain(config=recipe, forward_step_func=forward_step)
 

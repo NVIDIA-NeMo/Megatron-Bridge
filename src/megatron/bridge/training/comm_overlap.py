@@ -439,6 +439,7 @@ class CommOverlapConfig:
             if model_cfg.tensor_model_parallel_size < 2:
                 logging.warning("Disabling tensor parallel communication overlap due to TP size < 2.")
                 self.user_comm_overlap_cfg.tp_comm_overlap = False
+                self.user_comm_overlap_cfg.defer_embedding_wgrad_compute = False
             elif not model_cfg.sequence_parallel:
                 logging.warning("Disabling tensor parallel communication overlap due to sequence_parallel=False.")
                 self.user_comm_overlap_cfg.tp_comm_overlap = False

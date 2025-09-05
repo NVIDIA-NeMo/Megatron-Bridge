@@ -264,7 +264,6 @@ def setup(
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
     if get_rank_safe() == 0:
-        # Print final resolved/updated/overridden configs
         print("------- Task Configuration -------")
         cfg.to_yaml()
         print("----------------------------------")

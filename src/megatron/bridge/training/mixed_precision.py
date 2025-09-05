@@ -128,7 +128,7 @@ def update_config_with_precision_overrides(mixed_precision_config: MixedPrecisio
         new_val = getattr(mixed_precision_config, field.name)
         if old_val != new_val:
             setattr(config, field.name, new_val)
-            logging.debug(f"Overwrote {type(config).__name__}.{field.name}  {old_val} -> {new_val}")
+            print(f"Overwrote {type(config).__name__}.{field.name}  {old_val} -> {new_val}")
     return config
 
 
