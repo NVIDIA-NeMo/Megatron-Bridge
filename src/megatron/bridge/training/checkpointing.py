@@ -672,10 +672,6 @@ def cleanup_old_non_persistent_checkpoint(
     if not sorted_iter_ckpts:
         return
     rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
-
-    if not rm_iter_ckpts:
-        return
-
     print_rank_0(f"Non-persistent checkpoints to be kept: {sorted_iter_ckpts[-leave_ckpt_num:]}")
     print_rank_0(f"Non-persistent checkpoints scheduled for removal: {rm_iter_ckpts}")
 
