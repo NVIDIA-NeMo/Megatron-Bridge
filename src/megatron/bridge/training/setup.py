@@ -45,14 +45,6 @@ from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0
 
-try:
-    from megatron.core.distributed import TorchFullyShardedDataParallel  # noqa: F401 pylint: disable=unused-import
-
-    HAVE_FSDP2 = True
-except ImportError:
-    HAVE_FSDP2 = False
-
-
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
 
@@ -193,6 +185,7 @@ def setup(
 
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
+        use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
@@ -226,7 +219,7 @@ def setup(
             optimizer,
             scheduler,
             checkpointing_context=checkpointing_context,
-            skip_load_to_model_and_opt=HAVE_FSDP2 and cfg.dist.use_torch_fsdp2,
+            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

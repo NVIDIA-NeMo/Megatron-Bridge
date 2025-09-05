@@ -32,7 +32,7 @@ from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
-from megatron.bridge.utils.common_utils import get_world_size_safe
+from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 @dataclass(kw_only=True)
@@ -76,6 +76,9 @@ class DistributedInitConfig:
     lazy_init: bool = False
     """If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead.
     Also turns on --use-cpu-initialization flag. This is for external DDP manager."""
+
+    use_megatron_fsdp: bool = False
+    """Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2."""
 
     use_torch_fsdp2: bool = False
     """Use the torch FSDP2 implementation. FSDP2 is not currently working with Pipeline Parallel.
@@ -773,9 +776,40 @@ class ConfigContainer(Container):
 
         # Run validations
 
+        if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
+            raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+
         # Distributed
         world_size = get_world_size_safe()
         self.data_parallel_size = self.get_data_parallel_size(world_size)
+
+        # Megatron FSDP Config checks
+        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+            # Set Megatron FSDP Configs
+            self.dist.use_megatron_fsdp = True
+            self.ddp.use_megatron_fsdp = True
+
+            if self.checkpoint.save is not None or self.checkpoint.load is not None:
+                # only check if saving or loading
+                assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
+                    "Megatron FSDP only supports fsdp_dtensor checkpoint format"
+                )
+
+            if self.model.gradient_accumulation_fusion:
+                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
+                self.model.gradient_accumulation_fusion = False
+
+            if self.ddp.average_in_collective:
+                print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
+                self.ddp.average_in_collective = False
+
+                # Checkpoint
+        if self.checkpoint.save is not None or self.checkpoint.load is not None:
+            # only check if saving or loading
+            if self.checkpoint.ckpt_format == "fsdp_dtensor":
+                assert self.ddp.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
+                    "fsdp_dtensor checkpoint format only supports Megatron FSDP"
+                )
 
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
