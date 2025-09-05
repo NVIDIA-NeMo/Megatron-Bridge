@@ -104,7 +104,6 @@ class DeepSeekProvider(MLATransformerConfig, GPTModelProvider):
     bias_activation_fusion: bool = True
     bias_dropout_fusion: bool = True
     masked_softmax_fusion: bool = True
-    gradient_accumulation_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
     cross_entropy_fusion_impl: str = "te"
     moe_permute_fusion: bool = is_te_min_version("2.1.0") if HAVE_TE else False
