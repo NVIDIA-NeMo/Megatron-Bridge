@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+from collections import defaultdict
 from datetime import datetime
 from functools import partial
 from typing import Any, Callable, Optional, Union
@@ -66,7 +67,10 @@ def param_is_not_shared(param: nn.Parameter) -> bool:
 
 
 def calc_params_l2_norm(
-    model: Union[MegatronModule, list[MegatronModule]], model_config: Any, force_create_fp32_copy: bool = False
+    model: Union[MegatronModule, list[MegatronModule]],
+    model_config: Any,
+    use_megatron_fsdp: bool = False,
+    force_create_fp32_copy: bool = False,
 ) -> float:
     """Calculate the L2 norm of model parameters across all GPUs.
 
@@ -85,6 +89,22 @@ def calc_params_l2_norm(
     """
     if not isinstance(model, list):
         model = [model]
+
+    if use_megatron_fsdp:
+        # All Megatron FSDP parameters are expected to be PyTorch DTensor.
+        # params_data is a dict of device_mesh -> list of local tensors.
+        params = []
+        for model_chunk in model:
+            model_chunk.stop_communication()
+            for name, param in model_chunk.named_parameters():
+                if not hasattr(param, "_local_tensor"):
+                    raise RuntimeError(
+                        f"Megatron FSDP requires parameters are PyTorch DTensor. Parameter {name} is not a DTensor."
+                    )
+                params.append(param)
+
+        return calc_dtensor_params_l2_norm(params)
+
     # Seperate moe and dense params
     params_data = []
     moe_params_data = []
@@ -192,6 +212,42 @@ def calc_params_l2_norm(
         norm_2 += moe_norm_2
 
     return norm_2.item() ** 0.5
+
+
+def calc_dtensor_params_l2_norm(params):
+    """Calculate l2 norm of DTensor parameters."""
+    params_data = defaultdict(list)
+    for param in params:
+        params_data[param._spec].append(param._local_tensor)
+
+    total_norm_2 = torch.zeros((1,), dtype=torch.float32, device="cuda")
+    dummy_overflow_buf = torch.zeros((1,), dtype=torch.int, device="cuda")
+    for dtensor_spec, local_tensors in params_data.items():
+        local_tensors = [t for t in local_tensors if t.numel() > 0]
+        if len(local_tensors) == 0:
+            norm = torch.zeros((1,), dtype=torch.float32, device="cuda")
+        else:
+            norm, _ = multi_tensor_applier(
+                multi_tensor_l2norm,
+                dummy_overflow_buf,
+                [local_tensors],
+                False,  # no per-parameter norm.
+            )
+        norm_2 = norm * norm
+        for pg, placement in zip(
+            dtensor_spec.device_mesh.get_all_groups(),
+            dtensor_spec.placements,
+        ):
+            if placement.is_shard():
+                torch.distributed.all_reduce(norm_2, op=torch.distributed.ReduceOp.SUM, group=pg)
+            elif placement.is_replicate():
+                # Replicated parameters are already summed across all ranks.
+                pass
+            else:
+                raise RuntimeError(f"Unsupported placement {placement} for Megatron FSDP.")
+        total_norm_2 += norm_2
+
+    return total_norm_2.item() ** 0.5
 
 
 def reduce_max_stat_across_model_parallel_group(stat: Optional[float]) -> Optional[float]:
