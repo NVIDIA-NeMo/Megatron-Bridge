@@ -21,7 +21,6 @@ from typing import Iterable, List, Optional, Tuple
 import torch
 from megatron.core.transformer.module import MegatronModule
 from rich.table import Table
-from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.utils.common_utils import unwrap_model
