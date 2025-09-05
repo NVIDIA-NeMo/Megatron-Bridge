@@ -96,7 +96,10 @@ def _get_vocab_size(model_cfg) -> int:
     """
     if model_cfg.should_pad_vocab:
         return calculate_padded_vocab_size(
-            model_cfg.vocab_size, model_cfg.make_vocab_size_divisible_by, model_cfg.tensor_model_parallel_size
+            model_cfg.vocab_size,
+            model_cfg.make_vocab_size_divisible_by,
+            model_cfg.tensor_model_parallel_size,
+            logging_enabled=False,
         )
     else:
         return model_cfg.vocab_size
