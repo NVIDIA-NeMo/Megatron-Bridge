@@ -38,6 +38,9 @@ train:
   train_iters: 25
   eval_iters: 0
 
+rerun_state_machine:
+  check_for_nan_in_loss: false
+
 dist:
   enable_megatron_core_experimental: true
 
