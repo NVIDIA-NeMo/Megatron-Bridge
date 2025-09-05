@@ -816,7 +816,7 @@ class TestCleanupNonPersistentCheckpoints:
                     old_ckpt = save_dir / f"iter_0000{i}"
                 old_ckpt.mkdir()
 
-            # save last top 3 ckpts
+            # save last top 5 ckpts
             cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=5, do_async=False)
             assert get_ckpt_nums(str(save_dir), return_ckpts=True) == (
                 5,
