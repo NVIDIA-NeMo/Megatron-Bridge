@@ -221,7 +221,7 @@ def setup(
             optimizer,
             scheduler,
             checkpointing_context=checkpointing_context,
-            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.model.use_megatron_fsdp,
+            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
