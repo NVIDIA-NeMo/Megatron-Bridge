@@ -344,20 +344,26 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         is_main_rank = not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
         bridge_name = self.__class__.__name__
 
-        with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            TextColumn("({task.completed}/{task.total})"),
-            TextColumn("{task.fields[bridge]}"),
-            disable=not (is_main_rank and show_progress),
-        ) as progress:
-            task_id = progress.add_task(description, total=len(tasks), bridge=bridge_name)
+        if show_progress:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                TextColumn("({task.completed}/{task.total})"),
+                TextColumn("{task.fields[bridge]}"),
+                disable=not is_main_rank,
+            ) as progress:
+                task_id = progress.add_task(description, total=len(tasks), bridge=bridge_name)
 
+                for task in tasks:
+                    yield task
+                    progress.update(task_id, advance=1)
+        else:
+            # not using disable above because we notice it will dump some empty progress bar,
+            # even when disable is set to True
             for task in tasks:
                 yield task
-                progress.update(task_id, advance=1)
 
     def load_weights_hf_to_megatron(
         self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
