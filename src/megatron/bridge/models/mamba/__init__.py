@@ -39,6 +39,8 @@ __all__ = [
     "NemotronHModel8BProvider",
     "NemotronHModel47BProvider",
     "NemotronHModel56BProvider",
+    "NemotronNano9Bv2Provider",
+    "NemotronNano12Bv2Provider",
     "MambaProvider",
     "MambaProvider1_3B",
     "MambaProvider2_7B",
