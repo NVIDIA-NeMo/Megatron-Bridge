@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import torch
+from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
@@ -62,7 +63,11 @@ class FinetuningDatasetBuilder:
         do_validation: bool = True,
         do_test: bool = True,
     ):
-        self.dataset_root = Path(dataset_root)
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            self.dataset_root = msc.Path(dataset_root)
+        else:
+            self.dataset_root = Path(dataset_root)
         self.tokenizer = tokenizer
         self.seq_length = seq_length
         self.seed = seed
@@ -190,7 +195,13 @@ class FinetuningDatasetBuilder:
         Returns:
             The created dataset
         """
-        if not Path(path).exists():
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            path_exists = msc.Path(path).exists()
+        else:
+            path_exists = Path(path).exists()
+
+        if not path_exists:
             print_rank_0(f"Warning: Dataset path {path} does not exist")
             return None
 

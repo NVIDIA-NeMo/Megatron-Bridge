@@ -16,6 +16,7 @@ import subprocess
 from pathlib import PosixPath
 
 import pytest
+from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -25,12 +26,13 @@ from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 def get_dataset(
     ensure_test_data,
+    dataset_dirname="finetune",
     packed_sequence_size=1,
     packed_train_data_path=None,
     packed_val_data_path=None,
     tokenizer_name="null",
 ):
-    path = f"{ensure_test_data}/datasets/finetune"
+    path = f"{ensure_test_data}/datasets/{dataset_dirname}"
     # path = "/home/data/finetune_dataset"
     if tokenizer_name == "null":
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
@@ -134,3 +136,73 @@ class TestDataFineTuningDataset:
 
         with pytest.raises(KeyError):
             dataset.prepare_packed_data()
+
+    def test_paths_packed_with_msc_url(self, ensure_test_data):
+        MultiStorageClientFeature.enable()
+
+        npy_path = f"msc://default{ensure_test_data}/datasets/finetune/test.npy"
+        msc = MultiStorageClientFeature.import_package()
+        msc.Path(npy_path).touch(exist_ok=True)
+
+        # Train
+        dataset, _ = get_dataset(ensure_test_data, packed_train_data_path=npy_path)
+        train_path_packed = dataset.train_path_packed
+
+        assert train_path_packed == msc.Path(npy_path)
+
+        dataset, _ = get_dataset(ensure_test_data)
+        train_path_packed = dataset.train_path_packed
+
+        assert train_path_packed == msc.Path(f"{ensure_test_data}/datasets/finetune/packed/null/training_1.npy")
+
+        # Validation
+        dataset, _ = get_dataset(ensure_test_data, packed_val_data_path=npy_path)
+        validation_path_packed = dataset.validation_path_packed
+
+        assert validation_path_packed == msc.Path(npy_path)
+
+        dataset, _ = get_dataset(ensure_test_data)
+        validation_path_packed = dataset.validation_path_packed
+
+        assert validation_path_packed == msc.Path(f"{ensure_test_data}/datasets/finetune/packed/null/validation_1.npy")
+
+        dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
+
+        with pytest.raises(ValueError):
+            train_path_packed = dataset.train_path_packed
+
+        with pytest.raises(ValueError):
+            validation_path_packed = dataset.validation_path_packed
+
+    def test_build_dataset_with_msc_url(self, ensure_test_data):
+        MultiStorageClientFeature.enable()
+
+        dataset_dirname = "finetune_msc"
+        jsonl_example = '{"input": "John von Neumann Von Neumann made fundamental contributions ... Q: What did the math of artificial viscosity do?", "output": "smoothed the shock transition without sacrificing basic physics"}\n'
+
+        msc = MultiStorageClientFeature.import_package()
+        msc.Path(f"{ensure_test_data}/datasets/{dataset_dirname}").mkdir(exist_ok=True)
+
+        with open(f"{ensure_test_data}/datasets/{dataset_dirname}/training.jsonl", "w") as f:
+            for i in range(10):
+                f.write(jsonl_example)
+
+        with open(f"{ensure_test_data}/datasets/{dataset_dirname}/validation.jsonl", "w") as f:
+            for i in range(10):
+                f.write(jsonl_example)
+
+        with open(f"{ensure_test_data}/datasets/{dataset_dirname}/test.jsonl", "w") as f:
+            for i in range(10):
+                f.write(jsonl_example)
+
+        dataset, _ = get_dataset(
+            ensure_test_data, dataset_dirname=dataset_dirname, packed_sequence_size=2048, tokenizer_name="hf"
+        )
+        assert not dataset.pack_metadata.exists()
+
+        datasets = dataset.build()
+        assert dataset.pack_metadata.exists()
+
+        assert datasets[0] is not None
+        assert datasets[1] is not None
+        assert datasets[2] is not None

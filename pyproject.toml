@@ -125,7 +125,7 @@ test = [
     "pytest-runner>=6.0.1",
     "pygithub",
     "click",
-    "multi-storage-client",
+    "multi-storage-client>=0.28.0",
 ]
 dev = [
     "pre-commit>=3.6.0",
