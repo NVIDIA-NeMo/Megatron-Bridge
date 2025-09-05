@@ -35,6 +35,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 
 from megatron.bridge.training import fault_tolerance
@@ -204,6 +205,17 @@ def train(
         torch.distributed.barrier()
         print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
 
+    # Capture CUDA Graphs.
+    if model_config.external_cuda_graph:
+        cuda_graph_helper = TECudaGraphHelper(
+            model=model,
+            config=model_config,
+            seq_length=config.model.seq_length,
+            micro_batch_size=config.train.micro_batch_size,
+            optimizers=[optimizer],
+        )
+        cuda_graph_helper.create_cudagraphs()
+
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         if prof_config and torch.distributed.get_rank() in prof_config.profile_ranks:
@@ -292,6 +304,9 @@ def train(
                     enable_forward_pre_hook(model)
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
+                    # Set the manual hooks when CUDA Graphs are used.
+                    if model_config.external_cuda_graph:
+                        cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
         batch_size = (
