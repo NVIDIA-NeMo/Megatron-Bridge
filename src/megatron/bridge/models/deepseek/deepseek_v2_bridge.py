@@ -31,7 +31,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2")
+        >>> bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
 
