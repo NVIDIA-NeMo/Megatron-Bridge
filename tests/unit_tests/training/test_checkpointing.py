@@ -805,9 +805,8 @@ class TestCleanupNonPersistentCheckpoints:
             else:
                 return count
 
-        # save ckpt every 10 steps with max_steps=200 with retain_inverval=20
+        # save ckpt every 10 steps with max_steps=200
         save_interval = 10
-        retain_interval = 20
         max_steps = 200
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create mock checkpoint directories
@@ -819,23 +818,11 @@ class TestCleanupNonPersistentCheckpoints:
                     old_ckpt = save_dir / f"iter_0000{i}"
                 old_ckpt.mkdir()
 
-                if i > 10:
-                    previous_step = i - save_interval
-                    cleanup_old_non_persistent_checkpoint(
-                        str(save_dir),
-                        retain_interval=retain_interval,
-                        previous_step=previous_step,
-                        do_async=False,
-                    )
-
-            # expected number of kept ckpts is 10
-            assert get_ckpt_nums(str(save_dir)) == 10
-
             # save last top 3 ckpts
-            cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=3, do_async=False)
+            cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=5, do_async=False)
             assert get_ckpt_nums(str(save_dir), return_ckpts=True) == (
-                3,
-                ["iter_0000160", "iter_0000180", "iter_0000200"],
+                5,
+                ["iter_0000160", "iter_0000170", "iter_0000180", "iter_0000190", "iter_0000200"],
             )
 
 

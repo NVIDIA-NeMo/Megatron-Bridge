@@ -636,20 +636,6 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
-    # keep checkpoints which fit into retain interval
-    if (
-        ckpt_cfg.save_retain_interval > 1
-        and ckpt_cfg.save_retain_interval > ckpt_cfg.save_interval
-        and ckpt_cfg.save_retain_interval % ckpt_cfg.save_interval == 0
-    ):
-        previous_step = train_state.step - ckpt_cfg.save_interval
-        cleanup_old_non_persistent_checkpoint(
-            save_dir,
-            retain_interval=ckpt_cfg.save_retain_interval,
-            previous_step=previous_step,
-            do_async=ckpt_cfg.async_save,
-        )
-
     # keep only last k checkpoints
     if ckpt_cfg.save_top_k > -1:
         cleanup_old_non_persistent_checkpoint(
@@ -664,8 +650,6 @@ def save_checkpoint(
 def cleanup_old_non_persistent_checkpoint(
     save_dir: str,
     leave_ckpt_num: int = -1,
-    retain_interval: int = 1,
-    previous_step: int = None,
     do_async: bool = False,
 ) -> None:
     """Clean up old non-persistent checkpoints in a directory.
@@ -677,8 +661,6 @@ def cleanup_old_non_persistent_checkpoint(
     Args:
         save_dir: The directory containing non-persistent checkpoints.
         leave_ckpt_num: The number of latest checkpoints to keep.
-        retain_interval: The number of iterations between retained checkpoints.
-        previous_step: previous iteration number when checkpoint was saved.
         do_async: If True, performs cleanup in a background thread.
     """
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
@@ -690,28 +672,12 @@ def cleanup_old_non_persistent_checkpoint(
     sorted_iter_ckpts = sorted(iter_ckpts, key=lambda ckpt_name: int(ckpt_name.name[len(iter_prefix) :]))
     if not sorted_iter_ckpts:
         return
-
-    def extract_iter(path) -> int:
-        """Returns iteration number by given ckpt path."""
-        match = re.search(r"iter_(\d+)$", path.name)
-        if match:
-            return int(match.group(1))
-
-    rm_iter_ckpts = None
-    if retain_interval > 1:
-        if (
-            previous_step > 0
-            and previous_step % retain_interval != 0
-            and previous_step == extract_iter(sorted_iter_ckpts[-2])
-        ):
-            rm_iter_ckpts = [sorted_iter_ckpts[-2]]
-    elif leave_ckpt_num > -1:
-        rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
-        print_rank_0(f"Non-persistent checkpoints to be kept: {sorted_iter_ckpts[-leave_ckpt_num:]}")
+    rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
 
     if not rm_iter_ckpts:
         return
 
+    print_rank_0(f"Non-persistent checkpoints to be kept: {sorted_iter_ckpts[-leave_ckpt_num:]}")
     print_rank_0(f"Non-persistent checkpoints scheduled for removal: {rm_iter_ckpts}")
 
     def remove_iter_ckpts(_iter_ckpts):

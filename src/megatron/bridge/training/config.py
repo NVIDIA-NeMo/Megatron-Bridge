@@ -365,9 +365,6 @@ class CheckpointConfig:
     save_top_k: Optional[int] = -1
     """Number of latest checkpoint to be saved."""
 
-    save_retain_interval: Optional[int] = 1
-    """Number of iterations between retained checkpoints."""
-
     save_optim: bool = True
     """Do not save current optimizer."""
 
