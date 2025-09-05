@@ -381,7 +381,7 @@ def save_checkpoint(
     start_ckpt = time()
     cfg = state.cfg
     ckpt_cfg = cfg.checkpoint
-    
+
     if ckpt_cfg.async_save and not is_empty_async_queue(state):
         print_rank_0(
             "WARNING: Starting a checkpoint save before previous has finished. "
