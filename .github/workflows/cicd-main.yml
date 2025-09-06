@@ -67,13 +67,13 @@ jobs:
   cicd-unit-tests:
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
     needs: [pre-flight, cicd-wait-in-queue]
-    runs-on: self-hosted-nemo
+    runs-on: ${{ vars.GPU_RUNNER_LABEL || 'self-hosted-nemo' }}
     name: Launch_Unit_Tests
     environment: nemo-ci
     steps:
@@ -103,10 +103,10 @@ jobs:
           - script: L2_Launch_models
             timeout: 60
     needs: [cicd-unit-tests]
-    runs-on: self-hosted-nemo
+    runs-on: ${{ vars.GPU_RUNNER_LABEL || 'self-hosted-nemo' }}
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -184,7 +184,7 @@ jobs:
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
-              repo: context.repo.repo, 
+              repo: context.repo.repo,
               sha: context.sha,
               state: 'success',
               description: 'No code changes - coverage check skipped',
