@@ -20,7 +20,6 @@ behavior for different types using the `impl` decorator.
 
 from functools import _find_impl  # type: ignore
 from typing import Any, Callable, Dict, Optional, TypeVar
-from weakref import WeakKeyDictionary
 
 
 _SignatureType = TypeVar("_SignatureType", bound=Callable)
@@ -42,7 +41,7 @@ class _Dispatch:
         self._signature = signature
         self._name = signature.__name__
         self._exact_types: Dict[Any, Callable] = {}
-        self._dispatch_cache: WeakKeyDictionary = WeakKeyDictionary()
+        self._dispatch_cache: Dict[Any, Callable] = {}
 
         # Extract docstring and module info for rich repr
         self._doc = signature.__doc__
@@ -52,7 +51,7 @@ class _Dispatch:
         """Dispatch to the appropriate implementation based on instance type."""
         # Special case for tuple-based keys.
         if isinstance(instance, tuple):
-            key = tuple(v if isinstance(v, type) else type(v) for v in instance)
+            key = tuple(v if isinstance(v, (type, str)) else type(v) for v in instance)
 
             # Direct match
             impl = self._exact_types.get(key)
@@ -70,32 +69,49 @@ class _Dispatch:
                     continue
 
                 try:
-                    if all(issubclass(k, rk) for k, rk in zip(key, registered_key)):
+                    # For subclass checks, operate on the instance types only
+                    key_types = tuple(v if isinstance(v, type) else type(v) for v in instance)
+                    if all(issubclass(k, rk) for k, rk in zip(key_types, registered_key)):
                         # NOTE: not caching tuple subclass matches for simplicity
                         return callback(instance, *args, **kwargs)
                 except TypeError:
                     continue  # issubclass can fail
 
+            # Normalize both sides to names so tuples of types and/or strings can match.
+            def _name(obj):
+                return obj if isinstance(obj, str) else getattr(obj, "__name__", None) or str(obj)
+
+            key_names = tuple(_name(v) for v in key)
+            for registered_key, callback in self._exact_types.items():
+                if not isinstance(registered_key, tuple) or len(registered_key) != len(key):
+                    continue
+                reg_names = tuple(_name(rk) for rk in registered_key)
+                if reg_names == key_names:
+                    return callback(instance, *args, **kwargs)
+
             # No implementation found for this tuple, raise a specific error.
             error_msg = self._format_no_implementation_error(instance)
             raise NotImplementedError(error_msg)
 
-        # For class dispatch, we use the class itself as the key
+        # For class dispatch, we use the class (or string of class name) itself as the key
         if isinstance(instance, type):
+            cache_key = instance
             instance_type = instance
+        elif isinstance(instance, str):
+            cache_key = instance
+            instance_type = str
         else:
-            instance_type = type(instance)
+            cache_key = type(instance)
+            instance_type = cache_key
 
         # Try cache
-        try:
-            impl = self._dispatch_cache[instance_type]
-        except KeyError:
+        impl = self._dispatch_cache.get(cache_key)
+        if impl is None:
             impl = self._dispatch(instance, instance_type)
             if impl is None:
-                # Generate automatic error with nice formatting
                 error_msg = self._format_no_implementation_error(instance)
                 raise NotImplementedError(error_msg)
-            self._dispatch_cache[instance_type] = impl
+            self._dispatch_cache[cache_key] = impl
 
         return impl(instance, *args, **kwargs)
 
@@ -154,7 +170,15 @@ class _Dispatch:
         return "\n".join(lines)
 
     def _dispatch(self, instance: Any, instance_type: type) -> Optional[Callable]:
-        """Find the implementation for a given type."""
+        """Find the implementation for a given type.
+
+        Fallback order:
+          1) Exact type match
+          2) issubclass match (when instance is a type)
+          3) MRO-based match via functools._find_impl
+          4) Name-based fallback: match by class __name__ for dynamically generated
+             classes (e.g., HF transformers auto_map dynamic modules)
+        """
         # Direct type match
         impl = self._exact_types.get(instance_type, None)
         if impl is not None:
@@ -174,7 +198,28 @@ class _Dispatch:
 
         # Use functools._find_impl for MRO-based dispatch, only for single types
         single_type_impls = {k: v for k, v in self._exact_types.items() if isinstance(k, type)}
-        return _find_impl(instance_type, single_type_impls)
+        impl = _find_impl(instance_type, single_type_impls)
+        if impl is not None:
+            return impl
+
+        # Name-based fallback for dynamic HF classes and string registrations.
+        def _name(obj):
+            return obj if isinstance(obj, str) else getattr(obj, "__name__", None)
+
+        if isinstance(instance, str):
+            inst_name = instance
+        elif isinstance(instance, type):
+            inst_name = _name(instance)
+        else:
+            inst_name = _name(type(instance))
+
+        if inst_name:
+            for registered_type, callback in self._exact_types.items():
+                reg_name = _name(registered_type)
+                if reg_name and str(reg_name) == inst_name:
+                    return callback
+
+        return None
 
     def _format_location(self, func: Callable) -> str:
         """Format the location of a function for display."""

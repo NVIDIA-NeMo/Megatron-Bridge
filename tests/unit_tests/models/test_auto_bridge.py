@@ -16,7 +16,7 @@
 Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 import torch
@@ -494,6 +494,7 @@ class TestAutoBridge:
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
 
         mock_megatron_model = [Mock()]
         mock_megatron_model[0].module = None  # No nested module
@@ -511,8 +512,9 @@ class TestAutoBridge:
 
                 bridge = AutoBridge(mock_hf_model)
 
-                # Mock _get_causal_lm_architecture to avoid accessing transformers
-                with patch.object(bridge, "_get_causal_lm_architecture", return_value=mock_arch_class):
+                # Mock the cached property to avoid accessing transformers
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
+                    mock_prop.return_value = mock_arch_class
                     weights = list(bridge.export_hf_weights(mock_megatron_model, cpu=True))
 
                     assert len(weights) == 2
@@ -527,6 +529,7 @@ class TestAutoBridge:
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
 
         with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
             mock_arch_class = Mock()
@@ -536,7 +539,7 @@ class TestAutoBridge:
             bridge = AutoBridge.__new__(AutoBridge)
             bridge.hf_pretrained = mock_hf_model
 
-            arch = bridge._get_causal_lm_architecture()
+            arch = bridge._causal_lm_architecture
             assert arch == mock_arch_class
 
     def test_get_causal_lm_architecture_no_architectures(self):
@@ -544,28 +547,31 @@ class TestAutoBridge:
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = []
+        mock_hf_model.config.auto_map = None
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
         with pytest.raises(ValueError, match="No architectures found in model config"):
-            bridge._get_causal_lm_architecture()
+            bridge._causal_lm_architecture
 
     def test_get_causal_lm_architecture_no_causal_lm(self):
         """Test error when no CausalLM architecture found."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["BertForMaskedLM"]
+        mock_hf_model.config.auto_map = None
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
         with pytest.raises(ValueError, match="No CausalLM architecture found"):
-            bridge._get_causal_lm_architecture()
+            bridge._causal_lm_architecture
 
     def test_get_causal_lm_architecture_not_in_transformers(self):
         """Test error when architecture class not found in transformers."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["CustomForCausalLM"]
+        mock_hf_model.config.auto_map = None
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
@@ -576,7 +582,7 @@ class TestAutoBridge:
             del mock_transformers.CustomForCausalLM
 
             with pytest.raises(ValueError, match="Architecture class 'CustomForCausalLM' not found in transformers"):
-                bridge._get_causal_lm_architecture()
+                bridge._causal_lm_architecture
 
     def test_repr(self):
         """Test string representation of AutoBridge."""
@@ -605,6 +611,7 @@ class TestAutoBridge:
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["GPT2ForCausalLM"]
+        mock_hf_model.config.auto_map = None
 
         # Create bridge - should work without CUDA
         bridge = AutoBridge.__new__(AutoBridge)
@@ -616,7 +623,7 @@ class TestAutoBridge:
             mock_transformers.GPT2ForCausalLM = Mock()
 
             # These operations should work on CPU
-            arch = bridge._get_causal_lm_architecture()
+            arch = bridge._causal_lm_architecture
             assert arch is not None
 
     def test_kwargs_passed_through(self, gpt2_config):
