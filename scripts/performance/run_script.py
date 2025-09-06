@@ -72,7 +72,6 @@ def main():
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    recipe.to_yaml()
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     # Load and merge YAML overrides if a config file is provided
     if args.config_file:
