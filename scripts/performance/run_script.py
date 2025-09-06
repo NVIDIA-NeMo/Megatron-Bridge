@@ -31,6 +31,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -72,7 +73,9 @@ def main():
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    recipe.to_yaml()
+    if get_rank_safe() == 0:
+        recipe.to_yaml()
+
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     # Load and merge YAML overrides if a config file is provided
     if args.config_file:
