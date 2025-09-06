@@ -401,3 +401,18 @@ class Qwen3MoEModelProvider235B_A22B(Qwen3MoEModelProvider):
     num_query_groups: int = 4
     ffn_hidden_size: int = 12288
     moe_ffn_hidden_size: int = 1536
+
+
+@dataclass
+class Qwen3MoEModelProvider480B_A35B(Qwen3MoEModelProvider):
+    """
+    Provider for Qwen 3 480B-A35B: https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct
+    """
+
+    num_layers: int = 62
+    hidden_size: int = 6144
+    num_attention_heads: int = 96
+    num_query_groups: int = 8
+    ffn_hidden_size: int = 8192
+    moe_ffn_hidden_size: int = 2560
+    num_moe_experts: int = 160
