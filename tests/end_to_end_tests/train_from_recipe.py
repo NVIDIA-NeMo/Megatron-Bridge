@@ -261,9 +261,12 @@ def apply_args_to_config(config, args):
 
         # Validation configuration for convergence
         if args.max_steps <= 100:
-            config.train.eval_interval = args.max_steps
+            config.train.eval_interval = None
         else:
             config.train.eval_interval = 800
+        
+        if args.max_steps > 100:
+            config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
     # Profiling configuration
     if args.nsys or args.mem:
