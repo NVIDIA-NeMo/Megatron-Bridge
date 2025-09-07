@@ -621,7 +621,6 @@ def save_checkpoint(
     else:
         _post_save_global_barrier()
 
-
     # Additional callback for wandb (last rank)
     if not torch.distributed.is_initialized() or is_last_rank():
 
