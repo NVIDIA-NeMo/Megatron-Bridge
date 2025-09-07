@@ -910,9 +910,9 @@ def checkpoint_and_decide_exit(
 
     # Exit based on duration.
     if state.cfg.train.exit_duration_in_mins:
-        train_time = (time.time() - state.train_state.start_time) / 60.0
+        train_time = (time.time() - state.start_time) / 60.0
         done_cuda = torch.tensor(
-            [train_time > state.cfg.checkpoint.exit_duration_in_mins], dtype=torch.int, device="cuda"
+            [train_time > state.cfg.train.exit_duration_in_mins], dtype=torch.int, device="cuda"
         )
         torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
         done = done_cuda.item()
