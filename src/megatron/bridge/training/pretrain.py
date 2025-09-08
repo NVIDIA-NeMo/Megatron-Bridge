@@ -21,8 +21,7 @@ from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
-from megatron.bridge.training.mixed_precision import get_mixed_precision_config
-from megatron.bridge.training.setup import setup
+from megatron.bridge.training.setup import runtime_config_update, setup
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
@@ -51,7 +50,7 @@ def pretrain(
         incompatible ways without notice.
     """
     # Apply runtime config updates prior to creating/attaching GlobalState
-    _runtime_config_update(config)
+    runtime_config_update(config)
 
     # Create a single GlobalState instance regardless of restart path
     state = GlobalState()
@@ -163,27 +162,3 @@ def _pretrain(
         )
 
     _finish_train(state)
-
-
-def _runtime_config_update(cfg: ConfigContainer) -> None:
-    """Apply runtime configuration updates prior to initialization.
-
-    - Validate configuration
-    - Resolve mixed precision configuration
-    - Apply communication overlap configuration
-    - Validate configuration again after resolving mixed precision and communication overlap
-    """
-    # Validate
-    cfg.validate()
-
-    # Mixed precision
-    if cfg.mixed_precision is not None:
-        if isinstance(cfg.mixed_precision, str):
-            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Communication overlap
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    cfg.validate()
