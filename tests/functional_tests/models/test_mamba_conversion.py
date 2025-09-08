@@ -148,9 +148,9 @@ class TestMambaConversion:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
 
             # Verify model structure
-            assert hasattr(model, "model")
-            assert hasattr(model.model, "layers")
-            assert len(model.model.layers) == 2  # num_hidden_layers updated to match toy config
+            assert hasattr(model, "backbone")
+            assert hasattr(model.backbone, "layers")
+            assert len(model.backbone.layers) == 2  # num_hidden_layers updated to match toy config
 
             print(f"SUCCESS: Toy model created and validated at {mamba_toy_model_path}")
 
