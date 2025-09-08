@@ -6,25 +6,25 @@ This guide describes how to configure logging in Megatron Bridge. It introduces 
 
 `LoggerConfig` is a dataclass that encapsulates logging‑related settings for training. It resides inside the overall `ConfigContainer`, which represents the complete configuration for a training run. For the complete API and all available fields, see {py:class}`~megatron.bridge.training.config.LoggerConfig`.
 
-## Timer Configuration Options
+### Timer Configuration Options
 
 Use the following options to control which timing metrics are collected during training and how they are aggregated and logged.
 
-### `timing_log_level`
+#### `timing_log_level`
 Controls which timers are recorded during execution:
 
 - **Level 0**: Logs only the overall iteration time.
 - **Level 1**: Includes once-per-iteration operations, such as gradient all-reduce.
 - **Level 2**: Captures frequently executed operations, providing more detailed insights but with increased overhead.
 
-### `timing_log_option`
+#### `timing_log_option`
 Specifies how timer values are aggregated across ranks. Valid options:
 
 - `"max"`: Logs the maximum value across ranks.
 - `"minmax"`: Logs both minimum and maximum values.
 - `"all"`: Logs all values from all ranks.
 
-### `log_timers_to_tensorboard`
+#### `log_timers_to_tensorboard`
 When enabled, the framework records timer metrics to supported backends such as TensorBoard.
 
 
@@ -50,9 +50,8 @@ Both TensorBoard and W&B are supported for metric logging. When using W&B, it’
 
 ### TensorBoard
 
-## TensorBoard
  
-### What Gets Logged
+#### What Gets Logged
 
 TensorBoard captures a range of training and system metrics, including:
 
@@ -65,7 +64,7 @@ TensorBoard captures a range of training and system metrics, including:
 - **Energy consumption** and **instantaneous power**, if energy logging is active
 
 
-### Enable TensorBoard Logging
+#### Enable TensorBoard Logging
   1) Install TensorBoard (if not already available):
   ```bash
   pip install tensorboard
@@ -87,7 +86,7 @@ TensorBoard captures a range of training and system metrics, including:
   The writer is created lazily on the last rank when `tensorboard_dir` is set.
   ```
 
-### Set the Output Directory
+#### Set the Output Directory
 
 TensorBoard event files are saved to the directory specified by `tensorboard_dir`.
 
@@ -103,15 +102,14 @@ cfg.logger.log_timers_to_tensorboard = True
 
 ### Weights & Biases (W&B)
 
-## Weights & Biases (W&B)
   
-### What Gets Logged
+#### What Gets Logged
 
 When enabled, W&B automatically mirrors the scalar metrics logged to TensorBoard.  
 In addition, the full run configuration is synced at initialization, allowing for reproducibility and experiment tracking.
 
 
-### Enable W&B Logging
+#### Enable W&B Logging
 
   1) Install W&B (if not already available):
   ```bash
@@ -138,7 +136,7 @@ In addition, the full run configuration is synced at initialization, allowing fo
 W&B is initialized lazily on the last rank when `wandb_project` is set and `wandb_exp_name` is non-empty.
 ```  
 
-### W&B Configuration for NeMo Run Recipes
+#### W&B Configuration for NeMo Run Recipes
 
 For users running training recipes with NeMo Run, W&B can be optionally configured using the `WandbPlugin`.
 
@@ -152,7 +150,7 @@ The plugin automatically forwards the `WANDB_API_KEY` and injects CLI overrides 
 This allows seamless integration of W&B logging into your training workflow without manual configuration.
 
 
-### Progress Log
+#### Progress Log
 
 When `logger.log_progress` is enabled, the framework generates a `progress.txt` file in the checkpoint save directory.
 
