@@ -25,6 +25,8 @@ import logging
 from omegaconf import OmegaConf
 from megatron.bridge.training.utils.omegaconf_utils import apply_overrides
 
+logger = logging.getLogger(__name__)
+
 
 COMM_OVERLAP_CONFIG_MAP = {
     "llama3_70b": {
@@ -100,8 +102,6 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
     """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""
-    logger = logging.getLogger(__name__)
-
     preset = get_perf_matrix_overrides(yaml_root, args)
     if not preset:
         num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
