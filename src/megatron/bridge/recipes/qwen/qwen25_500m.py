@@ -85,6 +85,7 @@ def pretrain_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
+    use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
     global_batch_size: int = 32,
@@ -116,6 +117,7 @@ def pretrain_config(
         virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism to be passed to model_config.
         sequence_parallelism (bool): Whether to use sequence parallelism.
+        use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
@@ -169,7 +171,11 @@ def pretrain_config(
         ),
         optimizer=opt_config,
         scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(check_for_nan_in_grad=True, use_distributed_optimizer=True),
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            use_distributed_optimizer=True,
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
+        ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
             reset_attention_mask=False,
@@ -183,6 +189,7 @@ def pretrain_config(
             # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
+            skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(
             log_interval=10,

@@ -132,7 +132,7 @@ def evaluate(
             state.train_state.consumed_valid_samples += eval_batch_size
 
             if state.cfg.train.exit_duration_in_mins:
-                train_time = (time.time() - state.train_state.start_time) / 60.0
+                train_time = (time.time() - state.start_time) / 60.0
                 done_cuda = torch.tensor(
                     [train_time > state.cfg.train.exit_duration_in_mins], dtype=torch.int, device="cuda"
                 )

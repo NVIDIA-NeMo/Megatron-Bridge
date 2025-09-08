@@ -27,6 +27,7 @@ model:
   cross_entropy_fusion_impl: "te"
   enable_cuda_graph: true
   use_te_rng_tracker: true
+  moe_router_fusion: true
 
 rng:
   te_rng_tracker: true
@@ -36,6 +37,9 @@ train:
   micro_batch_size: 1
   train_iters: 25
   eval_iters: 0
+
+rerun_state_machine:
+  check_for_nan_in_loss: false
 
 dist:
   enable_megatron_core_experimental: true

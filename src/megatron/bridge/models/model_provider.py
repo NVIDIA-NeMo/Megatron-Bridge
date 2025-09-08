@@ -36,6 +36,7 @@ from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
     DistributedDataParallel,
     DistributedDataParallelConfig,
+    FullyShardedDataParallel,
     TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
@@ -103,6 +104,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         overlap_param_gather_with_optimizer_step: bool = False,
         fp16: bool | None = None,
         bf16: bool | None = None,
+        use_megatron_fsdp: bool = False,
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = True,
@@ -128,6 +130,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
             fp16: Override FP16 setting.
             bf16: Override BF16 setting.
+            use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
             use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
             wrap_with_ddp: Whether to wrap model with DDP.
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
@@ -177,6 +180,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             overlap_param_gather_with_optimizer_step=overlap_param_gather_with_optimizer_step,
             fp16=fp16,
             bf16=bf16,
+            use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             wrap_with_ddp=wrap_with_ddp,
             data_parallel_random_init=data_parallel_random_init,
@@ -215,6 +219,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             virtual_pipeline_model_parallel_size=getattr(self, "virtual_pipeline_model_parallel_size", None),
             context_parallel_size=getattr(self, "context_parallel_size", 1) or 1,
             expert_model_parallel_size=getattr(self, "expert_model_parallel_size", 1) or 1,
+            expert_tensor_parallel_size=getattr(self, "expert_tensor_parallel_size", None),
             **model_parallel_kwargs,
         )
         if seed is not None:
@@ -393,6 +398,7 @@ class GetModelKwargs(TypedDict, total=False):
         overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
         fp16: Override FP16 setting.
         bf16: Override BF16 setting.
+        use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
@@ -407,6 +413,7 @@ class GetModelKwargs(TypedDict, total=False):
     overlap_param_gather_with_optimizer_step: bool
     fp16: bool | None
     bf16: bool | None
+    use_megatron_fsdp: bool
     use_torch_fsdp2: bool
     wrap_with_ddp: bool
     data_parallel_random_init: bool
@@ -429,6 +436,7 @@ def get_model(
     overlap_param_gather_with_optimizer_step: bool = False,
     fp16: bool | None = None,
     bf16: bool | None = None,
+    use_megatron_fsdp: bool = False,
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = True,
@@ -459,6 +467,7 @@ def get_model(
             gathering with optimizer step for performance optimization
         fp16: Enable FP16 mixed precision training. If None, uses model config
         bf16: Enable BF16 mixed precision training. If None, uses model config
+        use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
@@ -515,7 +524,7 @@ def get_model(
     # GPU allocation.
     # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
     # in the fully_shard function of FSDP2 instead.
-    if not (use_torch_fsdp2 or model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
+    if not (use_torch_fsdp2 and model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 
@@ -528,10 +537,11 @@ def get_model(
     if wrap_with_ddp:
         model = _ddp_wrap(
             model,
-            use_torch_fsdp2,
             data_parallel_random_init,
             ddp_config,
             overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=use_megatron_fsdp,
+            use_torch_fsdp2=use_torch_fsdp2,
         )
 
     return model
@@ -607,10 +617,11 @@ def _create_model(
 
 def _ddp_wrap(
     model: list[MegatronModule],
-    use_torch_fsdp2: bool,
     data_parallel_random_init: bool,
     ddp_config: DistributedDataParallelConfig,
     overlap_param_gather_with_optimizer_step: bool,
+    use_megatron_fsdp: bool = False,
+    use_torch_fsdp2: bool = False,
 ) -> list[MegatronModule]:
     """Wrap model with Distributed Data Parallel (DDP) or Fully Sharded Data Parallel (FSDP).
 
@@ -625,7 +636,11 @@ def _ddp_wrap(
     Returns:
         list[MegatronModule]: List of DDP/FSDP wrapped model modules
     """
-    if use_torch_fsdp2:
+    if use_megatron_fsdp:
+        DP = FullyShardedDataParallel
+        if use_torch_fsdp2:
+            raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
+    elif use_torch_fsdp2:
         DP = TorchFullyShardedDataParallel
     else:
         DP = DistributedDataParallel

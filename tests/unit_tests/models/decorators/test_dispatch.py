@@ -229,3 +229,137 @@ class TestDispatch:
         assert "Dispatch(my_dispatch" in repr_str
         assert "(int):" in repr_str
         assert "_int_impl" in repr_str
+
+    def test_string_single_arg_multiple_values(self):
+        """Strings should not be cached by type; distinct names resolve separately."""
+
+        @dispatch
+        def arch_to_impl(arch):
+            pass
+
+        @arch_to_impl.impl("Dog")
+        def _dog(_):
+            return "woof"
+
+        @arch_to_impl.impl("Cat")
+        def _cat(_):
+            return "meow"
+
+        assert arch_to_impl("Dog") == "woof"
+        assert arch_to_impl("Cat") == "meow"
+
+    def test_string_single_arg_dispatch(self):
+        """Test single-arg dispatch registered and called with string."""
+
+        @dispatch
+        def arch_to_impl(arch):
+            pass
+
+        @arch_to_impl.impl("Dog")
+        def _dog_impl(_):
+            return "woof"
+
+        assert arch_to_impl("Dog") == "woof"
+
+    def test_single_arg_name_fallback_type_call(self):
+        """Test single-arg name fallback: register with string, call with type."""
+
+        class Dog:
+            pass
+
+        @dispatch
+        def arch_to_impl(arch):
+            pass
+
+        @arch_to_impl.impl("Dog")
+        def _dog_impl(_):
+            return "woof"
+
+        assert arch_to_impl(Dog) == "woof"
+
+    def test_single_arg_name_fallback_string_call(self):
+        """Test single-arg name fallback: register with type, call with string."""
+
+        class Cat:
+            pass
+
+        @dispatch
+        def arch_to_impl(arch):
+            pass
+
+        @arch_to_impl.impl(Cat)
+        def _cat_impl(_):
+            return "meow"
+
+        assert arch_to_impl("Cat") == "meow"
+
+    def test_tuple_string_dispatch(self):
+        """Test tuple dispatch with string and a type."""
+
+        class Trainer:
+            pass
+
+        @dispatch
+        def bridge_key(key):
+            pass
+
+        @bridge_key.impl(("Dog", Trainer))
+        def _impl_tuple_str(values):
+            return "trained-dog"
+
+        assert bridge_key(("Dog", Trainer())) == "trained-dog"
+
+    def test_tuple_name_fallback_type_call(self):
+        """Test tuple name fallback: register with string, call with type."""
+
+        class Trainer:
+            pass
+
+        class Dog:
+            pass
+
+        @dispatch
+        def bridge_key(key):
+            pass
+
+        @bridge_key.impl(("Dog", Trainer))
+        def _impl_tuple_str(values):
+            return "trained-dog"
+
+        assert bridge_key((Dog, Trainer())) == "trained-dog"
+
+    def test_tuple_name_fallback_string_call(self):
+        """Test tuple name fallback: register with type, call with string."""
+
+        class Trainer:
+            pass
+
+        class Dog:
+            pass
+
+        @dispatch
+        def bridge_key(key):
+            pass
+
+        @bridge_key.impl((Dog, Trainer))
+        def _impl_tuple_type(values):
+            return "trained-dog"
+
+        assert bridge_key(("Dog", Trainer())) == "trained-dog"
+
+    def test_tuple_no_match_raises(self):
+        """Test tuple dispatch raises when types do not match."""
+
+        class Trainer:
+            pass
+
+        @dispatch
+        def bridge_key(key):
+            pass
+
+        @bridge_key.impl(("Dog", Trainer))
+        def _impl(values):
+            return "trained"
+
+        with pytest.raises(NotImplementedError):
+            bridge_key(("Cat", Trainer()))

@@ -151,10 +151,10 @@ def validate_rope_fusion_compatibility(config: TransformerConfig) -> bool:
     if getattr(config, "multi_latent_attention", False):
         if LOG_FUSION_DISABLE:
             logger.warning(
-                "apply_rope_fusion is enabled but not compatible with multi_latent_attention. "
-                "Consider disabling apply_rope_fusion."
+                "apply_rope_fusion for multi-latent attention only supports training. "
+                "It is experimental and may change in future versions."
             )
-        return False
+        return True
 
     # Check TE version for rotary_interleaved
     if getattr(config, "rotary_interleaved", False):

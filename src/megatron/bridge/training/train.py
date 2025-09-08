@@ -185,7 +185,12 @@ def train(
         prof.start()
 
     start_iteration = global_state.train_state.step
-    should_toggle_forward_pre_hook = config.optimizer.use_distributed_optimizer and config.ddp.overlap_param_gather
+    # Megatron FSDP and FSDP2 does not have this hook
+    should_toggle_forward_pre_hook = (
+        config.optimizer.use_distributed_optimizer
+        and config.ddp.overlap_param_gather
+        and not (config.dist.use_megatron_fsdp or config.dist.use_torch_fsdp2)
+    )
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -317,7 +322,7 @@ def train(
         params_norm = None
 
         if config.logger.log_params_norm:
-            params_norm = calc_params_l2_norm(model, model_config)
+            params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
         learning_rate = None
         decoupled_learning_rate = None
         for param_group in optimizer.param_groups:
@@ -905,10 +910,8 @@ def checkpoint_and_decide_exit(
 
     # Exit based on duration.
     if state.cfg.train.exit_duration_in_mins:
-        train_time = (time.time() - state.train_state.start_time) / 60.0
-        done_cuda = torch.tensor(
-            [train_time > state.cfg.checkpoint.exit_duration_in_mins], dtype=torch.int, device="cuda"
-        )
+        train_time = (time.time() - state.start_time) / 60.0
+        done_cuda = torch.tensor([train_time > state.cfg.train.exit_duration_in_mins], dtype=torch.int, device="cuda")
         torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
         done = done_cuda.item()
         if done:
