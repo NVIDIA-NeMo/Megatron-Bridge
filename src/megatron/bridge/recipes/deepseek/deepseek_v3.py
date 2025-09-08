@@ -116,6 +116,7 @@ def model_config(
     # Performance optimization knobs
     cfg.moe_permute_fusion = True
     cfg.apply_rope_fusion = True
+    cfg.moe_router_fusion = True
 
     # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
     map_pp_vp_to_layout = {
