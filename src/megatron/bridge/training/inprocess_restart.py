@@ -124,6 +124,26 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     completion = inprocess.nested_restarter.NestedRestarterFinalized()
     terminate = inprocess.nested_restarter.NestedRestarterAborted()
 
+    # Configure health check with optional fault counter
+    health_check_components = [inprocess.health_check.CudaHealthCheck(timeout=timedelta(seconds=10))]
+    if config.max_rank_faults is not None:
+        health_check_components.append(inprocess.health_check.FaultCounter(max_rank_faults=config.max_rank_faults))
+    health_check = inprocess.Compose(*health_check_components)
+
+    # Configure monitor process logging if enabled
+    monitor_process_logfile = None
+    if config.monitor_process_logdir is not None:
+        slurm_local_id = os.environ.get("SLURM_LOCALID")
+        slurm_global_rank = os.environ.get("SLURM_PROCID")
+        slurm_job_id = os.environ.get("SLURM_JOB_ID")
+        hostname = socket.gethostname()
+
+        if slurm_global_rank is not None and int(slurm_global_rank) == 0:
+            monitor_process_logfile = os.path.join(
+                config.monitor_process_logdir,
+                f"monitor_{slurm_job_id}_{hostname}_{slurm_global_rank}_{slurm_local_id}.log",
+            )
+
     # Adapter function to bridge nvidia-resiliency-ext 0.4.1 calling convention
     # with Megatron-Bridge function signatures.
     #
@@ -152,7 +172,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
         abort=abort,
         completion=completion,
         terminate=terminate,
-        health_check=inprocess.health_check.CudaHealthCheck(timeout=timedelta(seconds=10)),
+        health_check=health_check,
         rank_assignment=inprocess.rank_assignment.Tree(layers=layers),
         finalize=inprocess.Compose(*finalize),
         heartbeat_interval=timedelta(seconds=config.heartbeat_interval),
@@ -165,6 +185,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
         soft_timeout=timedelta(seconds=config.soft_timeout),
         hard_timeout=timedelta(seconds=config.hard_timeout),
         termination_grace_time=timedelta(seconds=config.termination_grace_time),
+        monitor_process_logfile=monitor_process_logfile,
         enabled=True,
     )(_adapter)
 

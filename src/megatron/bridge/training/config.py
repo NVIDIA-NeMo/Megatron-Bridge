@@ -855,6 +855,12 @@ class InProcessRestartConfig:
     empty_cuda_cache: bool = True
     """Empty CUDA cache during restart finalization."""
 
+    max_rank_faults: Optional[int] = None
+    """Maximum number of rank faults allowed before terminating the job."""
+
+    monitor_process_logdir: Optional[str] = None
+    """Directory for monitor process log files. If None, monitor process logging is disabled."""
+
 
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
