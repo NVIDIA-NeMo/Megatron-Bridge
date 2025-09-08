@@ -1944,7 +1944,7 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.6.0" },
     { name = "datasets" },
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
-    { name = "megatron-core", extras = ["dev", "mlm"], specifier = ">=0.14.0a0,<0.16.0" },
+    { name = "megatron-core", extras = ["dev", "mlm"], git = "https://github.com/NVIDIA/Megatron-LM.git?rev=3a9a0607eece56fcbd412caf3c20ada4a3da23f2" },
     { name = "nemo-run", marker = "extra == 'recipes'", specifier = ">=0.5.0a0,<0.6.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -1994,22 +1994,12 @@ test = [
 
 [[package]]
 name = "megatron-core"
-version = "0.15.0rc1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.15.0rc3"
+source = { git = "https://github.com/NVIDIA/Megatron-LM.git?rev=3a9a0607eece56fcbd412caf3c20ada4a3da23f2#3a9a0607eece56fcbd412caf3c20ada4a3da23f2" }
 dependencies = [
     { name = "numpy" },
     { name = "packaging" },
     { name = "torch" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/38/5974dedc74db7fb631eb98b069881d96c1a7435fec0e5041f41fab95c7a6/megatron_core-0.15.0rc1-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e5f3c64c2fcb10ce200b7ab514cec13a1208c6bad0c2df7df9d86ae79779d48b", size = 2131314, upload-time = "2025-09-01T04:13:17.407Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/98/216d21c928d90685bd3286f79dc69e564fa7ed3d4b8d10c56e7066190dc7/megatron_core-0.15.0rc1-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5cb6081f50d115b0fa6dbc8a8f6c5e51cf66aa7847d412bec1446ec99975fde6", size = 2162639, upload-time = "2025-09-01T04:13:19.371Z" },
-    { url = "https://files.pythonhosted.org/packages/30/95/6c60b32f8519e5c3e24a5123c55bbc2a0a920030ba5f5802f45893ad3ae0/megatron_core-0.15.0rc1-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d575fd54bb026418c9b701abc1c4e8e696fe2f99f0ecd601758d9affb05ba1fe", size = 2142363, upload-time = "2025-09-01T04:13:20.957Z" },
-    { url = "https://files.pythonhosted.org/packages/4c/59/ddfb4945a7f4b1da6fd3c2fdf56e83d5bd7c6bf6639f0cff38ae124c77d3/megatron_core-0.15.0rc1-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0c4f6c2ecc411b8257dc826a8fd795046a200136f64edcbf49910bd3c564fada", size = 2174178, upload-time = "2025-09-01T04:13:22.54Z" },
-    { url = "https://files.pythonhosted.org/packages/c6/23/7f6dd8db5f7e6e3df720d69ca600138de3644b7f8c9142785dd938c72f5c/megatron_core-0.15.0rc1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cacc85df7871aba41c981654272c4137dbd3f54eea1aec9fd45721a0ebb7fee9", size = 2163053, upload-time = "2025-09-01T04:13:24.22Z" },
-    { url = "https://files.pythonhosted.org/packages/fb/6f/331653f7f59c0b433f2ac2714f132903da6a02af0e02e9aa83f154e21a69/megatron_core-0.15.0rc1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2190f30b26ba677ebbeb272ae1456f12a9e53afc84148a38bac9f884adba6606", size = 2186865, upload-time = "2025-09-01T04:13:25.857Z" },
-    { url = "https://files.pythonhosted.org/packages/84/f1/c3ad57b320fc44b3c8e78e391fb29b2d72def3515e00565d788b1fede692/megatron_core-0.15.0rc1-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a4df4bff44bf68c6d737a7f70579e06ec83b22e6f118e218ff4845569475a38d", size = 2161825, upload-time = "2025-09-01T04:13:27.578Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/e0/944094deec3479e902cfc54d78e247d02c2f722c64fbd6fb523f93f11ca8/megatron_core-0.15.0rc1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:26d311d25e8fe36f36141a7fb5e77d00015f9f80b2442dbaaddba0b8ca2b3835", size = 2187576, upload-time = "2025-09-01T04:13:28.922Z" },
 ]
 
 [package.optional-dependencies]
@@ -2030,7 +2020,8 @@ dev = [
     { name = "tensorstore", version = "0.1.74", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "tensorstore", version = "0.1.76", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "tqdm" },
-    { name = "transformer-engine", extra = ["pytorch"] },
+    { name = "transformer-engine" },
+    { name = "wget" },
 ]
 mlm = [
     { name = "flask-restful" },
@@ -2158,7 +2149,7 @@ wheels = [
 
 [[package]]
 name = "multi-storage-client"
-version = "0.25.0"
+version = "0.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -2166,18 +2157,30 @@ dependencies = [
     { name = "jsonschema" },
     { name = "lark" },
     { name = "opentelemetry-api" },
+    { name = "prettytable" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
-    { name = "tabulate" },
     { name = "tqdm" },
     { name = "wcmatch" },
     { name = "xattr" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/91/d748ad8faebc79018b5334fcc019426eaa0ce1ab250fc013d87d3f14ce79/multi_storage_client-0.25.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:aefdfeac5558caf00d585688309f344ba637f711709648b8e8e9b99a5d643226", size = 4670834, upload-time = "2025-07-10T23:35:49.784Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/47/858af2b7a879bb01d0f0173c888dab6adeba5a9e42182e6505cd86a69f22/multi_storage_client-0.25.0-cp39-abi3-macosx_11_0_x86_64.whl", hash = "sha256:6fb38fa6c6c8ea98c291117ee5c59056d40fe88b5a3fc70c64bd2c1feafe0851", size = 4772658, upload-time = "2025-07-10T23:36:37.412Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/eb/f129e2eabcabd5e3b185692c1b0f93c2bbe3fb18107b4bd129a80baea8db/multi_storage_client-0.25.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e77b75dd13a57a0dc2fa1d8ccc4c712522216fa6fd0879eb9c107dfd2f7e56fa", size = 2665745, upload-time = "2025-07-10T23:36:14.168Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/8b/c24bd9aea4492bbab7b8f361bf0b4fc8666e903d77ace8224f6705bc3cf1/multi_storage_client-0.25.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:234f4f14033a87af6b29d57a41b193ba371f3dd759730b5b54c37752b30ee094", size = 2812708, upload-time = "2025-07-10T23:35:26.208Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/7b/5c70df13a9e595b57f8d94b0033703af70f134cc3b29f0165c2571ab6f6d/multi_storage_client-0.28.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:0ee1807248d47946592b871491f7bc03cba6048d8556cb026f9373ee8c2cb9ad", size = 5100961, upload-time = "2025-08-28T23:02:00.989Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/08/2a09579eb28f374aee3c4cb75051b66019c2bc3fd3d0a7fb8c1bf48fd23a/multi_storage_client-0.28.0-cp310-cp310-macosx_11_0_x86_64.whl", hash = "sha256:715c39ab7ff3b96a7ba17fa73968d447afde4a0b86350234c8345b971555ef58", size = 5215495, upload-time = "2025-08-28T22:58:38.167Z" },
+    { url = "https://files.pythonhosted.org/packages/13/5a/72df892701e9d420fe153e77ec664bcd2a05779f3b36c1d1cf0c22351bee/multi_storage_client-0.28.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:dcf2628266752a8b7c14d2e221af522c2b5790997a01c9b9d84624403387285c", size = 3012021, upload-time = "2025-08-28T22:57:50.243Z" },
+    { url = "https://files.pythonhosted.org/packages/20/6b/bc2df302195d28350a444b2c27dd3321191281b3034f2ba0982b954ffd49/multi_storage_client-0.28.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:86681ada615c7f881c311a19ba5fb4c94922c353a6a5a3a1955ebfee6196a81b", size = 3181922, upload-time = "2025-08-28T22:55:49.975Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/65/a1f920b8fe5e2437cf7e68d49c359a293789ea82e95a781652c167b982b0/multi_storage_client-0.28.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:77fc0bdd3cd5256b37bcff340a9369dc4c8c05de9dacdb69cf37b6e449824319", size = 5101431, upload-time = "2025-08-28T23:01:07.349Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/df/a9cf92f95e95c0ab9e13f05ee76c73865f9ec705295f1272ff7fe76827f3/multi_storage_client-0.28.0-cp311-cp311-macosx_11_0_x86_64.whl", hash = "sha256:05a4ec25c41ec482579f87eda7ea0c4ea3489725950266f899caf0a921d9192d", size = 5217145, upload-time = "2025-08-28T23:00:43.825Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/02/e66e38a8ca8ec8668eb181781dc34e4a9b3c2d789aee13eb240260b7c778/multi_storage_client-0.28.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3461228b080490d0fcd1f930b5ec5865e73d600bc9cb16a8e356fd96a730de54", size = 3013720, upload-time = "2025-08-28T23:03:16.902Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/77/7b29b9d0befbfd287212c184717fc11d92e21dc177db5184031c3ead210b/multi_storage_client-0.28.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5d5ef13944d561ca964334204f34b8187ffe001c5fcd8f791e85ac50dc52bacf", size = 3182950, upload-time = "2025-08-28T22:56:17.179Z" },
+    { url = "https://files.pythonhosted.org/packages/85/9f/75e3ac2bc47716326ef232aae61aff480a3437fde8d07450894a92828766/multi_storage_client-0.28.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:3723876fb6eb418110b7a100d3481e115539507c3300a91c875f26b6d5d194d1", size = 5096543, upload-time = "2025-08-28T22:59:01.578Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/bd/944fc769ec2a4372f0fa006ecd38064c283addc7d317438872979157732e/multi_storage_client-0.28.0-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:fc09015bcb29e18f61b74480b062a5882c76f0ed9cf39ba3794230a195de0346", size = 5207831, upload-time = "2025-08-28T23:00:13.781Z" },
+    { url = "https://files.pythonhosted.org/packages/62/28/b2a46e39cf246fe004d8e1bb7163c7fa8482f4bed8c701429daf9097511c/multi_storage_client-0.28.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:85ed9e2eb66be4a1de0b6c795a8f630656a1d71c4a8a91766cb86441a8ce9991", size = 3012712, upload-time = "2025-08-28T23:02:53.315Z" },
+    { url = "https://files.pythonhosted.org/packages/af/b0/bd4136f5c6fd9eb7f7a797206608155611c851dc28741d477c580871689e/multi_storage_client-0.28.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:343bd541ef5c1bbe68822a230876bbe9ecbcccacefcbc9dc567aff597c97fa4e", size = 3177604, upload-time = "2025-08-28T22:55:26.377Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/36/5c90762f2498ee64e5f68ccb6e281eb376f9a177678a757cac5f84705103/multi_storage_client-0.28.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f770e7074e7582c5d61f8d2b381191d89b9169a8d3365424cda7c8918f52f0a2", size = 5095056, upload-time = "2025-08-28T22:58:14.466Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/5f/ddba7aabef64f833424589349c53ab9eafc1db37d756b2a11627c25e8359/multi_storage_client-0.28.0-cp313-cp313-macosx_11_0_x86_64.whl", hash = "sha256:db73c1e83f6afe93a13fd0f7b33110d3d61d06bc6e03514278db6b7a2dfdaa43", size = 5206890, upload-time = "2025-08-28T22:59:48.768Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/02/c4c500afc3d28babe4d8bd970f6daf6b98f1a92f1898fe6b29c1403f7eca/multi_storage_client-0.28.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c5a2dd9604f2a6c319fd9900692d245a8be20efb7b1f7e2c43e5aae4282b1da6", size = 3011404, upload-time = "2025-08-28T22:57:26.833Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/f4/5788eb238a4c0de40424097660217e77893137ba6202af6aad810efd874d/multi_storage_client-0.28.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9b57de5ba21475c3002e8a717c62d41a88323b4675c2848b620e49cce048592c", size = 3176232, upload-time = "2025-08-28T22:57:03.859Z" },
 ]
 
 [[package]]
@@ -3109,6 +3112,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ff/29/7cf5bbc236333876e4b41f56e06857a87937ce4bf91e117a6991a2dbb02a/pre_commit-4.3.0.tar.gz", hash = "sha256:499fe450cc9d42e9d58e606262795ecb64dd05438943c62b66f6a8673da30b16", size = 193792, upload-time = "2025-08-09T18:56:14.651Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5b/a5/987a405322d78a73b66e39e4a90e4ef156fd7141bf71df987e50717c321b/pre_commit-4.3.0-py2.py3-none-any.whl", hash = "sha256:2b0747ad7e6e967169136edffee14c16e148a778a54e4f967921aa1ebf2308d8", size = 220965, upload-time = "2025-08-09T18:56:13.192Z" },
+]
+
+[[package]]
+name = "prettytable"
+version = "3.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/99/b1/85e18ac92afd08c533603e3393977b6bc1443043115a47bb094f3b98f94f/prettytable-3.16.0.tar.gz", hash = "sha256:3c64b31719d961bf69c9a7e03d0c1e477320906a98da63952bc6698d6164ff57", size = 66276, upload-time = "2025-03-24T19:39:04.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/c7/5613524e606ea1688b3bdbf48aa64bafb6d0a4ac3750274c43b6158a390f/prettytable-3.16.0-py3-none-any.whl", hash = "sha256:b5eccfabb82222f5aa46b798ff02a8452cf530a352c31bddfa29be41242863aa", size = 33863, upload-time = "2025-03-24T19:39:02.359Z" },
 ]
 
 [[package]]
@@ -4916,45 +4931,17 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.6.0.post1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "transformer-engine-cu12" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/59/09ab90314c16a6ac44deab14c734bee292fa62b58dd9d538de8c9b34a974/transformer_engine-2.6.0.post1-py3-none-any.whl", hash = "sha256:deb1ed2a937fbcce7e825e38461e360ca3057147996a8269dc8b868a21672486", size = 568125, upload-time = "2025-08-11T06:29:48.971Z" },
-]
-
-[package.optional-dependencies]
-pytorch = [
-    { name = "transformer-engine-torch" },
-]
-
-[[package]]
-name = "transformer-engine-cu12"
-version = "2.6.0.post1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "importlib-metadata" },
-    { name = "packaging" },
-    { name = "pydantic" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/df/0452fd0d62921c8d6ca2fd575f2ff330df577675ab290fd551cedd0856dd/transformer_engine_cu12-2.6.0.post1-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:d6f936a8e6e552002e329bf6076b599d88af7b212e9541139a6ed0a50ca5674a", size = 161229253, upload-time = "2025-08-11T06:36:31.742Z" },
-    { url = "https://files.pythonhosted.org/packages/06/a3/083982615f6b28b30cf4d70939a67c2f6e6fd28e73fd8e96012dbebd59f3/transformer_engine_cu12-2.6.0.post1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:197df838f70a4b862ba4e5056850888f74ee4a180a32c68c1e4e6eb7e611e42f", size = 277344566, upload-time = "2025-08-11T06:29:23.042Z" },
-]
-
-[[package]]
-name = "transformer-engine-torch"
-version = "2.6.0.post1"
-source = { registry = "https://pypi.org/simple" }
+version = "2.7.0+0289e76"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=0289e76380088358a584d809faf69effab1a7cda#0289e76380088358a584d809faf69effab1a7cda" }
 dependencies = [
     { name = "einops" },
+    { name = "importlib-metadata" },
     { name = "onnx" },
     { name = "onnxscript" },
+    { name = "packaging" },
+    { name = "pydantic" },
     { name = "torch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/b4/fc88697b5ea8086db9f11e9b0f546a10da59db8a011e6486b6dacb2b4644/transformer_engine_torch-2.6.0.post1.tar.gz", hash = "sha256:bbd86914afce057f566b33ae5e73351b001c0a276053d1c8fe65c9fc1b40b44a", size = 169413, upload-time = "2025-08-11T06:37:30.214Z" }
 
 [[package]]
 name = "transformers"
@@ -5322,6 +5309,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/9f/69/83029f1f6300c5fb2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/24/ab44c871b0f07f491e5d2ad12c9bd7358e527510618cb1b803a88e986db1/werkzeug-3.1.3-py3-none-any.whl", hash = "sha256:54b78bf3716d19a65be4fceccc0d1d7b89e608834989dfae50ea87564639213e", size = 224498, upload-time = "2024-11-08T15:52:16.132Z" },
 ]
+
+[[package]]
+name = "wget"
+version = "3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/6a/62e288da7bcda82b935ff0c6cfe542970f04e29c756b0e147251b2fb251f/wget-3.2.zip", hash = "sha256:35e630eca2aa50ce998b9b1a127bb26b30dfee573702782aa982f875e3f16061", size = 10857, upload-time = "2015-10-22T15:26:37.51Z" }
 
 [[package]]
 name = "win32-setctime"

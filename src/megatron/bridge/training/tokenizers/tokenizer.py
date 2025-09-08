@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizerCore
+from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer as MegatronLegacyTokenizerCore
 
 from megatron.bridge.training.tokenizers.bert_tokenization import FullTokenizer as FullBertTokenizer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -16,7 +16,7 @@ from megatron.bridge.training.tokenizers.multimodal_tokenizer import MultimodalT
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
-class MegatronTokenizer(MegatronTokenizerCore):
+class MegatronTokenizer(MegatronLegacyTokenizerCore):
     """Base tokenizer class, extending the MegatronTokenizer from megatron core.
 
     This class provides a common interface for various tokenizers used within the NeMo framework.
