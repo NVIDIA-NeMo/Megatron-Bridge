@@ -113,7 +113,7 @@ class MambaBridge(MegatronModelBridge):
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
-        for hf_param, megatron_param in param_mappings.items():
+        for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # Add special mappings that require parameter concatenation/transformation, pruning, etc.
