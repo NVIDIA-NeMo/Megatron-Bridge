@@ -47,8 +47,8 @@ if __name__ == "__main__":
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
-    config_filename = f"{args.model_name}_{args.model_size}_{args.task}_overrides.yaml"
-    config_filepath = SCRIPT_DIR / "llm" / "configs" / config_filename
+    config_filename = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}_overrides.yaml"
+    config_filepath = SCRIPT_DIR / "configs" / f"{args.model_name}" / config_filename
     logger.info(f"Config file path: {config_filepath}")
     if not config_filepath.is_file():
         logger.error(f"Specified YAML config file not found: {config_filepath}")

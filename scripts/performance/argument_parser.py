@@ -216,6 +216,13 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        help="Domain to use for the experiment- llm, vlm, diffusion. Default: llm",
+        required=False,
+        default="llm",
+    )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
