@@ -265,7 +265,7 @@ def apply_args_to_config(config, args):
             config.train.eval_iters = 1 # Run minimum evaluation iterations for short convergence runs
         else:
             config.train.eval_interval = 800
-        
+
         if args.max_steps > 100:
             config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
