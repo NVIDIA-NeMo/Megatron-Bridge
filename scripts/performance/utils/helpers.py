@@ -16,7 +16,7 @@ from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
-    bf16_with_fp8_mixed,
+    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
@@ -58,7 +58,7 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
         if fp8_recipe == "ds":
-            return bf16_with_fp8_mixed()
+            return bf16_with_fp8_delayed_scaling_mixed()
         elif fp8_recipe == "cs":
             return bf16_with_fp8_current_scaling_mixed()
         elif fp8_recipe == "mx":
