@@ -157,6 +157,14 @@ class TestMambaConversion:
         except Exception as e:
             assert False, f"Failed to load created toy model: {e}"
 
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "tp,pp,test_name",
+        [
+            (2, 1, "TP"),
+            (1, 2, "PP"),
+        ],
+    )
     def test_mamba_conversion_parallelism(self, mamba_toy_model_path, tmp_path, tp, pp, test_name):
         """
         Test Mamba model conversion with different parallelism configurations.
