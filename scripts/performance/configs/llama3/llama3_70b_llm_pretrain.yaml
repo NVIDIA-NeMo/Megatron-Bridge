@@ -39,6 +39,8 @@ ConfigContainer:
   ddp:
     check_for_nan_in_grad: false
     check_for_large_grads: false
+    use_megatron_fsdp: true
+    use_torch_fsdp2: false
 
   mixed_precision:
     grad_reduce_in_fp32: false
