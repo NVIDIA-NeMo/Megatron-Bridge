@@ -262,7 +262,7 @@ def apply_args_to_config(config, args):
         # Validation configuration for convergence
         if args.max_steps <= 100:
             config.train.eval_interval = args.max_steps
-            config.train.eval_iters = 1 # Run minimum evaluation iterations for short convergence runs
+            config.train.eval_iters = 0 # Disable evaluation for short convergence runs
         else:
             config.train.eval_interval = 800
 
