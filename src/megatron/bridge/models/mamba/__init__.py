@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.mamba.mamba_bridge import MambaBridge
 from megatron.bridge.models.mamba.mamba_provider import (
     MambaProvider,
     MambaProvider1_3B,
@@ -22,6 +23,7 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaHybridProvider8B,
     NVIDIAMambaProvider8B,
 )
+from megatron.bridge.models.mamba.nemotron_h_bridge import NemotronHBridge
 from megatron.bridge.models.mamba.nemotron_h_provider import (
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
