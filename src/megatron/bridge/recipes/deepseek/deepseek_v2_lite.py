@@ -98,6 +98,7 @@ def pretrain_config(
     context_parallelism: int = 1,
     expert_parallelism: int = 8,
     sequence_parallelism: bool = False,
+    use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 512,
@@ -204,6 +205,7 @@ def pretrain_config(
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -219,6 +221,7 @@ def pretrain_config(
             data_sharding=True,
             dataloader_type="single",
             num_workers=8,
+            skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir, log_timers_to_tensorboard=True),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),

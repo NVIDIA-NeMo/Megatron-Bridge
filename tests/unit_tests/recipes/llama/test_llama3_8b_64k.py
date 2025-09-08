@@ -211,7 +211,7 @@ class TestPretrainConfig:
         assert config.model.sequence_parallel == sequence_parallelism
         assert config.dataset.sequence_length == SEQUENCE_LENGTH_64K  # Always 64k
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_precision_recipes(self, precision):
         cfg = pretrain_config(precision_config=precision)
         assert cfg.mixed_precision == precision

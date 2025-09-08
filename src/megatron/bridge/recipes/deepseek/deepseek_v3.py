@@ -168,6 +168,7 @@ def pretrain_config(
     context_parallelism: int = 1,
     expert_parallelism: int = 64,
     sequence_parallelism: bool = True,
+    use_megatron_fsdp: bool = False,
     use_mtp: bool = True,
     mtp_num_layers: Optional[int] = 1,
     mtp_loss_scaling_factor: Optional[float] = 0.1,
@@ -259,6 +260,7 @@ def pretrain_config(
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -273,6 +275,7 @@ def pretrain_config(
             data_sharding=True,
             dataloader_type="single",
             num_workers=8,
+            skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(
             log_interval=10,
