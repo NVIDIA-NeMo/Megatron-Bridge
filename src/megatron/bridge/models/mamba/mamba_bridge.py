@@ -115,6 +115,9 @@ class MambaBridge(MegatronModelBridge):
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+        AutoMapping.register_module_type("MambaMixer", "column")
+        AutoMapping.register_module_type("Conv1d", "column")
+        AutoMapping.register_module_type("ExtendedRMSNorm", "column")
 
         # Add special mappings that require parameter concatenation/transformation, pruning, etc.
         mapping_list.extend(
