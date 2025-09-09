@@ -16,9 +16,11 @@ import sys
 from os.path import basename, splitext
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from .argument_parser import parse_cli_args
 from .utils.executors import slurm_executor
-
+from .utils.helpers import get_perf_matrix_overrides
 
 try:
     import nemo_run as run
@@ -76,14 +78,20 @@ if __name__ == "__main__":
     ]
     logger.info(f"Custom mounts: {custom_mounts}")
 
-    num_nodes = -(args.num_gpus // -args.gpus_per_node)
+    num_gpus_per_node = args.gpus_per_node
+    yaml_overrides_omega = OmegaConf.load(args.config_file)
+    preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
+    if preset:
+        num_gpus_per_node = preset.get("num_gpus_per_node", args.gpus_per_node)
+
+    num_nodes = -(args.num_gpus // -num_gpus_per_node)
     executor = slurm_executor(
         args.gpu.lower(),
         args.account,
         args.partition,
         args.log_dir,
         num_nodes,
-        args.gpus_per_node,
+        num_gpus_per_node,
         args.time_limit,
         args.container_image,
         custom_mounts=custom_mounts,

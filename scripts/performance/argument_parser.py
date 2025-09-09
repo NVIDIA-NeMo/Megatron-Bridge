@@ -150,8 +150,7 @@ def parse_cli_args():
         "--num_gpus",
         type=int,
         help="Number of gpus.",
-        required=False,
-        default=None,
+        required=True,
     )
     parser.add_argument(
         "-gn",

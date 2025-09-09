@@ -111,7 +111,7 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     num_gpus_yaml_key = f"num_gpus_{num_gpus_value}"
     gpu_block = perf.get(args.gpu) or {}
     preset = gpu_block.get(num_gpus_yaml_key) or {}
-    
+
     return preset
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
@@ -136,8 +136,8 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     recipe.model.pipeline_model_parallel_size = perf_overrides.get("pp", 1)
     recipe.model.virtual_pipeline_model_parallel_size = perf_overrides.get("vp", None)
     recipe.model.context_parallel_size = perf_overrides.get("cp", 1)
-    recipe.model.expert_model_parallel_size = 1
-    recipe.model.expert_tensor_parallel_size = None
+    recipe.model.expert_model_parallel_size = perf_overrides.get("ep", 1)
+    recipe.model.expert_tensor_parallel_size = perf_overrides.get("etp", None)
 
     recipe.ddp.use_megatron_fsdp = perf_overrides.get("fsdp", False)
     set_cuda_graph_overrides(recipe, perf_overrides)
