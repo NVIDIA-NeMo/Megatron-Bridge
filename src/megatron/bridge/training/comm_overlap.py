@@ -502,8 +502,8 @@ class CommOverlapConfig:
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
             if ddp_config.overlap_grad_reduce or self.user_comm_overlap_cfg.overlap_grad_reduce:
-                assert is_te_min_version("2.8.0"), (
-                    f"TE version >= 2.8.0 is required for overlap_grad_reduce when using"
+                assert is_te_min_version("2.7.0"), (
+                    f"TE version >= 2.7.0 is required for overlap_grad_reduce when using"
                     f"delay_wgrad_compute. Current TE version: {get_te_version()}"
                 )
             if model_cfg.gradient_accumulation_fusion is True:
