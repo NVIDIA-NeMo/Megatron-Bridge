@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from typing import Any, Dict
+
+from omegaconf import OmegaConf
+
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
@@ -20,10 +25,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
-from typing import Any, Dict
-import logging
-from omegaconf import OmegaConf
-from megatron.bridge.training.utils.omegaconf_utils import apply_overrides
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
+
 def set_cuda_graph_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the CUDA graph overrides from the performance matrix."""
     enable_cuda_graph = perf_overrides.get("cuda_graphs", False)
@@ -85,6 +88,7 @@ def set_cuda_graph_overrides(recipe: Any, perf_overrides: Any) -> None:
     recipe.model.enable_cuda_graph = enable_cuda_graph
     recipe.model.use_te_rng_tracker = enable_cuda_graph
     recipe.rng.te_rng_tracker = enable_cuda_graph
+
 
 def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the recompute num layers overrides from the performance matrix."""
@@ -100,6 +104,7 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.config.cpu_offloading_weights = False
         recipe.model.config.cpu_offloading_num_layers = activation_offload_layers
 
+
 def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     """Get the performance matrix overrides from the YAML file."""
     perf = yaml_root.get("perf_matrix") if hasattr(yaml_root, "get") else None
@@ -113,6 +118,7 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     preset = gpu_block.get(num_gpus_yaml_key) or {}
 
     return preset
+
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
     """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""
