@@ -431,7 +431,7 @@ class CheckpointConfig:
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
 
-    ckpt_format: Literal["torch_dist", "zarr"] = "torch_dist"
+    ckpt_format: Literal["torch_dist", "zarr", "fsdp_dtensor"] = "torch_dist"
     """Checkpoint format to use."""
 
     ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
@@ -457,8 +457,10 @@ class CheckpointConfig:
     """Apply full load parallelization across DP for distributed checkpoints."""
 
     ckpt_assume_constant_structure: bool = False
-    """If the model and optimizer state dict structure is constant throughout a *single training job,
-    it allows for different checkpointing performance optimizations."""
+    """Assume the checkpoint structure is constant across saves to enable optimizations."""
+
+    strict_fsdp_dtensor_load: bool = False
+    """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
     dist_ckpt_strictness: Literal[
         "assume_ok_unexpected",
