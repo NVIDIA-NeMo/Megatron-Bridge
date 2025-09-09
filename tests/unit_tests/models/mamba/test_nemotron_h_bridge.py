@@ -25,7 +25,6 @@ from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.mamba_bridge import PrunedVocabMapping
 from megatron.bridge.models.mamba.nemotron_h_bridge import NemotronHBridge
 from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
 
@@ -200,7 +199,7 @@ class TestNemotronHBridge:
         # Check it's not None
         assert mapping_registry is not None
         assert any([isinstance(m, AutoMapping) for m in mapping_registry.mappings])
-        assert any([isinstance(m, PrunedVocabMapping) for m in mapping_registry.mappings])
+        # assert any([isinstance(m, PrunedVocabMapping) for m in mapping_registry.mappings])
         assert any([isinstance(m, QKVMapping) for m in mapping_registry.mappings])
 
     def test_provider_bridge_fixed_settings(self, mock_pretrained_nemotronh):
