@@ -15,7 +15,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import List, TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 from megatron.bridge.utils.import_utils import MISSING_NEMO_RUN_MSG
 
