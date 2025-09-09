@@ -57,95 +57,75 @@ ConfigContainer:
 
 perf_matrix:
   h100:
-    num_gpus_64:
+    num_gpus_1024:
       common:
         num_gpus_per_node: 8
         seq_length: 8192
         mbs: 1
-        gbs: 128
+        gbs: 512
+        cuda_graphs: false
+        tp: 8
+        pp: 8
+        cp: 2
+        vp: 8
+        ep: null
+        etp: null
+        fsdp: false
+      bf16:
+      fp8_ds:
+      fp8_cs:
+  b200:
+    num_gpus_128:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 8192
+        mbs: 1
+        gbs: 64
         cuda_graphs: false
         tp: 4
-        vp: 5
+        pp: 8
+        cp: 2
+        vp: 8
         ep: null
         etp: null
         fsdp: false
       bf16:
-        pp: 4
-        cp: 2
       fp8_ds:
-        pp: 8
-        cp: 1
       fp8_cs:
-        pp: 8
-        cp: 1
-  b200:
-    num_gpus_64:
-      common:
-        num_gpus_per_node: 8
-        seq_length: 8192
-        mbs: 1
-        gbs: 128
-        ep: null
-        etp: null
-      bf16:
-        tp: 2
-        pp: 4
-        cp: 2
-        vp: 5
-        fsdp: false
-        cuda_graphs: true
-      fp8_ds:
-        tp: 1
-        pp: 1
-        cp: 1
-        vp: 1
-        fsdp: true
-        cuda_graphs: false
-        recompute_num_layers: 5
-      fp8_cs:
-        tp: 1
-        pp: 1
-        cp: 1
-        vp: 1
-        fsdp: true
-        cuda_graphs: false
-        recompute_num_layers: 5
       fp8_mx:
-        tp: 2
-        pp: 4
-        cp: 1
-        vp: 5
-        fsdp: false
-        cuda_graphs: false
   gb200:
-    num_gpus_64:
+    num_gpus_128:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
         mbs: 1
-        gbs: 128
+        gbs: 64
         cuda_graphs: false
-        cp: 1
         ep: null
         etp: null
       bf16:
-        tp: 1
-        pp: 1
-        vp: 1
-        fsdp: true
-        recompute_num_layers: 20
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        fsdp: false
       fp8_ds:
-        tp: 1
-        pp: 1
-        vp: 1
-        fsdp: true
-      fp8_cs:
-        tp: 1
-        pp: 1
-        vp: 1
-        fsdp: true
-      fp8_mx:
         tp: 2
-        pp: 4
-        vp: 5
+        pp: 1
+        cp: 1
+        vp: 1
+        fsdp: true
+        cpu_offloading_num_layers: 95
+      fp8_cs:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: 1
+        fsdp: true
+        cpu_offloading_num_layers: 95
+      fp8_mx:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
         fsdp: false

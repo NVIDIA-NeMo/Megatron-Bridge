@@ -86,6 +86,20 @@ def set_cuda_graph_overrides(recipe: Any, perf_overrides: Any) -> None:
     recipe.model.use_te_rng_tracker = enable_cuda_graph
     recipe.rng.te_rng_tracker = enable_cuda_graph
 
+def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
+    """Set the recompute num layers overrides from the performance matrix."""
+    recompute_num_layers = perf_overrides.get("recompute_num_layers", None)
+    if recompute_num_layers is not None:
+        recipe.model.config.recompute_granularity = "full"
+        recipe.model.config.recompute_method = "block"
+        recipe.model.config.recompute_num_layers = recompute_num_layers
+
+    cpu_offloading_num_layers = perf_overrides.get("cpu_offloading_num_layers", 0)
+    if cpu_offloading_num_layers > 0:
+        recipe.model.config.cpu_offloading = True
+        recipe.model.config.cpu_offloading_weights = False
+        recipe.model.config.cpu_offloading_num_layers = activation_offload_layers
+
 def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     """Get the performance matrix overrides from the YAML file."""
     perf = yaml_root.get("perf_matrix") if hasattr(yaml_root, "get") else None
@@ -127,5 +141,6 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
 
     recipe.ddp.use_megatron_fsdp = perf_overrides.get("fsdp", False)
     set_cuda_graph_overrides(recipe, perf_overrides)
+    set_recompute_overrides(recipe, perf_overrides)
 
     recipe.model.sequence_parallel = bool(recipe.model.tensor_model_parallel_size > 1)
