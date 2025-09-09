@@ -15,7 +15,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 from megatron.bridge.utils.import_utils import MISSING_NEMO_RUN_MSG
 
@@ -38,6 +38,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 # This file contains plugins based on NeMo-Run's run.Plugin API.
 # Plugins operate both on a configured task and an executor at the same time, and are specific to NeMo-Run.
 # These plugins work by modifying the ConfigContainer configuration overrides.
+
+
+def _format_list_for_override(values: List | int):
+    """Render a Python list into a Hydra/CLI-safe list string without spaces.
+
+    Example: [0, 3] -> "[0,3]"
+    """
+    if isinstance(values, int):
+        values = [values]
+    return "[" + ",".join(str(v) for v in values) + "]"
 
 
 @dataclass(kw_only=True)
@@ -207,7 +217,7 @@ class NsysPlugin(Plugin):
                 "profiling.use_nsys_profiler=true",
                 f"profiling.profile_step_start={self.profile_step_start}",
                 f"profiling.profile_step_end={self.profile_step_end}",
-                f"profiling.profile_ranks={self.profile_ranks or [0]}",
+                f"profiling.profile_ranks={_format_list_for_override(self.profile_ranks or [0])}",
                 f"profiling.record_shapes={str(self.record_shapes).lower()}",
             ]
             task.args.extend(cli_overrides)
@@ -262,7 +272,7 @@ class PyTorchProfilerPlugin(Plugin):
                 "profiling.use_pytorch_profiler=true",
                 f"profiling.profile_step_start={self.profile_step_start}",
                 f"profiling.profile_step_end={self.profile_step_end}",
-                f"profiling.profile_ranks={self.profile_ranks or [0]}",
+                f"profiling.profile_ranks={_format_list_for_override(self.profile_ranks or [0])}",
                 f"profiling.record_memory_history={str(self.record_memory_history).lower()}",
                 f"profiling.memory_snapshot_path={self.memory_snapshot_path}",
                 f"profiling.record_shapes={str(self.record_shapes).lower()}",
