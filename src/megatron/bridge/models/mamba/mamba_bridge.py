@@ -129,10 +129,8 @@ class MambaBridge(MegatronModelBridge):
                     k="backbone.layers.*.mixer.k_proj.weight",
                     v="backbone.layers.*.mixer.v_proj.weight",
                 ),
-                PrunedVocabMapping(
-                    megatron_param="embedding.word_embeddings.weight", hf_param="backbone.embeddings.weight"
-                ),
-                PrunedVocabMapping(megatron_param="output_layer.weight", hf_param="lm_head.weight"),
+                AutoMapping(megatron_param="embedding.word_embeddings.weight", hf_param="backbone.embeddings.weight"),
+                AutoMapping(megatron_param="output_layer.weight", hf_param="lm_head.weight"),
             ]
         )
 
