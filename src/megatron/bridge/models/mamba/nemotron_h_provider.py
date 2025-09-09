@@ -65,6 +65,7 @@ class NemotronHModel8BProvider(NemotronHModelProvider):
     num_layers: int = 52
     hidden_size: int = 4096
     mamba_state_dim: int = 128
+    mamba_num_heads: int = 128
     ffn_hidden_size: int = 21504
     num_attention_heads: int = 32
 
@@ -79,6 +80,7 @@ class NemotronHModel47BProvider(NemotronHModelProvider):
     num_layers: int = 98
     hidden_size: int = 8192
     mamba_state_dim: int = 256
+    mamba_num_heads: int = 256
     ffn_hidden_size: int = 30720
     num_attention_heads: int = 64
 
@@ -94,6 +96,7 @@ class NemotronHModel56BProvider(NemotronHModelProvider):
     num_layers: int = 118
     hidden_size: int = 8192
     mamba_state_dim: int = 256
+    mamba_num_heads: int = 256
     ffn_hidden_size: int = 32768
     num_attention_heads: int = 64
 
@@ -106,11 +109,11 @@ class NemotronNano9Bv2Provider(NemotronHModelProvider):
     num_layers: int = 56
     hidden_size: int = 4480
     mamba_num_heads: int = 128
-    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 15680
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
+    seq_length: int = 131072
 
 
 @dataclass
@@ -121,8 +124,8 @@ class NemotronNano12Bv2Provider(NemotronHModelProvider):
     num_layers: int = 62
     hidden_size: int = 5120
     mamba_num_heads: int = 128
-    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 20480
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
+    seq_length: int = 131072

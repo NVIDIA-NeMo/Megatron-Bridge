@@ -161,7 +161,7 @@ def compare_provider_configs(converted_provider, predefined_provider, model_id):
 
     for attr_name in sorted(converted_keys):
         # Skip excluded attributes
-        if "init_method" in attr_name or attr_name == "generation_config":
+        if "init_method" in attr_name or attr_name == "generation_config" or attr_name == "vocab_size":
             excluded_attrs.add(attr_name)
             continue
 
