@@ -540,7 +540,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             )
             for i in range(self.ep_size)
         ]
-        assert hf_param_name in gathered_expert_param_names, (
+        assert str(hf_param_name) in gathered_expert_param_names, (
             f"hf_param_name {hf_param_name} not in gathered_expert_param_names {gathered_expert_param_names}"
         )
 
@@ -766,7 +766,8 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if megatron_weights is None:
             return {}
 
-        if self.tp_size == 1:
+        if self.tp_size == 1 or len(megatron_weights.shape) == 1:
+            # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
             gathered = self.gather_from_tp_ranks(megatron_weights)
@@ -795,7 +796,12 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Replicate weight to all TP ranks."""
-        target_device = megatron_module.weight.device
+        try:
+            target_device = megatron_module.weight.device
+        except AttributeError:
+            # the parameter may not be called "weight"
+            target_device = next(megatron_module.parameters()).device
+        print(f"{self.hf_param=} {target_device=}")
         hf_weights = hf_weights.to(device=target_device)
         if self.tp_size == 1:
             return hf_weights
@@ -883,6 +889,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "TELayerNormColumnParallelLinear",
             "TEColumnParallelGroupedLinear",
             "VocabParallelEmbedding",
+            "DotProductAttention",  # for attention sink only
+            "TEDotProductAttention",  # for attention sink only
         },
         "row": {
             "RowParallelLinear",
@@ -899,8 +907,6 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "L2Norm",
             # Other non-parallel modules
             "IdentityOp",
-            "DotProductAttention",
-            "TEDotProductAttention",
             "TopKRouter",
         },
     }

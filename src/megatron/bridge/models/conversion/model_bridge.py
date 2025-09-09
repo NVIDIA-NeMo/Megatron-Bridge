@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import (
     Callable,
+    Dict,
     Generic,
     Iterable,
     List,
@@ -358,6 +359,43 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 yield task
                 progress.update(task_id, advance=1)
 
+
+    def modify_loaded_hf_weight(self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        """ Load weights from HuggingFace state dict.
+        This function can be overridden by subclasses to preprocess the HF weights before conversion, such as renaming
+        certain parameters to avoid mapping conflicts, or dequantize the weights.
+
+        Note that loading is done lazily before this function is called, so the weights are actually loaded in
+        this function when hf_state_dict.__getitem__ is called.
+
+        Args:
+            hf_param: The parameter name or dictionary of parameter names to load.
+            hf_state_dict: The HuggingFace state dictionary.
+
+        Returns:
+            The loaded weights.
+        """
+        if isinstance(hf_param, str):
+            hf_weights = hf_state_dict[hf_param]
+        else:
+            hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
+        return hf_weights
+
+
+    def modify_converted_hf_weight(self, converted_weights_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """ Modify the converted weights after conversion. By default, no modification is done.
+        This function can be overridden by subclasses to postprocess the converted weights, such as merging the
+        weights of multiple experts or quantizing the weights.
+
+        Args:
+            converted_weights_dict: The converted weights dictionary.
+
+        Returns:
+            The modified weights dictionary.
+        """
+        return converted_weights_dict
+
+
     def load_weights_hf_to_megatron(
         self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
     ) -> List[MegatronModel]:
@@ -414,10 +452,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             if task.megatron_module is None:
                 continue
             # 1) Fetch source tensor(s) from HF state dict
-            if isinstance(task.mapping.hf_param, str):
-                hf_weights = hf_state_dict[task.mapping.hf_param]
-            else:
-                hf_weights = {k: hf_state_dict[v] for k, v in task.mapping.hf_param.items()}
+            hf_weights = self.modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
 
             # 2) Delegate conversion & distribution to the bridge
             converted_weights = task.mapping.hf_to_megatron(hf_weights, task.megatron_module)
@@ -576,7 +611,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         embeddings_are_tied = model_config.share_embeddings_and_output_weights
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
-
+            converted_weights_dict = self.modify_converted_hf_weight(task, converted_weights_dict)  # dict will be none except for one expert;
             # All ranks get the full tensor
             for hf_name, tensor in converted_weights_dict.items():
                 final_tensor = tensor.cpu() if cpu else tensor
@@ -757,7 +792,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
     def build_conversion_tasks(
-        self, hf_pretrained: HFPreTrained, megatron_model: List[MegatronModel]
+        self,
+        hf_pretrained: HFPreTrained,
+        megatron_model: List[MegatronModel],
+        *,
+        strict: bool = False,
     ) -> List[None | WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
 
@@ -809,15 +848,16 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     continue
 
                 # ensure hf weights exist
-                if isinstance(mapping.hf_param, str):
-                    if mapping.hf_param not in hf_keys:
-                        logger.warning(f"WARNING: Can't find {mapping.hf_param} in hf_keys")
-                        continue
-                else:
-                    missing_params = [hf_param for hf_param in mapping.hf_param.values() if hf_param not in hf_keys]
-                    if missing_params:
-                        logger.warning(f"WARNING: Can't find the following HF parameters in hf_keys: {missing_params}")
-                        continue
+                if strict:
+                    if isinstance(mapping.hf_param, str):
+                        if mapping.hf_param not in hf_keys:
+                            logger.warning(f"WARNING: Can't find {mapping.hf_param} in hf_keys")
+                            continue
+                    else:
+                        missing_params = [hf_param for hf_param in mapping.hf_param.values() if hf_param not in hf_keys]
+                        if missing_params:
+                            logger.warning(f"WARNING: Can't find the following HF parameters in hf_keys: {missing_params}")
+                            continue
 
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
 
@@ -956,6 +996,16 @@ def register_bridge_implementation(
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
+        # Thread export quantization preference into the bridge instance if present on HF handle
+        try:
+            bridge.quantized = bool(getattr(hf_pretrained, "export_quantized", False))
+        except Exception:
+            # Be resilient to odd configs
+            bridge.quantized = False
+
+        # allow bridge to access model config
+        bridge.hf_config = hf_pretrained.config
+
         return bridge.stream_weights_megatron_to_hf(
             megatron_model, hf_pretrained, cpu=cpu, show_progress=show_progress, conversion_tasks=conversion_tasks
         )
