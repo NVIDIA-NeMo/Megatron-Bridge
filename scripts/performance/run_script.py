@@ -93,6 +93,9 @@ def main():
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
 
+    #if int(os.environ.get('LOCAL_RANK', 0)) == 0:
+    #    import pdb; pdb.set_trace()
+
     pretrain(config=recipe, forward_step_func=forward_step)
 
 
