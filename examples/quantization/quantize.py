@@ -24,8 +24,8 @@ The process is as follows:
     using the `--megatron-save-path` argument.
 
 Usage:
-torchrun --nproc_per_node 2 examples/models/ptq.py --export-quant-cfg fp8
-torchrun --nproc_per_node 2 examples/models/ptq.py --export-quant-cfg fp8 --megatron-save-path ./megatron_checkpoint
+torchrun --nproc_per_node 2 examples/models/quantize.py --export-quant-cfg fp8
+torchrun --nproc_per_node 2 examples/models/quantize.py --export-quant-cfg fp8 --megatron-save-path ./megatron_checkpoint
 """
 
 import argparse
@@ -33,26 +33,24 @@ import os
 import sys
 import warnings
 
+import modelopt.torch.quantization as mtq
 import torch
 from datasets import load_dataset
+from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.utils import unwrap_model
+from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
 from rich.console import Console
 from rich.table import Table
 from tqdm import tqdm
 
-import modelopt
-import modelopt.torch.quantization as mtq
-
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
+from megatron.bridge.models.gpt_provider import quantization_layer_spec
 
-from megatron.core.transformer.moe.router import TopKRouter
-from modelopt.torch.utils.plugins.megatron_generate import megatron_generate
-from megatron.training.utils import unwrap_model
-from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
-HF_MODEL_ID = "/models/Llama-3.2-1B"
+HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 console = Console()
 
 
@@ -69,7 +67,7 @@ QUANT_CFG_CHOICES = {
 def get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant=False, weight_only=False):
     """Return a quantization config based on the specified configuration."""
     mtq_config = QUANT_CFG_CHOICES[export_quant_cfg]
-    
+
     fp8_config = {"enable": True, "num_bits": (4, 3), "axis": None}
     fp4_config = {
         "num_bits": (2, 1),
@@ -77,7 +75,7 @@ def get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_qua
         "axis": None,
         "enable": True,
     }
-    
+
     if "fp8" == export_quant_cfg:
         # Enable Medusa heads and kv-cache quantization
         mtq_config["quant_cfg"]["*medusa_heads**"] = fp8_config
@@ -110,7 +108,7 @@ def get_calib_dataloader(calib_size=512, max_sequence_length=512):
 def _hf_dataset_forward_loop_func(model, tokenizer, calib_size, force_all_expert_routing=False):
     """Forward loop function for calibration using HuggingFace dataset."""
     dataloader = get_calib_dataloader(calib_size)
-    
+
     if force_all_expert_routing:
         for name, module in model.named_modules():
             if isinstance(module, TopKRouter):
@@ -119,7 +117,7 @@ def _hf_dataset_forward_loop_func(model, tokenizer, calib_size, force_all_expert
     for prompt in tqdm(dataloader, total=calib_size, disable=torch.distributed.get_rank()):
         tokens = tokenizer(prompt, return_tensors="pt")
         # Use megatron_generate for calibration (same as quantize.py)
-        generated_ids = megatron_generate(model, tokens.input_ids.cuda(), osl=1)
+        megatron_generate(model, tokens.input_ids.cuda(), osl=1)
 
         if force_all_expert_routing:
             for name, module in model.named_modules():
@@ -127,13 +125,13 @@ def _hf_dataset_forward_loop_func(model, tokenizer, calib_size, force_all_expert
                     module.topk = module.config.moe_router_topk
 
 
-def _custom_prompt_forward_loop_func(model, prompts, tokenizer, is_rank_0):
+def _custom_prompt_forward_loop_func(model, prompts, tokenizer, is_rank_0, osl=32):
     """Forward loop function for testing quantized model with custom prompts."""
     all_prompts = prompts.split("|")
-    
+
     for idx, prompt in tqdm(enumerate(all_prompts), disable=torch.distributed.get_rank()):
         tokens = tokenizer(prompt, return_tensors="pt")
-        generated_ids = megatron_generate(model, tokens.input_ids.cuda(0), osl=32, enable_kv_cache=False)
+        generated_ids = megatron_generate(model, tokens.input_ids.cuda(), osl=osl, enable_kv_cache=False)
         generated_texts = tokenizer.batch_decode(generated_ids)
         if is_rank_0:
             console.print(f"[green]Prompt {idx + 1}: {prompt}[/green]")
@@ -148,7 +146,7 @@ def main(
     ep: int = 1,
     etp: int = 1,
     megatron_save_path: str | None = None,
-    export_quant_cfg: str = "int8_sq",
+    export_quant_cfg: str = "fp8",
     calib_size: int = 512,
     compress: bool = False,
     weight_only: bool = False,
@@ -161,24 +159,22 @@ def main(
         console.print("This script must be launched with torchrun. Please run:")
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
         sys.exit(1)
-    
+
+    os.environ["MEGATRON_USE_TE"] = "false"
     bridge = AutoBridge.from_hf_pretrained(hf_model_id)
 
     model_provider = bridge.to_megatron_provider(load_weights=True)
     model_provider.tensor_model_parallel_size = tp
     model_provider.pipeline_model_parallel_size = pp
     model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp    
-    model_provider.transformer_layer_spec = lambda config: get_gpt_modelopt_spec(
-        config=config,
-        local_core_attention=False,
-        remap_te_layernorm=False,
-        real_quant_cfg="None",
-        use_arbitrary_attention_mask=True,
-    )
+    model_provider.expert_tensor_parallel_size = etp
+    model_provider.pipeline_dtype = torch.bfloat16
+    model_provider.transformer_layer_spec = quantization_layer_spec
+    # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+    model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
-    
+
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
 
@@ -199,25 +195,18 @@ def main(
     if export_quant_cfg in QUANT_CFG_CHOICES:
         if is_rank_0:
             console.print(f"[green]Quantizing the model with {export_quant_cfg} configuration...[/green]")
-        
+
         # Get the unwrapped model for quantization
         unwrapped_model = unwrap_model(megatron_model)[0]
-        
+
         # Get quantization configuration
-        mtq_config = get_modelopt_torch_quantization_config(
-            export_quant_cfg, 
-            export_kv_cache_quant, 
-            weight_only
-        )
-        
+        mtq_config = get_modelopt_torch_quantization_config(export_quant_cfg, export_kv_cache_quant, weight_only)
+
         # Define forward loop function for calibration
         ptq_forward_loop_func = lambda model: _hf_dataset_forward_loop_func(
-            model, 
-            bridge.hf_pretrained.tokenizer, 
-            calib_size, 
-            force_all_expert_routing
+            model, bridge.hf_pretrained.tokenizer, calib_size, force_all_expert_routing
         )
-        
+
         # Apply quantization
         if weight_only:
             mtq.quantize(unwrapped_model, mtq_config)
@@ -227,34 +216,30 @@ def main(
             unwrapped_model.calibration_mode = False
         else:
             mtq.quantize(unwrapped_model, mtq_config, ptq_forward_loop_func)
-        
+
         if compress:
             mtq.compress(unwrapped_model)
             if is_rank_0:
                 console.print("[green]Weights are now compressed to low-bit![/green]")
-        
+
         if is_rank_0:
             console.print(f"[green]Fake Quantized Model:\n {unwrapped_model}[/green]")
-        
-        for k, v in unwrapped_model.state_dict().items():
-            if "amax" not in k and "_scale" not in k:
-                continue
-            if isinstance(v, torch.Tensor):
-                table.add_row(
-                    k,
-                    str(tuple(v.shape)),
-                    f"{torch.max(torch.abs(v)):.4e}"
-                )
-            else:
-                table.add_row(k, "", "")
-        
+
         if is_rank_0:
+            for k, v in unwrapped_model.state_dict().items():
+                if "amax" not in k and "_scale" not in k:
+                    continue
+                if isinstance(v, torch.Tensor):
+                    table.add_row(k, str(tuple(v.shape)), f"{torch.max(torch.abs(v)):.4e}")
+                else:
+                    table.add_row(k, "", "")
+
             console.print(table)
 
     # Test quantized model with custom prompts
     if is_rank_0:
         console.print("[green]Testing quantized model with custom prompts...[/green]")
-    
+
     _custom_prompt_forward_loop_func(unwrapped_model, prompts, bridge.hf_pretrained.tokenizer, is_rank_0)
 
     # Save quantized model in Megatron format
@@ -266,7 +251,7 @@ def main(
         save_path = f"{model_name}_quantized_{export_quant_cfg}"
         if is_rank_0:
             console.print(f"[yellow]No --megatron-save-path specified. Using default path: {save_path}[/yellow]")
-    
+
     if is_rank_0:
         console.print(f"Saving quantized Megatron checkpoint in {save_path}...")
     bridge.save_megatron_model(megatron_model, save_path)
@@ -327,7 +312,7 @@ if __name__ == "__main__":
         default="Hello!|Born in California, Soyer trained as a",
         help="Input texts for testing quantized model. Please use | to separate different batches.",
     )
-    
+
     args = parser.parse_args()
     main(
         args.hf_model_id,

@@ -97,7 +97,7 @@ def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.use_modelopt:
+    if config.restore_modelopt_state:
         return quantization_layer_spec(config)
     elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
@@ -170,8 +170,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 
-    # add modelopt attribute
-    use_modelopt: bool = False
+    # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
+    # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
+
+    restore_modelopt_state: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.

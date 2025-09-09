@@ -243,7 +243,8 @@ def build_and_load_model(
     from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
     if has_modelopt_state(checkpoint_path):
-        model_cfg.use_modelopt = True
+        if hasattr(model_cfg, "restore_modelopt_state"):
+            model_cfg.restore_modelopt_state = True
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
@@ -286,13 +287,11 @@ def build_and_load_model(
         else:
             model = _call_model_provider(model_cfg)
 
-        if model_cfg.use_modelopt == True:
+        if getattr(model_cfg, "restore_modelopt_state", False):
             from megatron.bridge.training.post_training.checkpointing import (
-                load_modelopt_checkpoint,
                 load_modelopt_state,
             )
 
-            load_modelopt_checkpoint(model, checkpoint_path)
             load_modelopt_state(model, checkpoint_path)
 
         maybe_state_dict = _load_model_weights_from_checkpoint(
