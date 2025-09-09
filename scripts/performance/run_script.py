@@ -49,16 +49,21 @@ def main():
     elif args.model_name == "llama31" and args.model_size == "405b":
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
+        enable_deepep = True
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
             # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
             pipeline_parallelism=4,
             virtual_pipeline_parallelism=1,
+            enable_deepep=enable_deepep,  # enable this for token-dropless
         )
-        from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+        if not enable_deepep:
+            from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
-        recipe.model = apply_moe_token_drop(recipe.model)
+            recipe.model = apply_moe_token_drop(recipe.model)
+        else:
+            recipe.model.moe_router_force_load_balancing = True
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 
@@ -69,8 +74,14 @@ def main():
         ub_cfg = COMM_OVERLAP_CONFIG_MAP[f"{args.model_name}_{args.model_size}"][args.gpu][args.compute_dtype]
         recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
 
-    # recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
-    # recipe.comm_overlap.delay_wgrad_compute = False
+    recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+    recipe.comm_overlap.delay_wgrad_compute = True
+    recipe.model.moe_shared_expert_overlap = False
+
+    # recompute modules
+    recipe.model.recompute_modules = ["mla_up_proj", "layernorm"]
+    recipe.model.recompute_granularity = "selective"
+
     # recipe.comm_overlap.overlap_grad_reduce = True
     # recipe.comm_overlap.overlap_param_gather = True
 
