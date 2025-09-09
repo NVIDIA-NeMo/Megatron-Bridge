@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import json
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -73,7 +76,7 @@ class TestNemotronHConversion:
             setattr(config, k, v)
 
         # Create model with random weights and convert to bfloat16
-        model_class = get_causal_lm_class_via_auto_map("nvidia/Nemotron-H-8B-Base-8K")
+        model_class = get_causal_lm_class_via_auto_map("nvidia/Nemotron-H-8B-Base-8K", config)
         model = model_class(config)
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 
@@ -81,8 +84,10 @@ class TestNemotronHConversion:
         tokenizer = AutoTokenizer.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         tokenizer.save_pretrained(model_dir)
 
-        # Save model and config to directory
+        # Save model, config, and modeling code to directory
         model.save_pretrained(model_dir, safe_serialization=True)
+        modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
+        shutil.copy(modeling_filepath, model_dir)
 
         # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"
@@ -116,6 +121,12 @@ class TestNemotronHConversion:
         tokenizer_config_file = model_path / "tokenizer_config.json"
         assert tokenizer_config_file.exists(), f"tokenizer_config.json not found at {tokenizer_config_file}"
 
+        # Check for modeling file
+        nemotronh_modeling_file = model_path / "modeling_nemotron_h.py"
+        assert nemotronh_modeling_file.exists(), (
+            f"modeling_nemotron_h.py must be copied to toy model path. not found at {nemotronh_modeling_file}"
+        )
+
         # Load and verify config
         with open(config_file) as f:
             config_data = json.load(f)
@@ -133,11 +144,12 @@ class TestNemotronHConversion:
                 nemotronh_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
+                trust_remote_code=True,
             )
 
             # Try loading the tokenizer as well
             try:
-                tokenizer = AutoTokenizer.from_pretrained(nemotronh_toy_model_path)
+                tokenizer = AutoTokenizer.from_pretrained(nemotronh_toy_model_path, trust_remote_code=True)
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
