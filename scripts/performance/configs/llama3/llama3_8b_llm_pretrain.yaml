@@ -59,7 +59,7 @@ perf_matrix:
         tp: 1
         pp: 1
         vp: null
-        ep: null
+        ep: 1
         etp: null
       bf16:
         cp: 2
@@ -86,7 +86,7 @@ perf_matrix:
         pp: 1
         cp: 1
         vp: null
-        ep: null
+        ep: 1
         etp: null
         fsdp: false
       bf16:
@@ -105,7 +105,7 @@ perf_matrix:
         pp: 1
         cp: 1
         vp: null
-        ep: null
+        ep: 1
         etp: null
         fsdp: false
       bf16:

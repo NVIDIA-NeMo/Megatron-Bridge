@@ -79,7 +79,7 @@ if __name__ == "__main__":
     logger.info(f"Custom mounts: {custom_mounts}")
 
     num_gpus_per_node = args.gpus_per_node
-    yaml_overrides_omega = OmegaConf.load(args.config_file)
+    yaml_overrides_omega = OmegaConf.load(config_filepath)
     preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
     if preset:
         num_gpus_per_node = preset.get("num_gpus_per_node", args.gpus_per_node)
@@ -112,7 +112,7 @@ if __name__ == "__main__":
             arg_value = getattr(args, arg_name)
             if arg_value is not None:
                 target_script_args.extend([f"--{arg_name}", str(arg_value)])
-    target_script_args.extend(["-a", "dummy", "-p", "dummy"])
+    target_script_args.extend(["-a", "dummy", "-p", "dummy", "-ng", args.num_gpus])
 
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),
