@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.mamba.mamba_bridge import MambaBridge
 from megatron.bridge.models.mamba.mamba_provider import (
     MambaProvider,
     MambaProvider1_3B,
