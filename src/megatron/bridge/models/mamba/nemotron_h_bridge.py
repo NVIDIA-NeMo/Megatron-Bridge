@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Optional
 
 import torch
@@ -23,6 +24,9 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 class PrunedVocabMapping(AutoMapping):
@@ -93,6 +97,7 @@ class NemotronHBridge(MegatronModelBridge):
         )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
+        logger.warning("WARNING: NemotronHBridge is currently experimental and may not work with tensor parallel > 1.")
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
 
