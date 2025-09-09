@@ -75,11 +75,14 @@ def main():
         recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
 
     recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
-    recipe.comm_overlap.delay_wgrad_compute = True
+    # (TODO) fix this when right TE is installed
+    recipe.comm_overlap.delay_wgrad_compute = False
     recipe.model.moe_shared_expert_overlap = False
 
     # recompute modules
-    recipe.model.recompute_modules = ["mla_up_proj", "layernorm"]
+    # (TODO) Change to this recompute scheme when using only 8 GPUs
+    # recipe.model.recompute_modules = ["mla_up_proj", "layernorm"]
+    recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
     recipe.model.recompute_granularity = "selective"
 
     # recipe.comm_overlap.overlap_grad_reduce = True

@@ -19,15 +19,15 @@
 model:
   seq_length: 4096
   tensor_model_parallel_size: 2
-  pipeline_model_parallel_size: 8
   context_parallel_size: 1
-  virtual_pipeline_model_parallel_size: 2
+  pipeline_model_parallel_size: 8
+  virtual_pipeline_model_parallel_size: 4
+  pipeline_model_parallel_layout: "Et|(tt|)*30mL"
   expert_model_parallel_size: 64
   expert_tensor_parallel_size: 1
   cross_entropy_fusion_impl: "te"
   use_te_rng_tracker: true
   moe_router_fusion: true
-  moe_router_force_load_balancing: true
 
 rng:
   te_rng_tracker: true
