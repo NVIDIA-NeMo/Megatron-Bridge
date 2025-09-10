@@ -126,3 +126,26 @@ class NemotronNano12Bv2Provider(NemotronHModelProvider):
     ffn_hidden_size: int = 20480
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
+
+
+@dataclass
+class NemotronNanoNext3Bv2Provider(NemotronHModelProvider):
+    """Configuration for a 3B parameter Nemotron Nano Next v2 model."""
+
+    hybrid_override_pattern: str = "MEMEM*EMEM*EMEM*EMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEME"
+    num_layers: int = 54
+    hidden_size: int = 268
+    mamba_num_heads: int = 64
+    kv_channels: int = 128
+    mamba_state_dim: int = 128
+    ffn_hidden_size: int = 1856
+    num_attention_heads: int = 32
+    mamba_head_dim: int = 64
+    num_moe_experts: int = 128
+    moe_ffn_hidden_size: int = 1856
+    moe_shared_expert_intermediate_size: int = 3712  # 1856 * 2 shared expert
+    moe_router_topk: int = 6
+    moe_router_topk_scaling_factor: float = 2.5
+    moe_aux_loss_coeff: float = 0.0001
+    moe_router_score_function: str = "sigmoid"
+    moe_router_enable_expert_bias: bool = True

@@ -54,6 +54,9 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
+from megatron.bridge.models.mamba import (
+    NemotronNanoNext3Bv2Provider,
+)
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
@@ -140,4 +143,5 @@ __all__ = [
     "DeepSeekV2Provider",
     "DeepSeekV3Provider",
     "MoonlightProvider",
+    "NemotronNanoNext3Bv2Provider",
 ]
