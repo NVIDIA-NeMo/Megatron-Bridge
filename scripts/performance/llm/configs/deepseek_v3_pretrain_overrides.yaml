@@ -28,6 +28,7 @@ model:
   cross_entropy_fusion_impl: "te"
   use_te_rng_tracker: true
   moe_router_fusion: true
+  gradient_accumulation_fusion: true
 
 rng:
   te_rng_tracker: true

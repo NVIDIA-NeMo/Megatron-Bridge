@@ -37,6 +37,7 @@ model:
   moe_router_fusion: true
   moe_permute_fusion: true
   apply_rope_fusion: true
+  gradient_accumulation_fusion: false
 
 rng:
   te_rng_tracker: true

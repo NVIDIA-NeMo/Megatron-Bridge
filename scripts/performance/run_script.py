@@ -76,7 +76,7 @@ def main():
 
     recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
     # (TODO) fix this when right TE is installed
-    recipe.comm_overlap.delay_wgrad_compute = False
+    recipe.comm_overlap.delay_wgrad_compute = True
     recipe.model.moe_shared_expert_overlap = False
 
     # recompute modules

@@ -61,13 +61,19 @@ if __name__ == "__main__":
                 enable_vboost=args.enable_vboost,
                 nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
                 gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
+                layernorm_sm_margin=20
+                if args.gpu.lower()
+                in [
+                    "h100",
+                ]
+                else 16,
             )
         ]
         if HAS_NEMO_RUN
         else []
     )
     if HAS_NEMO_RUN and args.enable_nsys and not args.localrun:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11, profile_ranks=[0]))
+        plugins.append(NsysPlugin(profile_step_start=12, profile_step_end=13, profile_ranks=[0]))
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
