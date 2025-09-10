@@ -18,10 +18,10 @@
 
 model:
   seq_length: 4096
-  tensor_model_parallel_size: 2
+  tensor_model_parallel_size: 1
   context_parallel_size: 1
-  pipeline_model_parallel_size: 8
-  virtual_pipeline_model_parallel_size: 4
+  pipeline_model_parallel_size: 4
+  virtual_pipeline_model_parallel_size: 8
   pipeline_model_parallel_layout: "Et|(tt|)*30mL"
   expert_model_parallel_size: 64
   expert_tensor_parallel_size: 1
@@ -29,12 +29,15 @@ model:
   use_te_rng_tracker: true
   moe_router_fusion: true
   gradient_accumulation_fusion: true
+  external_cuda_graph: true
+  cuda_graph_scope: "attn"
+
 
 rng:
   te_rng_tracker: true
 
 train:
-  global_batch_size: 8192
+  global_batch_size: 2048
   micro_batch_size: 1
   train_iters: 25
   eval_iters: 0

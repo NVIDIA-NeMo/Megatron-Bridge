@@ -27,7 +27,7 @@ model:
   expert_tensor_parallel_size: 1
   cross_entropy_fusion_impl: "te"
   use_te_rng_tracker: true
-  external_cuda_graph: false
+  external_cuda_graph: true
   cuda_graph_scope: "attn"
   num_moe_experts: 8
   num_layers: 3
@@ -37,7 +37,7 @@ model:
   moe_router_fusion: true
   moe_permute_fusion: true
   apply_rope_fusion: true
-  gradient_accumulation_fusion: false
+  gradient_accumulation_fusion: true
 
 rng:
   te_rng_tracker: true
