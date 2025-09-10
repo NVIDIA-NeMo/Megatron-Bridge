@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.qwen import Qwen25ModelProvider32B
+from megatron.bridge.models.qwen import Qwen2ModelProvider
 from megatron.bridge.recipes.qwen.qwen25_32b import model_config, pretrain_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
@@ -33,7 +33,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, Qwen25ModelProvider32B)
+        assert isinstance(config, Qwen2ModelProvider)
         assert config.tensor_model_parallel_size == 8  # Default for 32B model
         assert config.pipeline_model_parallel_size == 2  # Default for 32B model
         assert config.pipeline_dtype == torch.bfloat16  # Default for 32B model
@@ -51,7 +51,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Qwen25ModelProvider32B)
+        assert isinstance(config.model, Qwen2ModelProvider)
 
         # Check training configuration
         assert config.train.train_iters == 300000

@@ -16,8 +16,7 @@ from typing import List, Optional, Union
 
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider70B
-from megatron.bridge.recipes.llama import llama3_70b
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -34,7 +33,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 8,
     sequence_parallelism: bool = True,
-) -> Llama3ModelProvider70B:
+):
     """
     Configure the Llama3 70B model for 64k sequence length training.
 
@@ -47,22 +46,20 @@ def model_config(
         sequence_parallelism (bool): Whether to use sequence parallelism. Default optimized for 70B with 64k sequences.
 
     Returns:
-        Llama3ModelProvider70B: Configuration for the Llama3 70B model optimized for 64k sequences.
+        Configuration for the Llama3 70B model optimized for 64k sequences.
     """
-    # Get base model config and override specific parameters for 64k sequences
-    model_cfg = llama3_70b.model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
-    )
-
-    # Override sequence length to 64k to match dataset config
-    model_cfg.seq_length = SEQUENCE_LENGTH_64K
-
-    return model_cfg
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    provider.seq_length = SEQUENCE_LENGTH_64K
+    
+    return provider
 
 
 def pretrain_config(

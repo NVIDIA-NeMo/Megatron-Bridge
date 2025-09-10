@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider235B_A22B
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -42,7 +42,7 @@ def model_config(
     context_parallelism: int = 2,
     expert_parallelism: Optional[int] = 8,
     sequence_parallelism: bool = True,
-) -> Qwen3MoEModelProvider235B_A22B:
+):
     """
     Configure the Qwen3 235B-A22B MoE model.
 
@@ -56,22 +56,23 @@ def model_config(
         sequence_parallelism (bool): Whether to use sequence parallelism.
 
     Returns:
-        Qwen3MoEModelProvider235B_A22B: Configuration for the Qwen3 235B-A22B MoE model.
+        Configuration for the Qwen3 235B-A22B MoE model.
     """
-    model_cfg = Qwen3MoEModelProvider235B_A22B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        expert_model_parallel_size=expert_parallelism,
-        expert_tensor_parallel_size=1,
-        sequence_parallel=sequence_parallelism,
-        account_for_embedding_in_pipeline_split=True,
-        account_for_loss_in_pipeline_split=True,
-    )
-
-    return model_cfg
+    bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.expert_model_parallel_size = expert_parallelism
+    provider.expert_tensor_parallel_size = 1
+    provider.sequence_parallel = sequence_parallelism
+    provider.account_for_embedding_in_pipeline_split = True
+    provider.account_for_loss_in_pipeline_split = True
+    
+    return provider
 
 
 def pretrain_config(

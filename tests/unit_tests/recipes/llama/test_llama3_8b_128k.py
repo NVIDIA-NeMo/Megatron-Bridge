@@ -18,7 +18,7 @@ import tempfile
 import pytest
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider8B
+from megatron.bridge.models.llama import LlamaModelProvider
 from megatron.bridge.recipes.llama.llama3_8b_128k import SEQUENCE_LENGTH_128K, model_config, pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -31,7 +31,7 @@ class TestModelConfig:
         """Test model_config with default parameters optimized for 128k sequences."""
         config = model_config()
 
-        assert isinstance(config, Llama3ModelProvider8B)
+        assert isinstance(config, LlamaModelProvider)
         # Verify 128k-optimized defaults
         assert config.tensor_model_parallel_size == 4  # Same as 64k
         assert config.pipeline_model_parallel_size == 2  # Same as 64k
@@ -72,7 +72,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Llama3ModelProvider8B)
+        assert isinstance(config.model, LlamaModelProvider)
 
         # Check that sequence length is set to 128k in both model and dataset
         assert config.dataset.sequence_length == SEQUENCE_LENGTH_128K

@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.llama import Llama31ModelProvider405B
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import (
@@ -46,7 +46,7 @@ def model_config(
     sequence_parallelism: bool = True,
     account_for_embedding_in_pipeline_split: bool = True,
     account_for_loss_in_pipeline_split: bool = True,
-) -> Llama31ModelProvider405B:
+):
     """
     Configure the Llama3.1 405B model.
 
@@ -61,18 +61,21 @@ def model_config(
         account_for_loss_in_pipeline_split (bool): Whether to account for loss in pipeline split.
 
     Returns:
-        Llama31ModelProvider405B: Configuration for the Llama3.1 405B model.
+        Configuration for the Llama3.1 405B model.
     """
-    return Llama31ModelProvider405B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-        account_for_embedding_in_pipeline_split=account_for_embedding_in_pipeline_split,
-        account_for_loss_in_pipeline_split=account_for_loss_in_pipeline_split,
-    )
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    provider.account_for_embedding_in_pipeline_split = account_for_embedding_in_pipeline_split
+    provider.account_for_loss_in_pipeline_split = account_for_loss_in_pipeline_split
+    
+    return provider
 
 
 def pretrain_config(

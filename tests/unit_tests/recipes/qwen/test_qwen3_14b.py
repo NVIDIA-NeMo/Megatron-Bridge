@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megatron.bridge.models.qwen import Qwen3ModelProvider14B
+from megatron.bridge.models.qwen import Qwen3ModelProvider
 from megatron.bridge.recipes.qwen.qwen3_14b import model_config, pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -31,7 +31,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, Qwen3ModelProvider14B)
+        assert isinstance(config, Qwen3ModelProvider)
         assert config.tensor_model_parallel_size == 8  # Default for Qwen3 14B model
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype is None
@@ -49,7 +49,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Qwen3ModelProvider14B)
+        assert isinstance(config.model, Qwen3ModelProvider)
 
         # Check training configuration
         assert config.train.train_iters == 300000

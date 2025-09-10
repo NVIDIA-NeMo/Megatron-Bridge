@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.qwen import Qwen2ModelProvider1P5B
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -42,7 +42,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
-) -> Qwen2ModelProvider1P5B:
+):
     """
     Configure the Qwen2 1.5B model.
 
@@ -55,16 +55,19 @@ def model_config(
         sequence_parallelism (bool): Whether to use sequence parallelism.
 
     Returns:
-        Qwen2ModelProvider1P5B: Configuration for the Qwen2 1.5B model.
+        Configuration for the Qwen2 1.5B model.
     """
-    return Qwen2ModelProvider1P5B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-    )
+    bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-1.5B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    
+    return provider
 
 
 def pretrain_config(

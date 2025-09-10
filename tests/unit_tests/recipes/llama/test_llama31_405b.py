@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.llama import Llama31ModelProvider405B
+from megatron.bridge.models.llama import LlamaModelProvider
 from megatron.bridge.recipes.llama.llama31_405b import model_config, pretrain_config
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
@@ -36,7 +36,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, Llama31ModelProvider405B)
+        assert isinstance(config, LlamaModelProvider)
         assert config.tensor_model_parallel_size == 8
         assert config.pipeline_model_parallel_size == 8
         assert config.pipeline_dtype == torch.bfloat16
@@ -129,7 +129,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Llama31ModelProvider405B)
+        assert isinstance(config.model, LlamaModelProvider)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251

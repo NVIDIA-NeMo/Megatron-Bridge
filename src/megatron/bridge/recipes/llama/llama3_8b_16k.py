@@ -16,7 +16,7 @@ from typing import List, Optional, Union
 
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider8B
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.llama import llama3_8b
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
@@ -33,7 +33,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 2,
     sequence_parallelism: bool = True,
-) -> Llama3ModelProvider8B:
+):
     """
     Configure the Llama3 8B model with 16k sequence length optimizations.
 
@@ -46,18 +46,20 @@ def model_config(
         sequence_parallelism (bool): Whether to use sequence parallelism.
 
     Returns:
-        Llama3ModelProvider8B: Configuration for the Llama3 8B model with 16k optimizations.
+        Configuration for the Llama3 8B model with 16k optimizations.
     """
-    cfg = Llama3ModelProvider8B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-    )
-    cfg.seq_length = SEQ_LENGTH
-    return cfg
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    provider.seq_length = SEQ_LENGTH
+    
+    return provider
 
 
 def pretrain_config(

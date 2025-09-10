@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider30B_A3B
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -42,7 +42,7 @@ def model_config(
     context_parallelism: int = 1,
     expert_parallelism: Optional[int] = 4,
     sequence_parallelism: bool = True,
-) -> Qwen3MoEModelProvider30B_A3B:
+):
     """
     Configure the Qwen3 30B-A3B MoE model.
 
@@ -56,25 +56,26 @@ def model_config(
         sequence_parallelism (bool): Whether to use sequence parallelism.
 
     Returns:
-        Qwen3MoEModelProvider30B_A3B: Configuration for the Qwen3 30B-A3B MoE model.
+        Configuration for the Qwen3 30B-A3B MoE model.
     """
-    model_cfg = Qwen3MoEModelProvider30B_A3B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        expert_model_parallel_size=expert_parallelism,
-        expert_tensor_parallel_size=1,
-        sequence_parallel=sequence_parallelism,
-    )
+    bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.expert_model_parallel_size = expert_parallelism
+    provider.expert_tensor_parallel_size = 1
+    provider.sequence_parallel = sequence_parallelism
 
     # Add recompute settings for memory optimization
-    model_cfg.recompute_granularity = "full"
-    model_cfg.recompute_method = "uniform"
-    model_cfg.recompute_num_layers = 1
+    provider.recompute_granularity = "full"
+    provider.recompute_method = "uniform"
+    provider.recompute_num_layers = 1
 
-    return model_cfg
+    return provider
 
 
 def pretrain_config(

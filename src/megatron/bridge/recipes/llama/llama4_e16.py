@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.llama import Llama4Experts16ModelProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -43,7 +43,7 @@ def model_config(
     sequence_parallelism: bool = True,
     expert_tensor_parallelism: int = 4,
     expert_model_parallelism: int = 16,
-) -> Llama4Experts16ModelProvider:
+):
     """
     Configure the Llama4 16-Experts (Scout) model.
 
@@ -58,18 +58,21 @@ def model_config(
         expert_model_parallelism (int): Degree of expert model parallelism.
 
     Returns:
-        Llama4Experts16ModelProvider: Configuration for the Llama4 16-Experts (Scout) model.
+        Configuration for the Llama4 16-Experts (Scout) model.
     """
-    return Llama4Experts16ModelProvider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-        expert_tensor_parallel_size=expert_tensor_parallelism,
-        expert_model_parallel_size=expert_model_parallelism,
-    )
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-Scout-8B-E16")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    provider.expert_tensor_parallel_size = expert_tensor_parallelism
+    provider.expert_model_parallel_size = expert_model_parallelism
+    
+    return provider
 
 
 def pretrain_config(
