@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 import torch
-from typing import Dict, Optional, Tuple
 from megatron.core.models.mamba import MambaModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -22,47 +23,29 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapp
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
 
+
+logger = logging.getLogger(__name__)
+
+
 @MegatronModelBridge.register_bridge(source="NemotronHForCausalLM", target=MambaModel)
 class NemotronHBridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for Nemotron-H.
+    Megatron Bridge for Nemotron-H Causal LM.
 
-    As a user you would not use this bridge directly, but through `AutoBridge`.
+    This bridge handles the conversion between HuggingFace NemotronHForCausalLM
+    and Megatron-Core MambaModel formats, including weight mappings and
+    configuration translation.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/nemotron-h-4b", trust_remote_code=True)
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
-
-    def __init__(self):
-        super().__init__()
-        self.hf_weights_cache = {}
-        self.megatron_weights_cache = {}
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronHModelProvider:
         hf_config = hf_pretrained.config
 
-        configs = {
-            "num_layers": hf_config.num_hidden_layers,
-            "hidden_size": hf_config.hidden_size,
-            "ffn_hidden_size": hf_config.intermediate_size,
-            "num_attention_heads": hf_config.num_attention_heads,
-            "kv_channels": hf_config.head_dim,
-            "vocab_size": hf_config.vocab_size,
-            "rotary_base": getattr(hf_config, "rope_theta", 10000.0),
-            "layernorm_epsilon": hf_config.layer_norm_epsilon,
-            "hybrid_override_pattern": hf_config.hybrid_override_pattern,
-            "mamba_num_heads": hf_config.mamba_num_heads,
-            "mamba_num_groups": hf_config.n_groups,
-            "mamba_head_dim": hf_config.mamba_head_dim,
-            "mamba_state_dim": hf_config.ssm_state_size,
-        }
-
-        configs["fp16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16
-        configs["bf16"] = self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16
-        configs["params_dtype"] = self.dtype_from_hf(hf_config, default=torch.float32)
-
+        configs = {}
         # MoE configurations
         if hasattr(hf_config, "n_routed_experts") and hf_config.n_routed_experts > 0:
             configs.update({
@@ -73,33 +56,45 @@ class NemotronHBridge(MegatronModelBridge):
                 "moe_router_num_groups": hf_config.n_group,
                 "moe_router_group_topk": hf_config.topk_group,
                 "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
+                "kv_channels": hf_config.head_dim,
             })
 
-        provider = NemotronHModelProvider(**configs)
-        return provider
+        return NemotronHModelProvider(
+            num_layers=hf_config.num_hidden_layers,
+            hidden_size=hf_config.hidden_size,
+            ffn_hidden_size=hf_config.intermediate_size,
+            add_bias_linear=hf_config.use_bias,
+            num_attention_heads=hf_config.num_attention_heads,
+            num_query_groups=hf_config.num_key_value_heads,
+            init_method_std=hf_config.initializer_range,
+            layernorm_epsilon=hf_config.layer_norm_epsilon,
+            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
+            vocab_size=hf_config.vocab_size,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            seq_length=hf_config.max_position_embeddings,
+            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
+            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
+            fp32_residual_connection=hf_config.residual_in_fp32,
+            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
+            attention_dropout=hf_config.attention_dropout,
+            hidden_dropout=hf_config.hidden_dropout,
+            hybrid_override_pattern=hf_config.hybrid_override_pattern,
+            mamba_head_dim=hf_config.mamba_head_dim,
+            mamba_num_heads=hf_config.mamba_num_heads,
+            mamba_num_groups=hf_config.n_groups,
+            mamba_state_dim=hf_config.ssm_state_size,
+            add_qkv_bias=hf_config.attention_bias,
+            **configs,
+        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = []
+        logger.warning("WARNING: NemotronHBridge is currently experimental and may not work with tensor parallel > 1.")
+        # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
+        # First create simple 1:1 parameter mappings using a dictionary for readability
 
-        # Basic parameter mappings from decoder (Megatron) to backbone (HF)
+        # Dictionary maps Megatron parameter names -> HF parameter names
+        # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
-            # Embedding
-            "embedding.word_embeddings.weight": "backbone.embeddings.weight",
-
-            # Attention layers
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "backbone.layers.*.norm.weight",
-            "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
-
-            # MoE layers
-            "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
-            "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
-            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
-            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
-            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
-
-            # Mamba mixer layers
             "decoder.layers.*.mixer.A_log": "backbone.layers.*.mixer.A_log",
             "decoder.layers.*.mixer.D": "backbone.layers.*.mixer.D",
             "decoder.layers.*.mixer.conv1d.weight": "backbone.layers.*.mixer.conv1d.weight",
@@ -108,24 +103,47 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mixer.dt_bias": "backbone.layers.*.mixer.dt_bias",
             "decoder.layers.*.mixer.out_proj.weight": "backbone.layers.*.mixer.out_proj.weight",
             "decoder.layers.*.mixer.norm.weight": "backbone.layers.*.mixer.norm.weight",
-            "decoder.layers.*.mixer.in_proj.layer_norm_weight": "backbone.layers.*.norm.weight",
-
-            # Final layers
+            "decoder.layers.*.mlp.linear_fc1.weight": "backbone.layers.*.mixer.up_proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
             "decoder.final_norm.weight": "backbone.norm_f.weight",
+            # if the megatron key does not exist for a given layer it will be ignored,
+            # so only one of these will be used per layer
+            "decoder.layers.*.mixer.in_proj.layer_norm_weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "backbone.layers.*.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "backbone.layers.*.norm.weight",
+            # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
+            "embedding.word_embeddings.weight": "backbone.embeddings.weight",
             "output_layer.weight": "lm_head.weight",
+            # MoE layers
+            "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",
+            "decoder.layers.*.mlp.router.expert_bias": "backbone.layers.*.mixer.gate.e_score_correction_bias",
+            "decoder.layers.*.mlp.experts.linear_fc1.weight*": "backbone.layers.*.mixer.experts.*.up_proj.weight",
+            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "backbone.layers.*.mixer.experts.*.down_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc1.weight": "backbone.layers.*.mixer.shared_experts.up_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "backbone.layers.*.mixer.shared_experts.down_proj.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
         }
 
+        mapping_list = []
+        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+        AutoMapping.register_module_type("MambaMixer", "column")
+        AutoMapping.register_module_type("Conv1d", "column")
+        AutoMapping.register_module_type("ExtendedRMSNorm", "column")
 
-        # Add QKV mapping for attention weights
-        mapping_list.append(
-            QKVMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="backbone.layers.*.mixer.q_proj.weight",
-                k="backbone.layers.*.mixer.k_proj.weight",
-                v="backbone.layers.*.mixer.v_proj.weight",
-            )
+        # Add special mappings that require parameter concatenation/transformation, pruning, etc.
+        mapping_list.extend(
+            [
+                # QKV: Combine separate Q, K, V matrices into single QKV matrix
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="backbone.layers.*.mixer.q_proj.weight",
+                    k="backbone.layers.*.mixer.k_proj.weight",
+                    v="backbone.layers.*.mixer.v_proj.weight",
+                ),
+            ]
         )
 
         return MegatronMappingRegistry(*mapping_list)

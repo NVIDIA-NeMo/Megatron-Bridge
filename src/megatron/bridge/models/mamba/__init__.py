@@ -36,12 +36,13 @@ from megatron.bridge.models.mamba.nemotron_h_provider import (
 
 
 __all__ = [
-    "NemotronHBridge",
     "NemotronHModelProvider",
     "NemotronHModel4BProvider",
     "NemotronHModel8BProvider",
     "NemotronHModel47BProvider",
     "NemotronHModel56BProvider",
+    "NemotronNano9Bv2Provider",
+    "NemotronNano12Bv2Provider",
     "MambaProvider",
     "MambaProvider1_3B",
     "MambaProvider2_7B",

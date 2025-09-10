@@ -285,6 +285,10 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
                 spec = config.transformer_layer_spec(config)
         else:
             spec = config.transformer_layer_spec
+        if hasattr(spec, "layer_specs") and len(spec.layer_specs) == 0:
+            # Get the decoder layer spec explicitly if no decoder layer in the last stage,
+            # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
+            spec = default_layer_spec(config)
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None

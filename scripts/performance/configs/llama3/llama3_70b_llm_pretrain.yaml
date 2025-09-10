@@ -1,0 +1,151 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# To override a parameter, ensure the structure matches the ConfigContainer
+# and its sub-configurations (e.g., model, train, etc.)
+# Top-level ConfigContainer fields are dataclasses themselves
+
+ConfigContainer:
+  model:
+    cross_entropy_fusion_impl: "te"
+    enable_cuda_graph: false
+    use_te_rng_tracker: false
+
+  train:
+    train_iters: 25
+    eval_iters: 0
+
+  rerun_state_machine:
+    check_for_nan_in_loss: false
+
+  checkpoint:
+    # Directory to save to. If null, no checkpoint will be saved.
+    save: null
+
+  logger:
+    log_interval: 1
+
+  ddp:
+    check_for_nan_in_grad: false
+    check_for_large_grads: false
+    use_megatron_fsdp: true
+    use_torch_fsdp2: false
+
+  mixed_precision:
+    grad_reduce_in_fp32: false
+
+  profiling:
+    # For optional fields in the config, specify the target to instantiate the object.
+    _target_: megatron.bridge.training.config.ProfilingConfig
+    use_nsys_profiler: true
+    profile_step_start: 10
+    profile_step_end: 11
+    profile_ranks: [0]
+    record_shapes: false
+    use_pytorch_profiler: false
+
+perf_matrix:
+  h100:
+    num_gpus_64:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 8192
+        mbs: 1
+        gbs: 128
+        cuda_graphs: false
+        tp: 4
+        vp: 5
+        ep: 1
+        etp: null
+        fsdp: false
+      bf16:
+        pp: 4
+        cp: 2
+      fp8_ds:
+        pp: 8
+        cp: 1
+      fp8_cs:
+        pp: 8
+        cp: 1
+  b200:
+    num_gpus_64:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 8192
+        mbs: 1
+        gbs: 128
+        ep: 1
+        etp: null
+      bf16:
+        tp: 2
+        pp: 4
+        cp: 2
+        vp: 5
+        fsdp: false
+        cuda_graphs: true
+      fp8_ds:
+        tp: 1
+        pp: 1
+        cp: 1
+        vp: 1
+        fsdp: true
+        cuda_graphs: false
+        recompute_num_layers: 5
+      fp8_cs:
+        tp: 1
+        pp: 1
+        cp: 1
+        vp: 1
+        fsdp: true
+        cuda_graphs: false
+        recompute_num_layers: 5
+      fp8_mx:
+        tp: 2
+        pp: 4
+        cp: 1
+        vp: 5
+        fsdp: false
+        cuda_graphs: false
+  gb200:
+    num_gpus_64:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 8192
+        mbs: 1
+        gbs: 128
+        cuda_graphs: false
+        cp: 1
+        ep: 1
+        etp: null
+      bf16:
+        tp: 1
+        pp: 1
+        vp: 1
+        fsdp: true
+        recompute_num_layers: 20
+      fp8_ds:
+        tp: 1
+        pp: 1
+        vp: 1
+        fsdp: true
+      fp8_cs:
+        tp: 1
+        pp: 1
+        vp: 1
+        fsdp: true
+      fp8_mx:
+        tp: 2
+        pp: 4
+        vp: 5
+        fsdp: false

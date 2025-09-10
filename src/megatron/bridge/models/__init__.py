@@ -54,7 +54,24 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
-from megatron.bridge.models.mamba import (
+from megatron.bridge.models.mamba.mamba_provider import (
+    MambaProvider,
+    MambaProvider1_3B,
+    MambaProvider2_7B,
+    MambaProvider130M,
+    MambaProvider370M,
+    MambaProvider780M,
+    NVIDIAMambaHybridProvider8B,
+    NVIDIAMambaProvider8B,
+)
+from megatron.bridge.models.mamba.nemotron_h_provider import (
+    NemotronHModel4BProvider,
+    NemotronHModel8BProvider,
+    NemotronHModel47BProvider,
+    NemotronHModel56BProvider,
+    NemotronHModelProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
     NemotronNanoNext3Bv2Provider,
 )
 from megatron.bridge.models.qwen import (
@@ -143,5 +160,20 @@ __all__ = [
     "DeepSeekV2Provider",
     "DeepSeekV3Provider",
     "MoonlightProvider",
+    "NemotronHModelProvider",
+    "NemotronHModel4BProvider",
+    "NemotronHModel8BProvider",
+    "NemotronHModel47BProvider",
+    "NemotronHModel56BProvider",
+    "NemotronNano9Bv2Provider",
+    "NemotronNano12Bv2Provider",
     "NemotronNanoNext3Bv2Provider",
+    "MambaProvider",
+    "MambaProvider1_3B",
+    "MambaProvider2_7B",
+    "MambaProvider130M",
+    "MambaProvider370M",
+    "MambaProvider780M",
+    "NVIDIAMambaHybridProvider8B",
+    "NVIDIAMambaProvider8B",
 ]

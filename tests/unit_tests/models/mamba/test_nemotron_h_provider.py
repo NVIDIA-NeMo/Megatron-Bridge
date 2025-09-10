@@ -282,7 +282,7 @@ class TestNemotronNano9Bv2Provider:
         assert provider.hidden_size == 4480
         assert provider.num_attention_heads == 40
         assert provider.mamba_num_heads == 128
-        assert provider.kv_channels == 128
+        assert provider.kv_channels == 112
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 15680
         assert provider.mamba_head_dim == 80

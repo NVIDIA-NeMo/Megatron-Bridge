@@ -18,7 +18,7 @@ import sys
 
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
-from utils.helpers import COMM_OVERLAP_CONFIG_MAP, get_precision_config
+from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
@@ -72,16 +72,22 @@ def main():
     if args.compute_dtype == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    recipe.to_yaml()
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     # Load and merge YAML overrides if a config file is provided
+    yaml_overrides_omega = None
     if args.config_file:
         logger.debug(f"Loading YAML overrides from: {args.config_file}")
         if not os.path.exists(args.config_file):
             logger.error(f"Override YAML file not found: {args.config_file}")
             sys.exit(1)
         yaml_overrides_omega = OmegaConf.load(args.config_file)
-        merged_omega_conf = OmegaConf.merge(merged_omega_conf, yaml_overrides_omega)
+        # If YAML contains a nested ConfigContainer, merge only that subtree.
+        yaml_cfg_overrides = (
+            yaml_overrides_omega["ConfigContainer"]
+            if OmegaConf.is_dict(yaml_overrides_omega) and "ConfigContainer" in yaml_overrides_omega
+            else yaml_overrides_omega
+        )
+        merged_omega_conf = OmegaConf.merge(merged_omega_conf, yaml_cfg_overrides)
         logger.debug("YAML overrides merged successfully.")
     if cli_overrides:
         logger.debug(f"Applying Hydra-style command-line overrides: {cli_overrides}")
@@ -93,6 +99,10 @@ def main():
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
+
+    # Apply GPU/precision-specific performance overrides from perf_matrix, if present
+    if yaml_overrides_omega is not None:
+        apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
