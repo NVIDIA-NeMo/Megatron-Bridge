@@ -223,6 +223,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         - MegatronModel: The Megatron model type
     """
 
+    use_te: bool = True  # Whether to use Transformer Engine optimization
+
     @abc.abstractmethod
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.

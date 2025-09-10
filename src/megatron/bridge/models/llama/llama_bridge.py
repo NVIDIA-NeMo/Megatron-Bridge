@@ -92,6 +92,21 @@ class LlamaBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
 
+        if self.use_te:
+            param_mappings.update(
+                {
+                    "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+                    "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+                }
+            )
+        else:
+            param_mappings.update(
+                {
+                    "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
+                    "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
+                }
+            )
+
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():

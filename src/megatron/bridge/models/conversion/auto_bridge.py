@@ -778,7 +778,7 @@ class AutoBridge(Generic[MegatronModelT]):
         _model_provider = self.to_megatron_provider(load_weights=False)
         return self._create_config_from_provider(_model_provider, MLATransformerConfig)
 
-    @property
+    @cached_property
     def _model_bridge(self) -> "MegatronModelBridge":
         return model_bridge.get_model_bridge(self._causal_lm_architecture)
 
