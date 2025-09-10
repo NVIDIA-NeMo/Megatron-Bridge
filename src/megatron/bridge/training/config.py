@@ -707,7 +707,7 @@ class NVRxStragglerDetectionConfig:
     profiling_interval: int = 1
     """Profiling interval passed to straggler.Detector.initialize."""
 
-    logger_name: str = "megatron_hub.NVRxStragglerDetection"
+    logger_name: str = "megatron.bridge.NVRxStragglerDetection"
     """Logger name for straggler detection messages."""
 
     def __post_init__(self) -> None:
