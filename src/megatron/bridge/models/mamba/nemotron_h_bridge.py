@@ -13,10 +13,8 @@
 # limitations under the License.
 
 import logging
-from typing import Optional
 
 import torch
-import torch.nn as nn
 from megatron.core.models.mamba import MambaModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -27,28 +25,6 @@ from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvi
 
 
 logger = logging.getLogger(__name__)
-
-
-class PrunedVocabMapping(AutoMapping):
-    """
-    Smart mapping like AutoMapping that additionally prunes vocab padding.
-
-    Intended for embedding and output layers.
-    """
-
-    def megatron_to_hf(
-        self,
-        megatron_weights: Optional[torch.Tensor],
-        megatron_module: Optional[nn.Module],
-    ) -> dict[str, torch.Tensor]:
-        """Prune padding from weight in vocab size dimension, if vocab size is accessible."""
-        mapping = super().megatron_to_hf(megatron_weights, megatron_module)
-
-        if megatron_module is not None:
-            weight = mapping[str(self.hf_param)]
-            mapping[str(self.hf_param)] = weight[: megatron_module.vocab_size, :]
-
-        return mapping
 
 
 @MegatronModelBridge.register_bridge(source="NemotronHForCausalLM", target=MambaModel)
@@ -121,6 +97,9 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mixer.in_proj.layer_norm_weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "backbone.layers.*.norm.weight",
+            # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
+            "embedding.word_embeddings.weight": "backbone.embeddings.weight",
+            "output_layer.weight": "lm_head.weight",
         }
 
         mapping_list = []
@@ -141,8 +120,6 @@ class NemotronHBridge(MegatronModelBridge):
                     k="backbone.layers.*.mixer.k_proj.weight",
                     v="backbone.layers.*.mixer.v_proj.weight",
                 ),
-                AutoMapping(megatron_param="embedding.word_embeddings.weight", hf_param="backbone.embeddings.weight"),
-                AutoMapping(megatron_param="output_layer.weight", hf_param="lm_head.weight"),
             ]
         )
 
