@@ -876,7 +876,8 @@ def generate_state_dict(
             state_dict["opt_param_scheduler"] = opt_param_scheduler.state_dict()
 
     # Rerun state
-    state_dict["rerun_state_machine"] = rerun_state
+    if rerun_state is not None:
+        state_dict["rerun_state_machine"] = rerun_state
 
     # RNG states.
     if ckpt_cfg.save_rng:
