@@ -29,9 +29,9 @@ model:
   use_te_rng_tracker: true
   moe_router_fusion: true
   gradient_accumulation_fusion: true
-  external_cuda_graph: true
+  external_cuda_graph: false
   cuda_graph_scope: "attn"
-
+  sequence_parallel: false
 
 rng:
   te_rng_tracker: true
