@@ -48,7 +48,7 @@ class NemotronHBridge(MegatronModelBridge):
             "hidden_size": hf_config.hidden_size,
             "ffn_hidden_size": hf_config.intermediate_size,
             "num_attention_heads": hf_config.num_attention_heads,
-            "kv_channels": hf_config.attention_head_dim,
+            "kv_channels": hf_config.head_dim,
             "vocab_size": hf_config.vocab_size,
             "rotary_base": getattr(hf_config, "rope_theta", 10000.0),
             "layernorm_epsilon": hf_config.layer_norm_epsilon,
@@ -73,8 +73,6 @@ class NemotronHBridge(MegatronModelBridge):
                 "moe_router_num_groups": hf_config.n_group,
                 "moe_router_group_topk": hf_config.topk_group,
                 "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
-                "moe_router_score_function": "sigmoid",
-                "moe_router_enable_expert_bias": True,
             })
 
         provider = NemotronHModelProvider(**configs)

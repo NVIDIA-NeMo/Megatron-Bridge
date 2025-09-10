@@ -41,6 +41,17 @@ class NemotronHModelProvider(MambaProvider):
     first_last_layers_bf16: bool = True
     is_hybrid_model: bool = True
 
+    # MoE
+    moe_aux_loss_coeff: float = 0.0001
+    moe_router_score_function: str = "sigmoid"
+    moe_router_enable_expert_bias: bool = True
+    moe_router_load_balancing_type: str = "seq_aux_loss"
+    moe_router_dtype: str = "fp32"
+    moe_grouped_gemm: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
+    moe_permute_fusion: bool = True
+    moe_shared_expert_overlap: bool = True
+
 
 @dataclass
 class NemotronHModel4BProvider(NemotronHModelProvider):
@@ -146,6 +157,3 @@ class NemotronNanoNext3Bv2Provider(NemotronHModelProvider):
     moe_shared_expert_intermediate_size: int = 3712  # 1856 * 2 shared expert
     moe_router_topk: int = 6
     moe_router_topk_scaling_factor: float = 2.5
-    moe_aux_loss_coeff: float = 0.0001
-    moe_router_score_function: str = "sigmoid"
-    moe_router_enable_expert_bias: bool = True
