@@ -14,6 +14,7 @@
 
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 import pytest
 import torch
@@ -57,6 +58,182 @@ class Llama3ModelProviderFSDP145M(Llama3ModelProvider):
     gradient_accumulation_fusion: bool = False
 
 
+def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3ModelProviderFSDP145M:
+    """Create a standardized FSDP model configuration."""
+    base_config = {
+        "seq_length": seq_length,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
+        "attention_softmax_in_fp32": True,
+        "make_vocab_size_divisible_by": 128,
+        "vocab_size": None,
+    }
+    if bf16:
+        base_config.update(
+            {
+                "bf16": True,
+                "pipeline_dtype": torch.bfloat16,
+            }
+        )
+    base_config.update(kwargs)
+    return Llama3ModelProviderFSDP145M(**base_config)
+
+
+def create_base_training_config(
+    train_iters: int, global_batch_size: int = 8, micro_batch_size: int = 1, **kwargs
+) -> TrainingConfig:
+    """Create a standardized training configuration."""
+    base_config = {
+        "train_iters": train_iters,
+        "eval_interval": train_iters + 1,  # Disable evaluation to avoid hanging
+        "eval_iters": 0,  # No evaluation iterations
+        "global_batch_size": global_batch_size,
+        "micro_batch_size": micro_batch_size,
+        "exit_signal_handler": True,
+    }
+    base_config.update(kwargs)
+    return TrainingConfig(**base_config)
+
+
+def create_base_optimizer_config(**kwargs) -> OptimizerConfig:
+    """Create a standardized optimizer configuration."""
+    base_config = {
+        "optimizer": "adam",
+        "bf16": True,
+        "fp16": False,
+        "adam_beta1": 0.9,
+        "adam_beta2": 0.95,
+        "adam_eps": 1e-5,
+        "use_distributed_optimizer": True,
+        "clip_grad": 1.0,
+        "lr": 3e-3,
+        "weight_decay": 0.01,
+        "min_lr": 1e-6,
+    }
+    base_config.update(kwargs)
+    return OptimizerConfig(**base_config)
+
+
+def create_base_scheduler_config(total_iters: int, **kwargs) -> SchedulerConfig:
+    """Create a standardized scheduler configuration."""
+    base_config = {
+        "start_weight_decay": 0.033,
+        "end_weight_decay": 0.033,
+        "weight_decay_incr_style": "constant",
+        "lr_decay_style": "cosine",
+        "lr_warmup_iters": 2,
+        "lr_warmup_init": 0.0,
+        "lr_decay_iters": total_iters,
+        "override_opt_param_scheduler": True,
+    }
+    base_config.update(kwargs)
+    return SchedulerConfig(**base_config)
+
+
+def create_base_ddp_config(overlap_param_gather: bool = True, **kwargs) -> DistributedDataParallelConfig:
+    """Create a standardized DDP configuration for FSDP."""
+    base_config = {
+        "check_for_nan_in_grad": True,
+        "grad_reduce_in_fp32": True,
+        "overlap_grad_reduce": True,
+        "overlap_param_gather": overlap_param_gather,
+        "average_in_collective": False,  # Required for FSDP
+        "data_parallel_sharding_strategy": "optim_grads_params",  # For Megatron FSDP only
+        "use_distributed_optimizer": True,
+        "use_megatron_fsdp": True,  # Enable FSDP in DDP config too
+    }
+    base_config.update(kwargs)
+    return DistributedDataParallelConfig(**base_config)
+
+
+def create_base_dataset_config(seq_length: int, **kwargs) -> MockGPTDatasetConfig:
+    """Create a standardized dataset configuration."""
+    base_config = {
+        "random_seed": 1234,
+        "reset_attention_mask": False,
+        "reset_position_ids": False,
+        "eod_mask_loss": False,
+        "sequence_length": seq_length,
+        "num_dataset_builder_threads": 1,
+        "data_sharding": True,
+        "dataloader_type": "single",
+        "num_workers": 1,
+    }
+    base_config.update(kwargs)
+    return MockGPTDatasetConfig(**base_config)
+
+
+def create_base_logger_config(tensorboard_dir: Optional[str] = None, log_interval: int = 5, **kwargs) -> LoggerConfig:
+    """Create a standardized logger configuration."""
+    base_config = {
+        "log_interval": log_interval,
+        "log_params_norm": True,
+    }
+    if tensorboard_dir:
+        base_config["tensorboard_dir"] = tensorboard_dir
+    base_config.update(kwargs)
+    return LoggerConfig(**base_config)
+
+
+def create_base_tokenizer_config(**kwargs) -> TokenizerConfig:
+    """Create a standardized tokenizer configuration."""
+    base_config = {
+        "tokenizer_type": "NullTokenizer",
+        "vocab_size": 10000,
+    }
+    base_config.update(kwargs)
+    return TokenizerConfig(**base_config)
+
+
+def create_base_checkpoint_config(
+    checkpoint_dir: Optional[str] = None, load_dir: Optional[str] = None, save_interval: Optional[int] = None, **kwargs
+) -> CheckpointConfig:
+    """Create a standardized checkpoint configuration."""
+    base_config = {
+        "ckpt_format": "fsdp_dtensor",  # Use FSDP DTensor format
+        "fully_parallel_save": True,
+        "async_save": False,  # Disable async save for testing
+    }
+    if checkpoint_dir:
+        base_config["save"] = checkpoint_dir
+    if load_dir:
+        base_config["load"] = load_dir
+    if save_interval:
+        base_config["save_interval"] = save_interval
+    base_config.update(kwargs)
+    return CheckpointConfig(**base_config)
+
+
+def create_fsdp_config_container(
+    seq_length: int,
+    train_iters: int,
+    checkpoint_dir: Optional[str] = None,
+    load_dir: Optional[str] = None,
+    save_interval: Optional[int] = None,
+    tensorboard_dir: Optional[str] = None,
+    overlap_param_gather: bool = True,
+    **overrides,
+) -> ConfigContainer:
+    """Create a complete FSDP configuration container with common defaults."""
+    return ConfigContainer(
+        model=create_fsdp_model_config(seq_length, **overrides.pop("model", {})),
+        dist=DistributedInitConfig(use_megatron_fsdp=True),
+        train=create_base_training_config(train_iters, **overrides.pop("train", {})),
+        optimizer=create_base_optimizer_config(**overrides.pop("optimizer", {})),
+        scheduler=create_base_scheduler_config(train_iters, **overrides.pop("scheduler", {})),
+        ddp=create_base_ddp_config(overlap_param_gather, **overrides.pop("ddp", {})),
+        dataset=create_base_dataset_config(seq_length, **overrides.pop("dataset", {})),
+        logger=create_base_logger_config(tensorboard_dir, **overrides.pop("logger", {})),
+        tokenizer=create_base_tokenizer_config(**overrides.pop("tokenizer", {})),
+        checkpoint=create_base_checkpoint_config(
+            checkpoint_dir, load_dir, save_interval, **overrides.pop("checkpoint", {})
+        ),
+        rng=RNGConfig(seed=1234, **overrides.pop("rng", {})),
+    )
+
+
 class TestMegatronFSDP:
     """
     Test end to end training with Megatron FSDP and fsdp_dtensor checkpoint functionality.
@@ -72,94 +249,13 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
         try:
-            global_batch_size = 8
-            micro_batch_size = 1
             seq_length = 512
             total_iters = 10
 
-            model_cfg = Llama3ModelProviderFSDP145M(
+            cfg = create_fsdp_config_container(
                 seq_length=seq_length,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                sequence_parallel=False,
-                attention_softmax_in_fp32=True,
-                pipeline_dtype=torch.bfloat16,
-                bf16=True,
-                make_vocab_size_divisible_by=128,
-                vocab_size=None,
-            )
-
-            # Config Container with Megatron FSDP enabled
-            cfg = ConfigContainer(
-                model=model_cfg,
-                dist=DistributedInitConfig(
-                    use_megatron_fsdp=True,
-                ),
-                train=TrainingConfig(
-                    train_iters=total_iters,
-                    eval_interval=total_iters + 1,  # Disable evaluation to avoid hanging
-                    eval_iters=0,  # No evaluation iterations
-                    global_batch_size=global_batch_size,
-                    micro_batch_size=micro_batch_size,
-                    exit_signal_handler=True,
-                ),
-                optimizer=OptimizerConfig(
-                    optimizer="adam",
-                    bf16=True,
-                    fp16=False,
-                    adam_beta1=0.9,
-                    adam_beta2=0.95,
-                    adam_eps=1e-5,
-                    use_distributed_optimizer=True,
-                    clip_grad=1.0,
-                    lr=3e-3,
-                    weight_decay=0.01,
-                    min_lr=1e-6,
-                ),
-                scheduler=SchedulerConfig(
-                    start_weight_decay=0.033,
-                    end_weight_decay=0.033,
-                    weight_decay_incr_style="constant",
-                    lr_decay_style="cosine",
-                    lr_warmup_iters=2,
-                    lr_warmup_init=0.0,
-                    lr_decay_iters=total_iters,
-                    override_opt_param_scheduler=True,
-                ),
-                ddp=DistributedDataParallelConfig(
-                    check_for_nan_in_grad=True,
-                    grad_reduce_in_fp32=True,
-                    overlap_grad_reduce=True,
-                    overlap_param_gather=False,  # Disable for FSDP to avoid autograd issues
-                    average_in_collective=False,  # Required for FSDP
-                    data_parallel_sharding_strategy="optim_grads_params",  # For Megatron FSDP only
-                    use_distributed_optimizer=True,
-                    use_megatron_fsdp=True,  # Enable FSDP in DDP config too
-                ),
-                dataset=MockGPTDatasetConfig(
-                    random_seed=1234,
-                    reset_attention_mask=False,
-                    reset_position_ids=False,
-                    eod_mask_loss=False,
-                    sequence_length=seq_length,
-                    num_dataset_builder_threads=1,
-                    data_sharding=True,
-                    dataloader_type="single",
-                    num_workers=1,
-                ),
-                logger=LoggerConfig(
-                    log_interval=5,
-                    log_params_norm=True,
-                ),
-                tokenizer=TokenizerConfig(
-                    tokenizer_type="NullTokenizer",
-                    vocab_size=10000,
-                ),
-                rng=RNGConfig(seed=1234),
-                checkpoint=CheckpointConfig(
-                    ckpt_format="fsdp_dtensor",  # Use FSDP DTensor format
-                ),
+                train_iters=total_iters,
+                overlap_param_gather=False,
             )
 
             # Run training
@@ -188,99 +284,16 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
         try:
-            global_batch_size = 8
-            micro_batch_size = 1
             seq_length = 512
             total_iters = 20
 
-            model_cfg = Llama3ModelProviderFSDP145M(
+            # Create config with checkpointing enabled
+            cfg = create_fsdp_config_container(
                 seq_length=seq_length,
-                tensor_model_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                sequence_parallel=False,
-                attention_softmax_in_fp32=True,
-                pipeline_dtype=torch.bfloat16,
-                bf16=True,
-                make_vocab_size_divisible_by=128,
-                vocab_size=None,
-            )
-
-            # Config Container with FSDP and checkpointing
-            cfg = ConfigContainer(
-                model=model_cfg,
-                dist=DistributedInitConfig(
-                    use_megatron_fsdp=True,
-                ),
-                train=TrainingConfig(
-                    train_iters=total_iters,
-                    eval_interval=total_iters + 1,  # Disable evaluation to avoid hanging
-                    eval_iters=0,  # No evaluation iterations
-                    global_batch_size=global_batch_size,
-                    micro_batch_size=micro_batch_size,
-                    exit_signal_handler=True,
-                ),
-                optimizer=OptimizerConfig(
-                    optimizer="adam",
-                    bf16=True,
-                    fp16=False,
-                    adam_beta1=0.9,
-                    adam_beta2=0.95,
-                    adam_eps=1e-5,
-                    use_distributed_optimizer=True,
-                    clip_grad=1.0,
-                    lr=3e-3,
-                    weight_decay=0.01,
-                    min_lr=1e-6,
-                ),
-                scheduler=SchedulerConfig(
-                    start_weight_decay=0.033,
-                    end_weight_decay=0.033,
-                    weight_decay_incr_style="constant",
-                    lr_decay_style="cosine",
-                    lr_warmup_iters=2,
-                    lr_warmup_init=0.0,
-                    lr_decay_iters=total_iters,
-                    override_opt_param_scheduler=True,
-                ),
-                ddp=DistributedDataParallelConfig(
-                    check_for_nan_in_grad=True,
-                    grad_reduce_in_fp32=True,
-                    overlap_grad_reduce=True,
-                    overlap_param_gather=True,
-                    average_in_collective=False,  # Required for FSDP
-                    data_parallel_sharding_strategy="optim_grads_params",  # For Megatron FSDP only
-                    use_distributed_optimizer=True,
-                    use_megatron_fsdp=True,  # Enable FSDP in DDP config too
-                ),
-                dataset=MockGPTDatasetConfig(
-                    random_seed=1234,
-                    reset_attention_mask=False,
-                    reset_position_ids=False,
-                    eod_mask_loss=False,
-                    sequence_length=seq_length,
-                    num_dataset_builder_threads=1,
-                    data_sharding=True,
-                    dataloader_type="single",
-                    num_workers=1,
-                ),
-                logger=LoggerConfig(
-                    log_interval=5,
-                    tensorboard_dir=tensorboard_dir,
-                    log_params_norm=True,
-                ),
-                tokenizer=TokenizerConfig(
-                    tokenizer_type="NullTokenizer",
-                    vocab_size=10000,
-                ),
-                checkpoint=CheckpointConfig(
-                    save_interval=10,
-                    save=checkpoint_dir,
-                    ckpt_format="fsdp_dtensor",  # Use FSDP DTensor format
-                    fully_parallel_save=True,
-                    async_save=False,  # Disable async save for testing
-                ),
-                rng=RNGConfig(seed=1234),
+                train_iters=total_iters,
+                checkpoint_dir=checkpoint_dir,
+                tensorboard_dir=tensorboard_dir,
+                save_interval=10,
             )
 
             # Run training
@@ -311,86 +324,18 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
         try:
-            global_batch_size = 8
-            micro_batch_size = 1
             seq_length = 512
             total_iters = 20
             checkpoint_iters = 10
 
             # First training run - train for 10 iterations and save checkpoint
-            cfg_first = ConfigContainer(
-                model=Llama3ModelProviderFSDP145M(seq_length=seq_length),
-                dist=DistributedInitConfig(
-                    use_megatron_fsdp=True,
-                ),
-                train=TrainingConfig(
-                    train_iters=checkpoint_iters,
-                    eval_interval=checkpoint_iters + 1,  # Disable evaluation to avoid hanging
-                    eval_iters=0,  # No evaluation iterations
-                    global_batch_size=global_batch_size,
-                    micro_batch_size=micro_batch_size,
-                    exit_signal_handler=True,
-                ),
-                optimizer=OptimizerConfig(
-                    optimizer="adam",
-                    bf16=True,
-                    fp16=False,
-                    adam_beta1=0.9,
-                    adam_beta2=0.95,
-                    adam_eps=1e-5,
-                    use_distributed_optimizer=True,
-                    clip_grad=1.0,
-                    lr=3e-3,
-                    weight_decay=0.01,
-                    min_lr=1e-6,
-                ),
-                scheduler=SchedulerConfig(
-                    start_weight_decay=0.033,
-                    end_weight_decay=0.033,
-                    weight_decay_incr_style="constant",
-                    lr_decay_style="cosine",
-                    lr_warmup_iters=2,
-                    lr_warmup_init=0.0,
-                    lr_decay_iters=total_iters,
-                    override_opt_param_scheduler=True,
-                ),
-                ddp=DistributedDataParallelConfig(
-                    check_for_nan_in_grad=True,
-                    grad_reduce_in_fp32=True,
-                    overlap_grad_reduce=True,
-                    overlap_param_gather=True,
-                    average_in_collective=False,  # Required for FSDP
-                    data_parallel_sharding_strategy="optim_grads_params",  # For Megatron FSDP only
-                    use_distributed_optimizer=True,
-                    use_megatron_fsdp=True,  # Enable FSDP in DDP config too
-                ),
-                dataset=MockGPTDatasetConfig(
-                    random_seed=1234,
-                    reset_attention_mask=False,
-                    reset_position_ids=False,
-                    eod_mask_loss=False,
-                    sequence_length=seq_length,
-                    num_dataset_builder_threads=1,
-                    data_sharding=True,
-                    dataloader_type="single",
-                    num_workers=1,
-                ),
-                logger=LoggerConfig(
-                    log_interval=5,
-                    tensorboard_dir=tensorboard_dir,
-                ),
-                tokenizer=TokenizerConfig(
-                    tokenizer_type="NullTokenizer",
-                    vocab_size=10000,
-                ),
-                checkpoint=CheckpointConfig(
-                    save_interval=checkpoint_iters,
-                    save=checkpoint_dir,
-                    ckpt_format="fsdp_dtensor",  # Use FSDP DTensor format
-                    fully_parallel_save=True,
-                    async_save=False,  # Disable async save for testing
-                ),
-                rng=RNGConfig(seed=1234),
+            cfg_first = create_fsdp_config_container(
+                seq_length=seq_length,
+                train_iters=checkpoint_iters,
+                checkpoint_dir=checkpoint_dir,
+                tensorboard_dir=tensorboard_dir,
+                save_interval=checkpoint_iters,
+                scheduler={"lr_decay_iters": total_iters},  # Override scheduler for total iterations
             )
 
             # Run first training job
@@ -404,80 +349,14 @@ class TestMegatronFSDP:
             torch.distributed.barrier()
 
             # Second training run - resume from checkpoint and train for remaining 10 iterations
-            cfg_second = ConfigContainer(
-                model=Llama3ModelProviderFSDP145M(seq_length=seq_length),
-                dist=DistributedInitConfig(
-                    use_megatron_fsdp=True,
-                ),
-                train=TrainingConfig(
-                    train_iters=total_iters,
-                    eval_interval=total_iters + 1,  # Disable evaluation to avoid hanging
-                    eval_iters=0,  # No evaluation iterations
-                    global_batch_size=global_batch_size,
-                    micro_batch_size=micro_batch_size,
-                    exit_signal_handler=True,
-                ),
-                optimizer=OptimizerConfig(
-                    optimizer="adam",
-                    bf16=True,
-                    fp16=False,
-                    adam_beta1=0.9,
-                    adam_beta2=0.95,
-                    adam_eps=1e-5,
-                    use_distributed_optimizer=True,
-                    clip_grad=1.0,
-                    lr=3e-3,
-                    weight_decay=0.01,
-                    min_lr=1e-6,
-                ),
-                scheduler=SchedulerConfig(
-                    start_weight_decay=0.033,
-                    end_weight_decay=0.033,
-                    weight_decay_incr_style="constant",
-                    lr_decay_style="cosine",
-                    lr_warmup_iters=2,
-                    lr_warmup_init=0.0,
-                    lr_decay_iters=total_iters,
-                    override_opt_param_scheduler=True,
-                ),
-                ddp=DistributedDataParallelConfig(
-                    check_for_nan_in_grad=True,
-                    grad_reduce_in_fp32=True,
-                    overlap_grad_reduce=True,
-                    overlap_param_gather=True,
-                    average_in_collective=False,  # Required for FSDP
-                    data_parallel_sharding_strategy="optim_grads_params",  # For Megatron FSDP only
-                    use_distributed_optimizer=True,
-                    use_megatron_fsdp=True,  # Enable FSDP in DDP config too
-                ),
-                dataset=MockGPTDatasetConfig(
-                    random_seed=1234,
-                    reset_attention_mask=False,
-                    reset_position_ids=False,
-                    eod_mask_loss=False,
-                    sequence_length=seq_length,
-                    num_dataset_builder_threads=1,
-                    data_sharding=True,
-                    dataloader_type="single",
-                    num_workers=1,
-                ),
-                logger=LoggerConfig(
-                    log_interval=5,
-                    tensorboard_dir=tensorboard_dir,
-                ),
-                tokenizer=TokenizerConfig(
-                    tokenizer_type="NullTokenizer",
-                    vocab_size=10000,
-                ),
-                checkpoint=CheckpointConfig(
-                    save_interval=checkpoint_iters,
-                    save=checkpoint_dir,
-                    load=checkpoint_dir,  # Resume from checkpoint
-                    ckpt_format="fsdp_dtensor",  # Use FSDP DTensor format
-                    fully_parallel_save=True,
-                    async_save=False,  # Disable async save for testing
-                ),
-                rng=RNGConfig(seed=1234),
+            cfg_second = create_fsdp_config_container(
+                seq_length=seq_length,
+                train_iters=total_iters,
+                checkpoint_dir=checkpoint_dir,
+                load_dir=checkpoint_dir,  # Resume from checkpoint
+                tensorboard_dir=tensorboard_dir,
+                save_interval=checkpoint_iters,
+                scheduler={"lr_decay_iters": total_iters},  # Override scheduler for total iterations
             )
 
             # Run second training job (resume from checkpoint)

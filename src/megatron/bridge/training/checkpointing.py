@@ -28,6 +28,7 @@ from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from megatron.core import dist_checkpointing, mpu, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict
 from megatron.core.dist_checkpointing.serialization import (
@@ -45,6 +46,7 @@ from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
@@ -67,7 +69,7 @@ from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     is_last_rank,
     print_rank_0,
-    unwrap_model,
+    # unwrap_model,
 )
 from megatron.bridge.utils.import_utils import safe_import
 
@@ -875,8 +877,7 @@ def generate_state_dict(
             state_dict["opt_param_scheduler"] = opt_param_scheduler.state_dict()
 
     # Rerun state
-    if rerun_state:
-        state_dict["rerun_state_machine"] = rerun_state
+    state_dict["rerun_state_machine"] = rerun_state
 
     # RNG states.
     if ckpt_cfg.save_rng:
@@ -889,12 +890,16 @@ def generate_state_dict(
         if len(model) != 1:
             raise RuntimeError("FSDP DTensor checkpoints are not supported for multiple models.")
 
-        # Apply FSDP-specific preprocessing - mirror Megatron-LM approach
-        # Only call SWiGLU handler if we have an explicit swiglu flag (like Megatron-LM)
+        # Apply FSDP-specific preprocessing for SwiGLU
         from megatron.core.utils import get_model_config
 
         model_config = get_model_config(model[0])
-        if getattr(model_config, "swiglu", False):
+        # SWiGLU is enabled when activation is SiLU and GLU gating is on
+        is_swiglu = (
+            getattr(model_config, "gated_linear_unit", False)
+            and getattr(model_config, "activation_func", None) is F.silu
+        )
+        if is_swiglu:
             state_dict = state_dict.copy()
             handle_swiglu_in_state_dict(model[0], state_dict["model"], state_dict.get("optimizer"))
         handle_fp8_extra_state_case(state_dict["model"])
@@ -1197,19 +1202,6 @@ def _load_checkpoint_from_path(
                 rerun_state=gen_sd_rerun_state,
             )
 
-        # PEFT resume filtering
-        is_peft_resume = (
-            cfg.peft is not None
-            and cfg.checkpoint.load is not None
-            and load_dir == cfg.checkpoint.load
-            and load_dir != cfg.checkpoint.pretrained_checkpoint
-            and not cfg.checkpoint.finetune
-        )
-        if is_peft_resume:
-            load_kwargs["sharded_state_dict"] = apply_peft_adapter_filter_to_state_dict(
-                load_kwargs["sharded_state_dict"], cfg.peft
-            )
-
     elif ckpt_format == "fsdp_dtensor":
         # Handle fsdp_dtensor format
         from torch.distributed.checkpoint import FileSystemReader
@@ -1270,7 +1262,20 @@ def _load_checkpoint_from_path(
             iteration=1,
         )
 
-    # Step 4: Load the checkpoint
+    # Apply PEFT resume filtering (common across all checkpoint formats)
+    is_peft_resume = (
+        cfg.peft is not None
+        and cfg.checkpoint.load is not None
+        and load_dir == cfg.checkpoint.load
+        and load_dir != cfg.checkpoint.pretrained_checkpoint
+        and not cfg.checkpoint.finetune
+    )
+    if is_peft_resume and "sharded_state_dict" in load_kwargs:
+        load_kwargs["sharded_state_dict"] = apply_peft_adapter_filter_to_state_dict(
+            load_kwargs["sharded_state_dict"], cfg.peft
+        )
+
+    # Load the checkpoint
     state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
         load_dir, cfg.checkpoint, rank0=False, checkpointing_context=checkpointing_context, **load_kwargs
     )
@@ -1279,7 +1284,7 @@ def _load_checkpoint_from_path(
     if state_dict is None:
         return 0, 0
 
-    # Step 5: Common finalization
+    # Common finalization
     set_checkpoint_version(state_dict.get("checkpoint_version", 0))
 
     # Handle train state
@@ -1299,17 +1304,16 @@ def _load_checkpoint_from_path(
 
     # Load model weights
     if not skip_load_to_model_and_opt:
-        # Handle PEFT resume for strict loading (torch_dist only)
+        # Handle PEFT resume for strict loading
         load_strict = strict
-        if ckpt_format == "torch_dist":
-            is_peft_resume = (
-                cfg.peft is not None
-                and cfg.checkpoint.load is not None
-                and load_dir == cfg.checkpoint.load
-                and load_dir != cfg.checkpoint.pretrained_checkpoint
-                and not cfg.checkpoint.finetune
-            )
-            load_strict = False if is_peft_resume else strict
+        is_peft_resume = (
+            cfg.peft is not None
+            and cfg.checkpoint.load is not None
+            and load_dir == cfg.checkpoint.load
+            and load_dir != cfg.checkpoint.pretrained_checkpoint
+            and not cfg.checkpoint.finetune
+        )
+        load_strict = False if is_peft_resume else strict
 
         if len(model) == 1:
             _load_model_state_dict(model[0], state_dict["model"], load_strict)
