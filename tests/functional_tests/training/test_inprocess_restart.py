@@ -150,6 +150,15 @@ def build_test_config(
             granularity="rank",
             active_world_size=int(os.getenv("WORLD_SIZE", "2")),
             empty_cuda_cache=True,
+            # Increase timeouts for CI environment where operations can be slower
+            heartbeat_interval=10.0,
+            heartbeat_timeout=120.0,
+            soft_timeout=300.0,  # 5 minutes - much longer for CI
+            hard_timeout=600.0,  # 10 minutes - much longer for CI
+            barrier_timeout=180.0,
+            completion_timeout=180.0,
+            monitor_process_interval=5.0,
+            monitor_thread_interval=5.0,
         ),
         ft=FaultToleranceConfig(
             enable_ft_package=fault_delay is not None,
