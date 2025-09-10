@@ -797,8 +797,10 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         """Replicate weight to all TP ranks."""
         if hasattr(megatron_module, "weight"):
             target_device = megatron_module.weight.device
-        else:
+        elif hasattr(megatron_module, "A_log"): # Mamba mixer
             target_device = megatron_module.A_log.device
+        else:
+            raise ValueError(f"Module {megatron_module} has no weight attribute")
         hf_weights = hf_weights.to(device=target_device)
         if self.tp_size == 1:
             return hf_weights
