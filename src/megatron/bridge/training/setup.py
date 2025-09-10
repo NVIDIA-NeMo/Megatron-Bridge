@@ -21,6 +21,7 @@ from typing import Any, Callable, NamedTuple, Optional
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
@@ -276,18 +277,18 @@ def _update_model_config_funcs(
     align_grad_reduce: bool = True,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
-    if isinstance(model[0], DistributedDataParallel) and ddp_config.overlap_grad_reduce:
+    if isinstance(model[0], (DistributedDataParallel, megatron_FSDP)) and ddp_config.overlap_grad_reduce:
         assert model_config.no_sync_func is None, (
             "When overlap_grad_reduce is True, config.no_sync_func must be None; "
             "a custom no_sync_func is not supported when overlapping grad-reduce"
         )
-    model_config.no_sync_func = [model_chunk.no_sync for model_chunk in model]
-    if len(model) == 1:
-        model_config.no_sync_func = model_config.no_sync_func[0]
-    if align_grad_reduce:
-        model_config.grad_sync_func = [model_chunk.start_grad_sync for model_chunk in model]
+        model_config.no_sync_func = [model_chunk.no_sync for model_chunk in model]
         if len(model) == 1:
-            model_config.grad_sync_func = model_config.grad_sync_func[0]
+            model_config.no_sync_func = model_config.no_sync_func[0]
+        if align_grad_reduce:
+            model_config.grad_sync_func = [model_chunk.start_grad_sync for model_chunk in model]
+            if len(model) == 1:
+                model_config.grad_sync_func = model_config.grad_sync_func[0]
     if ddp_config.overlap_param_gather and ddp_config.align_param_gather:
         model_config.param_sync_func = [model_chunk.start_param_sync for model_chunk in model]
         if len(model) == 1:

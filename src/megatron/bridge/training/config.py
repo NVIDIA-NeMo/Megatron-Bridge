@@ -431,7 +431,7 @@ class CheckpointConfig:
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
 
-    ckpt_format: Literal["torch_dist", "zarr"] = "torch_dist"
+    ckpt_format: Literal["torch_dist", "zarr", "fsdp_dtensor"] = "torch_dist"
     """Checkpoint format to use."""
 
     ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
@@ -457,8 +457,10 @@ class CheckpointConfig:
     """Apply full load parallelization across DP for distributed checkpoints."""
 
     ckpt_assume_constant_structure: bool = False
-    """If the model and optimizer state dict structure is constant throughout a *single training job,
-    it allows for different checkpointing performance optimizations."""
+    """Assume the checkpoint structure is constant across saves to enable optimizations."""
+
+    strict_fsdp_dtensor_load: bool = False
+    """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
     dist_ckpt_strictness: Literal[
         "assume_ok_unexpected",
@@ -803,13 +805,22 @@ class ConfigContainer(Container):
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
 
-                # Checkpoint
+            if self.optimizer.use_precision_aware_optimizer:
+                self.ddp.preserve_fp32_weights = False
+
+        # Checkpoint
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             # only check if saving or loading
             if self.checkpoint.ckpt_format == "fsdp_dtensor":
                 assert self.ddp.use_megatron_fsdp and not self.dist.use_torch_fsdp2, (
                     "fsdp_dtensor checkpoint format only supports Megatron FSDP"
                 )
+
+        # Enforce async_save format restriction
+        if self.checkpoint.async_save:
+            assert self.checkpoint.ckpt_format == "torch_dist", (
+                "async_save is only supported with ckpt_format='torch_dist'"
+            )
 
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
