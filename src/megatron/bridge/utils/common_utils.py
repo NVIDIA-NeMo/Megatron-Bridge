@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import os
-from typing import Type, Union
+from functools import wraps
+from typing import Type, Union, Callable, Any, Optional
 
 import torch
 import torch.distributed
@@ -143,3 +144,15 @@ def use_dist_ckpt(ckpt_format: str) -> bool:
         True if the format is not "torch", False otherwise.
     """
     return ckpt_format != "torch"
+
+
+def rank_zero_only(fn: Callable) -> Callable:
+    """Decorator to enable a function being called only on global rank 0."""
+
+    @wraps(fn)
+    def wrapped_fn(*args: Any, **kwargs: Any) -> Optional[Any]:
+        if get_rank_safe() == 0:
+            return fn(*args, **kwargs)
+        return None
+
+    return wrapped_fn

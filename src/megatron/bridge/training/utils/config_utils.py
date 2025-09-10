@@ -22,6 +22,7 @@ import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
 from omegaconf import OmegaConf
 
+from megatron.bridge.utils.common_utils import rank_zero_only
 from megatron.bridge.utils.instantiate_utils import InstantiationMode, instantiate
 from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 
@@ -181,6 +182,7 @@ class _ConfigContainerBase:
         else:
             return value
 
+    @rank_zero_only
     def to_yaml(self, yaml_path: Optional[str] = None) -> None:
         """
         Save the config container to a YAML file.
