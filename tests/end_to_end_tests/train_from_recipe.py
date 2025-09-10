@@ -404,7 +404,7 @@ def main():
 
     # Log final configuration
     logging.info("Final configuration:")
-    final_config.to_yaml()
+    final_config.print_yaml()
 
     if args.pretrain:
         logging.info("Starting pretraining")

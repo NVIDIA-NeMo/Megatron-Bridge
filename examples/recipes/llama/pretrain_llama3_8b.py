@@ -132,7 +132,7 @@ def main() -> None:
     # Load base configuration from the recipe as a Python dataclass
     cfg: ConfigContainer = pretrain_config()
     logger.info("Loaded base configuration")
-    cfg.to_yaml()
+    cfg.print_yaml()
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
@@ -161,7 +161,7 @@ def main() -> None:
 
     # Display final configuration
     logger.info("--- Final Merged Configuration ---")
-    cfg.to_yaml()
+    cfg.print_yaml()
     logger.info("----------------------------------")
 
     # Start training
