@@ -69,7 +69,6 @@ from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     is_last_rank,
     print_rank_0,
-    # unwrap_model,
 )
 from megatron.bridge.utils.import_utils import safe_import
 
