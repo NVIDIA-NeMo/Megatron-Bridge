@@ -54,7 +54,7 @@ def main():
             mock=True,
             precision_config=precision_config,
             # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
-            pipeline_parallelism=4,
+            pipeline_parallelism=8,
             virtual_pipeline_parallelism=1,
             enable_deepep=enable_deepep,  # enable this for token-dropless
         )
