@@ -17,10 +17,8 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
 
-# # Run standard tests first (excluding inprocess restart tests)
-python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m \
-coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m \
-pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/training -k "not test_inprocess_restart"
+# Run standard tests first (excluding inprocess restart tests)
+python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/training -k "not test_inprocess_restart"
 
 # Run inprocess restart tests with ft_launcher if available
 if command -v ft_launcher >/dev/null 2>&1; then
@@ -37,8 +35,7 @@ if command -v ft_launcher >/dev/null 2>&1; then
       --ft-param-rank_out_of_section_timeout=300 \
       --monitor-interval=5 --max-restarts=3 \
       --ft-restart-policy=min-healthy \
-      -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode \
-      -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+      -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
       tests/functional_tests/training/test_inprocess_restart.py::TestInProcessRestartIntegration::test_inprocess_restart_basic_functionality
     
     # Run fault injection test with ft_launcher
@@ -49,8 +46,7 @@ if command -v ft_launcher >/dev/null 2>&1; then
       --ft-param-rank_out_of_section_timeout=300 \
       --monitor-interval=5 --max-restarts=3 \
       --ft-restart-policy=min-healthy \
-      -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode \
-      -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+      -m coverage run --data-file=/workspace/.coverage --source=/workspace/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
       tests/functional_tests/training/test_inprocess_restart.py::TestInProcessRestartIntegration::test_inprocess_restart_with_fault_injection
 fi
 

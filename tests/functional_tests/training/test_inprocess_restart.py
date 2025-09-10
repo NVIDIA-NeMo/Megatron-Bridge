@@ -150,15 +150,24 @@ def build_test_config(
             granularity="rank",
             active_world_size=int(os.getenv("WORLD_SIZE", "2")),
             empty_cuda_cache=True,
-            # Increase timeouts for CI environment where operations can be slower
-            heartbeat_interval=10.0,
-            heartbeat_timeout=120.0,
-            soft_timeout=300.0,  # 5 minutes - much longer for CI
-            hard_timeout=600.0,  # 10 minutes - much longer for CI
-            barrier_timeout=180.0,
-            completion_timeout=180.0,
-            monitor_process_interval=5.0,
-            monitor_thread_interval=5.0,
+            # Timeout configuration must satisfy all these constraints:
+            # soft_timeout < hard_timeout < barrier_timeout
+            # monitor_process_interval < barrier_timeout
+            # heartbeat_timeout < barrier_timeout
+            # heartbeat_interval < heartbeat_timeout
+            # monitor_process_interval < heartbeat_timeout
+            # monitor_process_interval < soft_timeout
+            # monitor_thread_interval < soft_timeout
+            # progress_watchdog_interval < soft_timeout
+            heartbeat_interval=5.0,  # < heartbeat_timeout
+            heartbeat_timeout=60.0,  # < barrier_timeout, > heartbeat_interval, > monitor_process_interval
+            soft_timeout=120.0,  # > monitor_process_interval, monitor_thread_interval, progress_watchdog_interval
+            hard_timeout=180.0,  # > soft_timeout, < barrier_timeout
+            barrier_timeout=240.0,  # > hard_timeout, heartbeat_timeout, monitor_process_interval
+            completion_timeout=200.0,  # Can be independent
+            monitor_process_interval=10.0,  # < heartbeat_timeout, soft_timeout, barrier_timeout
+            monitor_thread_interval=10.0,  # < soft_timeout
+            progress_watchdog_interval=10.0,  # < soft_timeout
         ),
         ft=FaultToleranceConfig(
             enable_ft_package=fault_delay is not None,
@@ -180,6 +189,14 @@ class TestInProcessRestartIntegration:
         """Test basic in-process restart functionality without faults."""
         # NOTE: Do not call initialize_distributed() here - inprocess restart must handle distributed initialization
         # from within the wrapped function
+
+        # Ensure torch.distributed is not initialized (required by nvidia-resiliency-ext)
+        if torch.distributed.is_initialized():
+            print("Warning: torch.distributed is already initialized, destroying it...")
+            torch.distributed.destroy_process_group()
+            # Also clear any CUDA context that might be associated
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Create a shared temporary directory that all processes can access
         # Use a predictable path that's consistent across all processes
@@ -230,6 +247,14 @@ class TestInProcessRestartIntegration:
         This test should be run with ft_launcher for proper fault tolerance coordination.
         """
         # NOTE: Do not call initialize_distributed() here - inprocess restart handles it
+
+        # Ensure torch.distributed is not initialized (required by nvidia-resiliency-ext)
+        if torch.distributed.is_initialized():
+            print("Warning: torch.distributed is already initialized, destroying it...")
+            torch.distributed.destroy_process_group()
+            # Also clear any CUDA context that might be associated
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Check world size from environment (since distributed is not yet initialized)
         world_size = int(os.getenv("WORLD_SIZE", "1"))
