@@ -15,12 +15,8 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
-from megatron.bridge.training.config import (
-    FaultToleranceConfig,
-    ProfilingConfig,
-)
 from megatron.bridge.utils.import_utils import MISSING_NEMO_RUN_MSG
 
 
@@ -42,6 +38,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 # This file contains plugins based on NeMo-Run's run.Plugin API.
 # Plugins operate both on a configured task and an executor at the same time, and are specific to NeMo-Run.
 # These plugins work by modifying the ConfigContainer configuration overrides.
+
+
+def _format_list_for_override(values: List | int):
+    """Render a Python list into a Hydra/CLI-safe list string without spaces.
+
+    Example: [0, 3] -> "[0,3]"
+    """
+    if isinstance(values, int):
+        values = [values]
+    return "[" + ",".join(str(v) for v in values) + "]"
 
 
 @dataclass(kw_only=True)
@@ -145,6 +151,8 @@ class FaultTolerancePlugin(Plugin):
             # For run.Partial, modify the task config directly
             # Configure fault tolerance in task config
             if not hasattr(task.config, "ft") or task.config.ft is None:
+                from megatron.bridge.training.config import FaultToleranceConfig
+
                 task.config.ft = FaultToleranceConfig()
 
             task.config.ft.enable_ft_package = self.enable_ft_package
@@ -209,7 +217,7 @@ class NsysPlugin(Plugin):
                 "profiling.use_nsys_profiler=true",
                 f"profiling.profile_step_start={self.profile_step_start}",
                 f"profiling.profile_step_end={self.profile_step_end}",
-                f"profiling.profile_ranks={self.profile_ranks or [0]}",
+                f"profiling.profile_ranks={_format_list_for_override(self.profile_ranks or [0])}",
                 f"profiling.record_shapes={str(self.record_shapes).lower()}",
             ]
             task.args.extend(cli_overrides)
@@ -217,6 +225,8 @@ class NsysPlugin(Plugin):
         elif isinstance(task, Partial):
             # For run.Partial, modify the task config directly
             if not hasattr(task.config, "profiling") or task.config.profiling is None:
+                from megatron.bridge.training.config import ProfilingConfig
+
                 task.config.profiling = ProfilingConfig()
 
             task.config.profiling.use_nsys_profiler = True
@@ -262,7 +272,7 @@ class PyTorchProfilerPlugin(Plugin):
                 "profiling.use_pytorch_profiler=true",
                 f"profiling.profile_step_start={self.profile_step_start}",
                 f"profiling.profile_step_end={self.profile_step_end}",
-                f"profiling.profile_ranks={self.profile_ranks or [0]}",
+                f"profiling.profile_ranks={_format_list_for_override(self.profile_ranks or [0])}",
                 f"profiling.record_memory_history={str(self.record_memory_history).lower()}",
                 f"profiling.memory_snapshot_path={self.memory_snapshot_path}",
                 f"profiling.record_shapes={str(self.record_shapes).lower()}",
@@ -273,6 +283,8 @@ class PyTorchProfilerPlugin(Plugin):
             # For run.Partial, modify the task config directly
             # Configure profiling in task config
             if not hasattr(task.config, "profiling") or task.config.profiling is None:
+                from megatron.bridge.training.config import ProfilingConfig
+
                 task.config.profiling = ProfilingConfig()
 
             task.config.profiling.use_pytorch_profiler = True
@@ -417,9 +429,6 @@ class PerfEnvPlugin(Plugin):
         if self.pp_size > 1 and self.nccl_pp_comm_chunksize is not None:
             assert isinstance(self.nccl_pp_comm_chunksize, int) and self.nccl_pp_comm_chunksize > 1
             executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(self.nccl_pp_comm_chunksize)
-
-        # Make cuda memory dynamically expandable that mitigates GPU memory waste from fragmentation
-        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         # Configure manual garbage collection
         if self.enable_manual_gc:

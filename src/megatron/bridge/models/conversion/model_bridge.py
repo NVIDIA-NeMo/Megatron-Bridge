@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import itertools
 import logging
 import re
 from dataclasses import dataclass
@@ -35,16 +36,21 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
     get_pg_size,
+    unwrap_model,
 )
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
-from megatron.bridge.models.conversion.utils import extract_sort_key, get_module_and_param_from_name
+from megatron.bridge.models.conversion.utils import (
+    extract_sort_key,
+    get_module_and_param_from_name,
+    persistent_buffers,
+)
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.utils.common_utils import unwrap_model
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 logger = logging.getLogger(__name__)
@@ -297,21 +303,15 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
-            for local_param_name, _ in model.named_parameters():
+            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
+            for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+                if "_extra_state" in local_param_name:
+                    continue
                 local_param_name = self._unwrap_name(local_param_name)
                 global_param_name = _megatron_local_name_to_global(
                     models_list, model_config, local_param_name, vp_stage
                 )
                 global_param_names.append(global_param_name)
-
-            # Process state_dict for expert_bias parameters for this specific model and vp_stage
-            for local_param_name in model.state_dict().keys():
-                if "_extra_state" not in local_param_name and "expert_bias" in local_param_name:
-                    local_param_name = self._unwrap_name(local_param_name)
-                    global_param_name = _megatron_local_name_to_global(
-                        models_list, model_config, local_param_name, vp_stage
-                    )
-                    global_param_names.append(global_param_name)
 
         gathered_global_param_names = [None] * pp_group.size()
         torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
@@ -344,20 +344,26 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         is_main_rank = not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
         bridge_name = self.__class__.__name__
 
-        with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            TextColumn("({task.completed}/{task.total})"),
-            TextColumn("{task.fields[bridge]}"),
-            disable=not (is_main_rank and show_progress),
-        ) as progress:
-            task_id = progress.add_task(description, total=len(tasks), bridge=bridge_name)
+        if show_progress:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                TextColumn("({task.completed}/{task.total})"),
+                TextColumn("{task.fields[bridge]}"),
+                disable=not is_main_rank,
+            ) as progress:
+                task_id = progress.add_task(description, total=len(tasks), bridge=bridge_name)
 
+                for task in tasks:
+                    yield task
+                    progress.update(task_id, advance=1)
+        else:
+            # not using disable above because we notice it will dump some empty progress bar,
+            # even when disable is set to True
             for task in tasks:
                 yield task
-                progress.update(task_id, advance=1)
 
     def load_weights_hf_to_megatron(
         self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
@@ -406,7 +412,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        hf_to_megatron_tasks = self._build_conversion_tasks(hf_pretrained, megatron_model)
+        hf_to_megatron_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         description = f"Loading from {hf_pretrained.model_name_or_path}"
@@ -443,7 +449,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         return megatron_model
 
     def stream_weights_hf_to_megatron(
-        self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
+        self,
+        hf_pretrained: HFPreTrained,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
     ) -> Iterable[MegatronWeightTuple]:
         """Generator variant of load_weights_hf_to_megatron for streaming weight conversion.
 
@@ -456,6 +465,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 the weights.
             megatron_model (Union[MegatronModel, List[MegatronModel]]): Megatron model instance
                 or list of model instances to extract configuration from.
+            conversion_tasks (Optional[List[WeightConversionTask]]): Pre-built conversion tasks.
+                If not provided, tasks will be built automatically from the models.
 
         Yields:
             MegatronWeightTuple: Named tuples containing:
@@ -471,6 +482,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     print(f"Processing {weight_tuple.param_name}: {weight_tuple.weight.shape}")
                     # Custom processing logic here
 
+                # Or use pre-built conversion tasks
+                tasks = bridge.build_conversion_tasks(hf_model, megatron_model)
+                for weight_tuple in bridge.stream_weights_hf_to_megatron(hf_model, megatron_model, tasks):
+                    print(f"Processing {weight_tuple.param_name}: {weight_tuple.weight.shape}")
+
         Note:
             Only yields weights that belong to the current rank after TP/PP distribution.
 
@@ -481,7 +497,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        for task in self._build_conversion_tasks(hf_pretrained, megatron_model):
+        # Use provided conversion tasks or build them
+        if conversion_tasks is None:
+            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+
+        for task in conversion_tasks:
             # None means megatron module not on current rank, skip if this task is not going to happen
             if task.megatron_module is None:
                 continue
@@ -502,6 +522,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         hf_pretrained: HFPreTrained,
         cpu: bool = True,
         show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
     ) -> Iterable[HFWeightTuple]:
         """Export Megatron weights to HuggingFace format.
 
@@ -523,6 +544,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 Defaults to True.
             show_progress (bool, optional): Display progress bar during export.
                 Defaults to True.
+            conversion_tasks (Optional[List[WeightConversionTask]]): Pre-built conversion tasks.
+                If not provided, tasks will be built automatically from the models.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format.
@@ -532,6 +555,13 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
                 # Export weights
                 for name, weight in bridge.stream_weights_megatron_to_hf(megatron_model, hf_config):
+                    print(f"Exported {name}: {weight.shape}")
+
+                # Or use pre-built conversion tasks
+                tasks = bridge.build_conversion_tasks(hf_config, megatron_model)
+                for name, weight in bridge.stream_weights_megatron_to_hf(
+                    megatron_model, hf_config, conversion_tasks=tasks
+                ):
                     print(f"Exported {name}: {weight.shape}")
 
         Raises:
@@ -544,7 +574,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
-        megatron_to_hf_tasks = self._build_conversion_tasks(hf_pretrained, megatron_model)
+        # Use provided conversion tasks or build them
+        if conversion_tasks is None:
+            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
+
+        megatron_to_hf_tasks = conversion_tasks
         model_config = unwrap_model(megatron_model)[0].config
         embeddings_are_tied = model_config.share_embeddings_and_output_weights
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
@@ -729,7 +763,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 if hasattr(unwrapped_model, "output_layer"):
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
-    def _build_conversion_tasks(
+    def build_conversion_tasks(
         self, hf_pretrained: HFPreTrained, megatron_model: List[MegatronModel]
     ) -> List[None | WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
@@ -763,7 +797,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
         tasks = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
-            for local_name, _ in model.named_parameters():
+            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
+            for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_name:
                     continue
 
@@ -771,6 +806,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
                 # if name removed due to some reason, continue. e.g. embeddings_are_tied
                 if global_name not in global_names_index_dict:
+                    print_rank_0(f"WARNING: {global_name} not in global_names_index_dict")
                     continue
                 global_name_idx = global_names_index_dict[global_name]
                 mapping = mapping_registry.megatron_to_hf_lookup(global_name)
@@ -821,7 +857,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
     @classmethod
     def register_bridge(
-        cls, *, source: Type[PreTrainedModel], target: Type[MegatronModel]
+        cls, *, source: Type[PreTrainedModel] | str, target: Type[MegatronModel]
     ) -> Callable[[_BridgeImplClass], _BridgeImplClass]:
         """Class decorator for registering bridge implementations.
 
@@ -830,8 +866,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         HuggingFace model type and target Megatron model type.
 
         Args:
-            source (Type[PreTrainedModel]): HuggingFace PreTrainedModel class
-                (e.g., LlamaForCausalLM).
+            source (Type[PreTrainedModel] | str): HuggingFace PreTrainedModel class
+                (e.g., LlamaForCausalLM) or the class name as a string. Using a
+                string allows registering bridges for architectures that are only
+                available via auto_map.
             target (Type[MegatronModel]): Megatron model class (e.g., GPTModel).
 
         Returns:
@@ -850,6 +888,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     def mapping_registry(self):
                         # Implementation
                         pass
+
+            String-based registration is also supported:
+
+            .. code-block:: python
+
+                @MegatronModelBridge.register_bridge(source="DeepseekV3ForCausalLM", target=GPTModel)
+                class MegatronDeepseekV3Bridge(MegatronModelBridge):
+                    ...
 
         Note:
             The decorated class is registered with multiple dispatchers to handle
@@ -879,6 +925,7 @@ def stream_weights_megatron_to_hf(
     hf_pretrained: HFPreTrained,
     cpu: bool = True,
     show_progress: bool = True,
+    conversion_tasks: Optional[List[WeightConversionTask]] = None,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...
@@ -886,14 +933,16 @@ def stream_weights_megatron_to_hf(
 
 def register_bridge_implementation(
     *,
-    source: Type["PreTrainedModel"],
+    source: Type["PreTrainedModel"] | str,
     target: Type["MegatronModule"],
     bridge_class: Type["MegatronModelBridge"],
 ) -> None:
     """Register a bridge implementation with the dispatch system.
 
     Args:
-        source: HuggingFace PreTrainedModel class (e.g., LlamaForCausalLM)
+        source: HuggingFace PreTrainedModel class or the class name as a string.
+            Using a string allows registering bridges for architectures that are
+            available only via auto_map.
         target: Megatron model class (e.g., GPTModel)
         bridge_class: MegatronModelBridge implementation class
     """
@@ -911,10 +960,11 @@ def register_bridge_implementation(
         hf_pretrained: HFPreTrained,
         cpu: bool = True,
         show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_weights_megatron_to_hf(
-            megatron_model, hf_pretrained, cpu=cpu, show_progress=show_progress
+            megatron_model, hf_pretrained, cpu=cpu, show_progress=show_progress, conversion_tasks=conversion_tasks
         )
 
     # Set meaningful names for debugging
@@ -923,12 +973,13 @@ def register_bridge_implementation(
 
 
 def create_bridge_decorator(
-    *, source: Type["PreTrainedModel"], target: Type["MegatronModule"]
+    *, source: Type["PreTrainedModel"] | str, target: Type["MegatronModule"]
 ) -> Callable[[Type["MegatronModelBridge"]], Type["MegatronModelBridge"]]:
     """Create a decorator for registering bridge implementations.
 
     Args:
-        source: HuggingFace PreTrainedModel class
+        source: HuggingFace PreTrainedModel class or the class name as a string
+            (useful for auto_map architectures)
         target: Megatron model class
 
     Returns:

@@ -645,7 +645,7 @@ class TestLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get the model with LoRA applied via hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
@@ -686,7 +686,7 @@ class TestLoRAMegatronIntegration:
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
-            vocab_size=100,
+            vocab_size=128,
             ffn_hidden_size=128,
         )
 
@@ -696,7 +696,7 @@ class TestLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get and adapt model using hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Test forward pass with proper Megatron input format
@@ -756,7 +756,7 @@ class TestLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get LoRA-adapted model using hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
         # Count LoRA modules before merge
@@ -828,7 +828,7 @@ class TestLoRAMegatronIntegration:
             model_provider.register_pre_wrap_hook(lora_hook)
 
             # Get adapted model using hook
-            adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+            adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
             adapted_model = [chunk.cuda() for chunk in adapted_model]
 
             # Count LoRA modules
@@ -856,7 +856,7 @@ class TestLoRAMegatronIntegration:
         # Register hook and apply LoRA first time
         lora_hook = self._create_lora_pre_wrap_hook(lora)
         model_provider.register_pre_wrap_hook(lora_hook)
-        first_transform = model_provider(ddp_config=None, wrap_with_ddp=False)
+        first_transform = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         first_transform = [chunk.cuda() for chunk in first_transform]
 

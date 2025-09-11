@@ -8,7 +8,7 @@ coverage:
         threshold: 0%
         base: auto
         if_ci_failed: error
+        if_no_uploads: success
         if_not_found: success
-
 fixes:
   - "/workspace/::"

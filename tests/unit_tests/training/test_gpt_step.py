@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+from unittest.mock import patch
+
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
-from megatron.bridge.training.gpt_step import get_packed_seq_params
+from megatron.bridge.training.gpt_step import _create_loss_function, get_packed_seq_params
 
 
 class TestGetPackedSeqParams:
@@ -170,3 +173,68 @@ class TestGetPackedSeqParams:
         # Verify that q and kv parameters are identical (as expected for this function)
         assert torch.equal(result.cu_seqlens_q, result.cu_seqlens_kv)
         assert torch.equal(result.max_seqlen_q, result.max_seqlen_kv)
+
+
+class TestCreateLossFunction:
+    """Tests for the _create_loss_function helper function."""
+
+    def test_create_loss_function_both_true(self):
+        """Test create_loss_function with both flags as True."""
+        loss_mask = torch.tensor([[1.0, 1.0, 0.0]])
+
+        loss_func = _create_loss_function(loss_mask=loss_mask, check_for_nan_in_loss=True, check_for_spiky_loss=True)
+
+        # Verify it returns a partial function
+        assert isinstance(loss_func, partial)
+        assert loss_func.func.__name__ == "masked_next_token_loss"
+
+        # Verify the partial has correct arguments
+        assert torch.equal(loss_func.args[0], loss_mask)
+        assert loss_func.keywords["check_for_nan_in_loss"] == True
+        assert loss_func.keywords["check_for_spiky_loss"] == True
+
+    def test_create_loss_function_both_false(self):
+        """Test _create_loss_function with both flags as False."""
+        loss_mask = torch.tensor([[1.0, 0.0, 1.0]])
+
+        loss_func = _create_loss_function(loss_mask=loss_mask, check_for_nan_in_loss=False, check_for_spiky_loss=False)
+
+        # Verify the partial has correct arguments
+        assert torch.equal(loss_func.args[0], loss_mask)
+        assert loss_func.keywords["check_for_nan_in_loss"] == False
+        assert loss_func.keywords["check_for_spiky_loss"] == False
+
+    def test_create_loss_function_mixed_values(self):
+        """Test create_loss_function with mixed flag values."""
+        loss_mask = torch.tensor([[0.0, 1.0, 1.0]])
+
+        loss_func = _create_loss_function(loss_mask=loss_mask, check_for_nan_in_loss=True, check_for_spiky_loss=False)
+
+        # Verify the partial has correct mixed values
+        assert torch.equal(loss_func.args[0], loss_mask)
+        assert loss_func.keywords["check_for_nan_in_loss"] == True
+        assert loss_func.keywords["check_for_spiky_loss"] == False
+
+    @patch("megatron.bridge.training.gpt_step.masked_next_token_loss")
+    def test_create_loss_function_callable(self, mock_loss_func):
+        """Test that the created loss function can be called correctly."""
+        loss_mask = torch.tensor([[1.0, 1.0, 1.0]])
+        output_tensor = torch.tensor([2.5])
+
+        # Mock return value
+        expected_result = (torch.tensor(3.0), torch.tensor(2), {"lm loss": torch.tensor([3.0, 2.0])})
+        mock_loss_func.return_value = expected_result
+
+        # Create the loss function
+        loss_func = _create_loss_function(loss_mask=loss_mask, check_for_nan_in_loss=True, check_for_spiky_loss=False)
+
+        # Call the partial function
+        result = loss_func(output_tensor)
+
+        # Verify the underlying function was called correctly
+        mock_loss_func.assert_called_once_with(
+            loss_mask, output_tensor, check_for_nan_in_loss=True, check_for_spiky_loss=False
+        )
+
+        # Verify the result
+        assert result == expected_result

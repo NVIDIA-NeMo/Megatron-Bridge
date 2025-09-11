@@ -18,6 +18,7 @@ from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
@@ -364,6 +365,9 @@ class _CommOverlapConfig:
     # Pipeline bubble overlap
     defer_embedding_wgrad_compute: bool = None
     wgrad_deferral_limit: int = None
+    # MOE expert parallel comm
+    overlap_moe_expert_parallel_comm: bool = None
+    delay_wgrad_compute: bool = None
 
 
 @dataclass(kw_only=True)
@@ -387,6 +391,8 @@ class CommOverlapConfig:
     defer_embedding_wgrad_compute: Optional[bool] = None
     wgrad_deferral_limit: Optional[int] = None
     data_parallel_size: Optional[int] = None
+    overlap_moe_expert_parallel_comm: Optional[bool] = None
+    delay_wgrad_compute: Optional[bool] = None
 
     def __post_init__(self):
         self.user_comm_overlap_cfg = _CommOverlapConfig(
@@ -402,6 +408,8 @@ class CommOverlapConfig:
             bucket_size=self.bucket_size,
             defer_embedding_wgrad_compute=self.defer_embedding_wgrad_compute,
             wgrad_deferral_limit=self.wgrad_deferral_limit,
+            overlap_moe_expert_parallel_comm=self.overlap_moe_expert_parallel_comm,
+            delay_wgrad_compute=self.delay_wgrad_compute,
         )
         self.tp_comm_overlap_cfg = None
         self.tp_comm_bootstrap_backend = None
@@ -409,6 +417,7 @@ class CommOverlapConfig:
     def _get_model_comm_overlap_cfgs(
         self,
         model_cfg: GPTModelProvider | T5ModelProvider,
+        ddp_config: DistributedDataParallelConfig,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
 
@@ -422,6 +431,8 @@ class CommOverlapConfig:
         comm_overlap_cfg.tp_comm_bootstrap_backend = None
         comm_overlap_cfg.defer_embedding_wgrad_compute = False
         comm_overlap_cfg.wgrad_deferral_limit = -1
+        comm_overlap_cfg.overlap_moe_expert_parallel_comm = False
+        comm_overlap_cfg.delay_wgrad_compute = False
 
         # Check if TP overlap can be safely enabled
         if self.user_comm_overlap_cfg.tp_comm_overlap is True:
@@ -446,6 +457,68 @@ class CommOverlapConfig:
         else:
             comm_overlap_cfg.overlap_p2p_comm = False
             comm_overlap_cfg.batch_p2p_comm = False
+
+        # MOE expert parallel comm overlap
+        assert hasattr(model_cfg, "overlap_moe_expert_parallel_comm"), (
+            f"model_cfg: {model_cfg} does not have overlap_moe_expert_parallel_comm"
+        )
+
+        if self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is True:
+            assert model_cfg.expert_model_parallel_size > 1, (
+                "overlap_moe_expert_parallel_comm is only supported when expert_model_parallel_size > 1"
+            )
+            assert model_cfg.num_moe_experts > 1, (
+                f"overlap_moe_expert_parallel_comm is only supported when num_moe_experts > 1, \
+                    but got {model_cfg.num_moe_experts}"
+            )
+            assert model_cfg.moe_token_dispatcher_type in ["alltoall", "flex"], (
+                f"overlap_moe_expert_parallel_comm is only supported when moe_token_dispatcher_type == 'alltoall' or 'flex',\
+                      but got {model_cfg.moe_token_dispatcher_type}"
+            )
+            assert model_cfg.bf16 or model_cfg.fp16, (
+                "overlap_moe_expert_parallel_comm is only supported when using bf16 or fp16 models"
+            )
+            assert is_torch_min_version("2.6.0"), "A2A Overlap encounters hang issue with torch version < 2.6.0"
+            if model_cfg.pipeline_model_parallel_size > 1:
+                assert model_cfg.virtual_pipeline_model_parallel_size is not None, (
+                    "If enabling EP A2A overlap, virtual_pipeline_model_parallel_size "
+                    "must be specified when pipeline_model_parallel_size > 1"
+                )
+            assert model_cfg.recompute_granularity != "full", (
+                "disable full recomputation when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert model_cfg.recompute_method is None, (
+                "disable recomputation method when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert model_cfg.recompute_num_layers is None, (
+                "recompute_num_layers must be None when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert not model_cfg.moe_shared_expert_overlap, (
+                "disable moe_shared_expert_overlap when enabling overlap_moe_expert_parallel_comm"
+            )
+            assert model_cfg.mtp_num_layers is None or model_cfg.mtp_num_layers == 1, (
+                "MTP layernum only supports 1 when enabling overlap_moe_expert_parallel_comm."
+            )
+
+        if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
+            if ddp_config.overlap_grad_reduce or self.user_comm_overlap_cfg.overlap_grad_reduce:
+                assert is_te_min_version("2.7.0"), (
+                    f"TE version >= 2.7.0 is required for overlap_grad_reduce when using"
+                    f"delay_wgrad_compute. Current TE version: {get_te_version()}"
+                )
+            if model_cfg.gradient_accumulation_fusion is True:
+                assert is_te_min_version("2.7.0"), (
+                    f"TE version >= 2.7.0 is required for gradient_accumulation_fusion when using"
+                    f"delay_wgrad_compute. Current TE version: {get_te_version()}"
+                )
+
+            assert (
+                model_cfg.overlap_moe_expert_parallel_comm
+                or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
+            ), "overlap_moe_expert_parallel_comm is required for delay_wgrad_compute"
+            assert not model_cfg.moe_use_legacy_grouped_gemm, (
+                "delay_wgrad_compute is not supported with legacy groupedgemm implementation"
+            )
 
         comm_overlap_cfg = self._override_user_cfgs(comm_overlap_cfg)
         return comm_overlap_cfg
@@ -514,7 +587,8 @@ class CommOverlapConfig:
                     os.environ.pop("CUDA_DEVICE_MAX_CONNECTIONS")
                 logging.info("Unset CUDA_DEVICE_MAX_CONNECTIONS")
         else:
-            if tp_size > 1 or cp_size > 1:
+            # Hopper or earlier generation GPUs
+            if (tp_size > 1 or cp_size > 1) and not model_cfg.overlap_moe_expert_parallel_comm:
                 """
                 Set the device connection to 1 to enforce the kernel queuing
                 order from the host to the execution order on GPU. This is
@@ -543,10 +617,22 @@ class CommOverlapConfig:
             optimizer_config: Optimizer configuration for gradient overlap settings
             ddp_config: Distributed data parallel configuration
         """
-        comm_overlap_cfg = self._get_model_comm_overlap_cfgs(model_config)
+        comm_overlap_cfg = self._get_model_comm_overlap_cfgs(model_config, ddp_config)
         self._apply_cfgs(comm_overlap_cfg, model_config)
         if model_config.tp_comm_overlap:
-            model_config.tp_comm_overlap_cfg = asdict(comm_overlap_cfg.tp_comm_overlap_cfg)
+            if comm_overlap_cfg.tp_comm_overlap_cfg is None:
+                logging.warning(
+                    "Tensor parallel overlap: No overlap config provided. "
+                    "Initializing TP comm overlap with the default config."
+                )
+                model_config.tp_comm_overlap_cfg = None
+            else:
+                # ub_cfgs is a dataclass, however TE needs a dict, so convert here
+                model_config.tp_comm_overlap_cfg = asdict(comm_overlap_cfg.tp_comm_overlap_cfg)
+                # remove keys with None values from dictionary to match TE's expectations
+                model_config.tp_comm_overlap_cfg = {
+                    key: value for key, value in model_config.tp_comm_overlap_cfg.items() if value is not None
+                }
             model_config.tp_comm_bootstrap_backend = comm_overlap_cfg.tp_comm_bootstrap_backend
 
         # Data parallel overlap is only available with the Megatron DDP and Distributed optimizer

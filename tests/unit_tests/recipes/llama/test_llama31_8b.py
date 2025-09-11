@@ -20,7 +20,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.llama import Llama31ModelProvider8B
-from megatron.bridge.recipes.llama.llama31_8b import model_config, pretrain_config
+from megatron.bridge.recipes.llama.llama31_8b import get_comm_overlap_config, model_config, pretrain_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
 from megatron.bridge.training.config import ConfigContainer
@@ -130,6 +130,7 @@ class TestPretrainConfig:
 
         # Check dataset configuration (should be in mock mode)
         assert config.dataset.sequence_length == 8192
+        assert config.model.seq_length == 8192
         assert config.dataset.split == "1,1,1"
         assert config.dataset.blend is None
         assert config.dataset.blend_per_split is None
@@ -277,8 +278,8 @@ class TestPretrainConfig:
         """Test default CommOverlapConfig setup."""
         config = pretrain_config()
 
-        # Default setup should have TP comm overlap disabled due to TP size being 1
-        assert config.comm_overlap is not None
+        # Default setup should have comm_overlap disabled (None) for memory efficiency
+        assert config.comm_overlap is None
 
     def test_pretrain_config_custom_comm_overlap(self):
         """Test custom CommOverlapConfig."""
@@ -296,19 +297,34 @@ class TestPretrainConfig:
 
     def test_pretrain_config_comm_overlap_with_tp(self):
         """Test CommOverlapConfig with tensor parallelism enabled."""
-        # Mock HAVE_TE to True to simulate transformer engine being available
-        with patch("megatron.bridge.training.comm_overlap.HAVE_TE", True):
-            config = pretrain_config(
-                tensor_parallelism=4,
-                context_parallelism=2,
-                sequence_parallelism=True,
-            )
+        # Even with TP > 1, comm_overlap should be None by default for memory efficiency
+        config = pretrain_config(
+            tensor_parallelism=4,
+            context_parallelism=2,
+            sequence_parallelism=True,
+        )
 
-        # With TP > 1 and sequence parallelism, comm_overlap should be configured
+        # Comm overlap should be disabled by default regardless of parallelism settings
+        assert config.comm_overlap is None
+
+    def test_pretrain_config_explicit_comm_overlap_enable(self):
+        """Test that communication overlap can still be enabled when explicitly provided."""
+        # Create a custom comm overlap config to enable it explicitly
+        custom_overlap = CommOverlapConfig(
+            tp_comm_overlap=True,
+            defer_embedding_wgrad_compute=True,
+            wgrad_deferral_limit=25,
+        )
+
+        config = pretrain_config(
+            tensor_parallelism=4, context_parallelism=2, sequence_parallelism=True, comm_overlap_config=custom_overlap
+        )
+
+        # Should use the explicitly provided config
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
         assert config.comm_overlap.defer_embedding_wgrad_compute is True
-        assert config.comm_overlap.wgrad_deferral_limit == 50  # Default from recipe
+        assert config.comm_overlap.wgrad_deferral_limit == 25
 
     def test_pretrain_config_scheduler_configuration(self):
         """Test scheduler configuration."""
@@ -347,7 +363,7 @@ class TestPretrainConfig:
         assert config.dataset.num_dataset_builder_threads == 1
         assert config.dataset.data_sharding is True
         assert config.dataset.dataloader_type == "single"
-        assert config.dataset.num_workers == 1
+        assert config.dataset.num_workers == 8
 
     def test_pretrain_config_logger_configuration(self):
         """Test logger configuration."""
@@ -412,7 +428,23 @@ class TestPretrainConfig:
         # Check dataset defaults
         assert config.dataset.sequence_length == 8192  # Standard 8k sequence length
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_precision_recipes(self, precision):
         cfg = pretrain_config(precision_config=precision)
         assert cfg.mixed_precision == precision
+
+
+@pytest.mark.unit
+class TestGetCommOverlapConfig:
+    """Test cases for the get_comm_overlap_config function."""
+
+    def test_get_comm_overlap_config_default_values(self):
+        """Test get_comm_overlap_config returns the expected configuration."""
+        config = get_comm_overlap_config()
+
+        assert isinstance(config, CommOverlapConfig)
+        assert config.tp_comm_overlap is True
+        assert config.defer_embedding_wgrad_compute is True
+        assert config.wgrad_deferral_limit == 50
+        assert config.overlap_param_gather_with_optimizer_step is False
+        assert config.align_param_gather is True

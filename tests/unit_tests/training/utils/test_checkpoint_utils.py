@@ -216,7 +216,8 @@ class TestCheckpointUtils:
         state_dict = {"iteration": 100, "epoch": 5, "step": 1000}
         mock_torch_load.return_value = state_dict
 
-        result = read_train_state("train_state.pt", MockTrainState)
+        with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
+            result = read_train_state("train_state.pt")
 
         assert isinstance(result, MockTrainState)
         assert result.iteration == 100
@@ -250,7 +251,7 @@ class TestCheckpointUtils:
 
         mock_broadcast.side_effect = broadcast_side_effect
 
-        result = read_train_state("train_state.pt", MockTrainState)
+        result = read_train_state("train_state.pt")
 
         assert result == train_state
         assert result.iteration == 200
@@ -267,23 +268,7 @@ class TestCheckpointUtils:
         mock_torch_load.side_effect = RuntimeError("Corrupted file")
 
         with pytest.raises(RuntimeError, match="Unable to load train state file"):
-            read_train_state("corrupted.pt", MockTrainState)
-
-    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
-    def test_read_train_state_class_instantiation_error(self, mock_torch_load, mock_is_initialized, mock_get_rank):
-        """Test read_train_state handles train state class instantiation error."""
-        mock_get_rank.return_value = 0
-        mock_is_initialized.return_value = False
-        mock_torch_load.return_value = {"iteration": 100}
-
-        # Mock a class that raises an error during instantiation
-        def bad_class():
-            raise ValueError("Cannot instantiate")
-
-        with pytest.raises(RuntimeError, match="Unable to load train state file"):
-            read_train_state("train_state.pt", bad_class)
+            read_train_state("corrupted.pt")
 
     def test_caching_behavior_read_run_config(self):
         """Test that read_run_config uses caching properly."""
@@ -319,9 +304,11 @@ class TestCheckpointUtils:
             mock_load.return_value = state_dict
 
             # First call
-            result1 = read_train_state("train_state.pt", MockTrainState)
+            with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
+                result1 = read_train_state("train_state.pt")
             # Second call should use cache
-            result2 = read_train_state("train_state.pt", MockTrainState)
+            with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
+                result2 = read_train_state("train_state.pt")
 
             assert result1 == result2
             assert result1.iteration == 100
@@ -501,8 +488,9 @@ class TestCheckpointUtils:
                 "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
             ),
             patch("megatron.bridge.training.utils.checkpoint_utils.torch.load", return_value=complex_state_dict),
+            patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=ComplexTrainState()),
         ):
-            result = read_train_state("complex_state.pt", ComplexTrainState)
+            result = read_train_state("complex_state.pt")
 
             # Verify the complex state is loaded correctly
             assert result.iteration == 10000
@@ -568,8 +556,9 @@ class TestCheckpointUtils:
         mock_is_initialized.return_value = False
         mock_torch_load.side_effect = RuntimeError("CUDA out of memory")
 
-        with pytest.raises(RuntimeError, match="Unable to load train state file"):
-            read_train_state("large_state.pt", MockTrainState)
+        with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
+            with pytest.raises(RuntimeError, match="Unable to load train state file"):
+                read_train_state("large_state.pt")
 
     def test_unicode_and_special_characters_in_config(self, tmp_path):
         """Test handling of Unicode and special characters in config files."""

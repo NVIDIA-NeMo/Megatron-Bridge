@@ -53,3 +53,5 @@ def apply_moe_token_drop(
 
     model_provider.moe_expert_capacity_factor = moe_expert_capacity_factor
     model_provider.moe_pad_expert_input_to_capacity = moe_pad_expert_input_to_capacity
+
+    return model_provider

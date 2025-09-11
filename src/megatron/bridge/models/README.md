@@ -17,7 +17,7 @@ provider = bridge.to_megatron_provider()
 provider.tensor_model_parallel_size = 8
 provider.pipeline_model_parallel_size = 2
 
-model = provider(wrap_with_ddp=False)
+model = provider.provide_distributed_model(wrap_with_ddp=False)
 ```
 
 ### Converting Megatron Models back to 🤗Hugging Face

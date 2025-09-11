@@ -4,11 +4,10 @@
 
 import base64
 import json
-import math
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizerCore
+from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer as MegatronTokenizerCore
 
 from megatron.bridge.training.tokenizers.bert_tokenization import FullTokenizer as FullBertTokenizer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -52,9 +51,7 @@ class MegatronTokenizer(MegatronTokenizerCore):
         return self.mask
 
 
-def build_tokenizer(
-    tokenizer_config: TokenizerConfig, make_vocab_size_divisible_by: int, tensor_model_parallel_size: int, **kwargs
-):
+def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
     """Initialize tokenizer based on the provided configuration.
 
     This function serves as a factory to instantiate various tokenizer types
@@ -65,9 +62,6 @@ def build_tokenizer(
         tokenizer_config (TokenizerConfig): Configuration object specifying the tokenizer
                                             type, paths to vocab/model files, and other
                                             tokenizer-specific settings.
-        make_vocab_size_divisible_by (int): Ensures the vocabulary size is a multiple of this value.
-        tensor_model_parallel_size (int): The tensor model parallel size, used for further
-                                          adjusting vocabulary size for distributed training.
         **kwargs: Additional keyword arguments that might be specific to certain tokenizers
                   (e.g., passed to HuggingFace AutoTokenizer).
 
@@ -146,35 +140,7 @@ def build_tokenizer(
     else:
         raise NotImplementedError("{} tokenizer is not implemented.".format(tokenizer_config.tokenizer_type))
 
-    # Add vocab size (if not already set from a checkpoint).
-    if getattr(tokenizer_config, "padded_vocab_size", None) is None:
-        tokenizer_config.padded_vocab_size = _vocab_size_with_padding(
-            tokenizer.vocab_size, make_vocab_size_divisible_by, tensor_model_parallel_size
-        )
-
     return tokenizer
-
-
-def _vocab_size_with_padding(
-    orig_vocab_size: int,
-    make_vocab_size_divisible_by: int,
-    tensor_model_parallel_size: int,
-    logging_enabled: bool = True,
-):
-    """Pad vocab size so it is divisible by model parallel size and
-    still having GPU friendly size."""
-
-    after = orig_vocab_size
-    multiple = make_vocab_size_divisible_by * tensor_model_parallel_size
-    after = int(math.ceil(after / multiple) * multiple)
-    if get_rank_safe() == 0 and logging_enabled:
-        print(
-            " > padded vocab (size: {}) with {} dummy tokens (new size: {})".format(
-                orig_vocab_size, after - orig_vocab_size, after
-            ),
-            flush=True,
-        )
-    return after
 
 
 class _HuggingFaceTokenizer(MegatronTokenizer):

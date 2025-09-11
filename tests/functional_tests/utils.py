@@ -95,8 +95,14 @@ def clear_directories(path: str) -> None:
         torch.distributed.barrier()
 
 
-def verify_checkpoint_files(checkpoint_dir: str, iteration_count: int) -> None:
-    """Verify that checkpoint files were created correctly."""
+def verify_checkpoint_files(checkpoint_dir: str, iteration_count: int, ckpt_format: str = "torch_dist") -> None:
+    """Verify that checkpoint files were created correctly for different checkpoint formats.
+
+    Args:
+        checkpoint_dir: Directory containing checkpoints
+        iteration_count: Expected iteration number for the checkpoint
+        ckpt_format: Checkpoint format ("torch_dist", "fsdp_dtensor", etc.)
+    """
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
 
@@ -110,10 +116,19 @@ def verify_checkpoint_files(checkpoint_dir: str, iteration_count: int) -> None:
         metadata_file = os.path.join(final_iter_dir, ".metadata")
         assert os.path.exists(metadata_file), "Checkpoint metadata file not found"
 
+        # Both formats use torch.distributed.checkpoint but may create different numbers of .distcp files
         distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
-        num_expected_files = 2 * torch.distributed.get_world_size()
+
+        if ckpt_format == "torch_dist":
+            num_expected_files = 2 * torch.distributed.get_world_size()
+        elif ckpt_format == "fsdp_dtensor":
+            # fsdp_dtensor format creates .distcp files (one per rank)
+            num_expected_files = torch.distributed.get_world_size()
+        else:
+            raise ValueError(f"Unsupported checkpoint format for verification: {ckpt_format}")
+
         assert len(distcp_files) == num_expected_files, (
-            f"Expected {num_expected_files} .distcp files, found {len(distcp_files)}: {distcp_files}"
+            f"Expected {num_expected_files} .distcp files for fsdp_dtensor, found {len(distcp_files)}: {distcp_files}"
         )
 
 
@@ -133,3 +148,56 @@ def verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, peft_checkpoint_dir,
         assert peft_size < pretrain_size * 0.6, (
             f"PEFT checkpoint ({peft_size}) should be smaller than 60% of pretrain checkpoint ({pretrain_size})"
         )
+
+
+def compare_provider_configs(converted_provider, predefined_provider, model_id):
+    """Compare ALL configuration attributes between converted and predefined providers."""
+
+    # Get all attributes from both providers
+    converted_attrs = vars(converted_provider)
+    predefined_attrs = vars(predefined_provider)
+
+    # First check that both providers have the same set of attributes
+    converted_keys = set(converted_attrs.keys())
+    predefined_keys = set(predefined_attrs.keys())
+
+    missing_in_converted = predefined_keys - converted_keys
+    missing_in_predefined = converted_keys - predefined_keys
+
+    if missing_in_converted:
+        raise AssertionError(f"Converted provider for {model_id} is missing attributes: {missing_in_converted}")
+
+    if missing_in_predefined:
+        raise AssertionError(f"Predefined provider for {model_id} is missing attributes: {missing_in_predefined}")
+
+    # Compare all attribute values
+    mismatched_attrs = []
+    excluded_attrs = set()
+
+    for attr_name in sorted(converted_keys):
+        # Skip excluded attributes
+        if "init_method" in attr_name or attr_name == "generation_config" or attr_name == "vocab_size":
+            excluded_attrs.add(attr_name)
+            continue
+
+        converted_value = converted_attrs[attr_name]
+        predefined_value = predefined_attrs[attr_name]
+
+        # Handle special comparison cases for different types
+        if converted_value != predefined_value:
+            # For functions, compare by name/identity since they might be the same function
+            # but not pass == comparison
+            if callable(converted_value) and callable(predefined_value):
+                if (
+                    hasattr(converted_value, "__name__")
+                    and hasattr(predefined_value, "__name__")
+                    and converted_value.__name__ == predefined_value.__name__
+                ):
+                    continue
+                elif converted_value is predefined_value:
+                    continue
+
+            mismatched_attrs.append(f"  {attr_name}: converted={converted_value} vs predefined={predefined_value}")
+
+    if mismatched_attrs:
+        raise AssertionError(f"Configuration mismatch for {model_id}:\n" + "\n".join(mismatched_attrs))

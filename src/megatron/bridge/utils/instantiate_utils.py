@@ -240,7 +240,9 @@ def instantiate_node(
                         value = instantiate_node(value, mode=mode)
                     except (ImportError, InstantiationException) as e:
                         if mode == InstantiationMode.STRICT:
-                            raise InstantiationException(f"Error instantiating {value} for key {full_key}: {e}") from e
+                            raise InstantiationException(
+                                f"Error instantiating {value} for key {full_key}.{key}: {e}"
+                            ) from e
                         else:
                             value = None
                             logging.warning(

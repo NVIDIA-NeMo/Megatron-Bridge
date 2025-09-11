@@ -20,6 +20,7 @@ from typing import Optional
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 NUM_BYTES_IN_MEGABYTE: int = 1024 * 1024
@@ -69,7 +70,7 @@ def compute_weight_and_optimizer_memory(config: ConfigContainer, verbose: bool =
             + (1 / (model_config.num_layers * model_config.hidden_size))
         )
     )
-    embedding_size = model_config.hidden_size * config.tokenizer.padded_vocab_size
+    embedding_size = model_config.hidden_size * _get_vocab_size(model_config)
     if not model_config.share_embeddings_and_output_weights:
         num_parameters_in_embedding_layers = 2 * embedding_size
     else:
@@ -206,7 +207,7 @@ def compute_activation_memory(
             * train_config.micro_batch_size
             * model_config.hidden_size
             * 4
-            * (1 + (config.tokenizer.padded_vocab_size / model_config.hidden_size))
+            * (1 + (_get_vocab_size(model_config) / model_config.hidden_size))
         )
 
     # Activation memory is partitioned by TP size due to tensor and sequence model parallelism.
@@ -245,3 +246,23 @@ def report_theoretical_memory(
         f"Theoretical memory footprints: weight and optimizer={weight_and_optimizer_memory:.2f} MB, "
         f"activation={activation_memory:.2f} MB, total={total_memory:.2f} MB\n"
     )
+
+
+def _get_vocab_size(model_cfg) -> int:
+    """Get the potentially padded vocabulary size for the given configuration.
+
+    Args:
+        cfg: The model provider configuration.
+
+    Returns:
+        int: The vocabulary size used.
+    """
+    if model_cfg.should_pad_vocab:
+        return calculate_padded_vocab_size(
+            model_cfg.vocab_size,
+            model_cfg.make_vocab_size_divisible_by,
+            model_cfg.tensor_model_parallel_size,
+            logging_enabled=False,
+        )
+    else:
+        return model_cfg.vocab_size

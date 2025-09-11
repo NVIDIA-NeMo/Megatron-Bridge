@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.data.datasets.sft import create_sft_dataset
@@ -77,7 +78,6 @@ def prepare_packed_sequence_data(
     Returns:
         None: Saves the packed sequence data to the specified output path.
     """
-
     logger.info(f"Preparing packed sequence from {input_path}")
     dataset = tokenize_dataset(input_path, tokenizer, max_seq_length, seed)
     sequences, histogram = create_hist(dataset, max_seq_length)
@@ -86,12 +86,16 @@ def prepare_packed_sequence_data(
     output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
 
     # save output data
-    np.save(output_path, output_data)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        msc.numpy.save(output_path, output_data)
+    else:
+        np.save(output_path, output_data)
 
     # save packing metadata, packing_metadata is appended to the packing file if it exists
     if output_metadata_path is not None:
         try:
-            with open(output_metadata_path, "r") as f:
+            with output_metadata_path.open(mode="r") as f:
                 packing_metadata_file = json.load(f)
                 # 'packing_metadata_file' is expected to be a list of dicts: List[Dict[str, int]]
                 # Each dict corresponds to a packed dataset. Typically there will be two dicts,
@@ -104,7 +108,7 @@ def prepare_packed_sequence_data(
             packing_metadata_file = []
 
         packing_metadata_file.append(packing_metadata)
-        with open(output_metadata_path, "w") as f:
+        with output_metadata_path.open(mode="w") as f:
             json.dump(packing_metadata_file, f)
 
     logger.info(f"Packed sequence is prepared and saved to {output_path}")
@@ -155,7 +159,11 @@ class PackedSequenceSpecs:
 
     def __post_init__(self):
         if self.packed_train_data_path is not None:
-            self.packed_train_data_path = Path(self.packed_train_data_path)
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                self.packed_train_data_path = msc.Path(self.packed_train_data_path)
+            else:
+                self.packed_train_data_path = Path(self.packed_train_data_path)
             assert self.packed_train_data_path.suffix == ".npy", (
                 f"packed training data file must be a .npy file: {self.packed_train_data_path}"
             )
@@ -164,7 +172,11 @@ class PackedSequenceSpecs:
             )
 
         if self.packed_val_data_path is not None:
-            self.packed_val_data_path = Path(self.packed_val_data_path)
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                self.packed_val_data_path = msc.Path(self.packed_val_data_path)
+            else:
+                self.packed_val_data_path = Path(self.packed_val_data_path)
             assert self.packed_val_data_path.suffix == ".npy", (
                 f"packed validation data file must be a .npy file: {self.packed_val_data_path}"
             )

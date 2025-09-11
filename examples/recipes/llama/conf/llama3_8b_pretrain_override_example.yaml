@@ -38,6 +38,10 @@ checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
   save: null
 
+dist:
+  use_megatron_fsdp: false
+  use_torch_fsdp2: false
+
 logger:
   log_interval: 1
 

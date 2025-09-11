@@ -457,7 +457,7 @@ class TestNsysPlugin:
             "profiling.use_nsys_profiler=true",
             "profiling.profile_step_start=50",
             "profiling.profile_step_end=100",
-            "profiling.profile_ranks=[0, 1, 2]",
+            "profiling.profile_ranks=[0,1,2]",
             "profiling.record_shapes=true",
         ]
         for arg in expected_args:
@@ -666,7 +666,6 @@ class TestPerfEnvPlugin:
         assert executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "32"
         assert executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "32"
         assert executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] == "2048"
-        assert executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
     def test_setup_with_older_gpu(self):
         """Test setup with older GPU architecture."""
@@ -799,7 +798,6 @@ class TestPluginIntegration:
 
         # From perf plugin
         assert task.config.train.manual_gc is True
-        assert executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
     def test_script_task_with_multiple_plugins(self):
         """Test multiple plugins with Script task."""

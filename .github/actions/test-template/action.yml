@@ -197,8 +197,6 @@ runs:
       with:
         path: cache-mount
         key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-uv-
 
     - name: Restore Docker cache mounts
       uses: reproducible-containers/buildkit-cache-dance@5b81f4d29dc8397a7d341dba3aeecc7ec54d6361

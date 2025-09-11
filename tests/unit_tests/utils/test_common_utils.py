@@ -19,7 +19,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-import torch.nn as nn
 
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
@@ -28,7 +27,6 @@ from megatron.bridge.utils.common_utils import (
     is_last_rank,
     print_rank_0,
     print_rank_last,
-    unwrap_model,
 )
 
 
@@ -267,161 +265,6 @@ class TestPrintRankLast:
         mock_print.assert_called_once_with(message, flush=True)
 
 
-class TestUnwrapModel:
-    """Test unwrap_model function."""
-
-    def test_unwrap_single_model_no_wrappers(self):
-        """Test unwrapping a single model with no wrappers."""
-        model = nn.Linear(10, 5)
-        result = unwrap_model(model)
-        assert result is model
-
-    def test_unwrap_single_model_with_custom_wrapper(self):
-        """Test unwrapping a single model with a custom wrapper."""
-        base_model = nn.Linear(10, 5)
-
-        # Create a real wrapper class that inherits from nn.Module
-        class TestWrapper(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-            def forward(self, x):
-                return self.module(x)
-
-        wrapped_model = TestWrapper(base_model)
-
-        # Test with custom module instances
-        result = unwrap_model(wrapped_model, module_instances=(TestWrapper,))
-        assert result is base_model
-
-    def test_unwrap_single_model_with_multiple_wrappers(self):
-        """Test unwrapping a single model with multiple nested wrappers."""
-        base_model = nn.Linear(10, 5)
-
-        # Create wrapper classes
-        class WrapperA(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-        class WrapperB(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-        # Nest the wrappers
-        wrapped_once = WrapperA(base_model)
-        wrapped_twice = WrapperB(wrapped_once)
-
-        result = unwrap_model(wrapped_twice, module_instances=(WrapperA, WrapperB))
-        assert result is base_model
-
-    def test_unwrap_list_of_models(self):
-        """Test unwrapping a list of models."""
-        model1 = nn.Linear(10, 5)
-        model2 = nn.Conv2d(3, 16, 3)
-
-        # Create a wrapper class
-        class TestWrapper(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-        # Wrap the models
-        wrapped_model1 = TestWrapper(model1)
-        wrapped_model2 = TestWrapper(model2)
-
-        models = [wrapped_model1, wrapped_model2]
-
-        result = unwrap_model(models, module_instances=(TestWrapper,))
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert result[0] is model1
-        assert result[1] is model2
-
-    def test_unwrap_empty_list(self):
-        """Test unwrapping an empty list."""
-        result = unwrap_model([])
-        assert result == []
-
-    def test_unwrap_mixed_list(self):
-        """Test unwrapping a list with some wrapped and some unwrapped models."""
-        model1 = nn.Linear(10, 5)
-        model2 = nn.Conv2d(3, 16, 3)
-
-        # Create a wrapper class
-        class TestWrapper(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-        # Only wrap one model
-        wrapped_model1 = TestWrapper(model1)
-        models = [wrapped_model1, model2]  # One wrapped, one not
-
-        result = unwrap_model(models, module_instances=(TestWrapper,))
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert result[0] is model1
-        assert result[1] is model2
-
-    def test_custom_module_instances(self):
-        """Test unwrapping with custom module instances parameter."""
-        base_model = nn.Linear(10, 5)
-
-        # Create a custom wrapper class
-        class CustomWrapper(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-        wrapper = CustomWrapper(base_model)
-
-        # Test with default module instances (should not unwrap)
-        result = unwrap_model(wrapper)
-        assert result is wrapper
-
-        # Test with custom module instances (should unwrap)
-        result = unwrap_model(wrapper, module_instances=(CustomWrapper,))
-        assert result is base_model
-
-    def test_unwrap_with_standard_wrappers(self):
-        """Test unwrapping behavior with models that don't have wrappers."""
-        # Create models without any wrappers
-        model1 = nn.Linear(10, 5)
-        model2 = nn.Sequential(nn.Linear(5, 3), nn.ReLU())
-
-        # Test single model
-        result = unwrap_model(model1)
-        assert result is model1
-
-        # Test list of models
-        models = [model1, model2]
-        result = unwrap_model(models)
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert result[0] is model1
-        assert result[1] is model2
-
-    def test_unwrap_deeply_nested_wrappers(self):
-        """Test unwrapping deeply nested wrapper structures."""
-        base_model = nn.Linear(10, 5)
-
-        class WrapperType(nn.Module):
-            def __init__(self, module):
-                super().__init__()
-                self.module = module
-
-        # Create deeply nested structure
-        nested_model = base_model
-        for _ in range(5):  # Wrap 5 times
-            nested_model = WrapperType(nested_model)
-
-        result = unwrap_model(nested_model, module_instances=(WrapperType,))
-        assert result is base_model
-
-
 class TestIntegration:
     """Integration tests for common_utils functions."""
 
@@ -453,18 +296,3 @@ class TestIntegration:
                 assert get_rank_safe() == 2
                 assert get_world_size_safe() == 4
                 assert get_local_rank_preinit() == 1
-
-    def test_model_unwrapping_integration(self):
-        """Test model unwrapping with various scenarios."""
-        # Create a base model
-        base_model = nn.Sequential(nn.Linear(10, 5), nn.ReLU(), nn.Linear(5, 1))
-
-        # Test single model
-        assert unwrap_model(base_model) is base_model
-
-        # Test list of models
-        models = [base_model, nn.Linear(3, 2)]
-        result = unwrap_model(models)
-        assert isinstance(result, list)
-        assert len(result) == 2
-        assert result[0] is base_model

@@ -59,7 +59,7 @@ provider.bias_activation_fusion = True
 provider.bias_dropout_fusion = True
 
 # Create the model with all configurations applied
-model = provider(wrap_with_ddp=False)
+model = provider.provide_distributed_model(wrap_with_ddp=False)
 ```
 
 The provider pattern is especially useful when you need to:
@@ -184,7 +184,7 @@ When using the provider pattern, always configure parallelism and other settings
 # ✅ Correct: Configure provider before creating model
 provider = bridge.to_megatron_provider()
 provider.tensor_model_parallel_size = 8
-model = provider(wrap_with_ddp=False)
+model = provider.provide_distributed_model(wrap_with_ddp=False)
 
 # ❌ Avoid: Creating model before configuring parallelism
 model = bridge.to_megatron_model()  # Uses default settings

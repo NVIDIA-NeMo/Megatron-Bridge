@@ -41,7 +41,9 @@ class MixedPrecisionConfig:
     grad_reduce_in_fp32: bool = True
     # fp8 related
     fp8: Optional[str] = None
-    fp8_recipe: str = "delayed"  # "tensorwise", "delayed", "mxfp8" (for Blackwell only)
+    fp8_recipe: str = (
+        "tensorwise"  # "tensorwise", "delayed", "mxfp8" (for Blackwell only), "blockwise" (for Hopper only)
+    )
     first_last_layers_bf16: bool = False
     fp8_margin: int = 0
     fp8_amax_history_len: int = 1
@@ -59,6 +61,7 @@ class MixedPrecisionConfig:
     hysteresis: int = 2
     num_layers_at_start_in_bf16: int = 0
     num_layers_at_end_in_bf16: int = 0
+    reuse_grad_buf_for_mxfp8_param_ag: bool = False
 
     def __setattr__(self, name: str, value) -> None:
         # Use object.__setattr__ to avoid recursion
@@ -76,6 +79,13 @@ class MixedPrecisionConfig:
         # If fp8_param is None, initialize it from fp8_param_gather
         if self.fp8_param is None:
             self.fp8_param = self.fp8_param_gather
+
+        # Validate that mxfp8 recipe requires reuse_grad_buf_for_mxfp8_param_ag=True when fp8_param_gather=True
+        if self.fp8_param_gather and self.fp8_recipe == "mxfp8":
+            assert self.reuse_grad_buf_for_mxfp8_param_ag, (
+                "When fp8_param_gather=True and fp8_recipe='mxfp8', "
+                "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
+            )
 
     def setup(
         self,
@@ -170,7 +180,7 @@ def fp16_mixed() -> MixedPrecisionConfig:
 
 
 @register
-def bf16_with_fp8_mixed() -> MixedPrecisionConfig:
+def bf16_with_fp8_delayed_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8.
 
     Note: FP8 recipes are experimental and have not been tested for training convergence.
@@ -189,7 +199,7 @@ def bf16_with_fp8_mixed() -> MixedPrecisionConfig:
 
 
 @register
-def fp16_with_fp8_mixed() -> MixedPrecisionConfig:
+def fp16_with_fp8_delayed_scaling_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16 with FP8.
 
     Note: FP8 recipes are experimental and have not been tested for training convergence.
@@ -217,7 +227,8 @@ def bf16_with_mxfp8_mixed() -> MixedPrecisionConfig:
     cfg = bf16_mixed()
     cfg.fp8 = "hybrid"
     cfg.fp8_recipe = "mxfp8"
-    cfg.fp8_param_gather = False
+    cfg.fp8_param_gather = True
+    cfg.reuse_grad_buf_for_mxfp8_param_ag = True
     return cfg
 
 
@@ -231,7 +242,8 @@ def fp16_with_mxfp8_mixed() -> MixedPrecisionConfig:
     cfg = fp16_mixed()
     cfg.fp8 = "hybrid"
     cfg.fp8_recipe = "mxfp8"
-    cfg.fp8_param_gather = False
+    cfg.fp8_param_gather = True
+    cfg.reuse_grad_buf_for_mxfp8_param_ag = True
     return cfg
 
 
@@ -272,6 +284,28 @@ def nemotron_h_bf16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
     cfg = bf16_mixed()
     cfg.fp8 = "hybrid"
     cfg.fp8_recipe = "tensorwise"
+    cfg.first_last_layers_bf16 = True
+    cfg.num_layers_at_start_in_bf16 = 2
+    cfg.num_layers_at_end_in_bf16 = 2
+    cfg.fp8_param_gather = True
+    return cfg
+
+
+@register
+def nanov2_bf16_with_fp8_current_scaling_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with FP8
+    per-tensor current scaling.
+
+    Note: The baseline current scaling recipe uses BF16 in the first and last Transformer layers. The user
+    can choose to disable the BF16 layers or apply BF16 to more Transformer layers.
+
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with FP8 per-tensor current scaling mixed
+        precision training
+    """
+    cfg = bf16_mixed()
+    cfg.fp8 = "hybrid"
+    cfg.fp8_recipe = "blockwise"
     cfg.first_last_layers_bf16 = True
     cfg.num_layers_at_start_in_bf16 = 2
     cfg.num_layers_at_end_in_bf16 = 2

@@ -42,7 +42,7 @@ def main() -> None:
     print()
     print("🔍 Model Bridge Details:")
     print("   Each model has specific implementation details and configurations.")
-    print("   Check the src/megatron/hub/models/ directory for:")
+    print("   Check the src/megatron/bridge/models/ directory for:")
     print("   • Model-specific bridge implementations")
     print("   • Configuration examples and README files")
     print("   • Weight mapping details")

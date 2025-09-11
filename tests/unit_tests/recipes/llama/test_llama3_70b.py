@@ -21,7 +21,6 @@ import torch
 
 from megatron.bridge.models.llama import Llama3ModelProvider70B
 from megatron.bridge.recipes.llama.llama3_70b import model_config, pretrain_config
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
 from megatron.bridge.training.config import ConfigContainer
 
@@ -319,12 +318,13 @@ class TestPretrainConfig:
         assert config.scheduler.lr_decay_iters == 50000  # Should match train_iters
         assert config.scheduler.override_opt_param_scheduler is True
 
-    def test_pretrain_config_tokenizer_configuration(self):
+    @pytest.mark.parametrize("vocab_size", [2048, 4096, 8192, 16384])
+    def test_pretrain_config_tokenizer_configuration(self, vocab_size):
         """Test tokenizer configuration."""
-        config = pretrain_config()
+        config = pretrain_config(vocab_size=vocab_size)
 
         assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.vocab_size == DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+        assert config.tokenizer.vocab_size == vocab_size
 
     def test_pretrain_config_rng_configuration(self):
         """Test RNG configuration."""
@@ -343,7 +343,7 @@ class TestPretrainConfig:
         assert config.dataset.num_dataset_builder_threads == 1
         assert config.dataset.data_sharding is True
         assert config.dataset.dataloader_type == "single"
-        assert config.dataset.num_workers == 1
+        assert config.dataset.num_workers == 8
 
     def test_pretrain_config_logger_configuration(self):
         """Test logger configuration."""
@@ -422,7 +422,7 @@ class TestPretrainConfig:
 
         assert config.model.virtual_pipeline_model_parallel_size == virtual_pipeline_parallelism
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_precision_recipes(self, precision):
         """Ensure precision recipes properly affect model/optimizer/ddp settings."""
         cfg = pretrain_config(precision_config=precision)

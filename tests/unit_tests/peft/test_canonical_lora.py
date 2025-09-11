@@ -747,7 +747,7 @@ class TestCanonicalLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get the model with CanonicalLoRA applied via hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
         assert isinstance(adapted_model, list)
@@ -786,7 +786,7 @@ class TestCanonicalLoRAMegatronIntegration:
             num_layers=1,
             hidden_size=64,
             num_attention_heads=2,
-            vocab_size=100,
+            vocab_size=128,
             ffn_hidden_size=128,
         )
 
@@ -796,7 +796,7 @@ class TestCanonicalLoRAMegatronIntegration:
         model_provider.register_pre_wrap_hook(lora_hook)
 
         # Get and adapt model using hook
-        adapted_model = model_provider(ddp_config=None, wrap_with_ddp=False)
+        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Test forward pass with proper Megatron input format
         batch_size, seq_len = 2, 8
