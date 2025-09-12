@@ -31,7 +31,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
 
 def model_config(
@@ -103,7 +103,7 @@ def pretrain_config(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
@@ -165,6 +165,11 @@ def pretrain_config(
         max_lr=lr,
         min_lr=min_lr,
     )
+
+    if precision_config is None:
+        precision_config = bf16_mixed()
+    if isinstance(precision_config, MixedPrecisionConfig):
+        precision_config.grad_reduce_in_fp32 = False
 
     # Config Container
     cfg = ConfigContainer(

@@ -183,6 +183,7 @@ class Llama3ModelProvider8B(Llama3ModelProvider):
     hidden_size: int = 4096
     ffn_hidden_size: int = 14336
     num_attention_heads: int = 32
+    cross_entropy_fusion_impl: str = "te"
 
 
 @dataclass
@@ -201,6 +202,7 @@ class Llama3ModelProvider70B(Llama3ModelProvider):
     num_attention_heads: int = 64
     init_method_std: float = 0.008944
     make_vocab_size_divisible_by: int = 128
+    cross_entropy_fusion_impl: str = "te"
 
 
 @dataclass
@@ -254,6 +256,7 @@ class Llama31ModelProvider405B(Llama31ModelProvider):
     ffn_hidden_size: int = 53248
     num_attention_heads: int = 128
     make_vocab_size_divisible_by: int = 128
+    cross_entropy_fusion_impl: str = "te"
 
 
 @dataclass
