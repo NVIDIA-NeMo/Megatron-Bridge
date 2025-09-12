@@ -64,6 +64,9 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
     configs["qk_head_dim"] = hf_config.qk_nope_head_dim
     configs["qk_pos_emb_head_dim"] = hf_config.qk_rope_head_dim
     configs["v_head_dim"] = hf_config.v_head_dim
+
+    # Ensure MLA is enabled
+    configs["multi_latent_attention"] = True
     configs["generation_config"] = hf_pretrained.generation_config
     configs["vocab_size"] = hf_config.vocab_size
     configs["rotary_base"] = hf_config.rope_theta

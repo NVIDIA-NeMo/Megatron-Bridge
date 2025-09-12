@@ -82,8 +82,12 @@ def main(
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
+        model_provider.pipeline_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
+
+        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(megatron_load_path, wrap_with_ddp=False)
         megatron_model = [m.cuda() for m in megatron_model]
@@ -92,7 +96,11 @@ def main(
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
+        model_provider.pipeline_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
+
+        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 

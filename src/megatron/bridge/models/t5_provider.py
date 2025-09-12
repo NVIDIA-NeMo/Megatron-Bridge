@@ -19,9 +19,9 @@ from typing import Any, Callable, Literal, Optional, Union
 
 from megatron.core.models.T5.t5_model import T5Model as MCoreT5Model
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 

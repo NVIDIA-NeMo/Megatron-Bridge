@@ -892,6 +892,7 @@ class TestPEFTCheckpointingIntegration:
         # Register LoRA pre-wrap hook and get model with PEFT applied
         lora_hook = self._create_lora_pre_wrap_hook(lora_config)
         model_provider.register_pre_wrap_hook(lora_hook)
+        model_provider.finalize()
         peft_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got Megatron modules
@@ -951,6 +952,7 @@ class TestPEFTCheckpointingIntegration:
         # Register LoRA pre-wrap hook and get model with PEFT applied
         lora_hook = self._create_lora_pre_wrap_hook(lora_config)
         model_provider.register_pre_wrap_hook(lora_hook)
+        model_provider.finalize()
         peft_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         peft_model = [chunk.cuda() for chunk in peft_model]
         lora_config.set_params_to_save(peft_model)
@@ -995,6 +997,7 @@ class TestPEFTCheckpointingIntegration:
         # Register LoRA pre-wrap hook
         lora_hook = self._create_lora_pre_wrap_hook(lora_config)
         model_provider.register_pre_wrap_hook(lora_hook)
+        model_provider.finalize()
 
         # Create DDP config
         ddp_config = DistributedDataParallelConfig()

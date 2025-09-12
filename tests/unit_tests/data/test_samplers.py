@@ -38,6 +38,7 @@ class TestDataSamplers:
         # Setup dataloader params
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
 
@@ -69,6 +70,7 @@ class TestDataSamplers:
         # Setup dataloader params
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
 
@@ -108,6 +110,7 @@ class TestDataSamplers:
     def test_build_pretraining_data_loader_external(self):
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         dataset = build_train_valid_test_datasets(cfg=cfg, build_train_valid_test_datasets_provider=dataset_provider)
 

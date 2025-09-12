@@ -641,6 +641,11 @@ class AutoBridge(Generic[MegatronModelT]):
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
         provider = self.to_megatron_provider(load_weights, hf_path)
+
+        # Finalize the provider before creating models
+        if hasattr(provider, "finalize"):
+            provider.finalize()
+
         return provider.provide_distributed_model(**kwargs)
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
@@ -771,11 +776,21 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def transformer_config(self) -> TransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, TransformerConfig)
 
     @property
     def mla_transformer_config(self) -> MLATransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, MLATransformerConfig)
 
     @property
