@@ -97,7 +97,7 @@ def model_config(
         recompute_num_layers=recompute_num_layers,
     )
 
-    # Pipeline split for asymmetric stages as used in NeMo recipe
+    # Pipeline split for asymmetric stages are specified with map_pp_vp_to_layout below
     cfg.account_for_embedding_in_pipeline_split = False
     cfg.account_for_loss_in_pipeline_split = False
     cfg.num_layers_in_first_pipeline_stage = None
@@ -301,3 +301,20 @@ def pretrain_config(
         )
 
     return cfg
+
+
+def pretrain_config_32nodes(**kwargs):    
+    """
+    Create a pre-training configuration for DeepSeek-V3 (671B) model with minimal number of nodes (32).
+
+    Returns:
+        ConfigContainer: Configuration for pre-training.
+    """    
+    return pretrain_config(
+        pipeline_parallelism=8,
+        expert_parallelism=32,
+        recompute_granularity="full",
+        recompute_method="uniform",
+        recompute_num_layers=1,
+        **kwargs,
+    )
