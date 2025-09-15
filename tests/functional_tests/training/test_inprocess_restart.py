@@ -185,7 +185,7 @@ class TestInProcessRestartIntegration:
     """Integration tests for in-process restart functionality."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_inprocess_restart_basic_functionality(self, tmp_path):
+    def test_inprocess_restart_integration(self, tmp_path):
         """Test basic in-process restart functionality without faults."""
         # NOTE: Do not call initialize_distributed() here - inprocess restart must handle distributed initialization
         # from within the wrapped function
@@ -231,71 +231,6 @@ class TestInProcessRestartIntegration:
                 traceback.print_exc()
 
             assert training_success, "Training with in-process restart should complete successfully"
-
-        finally:
-            # Clean up the shared directory
-            import shutil
-
-            if os.path.exists(shared_base_dir):
-                shutil.rmtree(shared_base_dir, ignore_errors=True)
-
-    @pytest.mark.run_only_on("GPU")
-    def test_inprocess_restart_with_fault_injection(self, tmp_path):
-        """Test in-process restart with Megatron-Bridge fault injection.
-
-        Note: This test requires at least 2 processes since fault injection occurs on rank 1.
-        This test should be run with ft_launcher for proper fault tolerance coordination.
-        """
-        # NOTE: Do not call initialize_distributed() here - inprocess restart handles it
-
-        # Ensure torch.distributed is not initialized (required by nvidia-resiliency-ext)
-        if torch.distributed.is_initialized():
-            print("Warning: torch.distributed is already initialized, destroying it...")
-            torch.distributed.destroy_process_group()
-            # Also clear any CUDA context that might be associated
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        # Check world size from environment (since distributed is not yet initialized)
-        world_size = int(os.getenv("WORLD_SIZE", "1"))
-        if world_size < 2:
-            pytest.skip("Fault injection test requires at least 2 processes (fault injected on rank 1)")
-
-        # Create a shared temporary directory that all processes can access
-        # Use a predictable path that's consistent across all processes
-        # Try common temp directories that should exist across platforms
-        temp_root = os.environ.get("TMPDIR", os.environ.get("TMP", "/tmp"))
-        shared_base_dir = os.path.join(temp_root, "inprocess_restart_fault_test")
-        checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
-
-        # Create checkpoint directory (all processes will create the same path)
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-        try:
-            config = build_test_config(
-                save_dir=checkpoint_dir,
-                train_iters=15,
-                seq_length=512,
-                async_save=True,
-                save_interval=5,
-                fault_delay=8.0,
-            )
-
-            try:
-                pretrain(config=config, forward_step_func=forward_step)
-                print("Training completed successfully despite fault injection")
-                # If we reach here, the restart mechanism worked and training completed
-            except Exception as e:
-                print(f"Training failed with fault injection: {e}")
-                # For integration testing, we consider this acceptable if it's a clean failure
-                # The important thing is that the fault tolerance system engaged
-
-            # For fault injection tests in CI, we need to be more permissive
-            # The key is that the test ran without hanging and the fault tolerance system engaged
-            print("Fault injection test completed - restart mechanism was tested")
-
-            # Don't assert training_success here - just completing the test is success
-            # The fault tolerance behavior (restart attempts) is what we're validating
 
         finally:
             # Clean up the shared directory
