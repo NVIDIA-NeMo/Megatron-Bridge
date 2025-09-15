@@ -54,6 +54,8 @@ def model_config(
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
     enable_deepep: bool = False,
 ) -> DeepSeekV3Provider:
     """
@@ -72,7 +74,8 @@ def model_config(
         mtp_loss_scaling_factor: Loss scaling factor for MTP (used when use_mtp=True).
         recompute_granularity: Recomputation granularity. For V3 we recommend "selective".
         recompute_modules: Modules to selectively recompute when granularity is "selective".
-
+        recompute_method: Method for activation recomputation.
+        recompute_num_layers: Number of layers to recompute.
     Returns:
         DeepSeekV3Provider: Configuration for the DeepSeek-V3 model.
     """
@@ -89,23 +92,10 @@ def model_config(
         mtp_loss_scaling_factor=mtp_loss_scaling_factor if use_mtp else None,
         # Recomputation
         recompute_granularity=recompute_granularity,
+        recompute_modules=recompute_modules,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
     )
-
-    # Set attribute defensively in case downstream supports selective recomputation lists
-    try:
-        cfg.recompute_granularity = "selective"
-        cfg.recompute_modules = recompute_modules
-    except Exception:
-        pass
-        logger.warning(f"Failed to set recompute_modules: {recompute_modules}")
-
-    # Some deployments expect a list of modules for selective recomputation
-    if recompute_modules is None:
-        # recompute_modules = ["mla_up_proj", "layernorm"]
-        cfg.recompute_granularity = None
-        cfg.recompute_method = None
-        cfg.recompute_num_layers = None
-        cfg.recompute_modules = None
 
     # Pipeline split for asymmetric stages as used in NeMo recipe
     cfg.account_for_embedding_in_pipeline_split = False
@@ -184,6 +174,11 @@ def pretrain_config(
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     enable_deepep: bool = False,
+    # Recomputation
+    recompute_granularity: str = "selective",
+    recompute_modules: Optional[List[str]] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model.
@@ -211,6 +206,10 @@ def pretrain_config(
         use_mtp=use_mtp,
         mtp_num_layers=mtp_num_layers,
         mtp_loss_scaling_factor=mtp_loss_scaling_factor,
+        recompute_granularity=recompute_granularity,
+        recompute_modules=recompute_modules,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
         enable_deepep=enable_deepep,
     )
 
@@ -282,7 +281,7 @@ def pretrain_config(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model="deepseek-ai/DeepSeek-V3"),
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
