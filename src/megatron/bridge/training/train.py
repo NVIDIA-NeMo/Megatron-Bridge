@@ -185,7 +185,12 @@ def train(
         prof.start()
 
     start_iteration = global_state.train_state.step
-    should_toggle_forward_pre_hook = config.optimizer.use_distributed_optimizer and config.ddp.overlap_param_gather
+    # Megatron FSDP and FSDP2 does not have this hook
+    should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
+        config.ddp.use_megatron_fsdp,
+        config.optimizer.use_distributed_optimizer,
+        config.ddp.overlap_param_gather,
+    )
     # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
     # or random initialization don't propagate to all ranks in first all-gather (which is a
     # no-op if things work correctly).
@@ -317,7 +322,7 @@ def train(
         params_norm = None
 
         if config.logger.log_params_norm:
-            params_norm = calc_params_l2_norm(model, model_config)
+            params_norm = calc_params_l2_norm(model, model_config, use_megatron_fsdp=config.dist.use_megatron_fsdp)
         learning_rate = None
         decoupled_learning_rate = None
         for param_group in optimizer.param_groups:
@@ -641,6 +646,29 @@ def post_training_step_callbacks(
             gc.collect()
 
 
+def should_disable_forward_pre_hook(
+    use_megatron_fsdp: bool, use_distributed_optimizer: bool, overlap_param_gather: bool
+) -> bool:
+    """Determine if forward pre-hooks should be disabled during checkpointing.
+
+    Forward pre-hooks need to be disabled during checkpoint saving when using
+    distributed optimizer with overlapped parameter gathering
+
+    Args:
+        use_megatron_fsdp: Whether Megatron FSDP is enabled.
+        use_distributed_optimizer: Whether distributed optimizer is enabled.
+        overlap_param_gather: Whether parameter gathering is overlapped.
+
+    Returns:
+        True if forward pre-hooks should be disabled, False otherwise.
+
+    Note:
+        This is needed to prevent autograd issues during checkpoint saving
+        when using distributed optimizer with parameter gathering overlap.
+    """
+    return not use_megatron_fsdp and use_distributed_optimizer and overlap_param_gather
+
+
 def enable_forward_pre_hook(model: list[DDP]) -> None:
     """Enable forward pre-hook for all model chunks.
 
@@ -791,7 +819,12 @@ def save_checkpoint_and_time(
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
 
-    if state.cfg.optimizer.use_distributed_optimizer and state.cfg.ddp.overlap_param_gather:
+    should_disable_pre_hook = should_disable_forward_pre_hook(
+        state.cfg.ddp.use_megatron_fsdp,
+        state.cfg.optimizer.use_distributed_optimizer,
+        state.cfg.ddp.overlap_param_gather,
+    )
+    if should_disable_pre_hook:
         disable_forward_pre_hook(model)
     save_checkpoint(
         state,
@@ -808,7 +841,7 @@ def save_checkpoint_and_time(
         # dequantized bf16 tensors that were temporarily created during fp8
         # model checkpoint saving.
         gc.collect()
-    if state.cfg.optimizer.use_distributed_optimizer and state.cfg.ddp.overlap_param_gather:
+    if should_disable_pre_hook:
         enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
     timers.log([timer_key])
@@ -905,10 +938,8 @@ def checkpoint_and_decide_exit(
 
     # Exit based on duration.
     if state.cfg.train.exit_duration_in_mins:
-        train_time = (time.time() - state.train_state.start_time) / 60.0
-        done_cuda = torch.tensor(
-            [train_time > state.cfg.checkpoint.exit_duration_in_mins], dtype=torch.int, device="cuda"
-        )
+        train_time = (time.time() - state.start_time) / 60.0
+        done_cuda = torch.tensor([train_time > state.cfg.train.exit_duration_in_mins], dtype=torch.int, device="cuda")
         torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
         done = done_cuda.item()
         if done:

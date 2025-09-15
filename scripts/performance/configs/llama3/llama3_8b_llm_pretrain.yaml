@@ -1,0 +1,114 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ConfigContainer:
+  model:
+    cross_entropy_fusion_impl: "te"
+
+  train:
+    train_iters: 25
+    eval_iters: 0
+
+  rerun_state_machine:
+    check_for_nan_in_loss: false
+
+  checkpoint:
+    # Directory to save to. If null, no checkpoint will be saved.
+    save: null
+
+  logger:
+    log_interval: 1
+
+  ddp:
+    check_for_nan_in_grad: false
+    check_for_large_grads: false
+
+  mixed_precision:
+    grad_reduce_in_fp32: false
+
+  profiling:
+    # For optional fields in the config, specify the target to instantiate the object.
+    _target_: megatron.bridge.training.config.ProfilingConfig
+    use_nsys_profiler: true
+    profile_step_start: 5
+    profile_step_end: 6
+    profile_ranks: [0]
+    record_shapes: false
+    use_pytorch_profiler: false
+
+perf_matrix:
+  h100:
+    num_gpus_8:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 8192
+        mbs: 1
+        gbs: 128
+        cuda_graphs: false
+        tp: 1
+        pp: 1
+        vp: null
+        ep: 1
+        etp: null
+      bf16:
+        cp: 2
+        fsdp: false
+      fp8_ds:
+        cp: 1
+        fsdp: true
+        keep_fp8_transpose_cache_when_using_custom_fsdp: true
+        nccl_ub: true
+      fp8_cs:
+        cp: 1
+        fsdp: true
+        keep_fp8_transpose_cache_when_using_custom_fsdp: true
+        nccl_ub: true
+  b200:
+    num_gpus_8:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 8192
+        mbs: 2
+        gbs: 128
+        cuda_graphs: true
+        tp: 1
+        pp: 1
+        cp: 1
+        vp: null
+        ep: 1
+        etp: null
+        fsdp: false
+      bf16:
+      fp8_ds:
+      fp8_cs:
+      fp8_mx:
+  gb200:
+    num_gpus_8:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 8192
+        mbs: 2
+        gbs: 128
+        cuda_graphs: true
+        tp: 1
+        pp: 1
+        cp: 1
+        vp: null
+        ep: 1
+        etp: null
+        fsdp: false
+      bf16:
+      fp8_ds:
+      fp8_cs:
+      fp8_mx:

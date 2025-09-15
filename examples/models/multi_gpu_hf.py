@@ -76,7 +76,7 @@ def main(
     else:
         save_path = model_name
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
 
     if megatron_load_path:
         model_provider = bridge.to_megatron_provider(load_weights=False)

@@ -417,6 +417,7 @@ class CommOverlapConfig:
     def _get_model_comm_overlap_cfgs(
         self,
         model_cfg: GPTModelProvider | T5ModelProvider,
+        ddp_config: DistributedDataParallelConfig,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
 
@@ -500,10 +501,17 @@ class CommOverlapConfig:
             )
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
-            assert is_te_min_version("2.8.0"), (
-                f"TE version >= 2.8.0 is required for delay_wgrad_compute, \
-                current TE version: {get_te_version()}"
-            )
+            if ddp_config.overlap_grad_reduce or self.user_comm_overlap_cfg.overlap_grad_reduce:
+                assert is_te_min_version("2.7.0"), (
+                    f"TE version >= 2.7.0 is required for overlap_grad_reduce when using"
+                    f"delay_wgrad_compute. Current TE version: {get_te_version()}"
+                )
+            if model_cfg.gradient_accumulation_fusion is True:
+                assert is_te_min_version("2.7.0"), (
+                    f"TE version >= 2.7.0 is required for gradient_accumulation_fusion when using"
+                    f"delay_wgrad_compute. Current TE version: {get_te_version()}"
+                )
+
             assert (
                 model_cfg.overlap_moe_expert_parallel_comm
                 or self.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm
@@ -609,7 +617,7 @@ class CommOverlapConfig:
             optimizer_config: Optimizer configuration for gradient overlap settings
             ddp_config: Distributed data parallel configuration
         """
-        comm_overlap_cfg = self._get_model_comm_overlap_cfgs(model_config)
+        comm_overlap_cfg = self._get_model_comm_overlap_cfgs(model_config, ddp_config)
         self._apply_cfgs(comm_overlap_cfg, model_config)
         if model_config.tp_comm_overlap:
             if comm_overlap_cfg.tp_comm_overlap_cfg is None:

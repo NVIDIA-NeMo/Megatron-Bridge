@@ -16,8 +16,11 @@ import sys
 from os.path import basename, splitext
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from .argument_parser import parse_cli_args
 from .utils.executors import slurm_executor
+from .utils.helpers import get_perf_matrix_overrides
 
 
 try:
@@ -47,8 +50,8 @@ if __name__ == "__main__":
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
-    config_filename = f"{args.model_name}_{args.model_size}_{args.task}_overrides.yaml"
-    config_filepath = SCRIPT_DIR / "llm" / "configs" / config_filename
+    config_filename = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}.yaml"
+    config_filepath = SCRIPT_DIR / "configs" / f"{args.model_name}" / config_filename
     logger.info(f"Config file path: {config_filepath}")
     if not config_filepath.is_file():
         logger.error(f"Specified YAML config file not found: {config_filepath}")
@@ -76,14 +79,20 @@ if __name__ == "__main__":
     ]
     logger.info(f"Custom mounts: {custom_mounts}")
 
-    num_nodes = -(args.num_gpus // -args.gpus_per_node)
+    num_gpus_per_node = args.gpus_per_node
+    yaml_overrides_omega = OmegaConf.load(config_filepath)
+    preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
+    if preset:
+        num_gpus_per_node = preset.get("num_gpus_per_node", args.gpus_per_node)
+
+    num_nodes = -(args.num_gpus // -num_gpus_per_node)
     executor = slurm_executor(
         args.gpu.lower(),
         args.account,
         args.partition,
         args.log_dir,
         num_nodes,
-        args.gpus_per_node,
+        num_gpus_per_node,
         args.time_limit,
         args.container_image,
         custom_mounts=custom_mounts,
@@ -104,7 +113,7 @@ if __name__ == "__main__":
             arg_value = getattr(args, arg_name)
             if arg_value is not None:
                 target_script_args.extend([f"--{arg_name}", str(arg_value)])
-    target_script_args.extend(["-a", "dummy", "-p", "dummy"])
+    target_script_args.extend(["-a", "dummy", "-p", "dummy", "-ng", str(args.num_gpus)])
 
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),

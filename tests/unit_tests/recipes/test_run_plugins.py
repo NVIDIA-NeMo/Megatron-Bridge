@@ -457,7 +457,7 @@ class TestNsysPlugin:
             "profiling.use_nsys_profiler=true",
             "profiling.profile_step_start=50",
             "profiling.profile_step_end=100",
-            "profiling.profile_ranks=[0, 1, 2]",
+            "profiling.profile_ranks=[0,1,2]",
             "profiling.record_shapes=true",
         ]
         for arg in expected_args:

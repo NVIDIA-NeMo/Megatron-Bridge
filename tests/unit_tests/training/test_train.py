@@ -18,7 +18,7 @@ from unittest.mock import Mock
 
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
-from megatron.bridge.training.train import _handle_mxfp8_param_buffer_copy
+from megatron.bridge.training.train import _handle_mxfp8_param_buffer_copy, should_disable_forward_pre_hook
 
 
 class TestMxfp8ParamBufferCopy:
@@ -126,3 +126,49 @@ class TestMxfp8ParamBufferCopy:
             not hasattr(mock_regular_optimizer, "_copy_main_params_to_param_buffer")
             or not mock_regular_optimizer._copy_main_params_to_param_buffer.called
         )
+
+
+class TestShouldDisableForwardPreHook:
+    """Unit tests for should_disable_forward_pre_hook function."""
+
+    def test_disable_with_distributed_optimizer_and_overlap_no_fsdp(self):
+        """Test that pre-hook is disabled when using distributed optimizer + overlap without FSDP."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=False, use_distributed_optimizer=True, overlap_param_gather=True
+        )
+        assert result is True
+
+    def test_keep_enabled_with_megatron_fsdp(self):
+        """Test that pre-hook stays enabled when using Megatron FSDP."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=True, use_distributed_optimizer=True, overlap_param_gather=True
+        )
+        assert result is False
+
+    def test_keep_enabled_without_distributed_optimizer(self):
+        """Test that pre-hook stays enabled when not using distributed optimizer."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=False, use_distributed_optimizer=False, overlap_param_gather=True
+        )
+        assert result is False
+
+    def test_keep_enabled_without_overlap_param_gather(self):
+        """Test that pre-hook stays enabled when not overlapping parameter gathering."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=False, use_distributed_optimizer=True, overlap_param_gather=False
+        )
+        assert result is False
+
+    def test_keep_enabled_all_false(self):
+        """Test that pre-hook stays enabled when all conditions are false."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=False, use_distributed_optimizer=False, overlap_param_gather=False
+        )
+        assert result is False
+
+    def test_keep_enabled_all_true_with_fsdp(self):
+        """Test that pre-hook stays enabled when FSDP is used (even with other conditions true)."""
+        result = should_disable_forward_pre_hook(
+            use_megatron_fsdp=True, use_distributed_optimizer=True, overlap_param_gather=True
+        )
+        assert result is False

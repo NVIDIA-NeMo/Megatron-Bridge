@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,54 +12,57 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Example override file
+
 # To override a parameter, ensure the structure matches the ConfigContainer
 # and its sub-configurations (e.g., model, train, etc.)
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
   seq_length: 4096
-  tensor_model_parallel_size: 2
-  pipeline_model_parallel_size: 4
-  context_parallel_size: 1
-  virtual_pipeline_model_parallel_size: 1
-  expert_model_parallel_size: 64
-  expert_tensor_parallel_size: 1
-  cross_entropy_fusion_impl: "te"
-  enable_cuda_graph: true
-  use_te_rng_tracker: true
-
-rng:
-  te_rng_tracker: true
+  init_model_with_meta_device: true
 
 train:
-  global_batch_size: 2048
+  train_iters: 20
+  global_batch_size: 8
   micro_batch_size: 1
-  train_iters: 25
   eval_iters: 0
 
-dist:
-  enable_megatron_core_experimental: true
+optimizer:
+  lr: 0.00025
+  min_lr: 0.000025
+
+scheduler:
+  lr_warmup_iters: 10
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
   save: null
+  ckpt_format: "fsdp_dtensor"
+
+dist:
+  use_megatron_fsdp: true
+  use_torch_fsdp2: false
 
 logger:
   log_interval: 1
 
-ddp:
-  check_for_nan_in_grad: false
-  check_for_large_grads: false
+dataset:
+  sequence_length: 4096
 
-mixed_precision:
-  grad_reduce_in_fp32: false
+rng:
+  seed: 42
+
+ddp:
+  grad_reduce_in_fp32: true
+  data_parallel_sharding_strategy: "optim_grads_params" # for Megatron FSDP ZeRO-3 like sharding
 
 profiling:
   # For optional fields in the config, specify the target to instantiate the object.
   _target_: megatron.bridge.training.config.ProfilingConfig
-  use_nsys_profiler: true
-  profile_step_start: 10
-  profile_step_end: 11
-  profile_ranks: [0]
-  record_shapes: false
-  use_pytorch_profiler: false
+  use_nsys_profiler: false
+  profile_step_start: 5
+  profile_step_end: 10
+  use_pytorch_profiler: true
+  profile_ranks: [0, 1]
+  record_shapes: true
