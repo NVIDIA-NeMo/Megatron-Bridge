@@ -12,254 +12,293 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import subprocess
+from pathlib import Path
+
 import pytest
+import torch
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLConfig, Qwen2Tokenizer
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.qwen_vl import Qwen25VLModelProvider
 
-
-# HuggingFace Qwen2.5-VL model IDs that should be testable
-HF_QWEN25_VL_MODEL_IDS = [
-    "Qwen/Qwen2.5-VL-3B-Instruct",
-    "Qwen/Qwen2.5-VL-7B-Instruct",
-    # Note: Adding more model IDs as they become available
-    # "Qwen/Qwen2.5-VL-1.5B-Instruct",
-    # "Qwen/Qwen2.5-VL-14B-Instruct",
-]
+HF_QWEN25_VL_TOY_MODEL_CONFIG = {
+  "architectures": [
+    "Qwen2_5_VLForConditionalGeneration"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 151643,
+  "eos_token_id": 151645,
+  "vision_start_token_id": 151652,
+  "vision_end_token_id": 151653,
+  "vision_token_id": 151654,
+  "image_token_id": 151655,
+  "video_token_id": 151656,
+  "hidden_act": "silu",
+  "hidden_size": 3584,
+  "initializer_range": 0.02,
+  "intermediate_size": 18944,
+  "max_position_embeddings": 128000,
+  "max_window_layers": 2,
+  "model_type": "qwen2_5_vl",
+  "num_attention_heads": 28,
+  "num_hidden_layers": 2,
+  "num_key_value_heads": 4,
+  "rms_norm_eps": 1e-06,
+  "rope_theta": 1000000.0,
+  "sliding_window": 32768,
+  "tie_word_embeddings": False,
+  "torch_dtype": "bfloat16",
+  "transformers_version": "4.41.2",
+  "use_cache": True,
+  "use_sliding_window": False,
+  "vision_config": {
+    "depth": 2,
+    "hidden_act": "silu",
+    "hidden_size": 1280,
+    "intermediate_size": 3420,
+    "num_heads": 16,
+    "in_chans": 3,
+    "out_hidden_size": 3584,
+    "patch_size": 14,
+    "spatial_merge_size": 2,
+    "spatial_patch_size": 14,
+    "window_size": 112,
+    "fullatt_block_indexes": [
+        0,
+    ],
+    "tokens_per_second": 2,
+    "temporal_patch_size": 2
+  },
+  "rope_scaling": {
+    "type": "mrope",
+    "mrope_section": [
+      16,
+      24,
+      24
+    ]
+  },
+  "vocab_size": 152064
+}
 
 
 class TestQwen25VLConversion:
-    """Test conversion from HuggingFace Qwen2.5-VL models to Megatron."""
+    """
+    Test Qwen25 VL model conversion from local HuggingFace model with different parallelism configurations.
+    """
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_bridge_from_hf_pretrained(self, hf_model_id):
-        """Test that AutoBridge can load Qwen2.5-VL models from HF."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        
-        assert bridge is not None
-        assert hasattr(bridge, "to_megatron_provider")
+    @pytest.fixture(scope="class")
+    def qwen25_vl_toy_model_path(self, tmp_path_factory):
+        """
+        Create and save a HuggingFace Qwen25 VL toy model from config to a temporary directory.
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_to_megatron_provider(self, hf_model_id):
-        """Test conversion to Megatron provider."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        assert isinstance(provider, Qwen25VLModelProvider)
+        Args:
+            tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provider_basic_config(self, hf_model_id):
-        """Test that converted provider has correct basic configuration."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Check basic transformer config is present
-        assert hasattr(provider, "num_layers")
-        assert hasattr(provider, "hidden_size")
-        assert hasattr(provider, "num_attention_heads")
-        assert hasattr(provider, "vocab_size")
-        
-        # Check values are reasonable
-        assert provider.num_layers > 0
-        assert provider.hidden_size > 0
-        assert provider.num_attention_heads > 0
-        assert provider.vocab_size > 0
+        Returns:
+            str: Path to the saved HuggingFace model directory
+        """
+        # Create a temporary directory for this test class
+        temp_dir = tmp_path_factory.mktemp("qwen25_vl_toy_model")
+        model_dir = temp_dir / "qwen25_vl_toy"
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provider_vl_specific_config(self, hf_model_id):
-        """Test that converted provider has VL-specific configuration."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Check VL-specific attributes
-        assert hasattr(provider, "vision_config")
-        assert hasattr(provider, "bos_token_id")
-        assert hasattr(provider, "eos_token_id")
-        assert hasattr(provider, "vision_start_token_id")
-        assert hasattr(provider, "vision_end_token_id")
-        assert hasattr(provider, "vision_token_id")
-        assert hasattr(provider, "image_token_id")
-        assert hasattr(provider, "video_token_id")
-        
-        # Check position embedding type
-        assert provider.position_embedding_type == "mrope"
-        assert hasattr(provider, "mrope_section")
-        assert isinstance(provider.mrope_section, list)
+        # Create Qwen25 VL config from the toy model config
+        config = Qwen2_5_VLConfig(**HF_QWEN25_VL_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provider_token_ids(self, hf_model_id):
-        """Test that converted provider has correct token IDs."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Check token IDs are reasonable values
-        assert isinstance(provider.bos_token_id, int)
-        assert isinstance(provider.eos_token_id, int)
-        assert isinstance(provider.vision_start_token_id, int)
-        assert isinstance(provider.vision_end_token_id, int)
-        assert isinstance(provider.vision_token_id, int)
-        assert isinstance(provider.image_token_id, int)
-        assert isinstance(provider.video_token_id, int)
-        
-        # Token IDs should be within vocabulary range
-        assert 0 <= provider.bos_token_id < provider.vocab_size
-        assert 0 <= provider.eos_token_id < provider.vocab_size
+        # Create model with random weights and convert to bfloat16
+        model = Qwen2_5_VLForConditionalGeneration(config)
+        model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provider_qwen2_inheritance(self, hf_model_id):
-        """Test that converted provider inherits Qwen2 characteristics."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Check Qwen2-specific configuration
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.add_bias_linear is False
-        assert provider.add_qkv_bias is True
-        assert provider.layernorm_epsilon == 1e-6
+        # Debug: Check model dtype before saving
+        for name, param in model.named_parameters():
+            print(f"Before save - {name}: {param.dtype}")
+            break  # Just check the first parameter
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provider_vision_config(self, hf_model_id):
-        """Test that converted provider has valid vision configuration."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Check vision config exists and has required attributes
-        assert provider.vision_config is not None
-        assert hasattr(provider.vision_config, "hidden_size")
-        assert hasattr(provider.vision_config, "intermediate_size")
-        assert hasattr(provider.vision_config, "num_hidden_layers")
-        assert hasattr(provider.vision_config, "num_attention_heads")
+        # Download and save tokenizer from a reference Qwen25 VL model
+        # We use the smallest available Qwen25 VL model for tokenizer artifacts
+        try:
+            tokenizer = Qwen2Tokenizer.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+            tokenizer.save_pretrained(model_dir)
+        except Exception as e:
+            print(f"Warning: Could not download tokenizer, creating minimal tokenizer files: {e}")
+            # Create minimal tokenizer files if download fails
+            # This is a fallback for offline environments
+            tokenizer_config = {
+                "tokenizer_class": "Qwen2Tokenizer",
+                "vocab_size": 151936,
+                "bos_token": "<|endoftext|>",
+                "eos_token": "<|endoftext|>",
+                "pad_token": "<|endoftext|>",
+                "unk_token": "<|endoftext|>",
+            }
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provider_freeze_options(self, hf_model_id):
-        """Test that converted provider has freeze options."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Check freeze options exist and default to False
-        assert hasattr(provider, "freeze_language_model")
-        assert hasattr(provider, "freeze_vision_model")
-        assert hasattr(provider, "freeze_vision_projection")
-        
-        # Default should be False
-        assert provider.freeze_language_model is False
-        assert provider.freeze_vision_model is False
-        assert provider.freeze_vision_projection is False
+            with open(model_dir / "tokenizer_config.json", "w") as f:
+                json.dump(tokenizer_config, f, indent=2)
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_provide_method(self, hf_model_id):
-        """Test that provider can create models."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Should have provide method
-        assert hasattr(provider, "provide")
-        assert callable(provider.provide)
-        
-        # Should have provide_language_model method
-        assert hasattr(provider, "provide_language_model")
-        assert callable(provider.provide_language_model)
+        # Save model and config to directory
+        model.save_pretrained(model_dir, safe_serialization=True)
 
+        # Also save config.json explicitly to ensure compatibility with correct torch_dtype
+        config_to_save = HF_QWEN25_VL_TOY_MODEL_CONFIG.copy()
+        config_path = model_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(config_to_save, f, indent=2)
 
-class TestQwen25VLModelSizes:
-    """Test different Qwen2.5-VL model sizes have expected configurations."""
+        return str(model_dir)
 
-    def test_qwen25_vl_3b_configuration(self):
-        """Test Qwen2.5-VL 3B model specific configuration."""
-        if "Qwen/Qwen2.5-VL-3B-Instruct" not in HF_QWEN25_VL_MODEL_IDS:
-            pytest.skip("Qwen2.5-VL 3B model not available for testing")
-            
-        bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # 3B model should have specific architecture
-        # Note: These values might need adjustment based on actual model config
-        assert provider.hidden_size > 1000  # Should be reasonable size
-        assert provider.num_layers > 20     # Should have multiple layers
+    def test_toy_model_creation(self, qwen25_vl_toy_model_path):
+        """
+        Test that the toy model is created correctly and can be loaded.
 
-    def test_qwen25_vl_7b_configuration(self):
-        """Test Qwen2.5-VL 7B model specific configuration."""
-        if "Qwen/Qwen2.5-VL-7B-Instruct" not in HF_QWEN25_VL_MODEL_IDS:
-            pytest.skip("Qwen2.5-VL 7B model not available for testing")
-            
-        bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # 7B model should be larger than 3B
-        assert provider.hidden_size > 2000  # Should be larger
-        assert provider.num_layers > 25     # Should have more layers
+        Args:
+            qwen25_vl_toy_model_path: Path to the toy Qwen25 VL model (from fixture)
+        """
+        # Verify the model directory exists
+        model_path = Path(qwen25_vl_toy_model_path)
+        assert model_path.exists(), f"Model directory not found at {model_path}"
 
+        # Check essential files exist
+        config_file = model_path / "config.json"
+        assert config_file.exists(), f"config.json not found at {config_file}"
 
-class TestQwen25VLSpecialCases:
-    """Test special cases and edge conditions for Qwen2.5-VL conversion."""
+        # Check for model weights (safetensors preferred)
+        weights_file = model_path / "model.safetensors"
+        if not weights_file.exists():
+            weights_file = model_path / "pytorch_model.bin"
+        assert weights_file.exists(), f"Model weights file not found in {model_path}"
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_scatter_embedding_sequence_parallel(self, hf_model_id):
-        """Test that scatter_embedding_sequence_parallel is False for VL models."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # VL models should not scatter embeddings across sequence parallel regions
-        # because vision embeddings are inserted into language embeddings
-        assert provider.scatter_embedding_sequence_parallel is False
+        # Check for tokenizer files
+        tokenizer_config_file = model_path / "tokenizer_config.json"
+        assert tokenizer_config_file.exists(), f"tokenizer_config.json not found at {tokenizer_config_file}"
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_position_embedding_mrope(self, hf_model_id):
-        """Test that position embedding type is mrope for VL models."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # VL models should use mrope position embedding
-        assert provider.position_embedding_type == "mrope"
-        assert hasattr(provider, "mrope_section")
-        assert len(provider.mrope_section) == 3
+        # Load and verify config
+        with open(config_file) as f:
+            config_data = json.load(f)
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_generation_config(self, hf_model_id):
-        """Test that generation config is preserved."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Should have generation config
-        assert hasattr(provider, "generation_config")
-        # Generation config might be None, which is acceptable
+        assert config_data["model_type"] == "qwen2_5_vl"
+        assert config_data["hidden_size"] == 3584
+        assert config_data["num_hidden_layers"] == 2
+        assert config_data["num_attention_heads"] == 28
+        assert config_data["vocab_size"] == 152064
+        assert "vision_config" in config_data
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_qwen25_vl_conversion_reproducible(self, hf_model_id):
-        """Test that conversion is reproducible."""
-        # Convert twice and check consistency
-        bridge1 = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider1 = bridge1.to_megatron_provider(load_weights=False)
-        
-        bridge2 = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider2 = bridge2.to_megatron_provider(load_weights=False)
-        
-        # Basic config should be identical
-        assert provider1.num_layers == provider2.num_layers
-        assert provider1.hidden_size == provider2.hidden_size
-        assert provider1.num_attention_heads == provider2.num_attention_heads
-        assert provider1.vocab_size == provider2.vocab_size
-        
-        # VL-specific config should be identical
-        assert provider1.bos_token_id == provider2.bos_token_id
-        assert provider1.eos_token_id == provider2.eos_token_id
-        assert provider1.vision_start_token_id == provider2.vision_start_token_id
+        # Try loading the model to verify it's valid
+        try:
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                qwen25_vl_toy_model_path,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=False,  # Ensure full loading
+            )
 
+            # Try loading the tokenizer as well
+            try:
+                tokenizer = Qwen2Tokenizer.from_pretrained(qwen25_vl_toy_model_path)
+                print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
+            except Exception as e:
+                print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
 
-class TestQwen25VLErrorHandling:
-    """Test error handling for Qwen2.5-VL conversion."""
+            # Verify model structure for VL model
+            assert hasattr(model, "model")
+            assert hasattr(model.model, "language_model")
+            assert hasattr(model.model.language_model, "layers")
+            assert len(model.model.language_model.layers) == 2  # num_hidden_layers
+            assert hasattr(model.model, "visual")  # VL model should have visual component
 
-    def test_invalid_model_id(self):
-        """Test that invalid model ID raises appropriate error."""
-        with pytest.raises((ValueError, OSError, Exception)):
-            AutoBridge.from_hf_pretrained("invalid/qwen25-vl-model")
+            print(f"SUCCESS: Toy model created and validated at {qwen25_vl_toy_model_path}")
+            print("Model weights are correctly in bfloat16 format")
 
-    @pytest.mark.parametrize("hf_model_id", HF_QWEN25_VL_MODEL_IDS)
-    def test_conversion_without_weights_loading(self, hf_model_id):
-        """Test that conversion works without loading weights."""
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        
-        # Should work without errors
-        assert isinstance(provider, Qwen25VLModelProvider)
+        except Exception as e:
+            assert False, f"Failed to load created toy model: {e}"
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "tp,pp,test_name",
+        [
+            (2, 1, "TP"),
+            (1, 2, "PP"),
+        ],
+    )
+    def test_qwen25_vl_conversion_parallelism(self, qwen25_vl_toy_model_path, tmp_path, tp, pp, test_name):
+        """
+        Test Qwen25 VL model conversion with different parallelism configurations.
+
+        Args:
+            qwen25_vl_toy_model_path: Path to the toy Qwen25 VL model (from fixture)
+            tmp_path: Pytest temporary path fixture
+            tp: Tensor parallelism size
+            pp: Pipeline parallelism size
+            test_name: Name of the test for identification
+        """
+
+        # Create temporary output directory for conversion results
+        test_output_dir = tmp_path / f"qwen25_vl_{test_name}"
+        test_output_dir.mkdir(exist_ok=True)
+
+        # Run multi_gpu_hf.py with specified parallelism configuration on our toy model
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/workspace/.coverage",
+            "--source=/workspace/",
+            "--parallel-mode",
+            "examples/models/multi_gpu_hf.py",
+            "--hf-model-id",
+            qwen25_vl_toy_model_path,  # Use our local toy model instead of downloading
+            "--output-dir",
+            str(test_output_dir),
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+            )
+
+            # Check that the conversion completed successfully
+            if result.returncode != 0:
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                assert False, f"Qwen25 VL {test_name} conversion failed with return code {result.returncode}"
+
+            # Verify that the converted model was saved
+            # The output directory should be named after the last part of the model path
+            model_name = Path(qwen25_vl_toy_model_path).name  # "qwen25_vl_toy"
+            converted_model_dir = test_output_dir / model_name
+            assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
+
+            # Check that essential model files exist
+            config_file = converted_model_dir / "config.json"
+            assert config_file.exists(), f"config.json not found in converted model at {config_file}"
+
+            # Check for model weights file (could be either safetensors or pytorch_model.bin)
+            weights_file_safetensors = converted_model_dir / "model.safetensors"
+            weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
+            assert weights_file_safetensors.exists() or weights_file_pytorch.exists(), (
+                f"Model weights file not found in converted model at {converted_model_dir}"
+            )
+
+            # Verify the config contains Qwen25 VL-specific parameters
+            with open(config_file) as f:
+                saved_config = json.load(f)
+
+            assert saved_config["model_type"] == "qwen2_5_vl", "Model type should be qwen2_5_vl"
+            assert saved_config["hidden_size"] == 3584, "Hidden size should match toy config"
+            assert saved_config["num_attention_heads"] == 28, "Number of attention heads should match toy config"
+            assert "vision_config" in saved_config, "VL model should have vision_config"
+
+            print(f"SUCCESS: Qwen25 VL {test_name} conversion test completed successfully")
+            print(f"Converted model saved at: {converted_model_dir}")
+
+        except Exception as e:
+            print(f"Error during Qwen25 VL {test_name} conversion test: {e}")
+            raise

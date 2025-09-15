@@ -217,7 +217,17 @@ class TestQwen25VLBridgeMappingRegistry:
         assert len(mappings) > 0
         
         # Check that we have mappings for embeddings, output layer, layernorms
-        mapping_names = [str(mapping) for mapping in mappings]
+        mapping_names = []
+        for mapping in mappings:
+            # Collect Megatron param pattern
+            if hasattr(mapping, "megatron_param"):
+                mapping_names.append(str(getattr(mapping, "megatron_param")))
+            # Collect HF param pattern(s)
+            hf = getattr(mapping, "hf_param", None)
+            if isinstance(hf, dict):
+                mapping_names.extend([str(v) for v in hf.values()])
+            elif isinstance(hf, str):
+                mapping_names.append(hf)
         
         # Should contain word embeddings mapping
         has_embeddings = any("embed_tokens" in name or "word_embeddings" in name for name in mapping_names)
@@ -233,7 +243,15 @@ class TestQwen25VLBridgeMappingRegistry:
         
         # Should contain visual parameter mappings
         mappings = registry.mappings
-        mapping_names = [str(mapping) for mapping in mappings]
+        mapping_names = []
+        for mapping in mappings:
+            if hasattr(mapping, "megatron_param"):
+                mapping_names.append(str(getattr(mapping, "megatron_param")))
+            hf = getattr(mapping, "hf_param", None)
+            if isinstance(hf, dict):
+                mapping_names.extend([str(v) for v in hf.values()])
+            elif isinstance(hf, str):
+                mapping_names.append(hf)
         
         has_visual = any("visual" in name for name in mapping_names)
         assert has_visual, "Should contain visual parameter mappings"
@@ -243,7 +261,15 @@ class TestQwen25VLBridgeMappingRegistry:
         registry = qwen25_vl_bridge.mapping_registry()
         
         mappings = registry.mappings
-        mapping_names = [str(mapping) for mapping in mappings]
+        mapping_names = []
+        for mapping in mappings:
+            if hasattr(mapping, "megatron_param"):
+                mapping_names.append(str(getattr(mapping, "megatron_param")))
+            hf = getattr(mapping, "hf_param", None)
+            if isinstance(hf, dict):
+                mapping_names.extend([str(v) for v in hf.values()])
+            elif isinstance(hf, str):
+                mapping_names.append(hf)
         
         # Should contain QKV mappings
         has_qkv = any("linear_qkv" in name for name in mapping_names)
@@ -254,7 +280,15 @@ class TestQwen25VLBridgeMappingRegistry:
         registry = qwen25_vl_bridge.mapping_registry()
         
         mappings = registry.mappings
-        mapping_names = [str(mapping) for mapping in mappings]
+        mapping_names = []
+        for mapping in mappings:
+            if hasattr(mapping, "megatron_param"):
+                mapping_names.append(str(getattr(mapping, "megatron_param")))
+            hf = getattr(mapping, "hf_param", None)
+            if isinstance(hf, dict):
+                mapping_names.extend([str(v) for v in hf.values()])
+            elif isinstance(hf, str):
+                mapping_names.append(hf)
         
         # Should contain MLP mappings
         has_mlp = any("mlp" in name for name in mapping_names)
