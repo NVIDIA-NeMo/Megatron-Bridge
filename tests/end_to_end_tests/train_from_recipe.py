@@ -295,6 +295,7 @@ def setup_argument_parser():
     # Training modes
     parser.add_argument("--pretrain", action="store_true", help="Run pretraining")
     parser.add_argument("--finetune", action="store_true", help="Run finetuning")
+    parser.add_argument("--config-name", type=str, default=None, help="Config name (defaults to pretrain_config and finetune_config")
 
     # Training configuration
     parser.add_argument("--max-steps", type=int, default=100, help="Number of training steps")
@@ -383,15 +384,15 @@ def main():
 
     # Get base configuration from recipe based on training mode
     if args.pretrain:
-        if not hasattr(recipe_module, "pretrain_config"):
-            raise ValueError(f"Recipe {recipe_module_path} must have 'pretrain_config' function for pretraining")
-        base_config = recipe_module.pretrain_config(dir="/nemo_run/", name=args.exp_name)
+        config_name = args.config_name or "pretrain_config"
     elif args.finetune:
-        if not hasattr(recipe_module, "finetune_config"):
-            raise ValueError(f"Recipe {recipe_module_path} must have 'finetune_config' function for finetuning")
-        base_config = recipe_module.finetune_config(dir="/nemo_run/", name=args.exp_name)
+        config_name = args.config_name or "finetune_config"
     else:
         raise ValueError("Must specify either --pretrain or --finetune")
+
+    if not hasattr(recipe_module, config_name):
+        raise ValueError(f"Recipe {recipe_module_path} must have '{config_name}' function")
+    base_config = getattr(recipe_module, config_name)(dir="/nemo_run/", name=args.exp_name)
 
     # Apply plugin config overrides first (lower priority)
     if plugin_config_overrides:
