@@ -16,6 +16,8 @@ import types
 from typing import Optional
 
 import torch
+import transformers
+from packaging.version import Version as PkgVersion
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
@@ -27,6 +29,16 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
 )
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+def is_transformers_min_version(version):
+    """Check if minimum version of transformers is installed."""
+    try:
+        transformers_version = PkgVersion(transformers.__version__)
+        return transformers_version >= PkgVersion(version)
+    except Exception:
+        # If version parsing fails, assume false for safety
+        return False
 
 
 try:
@@ -101,7 +113,16 @@ class Qwen25VLModel(MegatronModule):
         )
 
         # Bind methods from HF's Qwen2_5_VLModel to this instance
-        self.get_placeholder_mask = types.MethodType(Qwen2_5_VLModel.get_placeholder_mask, self)
+        # get_placeholder_mask is only available in transformers 4.55+
+        if is_transformers_min_version("4.55.0"):
+            self.get_placeholder_mask = types.MethodType(Qwen2_5_VLModel.get_placeholder_mask, self)
+        else:
+            raise RuntimeError(
+                f"transformers version {transformers.__version__} is not supported. "
+                f"get_placeholder_mask requires transformers >= 4.55.0. "
+                f"Please upgrade transformers: pip install 'transformers>=4.55.0'"
+            )
+        
         self.get_image_features = types.MethodType(Qwen2_5_VLModel.get_image_features, self)
         self.get_video_features = types.MethodType(Qwen2_5_VLModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Qwen2_5_VLModel.get_rope_index, self)
