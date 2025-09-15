@@ -79,7 +79,7 @@ class MegatronMappingRegistry:
         Note:
             ** must be processed before * to avoid conflicts.
             ** becomes (.*) - matches any characters including dots
-            * becomes (\d+) - matches digits only for layer indices
+            * becomes (\\d+) - matches digits only for layer indices
         """
         # Escape the pattern first
         regex_pattern = re.escape(pattern)
