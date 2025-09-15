@@ -1,12 +1,13 @@
+import inspect
+import json
+
 import torch
 import torch.distributed as dist
-import json
-import inspect
 
 
 def _get_rank_and_world_size():
     """Get the current rank and world size for distributed training.
-    
+
     Returns:
         Tuple[int, int]: (rank, world_size) where rank=0 and world_size=1 for non-distributed setups.
     """
@@ -17,10 +18,10 @@ def _get_rank_and_world_size():
 
 def tensor_fingerprint(tensor):
     """Create a fingerprint for a tensor that includes basic properties and statistical summaries.
-    
+
     Args:
         tensor: PyTorch tensor to analyze.
-        
+
     Returns:
         Dict containing tensor shape, dtype, device, and statistical summaries (min, max, mean, abs_sum).
     """
@@ -33,16 +34,10 @@ def tensor_fingerprint(tensor):
             "min": float(cpu_tensor.min()),
             "max": float(cpu_tensor.max()),
             "mean": float(cpu_tensor.mean()),
-            "abs_sum": float(cpu_tensor.abs().sum())
+            "abs_sum": float(cpu_tensor.abs().sum()),
         }
     else:
-        stats = {
-            "min": None,
-            "max": None,
-            "mean": None,
-            "abs_sum": None
-        }
-
+        stats = {"min": None, "max": None, "mean": None, "abs_sum": None}
 
     return {
         "shape": list(cpu_tensor.shape),
@@ -51,12 +46,13 @@ def tensor_fingerprint(tensor):
         **stats,
     }
 
+
 def safe_convert(obj):
     """Recursively convert objects into JSON-serializable representations.
-    
+
     Args:
         obj: Object to convert (tensor, list, dict, etc.)
-        
+
     Returns:
         JSON-serializable representation where tensors are replaced by their fingerprint.
     """
@@ -75,13 +71,14 @@ def safe_convert(obj):
         except TypeError:
             return f"<non-serializable: {type(obj).__name__}>"
 
+
 def get_forward_arg_names(module, inputs):
     """Extract the forward() method's argument names (excluding 'self').
-    
+
     Args:
         module: PyTorch module to inspect.
         inputs: Tuple of input arguments to the forward method.
-        
+
     Returns:
         List of argument names. Falls back to default names if inspection fails.
     """
@@ -96,16 +93,18 @@ def get_forward_arg_names(module, inputs):
     except Exception:
         return [f"input{i}" for i in range(len(inputs))]
 
+
 def create_forward_hook(module_names, file_prefix="debug_"):
     """Create a forward hook that logs module inputs, outputs, and weights.
-    
+
     Args:
         module_names: Dict mapping module IDs to their hierarchical names.
         file_prefix: Prefix for log files.
-        
+
     Returns:
         Forward hook function that logs to JSONL files.
     """
+
     def forward_hook(module, inputs, output):
         global_name = module_names.get(id(module), module.__class__.__name__)
         input_names = get_forward_arg_names(module, inputs)
@@ -136,18 +135,21 @@ def create_forward_hook(module_names, file_prefix="debug_"):
             with open(log_filename, "a") as f:
                 error_entry = {"module": global_name, "error": f"Serialization error: {str(e)}"}
                 f.write(json.dumps(error_entry) + "\n")
+
     return forward_hook
+
 
 def create_backward_hook(module_names, file_prefix="debug_"):
     """Create a backward hook that logs gradient information.
-    
+
     Args:
         module_names: Dict mapping module IDs to their hierarchical names.
         file_prefix: Prefix for log files.
-        
+
     Returns:
         Backward hook function that logs to JSONL files.
     """
+
     def backward_hook(module, grad_input, grad_output):
         global_name = module_names.get(id(module), module.__class__.__name__)
         grad_input_summary = safe_convert(grad_input)
@@ -157,7 +159,7 @@ def create_backward_hook(module_names, file_prefix="debug_"):
             "hook": "backward",
             "module": global_name,
             "grad_input": grad_input_summary,
-            "grad_output": grad_output_summary
+            "grad_output": grad_output_summary,
         }
 
         rank, world_size = _get_rank_and_world_size()
@@ -170,21 +172,24 @@ def create_backward_hook(module_names, file_prefix="debug_"):
             with open(log_filename, "a") as f:
                 error_entry = {"module": global_name, "error": f"Serialization error: {str(e)}"}
                 f.write(json.dumps(error_entry) + "\n")
+
     return backward_hook
+
 
 def register_hooks(model, file_prefix="debug_"):
     """Register both forward and backward hooks on every submodule of the model.
-    
+
     A mapping from module id to hierarchical name is built so that each log entry
     contains a global name (e.g., "layer1.block.MLP") instead of just the class name.
-    
+
     Args:
         model: The PyTorch model to register hooks on.
         file_prefix: Prefix for the log files.
     """
     # Build mapping: module id -> hierarchical name.
-    module_names = {id(module): name if name != "" else module.__class__.__name__
-                    for name, module in model.named_modules()}
+    module_names = {
+        id(module): name if name != "" else module.__class__.__name__ for name, module in model.named_modules()
+    }
 
     # Create hook functions that share the module names mapping.
     forward_hook_fn = create_forward_hook(module_names, file_prefix)

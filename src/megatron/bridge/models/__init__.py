@@ -98,8 +98,8 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider500M,
 )
 from megatron.bridge.models.qwen_vl import (
-    Qwen25VLModel,
     Qwen25VLBridge,
+    Qwen25VLModel,
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -179,7 +179,6 @@ __all__ = [
     "MambaProvider780M",
     "NVIDIAMambaHybridProvider8B",
     "NVIDIAMambaProvider8B",
-
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",

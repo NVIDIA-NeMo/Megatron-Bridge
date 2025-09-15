@@ -17,11 +17,11 @@ from typing import Optional
 
 import torch
 import transformers
-from packaging.version import Version as PkgVersion
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
+from packaging.version import Version as PkgVersion
 from torch import Tensor
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VisionTransformerPretrainedModel,
@@ -39,14 +39,6 @@ def is_transformers_min_version(version):
     except Exception:
         # If version parsing fails, assume false for safety
         return False
-
-
-try:
-    from megatron.core.extensions.transformer_engine import te_checkpoint
-
-    HAVE_TE = True
-except ImportError:
-    HAVE_TE = False
 
 
 class Qwen25VLModel(MegatronModule):
@@ -122,7 +114,7 @@ class Qwen25VLModel(MegatronModule):
                 f"get_placeholder_mask requires transformers >= 4.55.0. "
                 f"Please upgrade transformers: pip install 'transformers>=4.55.0'"
             )
-        
+
         self.get_image_features = types.MethodType(Qwen2_5_VLModel.get_image_features, self)
         self.get_video_features = types.MethodType(Qwen2_5_VLModel.get_video_features, self)
         self.get_rope_index = types.MethodType(Qwen2_5_VLModel.get_rope_index, self)
@@ -210,9 +202,7 @@ class Qwen25VLModel(MegatronModule):
         )
         return outputs
 
-    def freeze(
-        self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool
-    ):
+    def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):
         """Freeze model modules.
 
         Make specific modules non-trainable by setting requires_grad to False.
@@ -223,20 +213,20 @@ class Qwen25VLModel(MegatronModule):
             freeze_vision_projection (bool): Freeze the vision projection module (merger).
         """
         modules = []
-        
-        if freeze_language_model and hasattr(self, 'language_model') and self.language_model is not None:
+
+        if freeze_language_model and hasattr(self, "language_model") and self.language_model is not None:
             modules.append(self.language_model)
-            
-        if freeze_vision_model and hasattr(self, 'visual') and self.visual is not None:
+
+        if freeze_vision_model and hasattr(self, "visual") and self.visual is not None:
             # Vision model consists of patch_embed and blocks
-            if hasattr(self.visual, 'patch_embed'):
+            if hasattr(self.visual, "patch_embed"):
                 modules.append(self.visual.patch_embed)
-            if hasattr(self.visual, 'blocks'):
+            if hasattr(self.visual, "blocks"):
                 modules.append(self.visual.blocks)
-                
-        if freeze_vision_projection and hasattr(self, 'visual') and self.visual is not None:
+
+        if freeze_vision_projection and hasattr(self, "visual") and self.visual is not None:
             # Vision projection is the merger module
-            if hasattr(self.visual, 'merger'):
+            if hasattr(self.visual, "merger"):
                 modules.append(self.visual.merger)
 
         for module in modules:
