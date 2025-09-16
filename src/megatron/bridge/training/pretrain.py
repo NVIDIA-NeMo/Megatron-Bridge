@@ -87,8 +87,8 @@ def _pretrain(
     """
     # Handle in-process restart store prefix
     if inprocess_call_wrapper is not None:
-        iteration = inprocess_call_wrapper.iteration
-        store = dist.PrefixStore(str(iteration), store)
+        restart_attempt = inprocess_call_wrapper.iteration
+        store = dist.PrefixStore(str(restart_attempt), store)
 
     config = state.cfg
     dataset_provider = get_dataset_provider(config.dataset)

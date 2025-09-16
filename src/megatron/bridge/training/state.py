@@ -311,6 +311,7 @@ class GlobalState:
         """Reset GlobalState components for in-process restart.
 
         This cleans up all stateful components that need to be reinitialized between restart iterations.
+        The async calls queue for checkpointing is handled separately in aborting in order to clean up persistent workers.
         """
         self._timers = None
         self._train_state = None
