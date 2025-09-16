@@ -1,6 +1,6 @@
 # Resiliency
 
-Megatron-Bridge incorporates resilient training features from the [NVIDIA Resiliency Extension](https://github.com/NVIDIA/nvidia-resiliency-ext). This extension provides fault-tolerant capabilities that help minimize downtime due to failures and interruptions during training.
+Megatron Bridge incorporates resilient training features from the [NVIDIA Resiliency Extension](https://github.com/NVIDIA/nvidia-resiliency-ext). This extension provides fault-tolerant capabilities that help minimize downtime due to failures and interruptions during training.
 
 ## Fault Tolerance
 
@@ -8,11 +8,11 @@ The fault tolerance feature can detect hangs during training and automatically r
 
 ### Key Features
 
-- **Hang Detection**: Monitors training progress and detects when ranks become unresponsive
-- **Automatic Restart**: Automatically restarts training from the last checkpoint when faults are detected
-- **Section-based Monitoring**: Uses different timeout thresholds for setup, training steps, and checkpointing operations
-- **Timeout Calculation**: Can automatically calculate optimal timeouts based on observed training behavior
-- **Multi-level Restart Logic**: Supports both in-job restarts and new job launches on failure
+- **Hang Detection**: Monitors training progress and detects when ranks become unresponsive.
+- **Automatic Restart**: Automatically restarts training from the last checkpoint when faults are detected.
+- **Section-based Monitoring**: Uses different timeout thresholds for setup, training steps, and checkpointing operations.
+- **Timeout Calculation**: Can automatically calculate optimal timeouts based on observed training behavior.
+- **Multi-level Restart Logic**: Supports both in-job restarts and new job launches on failure.
 
 ### Prerequisites
 
@@ -20,16 +20,16 @@ The fault tolerance feature can detect hangs during training and automatically r
 
 Before using fault tolerance features, ensure the following:
 
-1. **Slurm Environment**: Run on a Slurm-based cluster
-2. **Checkpoint Configuration**: A valid checkpoint save directory must be configured
+1. **Slurm Environment**: The system must be running on a Slurm-based cluster.
+2. **Checkpoint Configuration**: A valid directory for saving checkpoints must be properly configured.
 
 ### Usage Options
 
-Megatron-Bridge provides two ways to enable fault tolerance:
+Megatron Bridge provides two ways to enable fault tolerance:
 
-#### Option 1: NeMo-Run Plugin (Recommended)
+#### Option 1: NeMo Run Plugin (Recommended)
 
-For users using NeMo-Run, the `FaultTolerancePlugin` provides the simplest integration:
+If you're using NeMo Run, the `FaultTolerancePlugin` provides the simplest integration:
 
 ```python
 from megatron.bridge.recipes.run_plugins import FaultTolerancePlugin
@@ -56,7 +56,7 @@ run.run(task, plugins=run_plugins, executor=executor)
 
 #### Option 2: Direct Configuration (Advanced)
 
-For advanced users who need more control, configure fault tolerance directly:
+If you’re an advanced user and want more control, you can configure fault tolerance manually:
 
 ```python
 from megatron.bridge.training.config import FaultToleranceConfig
@@ -121,33 +121,33 @@ The system will then automatically restart training from the most recent checkpo
 
 ### How It Works
 
-The fault tolerance system integrates with Megatron-Bridge's training pipeline through several key points:
+The fault tolerance system integrates with Megatron Bridge's training pipeline through several key points:
 
-1. **Setup Phase**: Initializes fault tolerance monitoring before training begins
-2. **Training Steps**: Wraps each training iteration with timeout monitoring
-3. **Evaluation Steps**: Monitors evaluation iterations separately
-4. **Checkpointing**: Tracks checkpoint saving operations with dedicated timeouts
-5. **State Persistence**: Saves timeout calculations to `ft_state.json` for future runs
+1. **Setup Phase**: Initializes fault tolerance monitoring before training begins.
+2. **Training Steps**: Wraps each training iteration with timeout monitoring.
+3. **Evaluation Steps**: Monitors evaluation iterations separately.
+4. **Checkpointing**: Tracks checkpoint saving operations with dedicated timeouts.
+5. **State Persistence**: Saves timeout calculations to `ft_state.json` for future runs.
 
 The system uses a section-based approach with different timeout thresholds:
-- **Setup Section**: Covers initialization and checkpoint loading
-- **Step Section**: Monitors individual training/evaluation iterations
-- **Checkpointing Section**: Tracks checkpoint saving operations
-- **Out-of-Section**: Handles time between sections
+- **Setup Section**: Covers initialization and checkpoint loading.
+- **Step Section**: Monitors individual training/evaluation iterations.
+- **Checkpointing Section**: Tracks checkpoint saving operations.
+- **Out-of-Section**: Handles time between sections.
 
 ### Best Practices
 
-1. **Enable Automatic Timeout Calculation**: Set `calc_ft_timeouts=True` to let the system learn optimal timeouts from your workload
-2. **Conservative Restart Limits**: Use reasonable limits for `num_in_job_restarts` and `num_job_retries_on_failure` to avoid infinite restart loops
-3. **Monitor Logs**: Watch for fault tolerance messages to understand when and why restarts occur
-4. **Test with Simulation**: Use the fault simulation features to test your fault tolerance setup before production runs
-5. **Checkpoint Frequency**: Ensure regular checkpointing to minimize lost work during restarts
+1. **Enable Automatic Timeout Calculation**: Set `calc_ft_timeouts=True` to let the system learn optimal timeouts from your workload.
+2. **Conservative Restart Limits**: Use reasonable limits for `num_in_job_restarts` and `num_job_retries_on_failure` to avoid infinite restart loops.
+3. **Monitor Logs**: Watch for fault tolerance messages to understand when and why restarts occur.
+4. **Test with Simulation**: Use the fault simulation features to test your fault tolerance setup before production runs.
+5. **Checkpoint Frequency**: Ensure regular checkpointing to minimize lost work during restarts.
 
 ### Limitations
 
-- Currently only supported on Slurm-based clusters
-- Not compatible with NSys profiling (the plugin will automatically disable nsys if enabled)
-- Checkpoint save directory must be configured and accessible
+- Currently only supported on Slurm-based clusters.
+- Not compatible with NSys profiling (the plugin will automatically disable nsys if enabled).
+- Checkpoint save directory must be configured and accessible.
 
 ## Straggler Detection
 
@@ -155,11 +155,11 @@ The straggler detection feature identifies slow-performing ranks and can optiona
 
 ### Key Features
 
-- **Performance Monitoring**: Tracks individual and relative GPU performance scores
-- **Automatic Detection**: Identifies stragglers based on configurable thresholds
-- **Detailed Reporting**: Provides comprehensive performance reports with best/worst performing ranks
-- **Optional Termination**: Can automatically stop training when stragglers are detected
-- **Flexible Configuration**: Supports various reporting intervals and threshold settings
+- **Performance Monitoring**: Tracks individual and relative GPU performance scores.
+- **Automatic Detection**: Identifies stragglers based on configurable thresholds.
+- **Detailed Reporting**: Provides comprehensive performance reports with best/worst performing ranks.
+- **Optional Termination**: Can automatically stop training when stragglers are detected.
+- **Flexible Configuration**: Supports various reporting intervals and threshold settings.
 
 ### Configuration
 
@@ -245,8 +245,8 @@ STRAGGLER DETECTION WARNING: Some GPUs performance dropped. Affected ranks: [162
 
 The system calculates two types of performance scores:
 
-1. **Relative Performance**: Compares each rank's performance relative to other ranks in the same training run
-2. **Individual Performance**: Tracks each rank's performance over time to detect degradation
+1. **Relative Performance**: Compares each rank's performance relative to other ranks in the same training run.
+2. **Individual Performance**: Tracks each rank's performance over time to detect degradation.
 
 Scores range from 0.0 to 1.0, where:
 - **1.0**: Best possible performance
@@ -257,51 +257,51 @@ Scores range from 0.0 to 1.0, where:
 
 The straggler detection system:
 
-1. **Initialization**: Sets up the NVRx detector during training setup
-2. **Monitoring**: Wraps the training step function to monitor execution time
-3. **Periodic Reporting**: Generates performance reports at specified intervals
-4. **Straggler Identification**: Compares performance scores against thresholds
-5. **Action**: Optionally saves a checkpoint and terminates training if stragglers are detected
+1. **Initialization**: Sets up the NVRx detector during training setup.
+2. **Monitoring**: Wraps the training step function to monitor execution time.
+3. **Periodic Reporting**: Generates performance reports at specified intervals.
+4. **Straggler Identification**: Compares performance scores against thresholds.
+5. **Action**: Optionally saves a checkpoint and terminates training if stragglers are detected.
 
 ### Best Practices
 
-1. **Appropriate Intervals**: Set `report_time_interval` based on your training characteristics
-2. **Threshold Tuning**: Adjust thresholds based on your hardware and expected performance variability
-3. **Gradual Rollout**: Start with `stop_if_detected=False` to observe performance patterns before enabling automatic termination
-4. **Monitor Logs**: Regularly check straggler reports to identify persistent hardware issues
-5. **Performance Impact**: The overhead is minimal, but you can adjust `profiling_interval` if needed
+1. **Appropriate Intervals**: Set `report_time_interval` based on your training characteristics.
+2. **Threshold Tuning**: Adjust thresholds based on your hardware and expected performance variability.
+3. **Gradual Rollout**: Start with `stop_if_detected=False` to observe performance patterns before enabling automatic termination.
+4. **Monitor Logs**: Regularly check straggler reports to identify persistent hardware issues.
+5. **Performance Impact**: The overhead is minimal, but you can adjust `profiling_interval` if needed.
 
 ### Integration with Training
 
 The straggler detection integrates directly with the training loop:
 
-- Automatically initializes when `NVRxStragglerDetectionManager` is configured
-- Monitors training steps without affecting the training logic
-- Provides exit conditions that the training loop respects
-- Safely shuts down when training completes
+- Automatically initializes when `NVRxStragglerDetectionManager` is configured.
+- Monitors training steps without affecting the training logic.
+- Provides exit conditions that the training loop respects.
+- Safely shuts down when training completes.
 
 ## Preemption
 
 Training foundation models can take several hours or even days to complete. In some cases, training jobs must be halted preemptively due to cluster time limits, higher priority jobs, or other reasons.
 
-Megatron-Bridge provides functionality to gracefully perform preemptive shutdown of training. This feature listens for user-specified signals and saves a checkpoint before exiting when the signal is received.
+Megatron Bridge provides functionality to gracefully perform preemptive shutdown of training. This feature listens for user-specified signals and saves a checkpoint before exiting when the signal is received.
 
 ### Key Features
 
-- **Signal-based Shutdown**: Listens for signals (default: SIGTERM) during training
-- **Graceful Exit**: Saves checkpoint before terminating to preserve training progress
-- **Distributed Coordination**: Ensures all ranks receive and handle the signal properly
-- **Flexible Configuration**: Supports different signals and timing configurations
+- **Signal-based Shutdown**: Listens for signals (default: SIGTERM) during training.
+- **Graceful Exit**: Saves checkpoint before terminating to preserve training progress.
+- **Distributed Coordination**: Ensures all ranks receive and handle the signal properly.
+- **Flexible Configuration**: Supports different signals and timing configurations.
 
 ### Usage Options
 
-Megatron-Bridge provides two ways to enable preemption handling:
+Megatron Bridge provides two ways to enable preemption handling:
 
-#### Option 1: NeMo-Run Plugin (Recommended)
+#### Option 1: NeMo Run Plugin (Recommended)
 
 > **Warning**: This plugin is currently only supported on Slurm-based clusters.
 
-For users using NeMo-Run, the `PreemptionPlugin` provides the simplest integration:
+If you're using NeMo Run, the `PreemptionPlugin` provides the simplest integration:
 
 ```python
 from megatron.bridge.recipes.run_plugins import PreemptionPlugin
@@ -369,42 +369,42 @@ exiting program after receiving SIGTERM.
 ```
 
 The system will:
-1. **Detect the signal** at the end of the current training step
-2. **Save a checkpoint** to preserve training progress
-3. **Log the shutdown reason** for debugging purposes
-4. **Exit gracefully** with proper cleanup
+1. **Detect the signal** at the end of the current training step.
+2. **Save a checkpoint** to preserve training progress.
+3. **Log the shutdown reason** for debugging purposes.
+4. **Exit gracefully** with proper cleanup.
 
 ### How It Works
 
 The preemption system operates through several components:
 
-1. **Signal Handler Installation**: Sets up a distributed signal handler using `DistributedSignalHandler`
-2. **Signal Detection**: Checks for received signals at the end of each training step
-3. **Distributed Coordination**: Uses all-gather to ensure all ranks are aware of the signal
-4. **Checkpoint Saving**: Automatically saves a checkpoint before exiting
-5. **Graceful Shutdown**: Properly cleans up resources and exits
+1. **Signal Handler Installation**: Sets up a distributed signal handler using `DistributedSignalHandler`.
+2. **Signal Detection**: Checks for received signals at the end of each training step.
+3. **Distributed Coordination**: Uses all-gather to ensure all ranks are aware of the signal.
+4. **Checkpoint Saving**: Automatically saves a checkpoint before exiting.
+5. **Graceful Shutdown**: Properly cleans up resources and exits.
 
 ### Signal Handling Details
 
 The `DistributedSignalHandler` class provides:
-- **Cross-rank coordination**: Ensures all ranks handle the signal consistently
-- **Original handler preservation**: Restores original signal handlers on exit
-- **Flexible signal support**: Can handle different signal types (SIGTERM, SIGINT, etc.)
+- **Cross-rank coordination**: Ensures all ranks handle the signal consistently.
+- **Original handler preservation**: Restores original signal handlers on exit.
+- **Flexible signal support**: Can handle different signal types (SIGTERM, SIGINT, etc.).
 
 ### Integration with Slurm
 
 When using Slurm, the system automatically:
-- **Receives SIGTERM** when approaching job time limits
-- **Coordinates across nodes** to ensure consistent shutdown
-- **Saves progress** before the job is forcibly terminated
+- **Receives SIGTERM** when approaching job time limits.
+- **Coordinates across nodes** to ensure consistent shutdown.
+- **Saves progress** before the job is forcibly terminated.
 
 ### Best Practices
 
-1. **Use Appropriate Timing**: Set `preempt_time` to allow sufficient time for checkpoint saving
-2. **Monitor Logs**: Watch for preemption messages to understand shutdown patterns
-3. **Test Signal Handling**: Verify preemption works correctly in your environment
-4. **Regular Checkpointing**: Ensure regular checkpoint intervals to minimize potential data loss
-5. **Resource Cleanup**: The system handles cleanup automatically, but monitor for any resource leaks
+1. **Use Appropriate Timing**: Set `preempt_time` to allow sufficient time for checkpoint saving.
+2. **Monitor Logs**: Watch for preemption messages to understand shutdown patterns.
+3. **Test Signal Handling**: Verify preemption works correctly in your environment.
+4. **Regular Checkpointing**: Ensure regular checkpoint intervals to minimize potential data loss.
+5. **Resource Cleanup**: The system handles cleanup automatically, but monitor for any resource leaks.
 
 ## Re-run State Machine
 
@@ -414,20 +414,20 @@ The re-run state machine is an experimental feature that helps with attribution 
 
 ### Key Features
 
-- **Automatic Re-run Logic**: Detects unexpected results and automatically re-runs computations to verify reproducibility
-- **Error Attribution**: Classifies issues as transient errors, persistent errors, or correct results
-- **Multi-stage Validation**: Uses in-place re-runs and checkpoint-based re-runs on different hardware
-- **Determinism Tracking**: Can report statistics on computational non-determinism
-- **State Management**: Handles RNG state and data iterator state for reproducible re-runs
+- **Automatic Re-run Logic**: Detects unexpected results and automatically re-runs computations to verify reproducibility.
+- **Error Attribution**: Classifies issues as transient errors, persistent errors, or correct results.
+- **Multi-stage Validation**: Uses in-place re-runs and checkpoint-based re-runs on different hardware.
+- **Determinism Tracking**: Can report statistics on computational non-determinism.
+- **State Management**: Handles RNG state and data iterator state for reproducible re-runs.
 
 ### How It Works
 
 The re-run state machine operates through several stages:
 
-1. **Initial Run**: Executes the training step normally, validating results
-2. **First Re-run (In-place)**: If validation fails, re-runs on the same GPU to check reproducibility
-3. **Second Re-run (Different GPU)**: If the issue is reproducible, saves checkpoint and re-runs on different hardware
-4. **Attribution**: Determines if the issue is a transient error, persistent error, or correct result
+1. **Initial Run**: Executes the training step normally, validating results.
+2. **First Re-run (In-place)**: If validation fails, re-runs on the same GPU to check reproducibility.
+3. **Second Re-run (Different GPU)**: If the issue is reproducible, saves checkpoint and re-runs on different hardware.
+4. **Attribution**: Determines if the issue is a transient error, persistent error, or correct result.
 
 ### Configuration
 
@@ -459,19 +459,19 @@ config.rerun_state_machine = RerunStateMachineConfig(
 ### Operating Modes
 
 #### 1. Disabled Mode (`disabled`)
-- **Purpose**: No result validation or re-run logic
-- **Behavior**: Training proceeds normally without any result checking
-- **Use Case**: When re-run overhead is not acceptable or validation is not needed
+- **Purpose**: No result validation or re-run logic.
+- **Behavior**: Training proceeds normally without any result checking.
+- **Use Case**: When re-run overhead is not acceptable or validation is not needed.
 
 #### 2. Report Stats Mode (`report_stats`)  
-- **Purpose**: Collect statistics on computational determinism
-- **Behavior**: Re-runs every step once to measure variability
-- **Output**: Reports on computational non-determinism without stopping training
+- **Purpose**: Collect statistics on computational determinism.
+- **Behavior**: Re-runs every step once to measure variability.
+- **Output**: Reports on computational non-determinism without stopping training.
 
 #### 3. Validate Results Mode (`validate_results`)
-- **Purpose**: Full validation with re-runs and hardware fault attribution
-- **Behavior**: Re-runs computations when unexpected results are detected
-- **Exit Conditions**: May exit with specific codes for checkpointing or validation failure
+- **Purpose**: Full validation with re-runs and hardware fault attribution.
+- **Behavior**: Re-runs computations when unexpected results are detected.
+- **Exit Conditions**: May exit with specific codes for checkpointing or validation failure.
 
 ### Integration with Training
 
@@ -498,8 +498,8 @@ if should_exit:
 
 The re-run state machine uses specific exit codes to control job behavior:
 
-- **Exit Code 16** (`EXIT_CODE_RESUME_TO_DISAMBIGUATE`): Job should be restarted from checkpoint to re-run on different hardware
-- **Exit Code 17** (`EXIT_CODE_FAILED_ON_RESULT_VALIDATION`): Job failed validation and should not continue
+- **Exit Code 16** (`EXIT_CODE_RESUME_TO_DISAMBIGUATE`): Job should be restarted from checkpoint to re-run on different hardware.
+- **Exit Code 17** (`EXIT_CODE_FAILED_ON_RESULT_VALIDATION`): Job failed validation and should not continue.
 
 ### Expected Behavior
 
@@ -529,13 +529,13 @@ Correct result (but possible Application error)
 
 ### Result Attribution Categories
 
-1. **Transient Error**: Result not reproducible on same GPU - likely temporary hardware glitch
-2. **Persistent Error**: Result reproducible on same GPU but different on other GPU - likely hardware fault
-3. **Correct Result**: Result reproducible across different GPUs - likely correct but unexpected
+1. **Transient Error**: Result not reproducible on same GPU - likely temporary hardware glitch.
+2. **Persistent Error**: Result reproducible on same GPU but different on other GPU - likely hardware fault.
+3. **Correct Result**: Result reproducible across different GPUs - likely correct but unexpected.
 
 ### Data Iterator Integration
 
 The system uses `RerunDataIterator` to handle data replay:
-- **State Saving**: Captures data iterator state for reproducible re-runs
-- **Replay Capability**: Can rewind and replay the same data batches
-- **Checkpoint Support**: Saves/restores iterator state across job restarts
+- **State Saving**: Captures data iterator state for reproducible re-runs.
+- **Replay Capability**: Can rewind and replay the same data batches.
+- **Checkpoint Support**: Saves/restores iterator state across job restarts.
