@@ -832,7 +832,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     # to get the config from the parent module
                     parent_name = local_name.rsplit(".", 2)[0]
                     parent_module, _ = get_module_and_param_from_name(megatron_model, parent_name, vp_stage)
-                    setattr(local_module, "config", parent_module.config)
+                    if isinstance(parent_module, MegatronModule):
+                        setattr(local_module, "config", parent_module.config)
 
                 tasks[global_name_idx] = WeightConversionTask(
                     pp_rank=pp_rank,
