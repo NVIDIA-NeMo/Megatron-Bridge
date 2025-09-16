@@ -174,6 +174,7 @@ def pretrain_config(
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=False,
+            use_distributed_optimizer=True,
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
