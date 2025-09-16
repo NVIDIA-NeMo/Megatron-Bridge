@@ -711,8 +711,22 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
+    # keep only last k checkpoints
+    if ckpt_cfg.most_recent_k > -1:
+        cleanup_old_non_persistent_checkpoint(
+            save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
+        )
 
-def cleanup_old_non_persistent_checkpoint(save_dir: str, leave_ckpt_num: int = 1, do_async: bool = False) -> None:
+    # Wait so everyone is done (not necessary)
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
+def cleanup_old_non_persistent_checkpoint(
+    save_dir: str,
+    leave_ckpt_num: int = 1,
+    do_async: bool = False,
+) -> None:
     """Clean up old non-persistent checkpoints in a directory.
 
     Keeps the specified number of latest checkpoints and removes older ones.

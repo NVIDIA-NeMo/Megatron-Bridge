@@ -389,6 +389,7 @@ class TestSaveCheckpoint:
 
         # Add wandb logger to state
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
 
         # Call save_checkpoint
         save_checkpoint(
@@ -784,6 +785,42 @@ class TestCleanupNonPersistentCheckpoints:
         with patch("shutil.rmtree") as mock_rmtree:
             cleanup_old_non_persistent_checkpoint("/fake/dir", leave_ckpt_num=1)
             mock_rmtree.assert_not_called()
+
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_rank")
+    def test_cleanup_old_non_persistent_checkpoint_retain_interval(self, mock_get_rank, mock_dist_init):
+        """Test cleanup of old checkpoints."""
+        mock_dist_init.return_value = True
+        mock_get_rank.return_value = 0
+
+        def get_ckpt_nums(path, return_ckpts=False):
+            count = 0
+            ckpts = []
+            for root, dirs, files in os.walk(path):
+                count += len(dirs)
+                ckpts.append(dirs)
+
+            if return_ckpts:
+                return count, sorted(ckpts[0])
+            else:
+                return count
+
+        # save ckpt every 10 steps with max_steps=200
+        save_interval = 10
+        max_steps = 200
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create mock checkpoint directories
+            save_dir = Path(temp_dir)
+            for i in range(10, (max_steps + 10), save_interval):
+                old_ckpt = save_dir / "iter_{:07d}".format(i)
+                old_ckpt.mkdir()
+
+            # save last top 5 ckpts
+            cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=5, do_async=False)
+            assert get_ckpt_nums(str(save_dir), return_ckpts=True) == (
+                5,
+                ["iter_0000160", "iter_0000170", "iter_0000180", "iter_0000190", "iter_0000200"],
+            )
 
 
 class TestLoadBaseCheckpoint:

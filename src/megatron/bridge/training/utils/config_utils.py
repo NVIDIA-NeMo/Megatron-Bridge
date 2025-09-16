@@ -178,8 +178,38 @@ class _ConfigContainerBase:
             return [cls._convert_value_to_dict(item) for item in value]
         elif isinstance(value, dict):
             return {k: cls._convert_value_to_dict(v) for k, v in value.items()}
+        elif callable(value) and not isinstance(value, type):
+            # Handle callable functions by converting them to _target_ references
+            import inspect
+            try:
+                module = inspect.getmodule(value)
+                if module is not None and hasattr(value, '__name__'):
+                    return {
+                        "_target_": f"{module.__name__}.{value.__name__}",
+                        "_call_": False
+                    }
+            except Exception:
+                pass
+            # If we can't serialize the function, return None as a fallback
+            return None
         else:
-            return value
+            # Handle torch.dtype and other torch objects that aren't JSON serializable
+            import torch
+            from enum import Enum
+            if isinstance(value, torch.dtype):
+                # Convert torch.dtype to string representation
+                return str(value).replace('torch.', '')  # e.g., 'float32' instead of 'torch.float32'
+            elif isinstance(value, Enum):
+                # Handle enum types by converting to their string representation
+                return str(value)
+            elif str(type(value)).startswith("<class 'torch."):
+                # Handle other torch objects
+                return str(value)
+            elif hasattr(value, '__module__') and hasattr(value, '__name__') and not callable(value):
+                # Handle other custom objects that have module and name attributes
+                return str(value)
+            else:
+                return value
 
     def to_yaml(self, yaml_path: Optional[str] = None) -> None:
         """
