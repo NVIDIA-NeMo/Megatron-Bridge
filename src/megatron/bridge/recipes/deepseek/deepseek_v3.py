@@ -298,6 +298,7 @@ def pretrain_config(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
+    cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(
