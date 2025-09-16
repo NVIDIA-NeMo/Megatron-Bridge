@@ -99,7 +99,7 @@ class TestPretrainConfig:
         assert isinstance(config.model, MambaProvider780M)
 
         # Check training configuration
-        assert config.train.train_iters == 100
+        assert config.train.train_iters == 1_168_251
         assert config.train.global_batch_size == 8
         assert config.train.micro_batch_size == 1
         assert config.train.eval_interval == 100

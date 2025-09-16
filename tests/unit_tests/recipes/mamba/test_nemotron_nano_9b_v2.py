@@ -119,7 +119,7 @@ class TestPretrainConfig:
         assert isinstance(config.model, NemotronNano9Bv2Provider)
 
         # Check training configuration
-        assert config.train.train_iters == 10
+        assert config.train.train_iters == 1_168_251
         assert config.train.global_batch_size == 768
         assert config.train.micro_batch_size == 1
         assert config.train.eval_interval == 10

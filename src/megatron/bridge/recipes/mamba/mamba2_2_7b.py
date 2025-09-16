@@ -85,7 +85,7 @@ def pretrain_config(
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
     # Training hyperparameters
-    train_iters: int = 100,
+    train_iters: int = 1_168_251,
     global_batch_size: int = 8,
     micro_batch_size: int = 1,
     seq_length: int = 4096,
