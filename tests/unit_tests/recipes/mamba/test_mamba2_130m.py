@@ -238,6 +238,7 @@ class TestPretrainConfig:
         assert config.ddp.grad_reduce_in_fp32 is True
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
+        assert config.ddp.use_distributed_optimizer is True
 
     def test_pretrain_config_default_comm_overlap(self):
         """Test default CommOverlapConfig setup."""
