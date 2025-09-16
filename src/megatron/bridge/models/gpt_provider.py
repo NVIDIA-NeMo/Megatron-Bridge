@@ -39,12 +39,16 @@ logger = logging.getLogger(__name__)
 
 def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Create a Transformer Engine layer specification based on the provided config."""
+    if "use_te_op_fuser" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
+        kwargs = {"use_te_op_fuser": config.use_transformer_engine_op_fuser}
+    else:
+        kwargs = {}
     return get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
         qk_layernorm=config.qk_layernorm,
         fp8=bool(config.num_moe_experts and (config.fp8 is not None)),
-        use_te_op_fuser=config.use_transformer_engine_op_fuser,
+        **kwargs,
     )
 
 
