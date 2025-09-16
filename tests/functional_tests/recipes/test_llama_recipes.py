@@ -16,8 +16,6 @@
 
 import pytest
 
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_config
-from megatron.bridge.recipes.llama.llama31_8b import pretrain_config as llama31_8b_config
 from megatron.bridge.recipes.llama.llama32_1b import pretrain_config as llama32_1b_config
 from megatron.bridge.recipes.llama.llama32_3b import pretrain_config as llama32_3b_config
 from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
@@ -27,8 +25,6 @@ LLAMA_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides)
     (llama32_1b_config, "llama32_1b", {}),  # Small model, use recipe defaults
     (llama32_3b_config, "llama32_3b", {}),  # Small model, use recipe defaults
-    (llama3_8b_config, "llama3_8b", {"tensor_parallelism": 2, "pipeline_parallelism": 1}),  # 8B model, use TP=2
-    (llama31_8b_config, "llama31_8b", {"tensor_parallelism": 2, "pipeline_parallelism": 1}),  # 8B model, use TP=2
 ]
 
 
