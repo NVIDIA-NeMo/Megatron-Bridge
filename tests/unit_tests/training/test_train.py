@@ -19,7 +19,11 @@ from unittest.mock import Mock, patch
 
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
-from megatron.bridge.training.train import _handle_mxfp8_param_buffer_copy, checkpoint_and_decide_exit, should_disable_forward_pre_hook
+from megatron.bridge.training.train import (
+    _handle_mxfp8_param_buffer_copy,
+    checkpoint_and_decide_exit,
+    should_disable_forward_pre_hook,
+)
 
 
 class TestMxfp8ParamBufferCopy:
