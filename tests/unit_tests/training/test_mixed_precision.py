@@ -559,7 +559,7 @@ class TestMixedPrecisionRecipes:
         assert config.params_dtype == torch.bfloat16
 
         # MXFP8 specific settings
-        assert config.fp8 == "hybrid"
+        assert config.fp8 == "e4m3"
         assert config.fp8_recipe == "mxfp8"
         assert config.fp8_param_gather is True
         assert config.reuse_grad_buf_for_mxfp8_param_ag is True
@@ -574,7 +574,7 @@ class TestMixedPrecisionRecipes:
         assert config.params_dtype == torch.half
 
         # MXFP8 specific settings
-        assert config.fp8 == "hybrid"
+        assert config.fp8 == "e4m3"
         assert config.fp8_recipe == "mxfp8"
         assert config.fp8_param_gather is True
         assert config.reuse_grad_buf_for_mxfp8_param_ag is True

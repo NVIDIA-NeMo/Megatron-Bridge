@@ -68,7 +68,10 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
         if fp8_recipe == "ds":
             return bf16_with_fp8_delayed_scaling_mixed()
         elif fp8_recipe == "cs":
-            return bf16_with_fp8_current_scaling_mixed()
+            current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
+            # Disable BF16 Transformer layers in the performance config
+            current_scaling_cfg.first_last_layers_bf16 = False
+            return current_scaling_cfg
         elif fp8_recipe == "mx":
             return bf16_with_mxfp8_mixed()
         elif fp8_recipe == "ss":
@@ -129,7 +132,8 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
         return
 
     common = preset.get("common") or {}
-    dtype_cfg = preset.get(args.compute_dtype) if args.compute_dtype in preset else None
+    compute_dtype = args.compute_dtype if args.compute_dtype == "bf16" else f"{args.compute_dtype}_{args.fp8_recipe}"
+    dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
     # Deep-merge so dtype-specific values override common
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
     perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore

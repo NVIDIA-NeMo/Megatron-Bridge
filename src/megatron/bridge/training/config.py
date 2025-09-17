@@ -375,6 +375,9 @@ class CheckpointConfig:
     save_interval: Optional[int] = None
     """Number of iterations between persistent checkpoint saves."""
 
+    most_recent_k: Optional[int] = -1
+    """Number of latest checkpoint to be saved."""
+
     save_optim: bool = True
     """Do not save current optimizer."""
 
@@ -903,3 +906,7 @@ class ConfigContainer(Container):
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
+
+        assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
+            "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
+        )

@@ -34,8 +34,7 @@ jobs:
     needs: [pre-flight, build-docs]
     if: |
       (
-        needs.pre-flight.outputs.docs_only == 'true'
-        || needs.pre-flight.outputs.is_deployment_workflow == 'true'
+        needs.pre-flight.outputs.is_deployment_workflow == 'true'
         || always()
       )
       && !cancelled()
