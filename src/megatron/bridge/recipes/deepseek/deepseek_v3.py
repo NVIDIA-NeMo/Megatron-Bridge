@@ -215,6 +215,7 @@ def pretrain_config(
         recompute_method=recompute_method,
         recompute_num_layers=recompute_num_layers,
         enable_deepep=enable_deepep,
+        apply_rope_fusion=False,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -298,7 +299,7 @@ def pretrain_config(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-    cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+    # cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(
