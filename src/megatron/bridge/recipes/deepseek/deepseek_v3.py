@@ -57,6 +57,7 @@ def model_config(
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
     enable_deepep: bool = False,
+    apply_rope_fusion: bool = True,
 ) -> DeepSeekV3Provider:
     """
     Configure the DeepSeek-V3 (671B) model.
@@ -76,6 +77,7 @@ def model_config(
         recompute_modules: Modules to selectively recompute when granularity is "selective".
         recompute_method: Method for activation recomputation.
         recompute_num_layers: Number of layers to recompute.
+        apply_rope_fusion: Whether to apply MLA Yarn fusion.
     Returns:
         DeepSeekV3Provider: Configuration for the DeepSeek-V3 model.
     """
@@ -106,7 +108,8 @@ def model_config(
 
     # Performance optimization knobs
     cfg.moe_permute_fusion = True
-    cfg.apply_rope_fusion = True
+    if apply_rope_fusion:
+        cfg.apply_rope_fusion = True
 
     # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
     if mtp_num_layers is None:
@@ -183,6 +186,7 @@ def pretrain_config(
     recompute_modules: Optional[List[str]] = None,
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
+    apply_rope_fusion: bool = True,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model.
@@ -215,7 +219,7 @@ def pretrain_config(
         recompute_method=recompute_method,
         recompute_num_layers=recompute_num_layers,
         enable_deepep=enable_deepep,
-        apply_rope_fusion=False,
+        apply_rope_fusion=apply_rope_fusion,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -299,7 +303,8 @@ def pretrain_config(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-    # cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+    if apply_rope_fusion:
+        cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(
