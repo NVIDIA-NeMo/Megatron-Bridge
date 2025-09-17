@@ -42,6 +42,9 @@ MISSING_NVRX_MSG = (
     "nvidia-resiliency-ext is not available. Please install it with `pip install nvidia-resiliency-ext`."
 )
 MISSING_NEMO_RUN_MSG = "nemo-run is not available. Please install it with `pip install nemo-run`."
+MISSING_NVINSPECT_MSG = (
+    "nvdlfw_inspect is not available. Please install it with `pip install nvdlfw-inspect`."
+)
 
 
 class UnavailableError(Exception):

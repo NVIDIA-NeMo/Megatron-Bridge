@@ -630,6 +630,45 @@ class ProfilingConfig:
         )
 
 
+@dataclass(kw_only=True)
+class TensorInspectConfig:
+    """Configuration for Nvidia-DL-Framework-Inspect integration."""
+
+    enabled: bool = False
+    """Enable tensor inspection and statistics collection."""
+
+    features: Optional[Union[dict[str, Any], str, Path]] = None
+    """Feature configuration as a Python dict or a YAML file path."""
+
+    feature_dirs: Optional[list[str]] = None
+    """Directories containing feature implementations (searched recursively)."""
+
+    log_dir: Optional[str] = None
+    """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
+
+    init_training_step: int = 0
+    """Initial training step for the inspector (used when resuming)."""
+
+
+    def __post_init__(self) -> None:
+        """Populate sensible defaults when inspection is enabled.
+
+        - If feature_dirs is unset, default to the installed TransformerEngine
+          debug features package path (transformer_engine.debug.features), when available.
+        """
+        if not self.enabled:
+            return
+        if not self.feature_dirs:
+            try:
+                import importlib
+                te_features_mod = importlib.import_module("transformer_engine.debug.features")
+                te_features_dir = Path(te_features_mod.__file__).parent
+                if te_features_dir.exists():
+                    self.feature_dirs = [str(te_features_dir)]
+            except Exception:
+                pass
+
+
 @dataclass
 class FaultToleranceConfig:
     """Configuration settings related to fault tolerance mechanisms (NVIDIA internal use)."""
@@ -753,6 +792,7 @@ class ConfigContainer(Container):
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    tensor_inspect: Optional[TensorInspectConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -824,6 +864,13 @@ class ConfigContainer(Container):
             assert self.checkpoint.ckpt_format == "torch_dist", (
                 "async_save is only supported with ckpt_format='torch_dist'"
             )
+
+        # Set defaults for tensor inspect callback
+        if self.tensor_inspect is not None and self.tensor_inspect.enabled:
+            if self.tensor_inspect.log_dir is None:
+                self.tensor_inspect.log_dir = self.checkpoint.save or "."
+            if self.tensor_inspect.init_training_step == 0 and self.checkpoint.ckpt_step is not None:
+                self.tensor_inspect.init_training_step = int(self.checkpoint.ckpt_step)
 
         # Set data_parallel_size on comm_overlap config if present
         if self.comm_overlap is not None:
