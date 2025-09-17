@@ -1022,15 +1022,9 @@ class TestRerunConfigValidation:
         # Use the standard idempotency check
         self._check_post_init_idempotency(create_comm_overlap_config)
 
-        # Additional specific test for the validate() re-run scenario
-        # This tests the exact issue we encountered where validate() calls __post_init__() multiple times
         cfg = create_comm_overlap_config()
-
-        # Verify initial state is correct
         assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
         assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
-
-        # Simulate multiple validate() calls that each call __post_init__()
         cfg.__post_init__()
         cfg.__post_init__()
 
