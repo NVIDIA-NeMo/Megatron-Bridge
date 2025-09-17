@@ -21,6 +21,7 @@ from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -1008,6 +1009,34 @@ class TestRerunConfigValidation:
         cfg = bf16_with_mxfp8_mixed()
         cfg.grad_reduce_in_fp32 = False
         cfg.__post_init__()
+
+    def test_comm_overlap_config(self):
+        """Test that CommOverlapConfig.__post_init__() is idempotent and preserves user configuration."""
+
+        def create_comm_overlap_config():
+            return CommOverlapConfig(
+                tp_comm_overlap=True,
+                tp_comm_bootstrap_backend="nccl",
+            )
+
+        # Use the standard idempotency check
+        self._check_post_init_idempotency(create_comm_overlap_config)
+
+        # Additional specific test for the validate() re-run scenario
+        # This tests the exact issue we encountered where validate() calls __post_init__() multiple times
+        cfg = create_comm_overlap_config()
+
+        # Verify initial state is correct
+        assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
+        assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
+
+        # Simulate multiple validate() calls that each call __post_init__()
+        cfg.__post_init__()
+        cfg.__post_init__()
+
+        # The user configuration should be preserved across all re-runs
+        assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
+        assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
 
     def test_rerun_validate_config_container(self):
         import copy
