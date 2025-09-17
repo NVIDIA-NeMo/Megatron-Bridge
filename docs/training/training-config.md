@@ -6,7 +6,6 @@ The `TrainingConfig` contains settings related to the training loop bounds, exit
 Configure these parameters to control core training behavior, resource utilization, and monitoring across distributed setups.
 ### Batch Configuration
 Define how data is batched and distributed across devices during training.
-Define how data is batched and distributed across devices during training.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -22,7 +21,6 @@ The relationship between batch sizes:
 ### Training Duration
 
 Control when training stops using iteration counts or time-based limits.
-Control when training stops using iteration counts or time-based limits.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `train_iters` | `Optional[int]` | `None` | Total number of iterations to train |
@@ -30,7 +28,6 @@ Control when training stops using iteration counts or time-based limits.
 | `exit_duration_in_mins` | `Optional[int]` | `None` | Exit after this many minutes |
 
 ### Validation
-Configure validation frequency, duration, and evaluation-only modes.
 Configure validation frequency, duration, and evaluation-only modes.
 
 | Parameter | Type | Default | Description |
@@ -45,7 +42,6 @@ Configure validation frequency, duration, and evaluation-only modes.
 
 ### Memory Management
 Control GPU memory cleanup and garbage collection to prevent memory issues during training.
-Control GPU memory cleanup and garbage collection to prevent memory issues during training.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -56,7 +52,6 @@ Control GPU memory cleanup and garbage collection to prevent memory issues durin
 
 ### Signal Handling and Exit Conditions
 Set up automatic checkpoint saving and clean exit procedures for signal-based interruptions.
-Set up automatic checkpoint saving and clean exit procedures for signal-based interruptions.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -65,7 +60,6 @@ Set up automatic checkpoint saving and clean exit procedures for signal-based in
 | `exit_signal_handler_for_dataloader` | `bool` | `False` | Use signal handler for dataloader workers |
 
 ### Performance Monitoring
-Monitor training consistency and synchronization across distributed processes.
 Monitor training consistency and synchronization across distributed processes.
 
 | Parameter | Type | Default | Description |

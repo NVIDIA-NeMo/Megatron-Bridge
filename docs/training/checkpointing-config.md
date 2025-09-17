@@ -52,7 +52,6 @@ Parameters to control how checkpoints are saved.
 ## Asynchronous Saving
 
 Asynchronous saving allows training to continue while checkpoint data is persisted to disk in the background, reducing the impact of checkpointing on training throughput.
-Parameter for asynchronous checkpoint saving.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -103,7 +102,6 @@ Parameter for selecting the checkpoint format.
 | `ckpt_format` | `Literal["torch_dist"]` | `"torch_dist"` | Checkpoint format (PyTorch distributed checkpoint format) |
 
 ## Performance Optimizations
-Parameters to optimize checkpoint save and load performance.
 Parameters to optimize checkpoint save and load performance.
 
 | Parameter | Type | Default | Description |
@@ -162,7 +160,6 @@ Local checkpointing leverages the [NVIDIA Resiliency Extension](https://nvidia.g
 
 ### Non-Persistent Checkpointing Configuration
 Parameters for non-persistent checkpointing.
-Parameters for non-persistent checkpointing.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -173,7 +170,6 @@ Parameters for non-persistent checkpointing.
 | `non_persistent_local_ckpt_algo` | `Literal["fully_parallel", "atomic"]` | `"fully_parallel"` | Algorithm for local non-persistent checkpointing |
 
 ### Replication and Fault Tolerance
-Parameters for replication and fault tolerance of local checkpoints.
 Parameters for replication and fault tolerance of local checkpoints.
 
 | Parameter | Type | Default | Description |

@@ -28,7 +28,6 @@ The `SchedulerConfig` controls learning rate scheduling and weight decay progres
 
 ### Learning Rate Scheduling
 Parameters for controlling the learning rate schedule, including decay strategy, warmup behavior, and iteration-based adjustments:
-Parameters for controlling the learning rate schedule, including decay strategy, warmup behavior, and iteration-based adjustments:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -39,7 +38,6 @@ Parameters for controlling the learning rate schedule, including decay strategy,
 | `lr_warmup_init` | `float` | `0.0` | Initial learning rate for warmup phase |
 
 ### WSD (Warmup-Stable-Decay) Scheduling
-Parameters for configuring the annealing phase of the WSD schedule, including decay style and iteration count:
 Parameters for configuring the annealing phase of the WSD schedule, including decay style and iteration count:
 
 | Parameter | Type | Default | Description |
