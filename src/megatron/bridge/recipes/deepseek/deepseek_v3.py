@@ -285,7 +285,7 @@ def pretrain_config(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model="deepseek-ai/DeepSeek-V3"),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
             save_interval=2000,
             save=checkpoint_dir,
