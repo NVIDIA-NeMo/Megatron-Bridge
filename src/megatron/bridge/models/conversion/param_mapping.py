@@ -34,6 +34,11 @@ from megatron.bridge.models.conversion.utils import get_module_and_param_from_na
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
 
+import logging
+
+
+logger = logging.getLogger(__name__)
+
 
 class MegatronParamMapping(ABC, Generic[WeightType]):
     """
@@ -650,6 +655,18 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if self.tp_rank == 0:
             if hf_weights is None:
                 raise ValueError("hf_weights should not be None on rank 0")
+
+            # For MCore MambaMixer, A_log is initialized in FP32 but cast to BF16 when
+            # saving ckpts, including the ckpt uploaded to HF. Without this cast,
+            # self.scatter_to_tp_ranks will try to scatter the HF A_log weights in BF16 to
+            # the Megatron tensor which is in FP32. This will error. So we cast before the scatter.
+            if hf_weights.dtype != target_param.dtype:
+                logger.warning(
+                    f"WARNING: Dtype mismatch between HuggingFace weights and Megatron module. "
+                    f"HF dtype: {hf_weights.dtype}. Megatron dtype: {target_param.dtype}. "
+                    f"Casting HF weights to Megatron dtype. THIS MAY RESULT IN A LOSS OF PRECISION. "
+                )
+                hf_weights = hf_weights.to(target_param.dtype)
 
             # For bias (1D), we still split along dim 0
             # For weight (2D), we split along dim 0 (output dimension)

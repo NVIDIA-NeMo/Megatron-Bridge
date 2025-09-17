@@ -36,6 +36,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
     get_pg_size,
+    unwrap_model,
 )
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from transformers.modeling_utils import PreTrainedModel
@@ -49,7 +50,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.utils.common_utils import print_rank_0, unwrap_model
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 logger = logging.getLogger(__name__)

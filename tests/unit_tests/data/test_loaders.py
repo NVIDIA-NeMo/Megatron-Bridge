@@ -13,10 +13,17 @@
 # limitations under the License.
 
 import json
+import unittest.mock as mock
+
+import torch
 
 from megatron.bridge.data.loaders import (
+    build_train_valid_test_data_loaders,
     get_blend_and_blend_per_split,
 )
+from megatron.bridge.data.utils import get_dataset_provider
+from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.training.state import TrainState
 
 
 class TestDataLoaders:
@@ -71,3 +78,50 @@ class TestDataLoaders:
             ([data_path], None),
             ([data_path], None),
         ]
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
+    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
+    def test_build_train_valid_test_data_loaders(
+        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
+    ):
+        mock_get_data_parallel_rank.return_value = 0
+        mock_get_data_parallel_world_size.return_value = 1
+        cfg = pretrain_config()
+        cfg.train.train_iters = 1000
+        dataset_provider = get_dataset_provider(cfg.dataset)
+        train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+            cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
+        )
+
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        actual_flags = mock_broadcast.call_args[0][0]
+        expected_flags = torch.tensor([1, 1, 1], dtype=torch.long, device="cuda")
+        assert torch.equal(actual_flags, expected_flags)
+        assert train_dataloader is not None
+        assert valid_dataloader is not None
+        assert test_dataloader is not None
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("megatron.core.mpu.get_data_parallel_rank")
+    @mock.patch("megatron.core.mpu.get_data_parallel_world_size")
+    def test_build_train_valid_test_data_loaders_eval_iters_0(
+        self, mock_get_data_parallel_world_size, mock_get_data_parallel_rank, mock_broadcast
+    ):
+        mock_get_data_parallel_rank.return_value = 0
+        mock_get_data_parallel_world_size.return_value = 1
+        cfg = pretrain_config()
+        cfg.train.train_iters = 1000
+        cfg.train.eval_iters = 0
+        dataset_provider = get_dataset_provider(cfg.dataset)
+        train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+            cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
+        )
+
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        actual_flags = mock_broadcast.call_args[0][0]
+        expected_flags = torch.tensor([1, 0, 0], dtype=torch.long, device="cuda")
+        assert torch.equal(actual_flags, expected_flags)
+        assert train_dataloader is not None
+        assert valid_dataloader is None
+        assert test_dataloader is None

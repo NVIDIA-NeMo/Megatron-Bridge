@@ -113,7 +113,7 @@ if __name__ == "__main__":
             arg_value = getattr(args, arg_name)
             if arg_value is not None:
                 target_script_args.extend([f"--{arg_name}", str(arg_value)])
-    target_script_args.extend(["-a", "dummy", "-p", "dummy", "-ng", args.num_gpus])
+    target_script_args.extend(["-a", "dummy", "-p", "dummy", "-ng", str(args.num_gpus)])
 
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),

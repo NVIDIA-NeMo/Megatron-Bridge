@@ -21,6 +21,7 @@ ConfigContainer:
     cross_entropy_fusion_impl: "te"
     enable_cuda_graph: false
     use_te_rng_tracker: false
+    use_transformer_engine_op_fuser: true
 
   train:
     train_iters: 25
