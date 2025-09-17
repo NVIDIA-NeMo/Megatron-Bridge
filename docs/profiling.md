@@ -67,7 +67,7 @@ nsys profile -s none -o <profile_filepath> -t cuda,nvtx --force-overwrite true -
 
 Replace `<profile_filepath>` with your desired output path and `<path_to_script>` with your training script. The `--capture-range=cudaProfilerApi` option ensures profiling is controlled by the framework's step range configuration.
 
-### Configure Profiling with the NSys Plugin
+### Configure Profiling with the NeMo Run NSys Plugin
 
 Recipe users can leverage the `NsysPlugin` to configure NSys profiling through NeMo Run executors. The plugin provides a convenient interface for setting up profiling without manually configuring the underlying NSys command.
 
