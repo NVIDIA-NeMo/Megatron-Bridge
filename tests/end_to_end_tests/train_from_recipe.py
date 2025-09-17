@@ -23,6 +23,7 @@ import logging
 
 import torch
 
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -269,6 +270,9 @@ def apply_args_to_config(config, args):
         if args.max_steps > 100:
             config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
+    if args.precision_config_name:
+        config.mixed_precision = get_mixed_precision_config(args.precision_config_name)
+
     # Profiling configuration
     if args.nsys or args.mem:
         from megatron.bridge.training.config import ProfilingConfig
@@ -302,6 +306,7 @@ def setup_argument_parser():
     parser.add_argument("--gbs", type=int, default=8, help="Global batch size")
     parser.add_argument("--mbs", type=int, default=1, help="Micro batch size")
     parser.add_argument("--seq-length", type=int, help="Sequence length")
+    parser.add_argument("--precision-config-name", type=str, default=None, help="Precision config name in mixed_precision.py")
 
     # PEFT configuration
     parser.add_argument("--peft-scheme", type=str, default=None, help="PEFT scheme")
