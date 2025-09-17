@@ -186,7 +186,7 @@ def pretrain_config(
     recompute_modules: Optional[List[str]] = None,
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
-    apply_rope_fusion: bool = True,
+    apply_rope_fusion: bool = False,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model.
