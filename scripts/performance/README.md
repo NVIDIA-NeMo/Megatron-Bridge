@@ -70,6 +70,8 @@ python -m venv bridge_venv
 source bridge_venv/bin/activate
 pip install .
 pip install git+https://github.com/NVIDIA-NeMo/Run.git
+pip install transformers
+pip3 install git+https://github.com/NVIDIA/Megatron-LM.git@main
 ```
 
 - The YAML config files are resolved on compute node inside the container.
