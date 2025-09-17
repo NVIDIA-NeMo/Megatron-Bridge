@@ -68,7 +68,10 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
         if fp8_recipe == "ds":
             return bf16_with_fp8_delayed_scaling_mixed()
         elif fp8_recipe == "cs":
-            return bf16_with_fp8_current_scaling_mixed()
+            current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
+            # Disable BF16 Transformer layers in the performance config
+            current_scaling_cfg.first_last_layers_bf16 = False
+            return current_scaling_cfg
         elif fp8_recipe == "mx":
             return bf16_with_mxfp8_mixed()
         elif fp8_recipe == "ss":

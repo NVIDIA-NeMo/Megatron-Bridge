@@ -906,3 +906,7 @@ class ConfigContainer(Container):
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
+
+        assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
+            "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
+        )

@@ -85,7 +85,7 @@ def pretrain_config(
     context_parallelism: int = 1,
     sequence_parallelism: bool = True,
     # Training hyperparameters
-    train_iters: int = 10,
+    train_iters: int = 1_168_251,
     global_batch_size: int = 768,
     micro_batch_size: int = 1,
     seq_length: int = 8192,
@@ -174,6 +174,7 @@ def pretrain_config(
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=False,
+            use_distributed_optimizer=True,
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,

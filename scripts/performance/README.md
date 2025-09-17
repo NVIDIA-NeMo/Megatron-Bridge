@@ -7,7 +7,7 @@
 
 ## YAML configuration files
 
-There are YAML configuration files for supported models in `scripts/performance/llm/configs`.
+There are YAML configuration files for supported models in `scripts/performance/configs`.
 - You can override the defaul configs using these files. 
 - Follow key-value conventions as present in `megatron.bridge.training.config.ConfigContainer`
 - You can override any config as present in base classes in Megatron-LM.
@@ -39,10 +39,14 @@ The following line shows an example of how you can launch a pre-training experim
   - -cm/--custom_mounts: Comma separated string of mounts.
   - -m/--model_name: model name you want to run the job for. e.g. "llama3"
   - -s/--model_size: model size you want to use for a model (family)- e.g. "8b"
+  - --domain: Domain to use for the experiment- llm, vlm, diffusion. Default: llm
+  - -vb/--enable_vboost: Enable VBoost which steers more power towards tensor cores. Disabled by default
+  - --task: Task to run. Defaults to 'pretrain'. choices=["pretrain", "sft", "lora"]
 
 ## Virtual Environment
 
 - For creating a virtual env on login node on a Slurm cluster, comment the following lines in `pyproject.toml` present in parent directory of this repo-
+  - These lines need to be commented as they cannot be installed on login-node.
 
 ```
 "megatron-core[dev,mlm]>=0.14.0a0,<0.16.0",
@@ -66,7 +70,9 @@ python -m venv bridge_venv
 source bridge_venv/bin/activate
 pip install .
 pip install git+https://github.com/NVIDIA-NeMo/Run.git
+pip install transformers
+pip install git+https://github.com/NVIDIA/Megatron-LM.git@main
+pip install einops
 ```
 
-- GOOD NEWS: You DO NOT need have version parity (for configs in YAML files) for NeMo/Run and Megatron-LM between the venv and NeMo container image. 
-  - The YAML config files are resolved on compute node inside the container. Feel free to use any Megatron-LM configs present in the container version regardless of the version in your venv
+- The YAML config files are resolved on compute node inside the container.
