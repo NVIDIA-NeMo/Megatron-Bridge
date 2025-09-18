@@ -108,9 +108,11 @@ class TestAutoBridge:
 
     def test_from_hf_pretrained_with_unsupported_model(self, bert_config):
         """Test AutoBridge raises ValueError for unsupported models."""
-        with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
             # Setup mocks
-            mock_auto_config.from_pretrained.return_value = bert_config
+            mock_safe_load_config.return_value = bert_config
 
             # Should raise ValueError
             with pytest.raises(ValueError) as exc_info:
@@ -121,9 +123,11 @@ class TestAutoBridge:
 
     def test_from_pretrained_config_load_failure(self):
         """Test AutoBridge handles config loading failures gracefully."""
-        with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
             # Setup mock to raise exception
-            mock_auto_config.from_pretrained.side_effect = Exception("Config not found")
+            mock_safe_load_config.side_effect = ValueError("Failed to load configuration: Config not found")
 
             # Should raise ValueError with helpful message
             with pytest.raises(ValueError) as exc_info:
@@ -134,23 +138,29 @@ class TestAutoBridge:
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""
-        with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_auto_config:
-            mock_auto_config.from_pretrained.return_value = llama_config_mock
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
+            mock_safe_load_config.return_value = llama_config_mock
 
             assert AutoBridge.can_handle("meta-llama/Llama-3-8B") is True
-            mock_auto_config.from_pretrained.assert_called_with("meta-llama/Llama-3-8B", trust_remote_code=False)
+            mock_safe_load_config.assert_called_with("meta-llama/Llama-3-8B", trust_remote_code=False)
 
     def test_can_handle_unsupported_model(self, bert_config):
         """Test can_handle returns False for unsupported models."""
-        with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_auto_config:
-            mock_auto_config.from_pretrained.return_value = bert_config
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
+            mock_safe_load_config.return_value = bert_config
 
             assert AutoBridge.can_handle("bert-base-uncased") is False
 
     def test_can_handle_invalid_path(self):
         """Test can_handle returns False for invalid paths."""
-        with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_auto_config:
-            mock_auto_config.from_pretrained.side_effect = Exception("Not found")
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
+            mock_safe_load_config.side_effect = Exception("Not found")
 
             assert AutoBridge.can_handle("invalid/path") is False
 
@@ -170,8 +180,10 @@ class TestAutoBridge:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_autoconfig:
-                mock_autoconfig.from_pretrained.return_value = mock_config
+            with patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+            ) as mock_safe_load_config:
+                mock_safe_load_config.return_value = mock_config
 
                 # Skip architecture validation for this test
                 with patch.object(AutoBridge, "_validate_config"):
@@ -198,8 +210,10 @@ class TestAutoBridge:
             # Set up the from_pretrained class method properly
             mock_from_pretrained.return_value = mock_model
 
-            with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_autoconfig:
-                mock_autoconfig.from_pretrained.return_value = mock_config
+            with patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+            ) as mock_safe_load_config:
+                mock_safe_load_config.return_value = mock_config
 
                 # Skip architecture validation for this test
                 with patch.object(AutoBridge, "_validate_config"):
@@ -628,12 +642,14 @@ class TestAutoBridge:
 
     def test_kwargs_passed_through(self, gpt2_config):
         """Test that all kwargs are properly passed to the underlying loader."""
-        with patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig") as mock_auto_config:
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
             with patch(
                 "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
             ) as mock_from_pretrained:
                 with patch.object(AutoBridge, "_validate_config"):
-                    mock_auto_config.from_pretrained.return_value = gpt2_config
+                    mock_safe_load_config.return_value = gpt2_config
                     mock_model = create_mock_pretrained_causal_lm()
                     mock_from_pretrained.return_value = mock_model
 
