@@ -395,6 +395,10 @@ class CommOverlapConfig:
     delay_wgrad_compute: Optional[bool] = None
 
     def __post_init__(self):
+        # Don't recreate the user_comm_overlap_cfg if the post init is re-run
+        if hasattr(self, "user_comm_overlap_cfg") and self.user_comm_overlap_cfg is not None:
+            return
+
         self.user_comm_overlap_cfg = _CommOverlapConfig(
             tp_comm_overlap=self.tp_comm_overlap,
             tp_comm_overlap_cfg=self.tp_comm_overlap_cfg,
@@ -502,8 +506,8 @@ class CommOverlapConfig:
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
             if ddp_config.overlap_grad_reduce or self.user_comm_overlap_cfg.overlap_grad_reduce:
-                assert is_te_min_version("2.8.0"), (
-                    f"TE version >= 2.8.0 is required for overlap_grad_reduce when using"
+                assert is_te_min_version("2.7.0"), (
+                    f"TE version >= 2.7.0 is required for overlap_grad_reduce when using"
                     f"delay_wgrad_compute. Current TE version: {get_te_version()}"
                 )
             if model_cfg.gradient_accumulation_fusion is True:

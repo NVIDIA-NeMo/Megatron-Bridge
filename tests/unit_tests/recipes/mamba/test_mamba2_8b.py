@@ -114,7 +114,7 @@ class TestPretrainConfig:
         assert isinstance(config.model, NVIDIAMambaProvider8B)
 
         # Check training configuration
-        assert config.train.train_iters == 100
+        assert config.train.train_iters == 1_168_251
         assert config.train.global_batch_size == 8
         assert config.train.micro_batch_size == 1
         assert config.train.eval_interval == 100
@@ -259,6 +259,7 @@ class TestPretrainConfig:
         assert config.ddp.grad_reduce_in_fp32 is True
         assert config.ddp.overlap_grad_reduce is True
         assert config.ddp.overlap_param_gather is True
+        assert config.ddp.use_distributed_optimizer is True
 
     def test_pretrain_config_default_comm_overlap(self):
         """Test default CommOverlapConfig setup."""

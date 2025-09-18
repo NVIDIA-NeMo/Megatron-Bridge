@@ -225,7 +225,7 @@ def bf16_with_mxfp8_mixed() -> MixedPrecisionConfig:
         MixedPrecisionConfig: Configuration for BF16 with MXFP8 mixed precision training
     """
     cfg = bf16_mixed()
-    cfg.fp8 = "hybrid"
+    cfg.fp8 = "e4m3"
     cfg.fp8_recipe = "mxfp8"
     cfg.fp8_param_gather = True
     cfg.reuse_grad_buf_for_mxfp8_param_ag = True
@@ -240,7 +240,7 @@ def fp16_with_mxfp8_mixed() -> MixedPrecisionConfig:
         MixedPrecisionConfig: Configuration for FP16 with MXFP8 mixed precision training
     """
     cfg = fp16_mixed()
-    cfg.fp8 = "hybrid"
+    cfg.fp8 = "e4m3"
     cfg.fp8_recipe = "mxfp8"
     cfg.fp8_param_gather = True
     cfg.reuse_grad_buf_for_mxfp8_param_ag = True
