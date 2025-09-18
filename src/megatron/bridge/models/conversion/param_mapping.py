@@ -164,20 +164,53 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return ".mlp.experts.linear_fc" in self.megatron_param
 
     def _resolve_names(self, captures: Tuple[str, ...]) -> Tuple[str, Union[str, Dict[str, str]]]:
+        """Resolve wildcard patterns with captured values.
+
+        Handles both ** (any characters) and * (digits) wildcards in order.
+        ** patterns are processed before * patterns to avoid conflicts.
+        """
         resolved_megatron_param = self.megatron_param
-        for value in captures:
-            resolved_megatron_param = resolved_megatron_param.replace("*", value, 1)
+        capture_index = 0
+
+        # First pass: resolve ** wildcards
+        while "**" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("**", captures[capture_index], 1)
+            capture_index += 1
+
+        # Second pass: resolve * wildcards
+        while "*" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("*", captures[capture_index], 1)
+            capture_index += 1
 
         if isinstance(self.hf_param, str):
             resolved_hf_param = self.hf_param
-            for value in captures:
-                resolved_hf_param = resolved_hf_param.replace("*", value, 1)
+            capture_index = 0
+
+            # First pass: resolve ** wildcards
+            while "**" in resolved_hf_param and capture_index < len(captures):
+                resolved_hf_param = resolved_hf_param.replace("**", captures[capture_index], 1)
+                capture_index += 1
+
+            # Second pass: resolve * wildcards
+            while "*" in resolved_hf_param and capture_index < len(captures):
+                resolved_hf_param = resolved_hf_param.replace("*", captures[capture_index], 1)
+                capture_index += 1
         else:
             resolved_hf_param = {}
             for k, v in self.hf_param.items():
                 resolved_v = v
-                for value in captures:
-                    resolved_v = resolved_v.replace("*", value, 1)
+                capture_index = 0
+
+                # First pass: resolve ** wildcards
+                while "**" in resolved_v and capture_index < len(captures):
+                    resolved_v = resolved_v.replace("**", captures[capture_index], 1)
+                    capture_index += 1
+
+                # Second pass: resolve * wildcards
+                while "*" in resolved_v and capture_index < len(captures):
+                    resolved_v = resolved_v.replace("*", captures[capture_index], 1)
+                    capture_index += 1
+
                 resolved_hf_param[k] = resolved_v
 
         return resolved_megatron_param, resolved_hf_param
@@ -480,11 +513,37 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
+    def _count_wildcard_groups(self, pattern: str) -> int:
+        """Count the number of wildcard capture groups in a pattern.
+
+        Args:
+            pattern: Pattern string with * and ** wildcards
+
+        Returns:
+            Number of capture groups that will be generated
+
+        Note:
+            ** counts as 1 group, * counts as 1 group
+            ** must be counted before * to avoid double-counting
+        """
+        count = 0
+        remaining = pattern
+
+        # Count ** patterns first
+        while "**" in remaining:
+            count += 1
+            remaining = remaining.replace("**", "", 1)
+
+        # Count remaining * patterns
+        count += remaining.count("*")
+
+        return count
+
     def _validate_patterns(self):
         """Validate wildcard consistency between patterns."""
-        megatron_param_wildcards = self.megatron_param.count("*")
+        megatron_param_wildcards = self._count_wildcard_groups(self.megatron_param)
         if isinstance(self.hf_param, str):
-            hf_param_wildcards = self.hf_param.count("*")
+            hf_param_wildcards = self._count_wildcard_groups(self.hf_param)
             if megatron_param_wildcards != hf_param_wildcards:
                 raise ValueError(
                     f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
@@ -492,7 +551,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 )
         else:
             for key, pattern in self.hf_param.items():
-                hf_param_wildcards = pattern.count("*")
+                hf_param_wildcards = self._count_wildcard_groups(pattern)
                 if megatron_param_wildcards != hf_param_wildcards:
                     raise ValueError(
                         f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
