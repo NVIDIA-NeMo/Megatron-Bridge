@@ -37,14 +37,15 @@ from megatron.bridge.training.checkpointing import (
     load_checkpoint,
     init_async_checkpoint_worker,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0
+
+
 
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
@@ -101,20 +102,10 @@ def setup(
         A SetupOutput named tuple containing the initialized state, model,
         optimizer, scheduler, data iterators, and checkpointing context.
     """
+    # Apply runtime configuration updates (mixed precision, comm overlap, validation)
+    runtime_config_update(cfg)
+
     # TODO: Freeze state.cfg
-
-    cfg.validate()
-
-    # Apply mixed precision configuration if provided
-    if cfg.mixed_precision is not None:
-        if isinstance(cfg.mixed_precision, str):
-            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Apply communication overlap configuration if provided at the very beginning
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
     state = GlobalState()
     state.cfg = cfg
 

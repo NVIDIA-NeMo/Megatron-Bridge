@@ -110,6 +110,7 @@ def main():
     # Apply GPU/precision-specific performance overrides from perf_matrix, if present
     if yaml_overrides_omega is not None:
         apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
+    recipe.model.gradient_accumulation_fusion = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
