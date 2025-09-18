@@ -32,7 +32,11 @@ from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
-from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    get_world_size_safe,
+    print_rank_0,
+    warn_rank_0,
+)
 
 
 @dataclass
@@ -845,6 +849,33 @@ class ConfigContainer(Container):
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
+    def _sync_and_validate_external_cuda_graph(self) -> None:
+        """Sync necessary configs for external CUDA Graphs and and validates it."""
+
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
+
+        # Validate external_cg
+        if self.model.enable_cuda_graph or self.model.external_cuda_graph:
+            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
+                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
+            )
+            if self.model.transformer_impl == "transformer_engine" and not (
+                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
+            ):
+                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
+                warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+        if self.model.external_cuda_graph:
+            assert "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", ""), (
+                "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
+                "The training may crash with illegal memory access."
+            )
+            assert self.model.recompute_granularity != "full", (
+                "recompute_granularity must not be full when CUDA Graphs are enabled."
+            )
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1003,6 +1034,8 @@ class ConfigContainer(Container):
         assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
             "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
         )
+
+        self._sync_and_validate_external_cuda_graph()
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:
