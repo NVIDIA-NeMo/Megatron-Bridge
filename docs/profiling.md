@@ -4,7 +4,7 @@ Megatron Bridge provides built-in support for profiling training jobs using a ra
 
 ## ProfilingConfig Overview
 
-`ProfilingConfig` is a dataclass that encapsulates profiling-related settings for training. It resides inside the overall `ConfigContainer`, which represents the complete configuration for a training run. For the complete API and all available fields, see {py:class}`~[megatron.bridge.training.config.ProfilingConfig](https://docs.nvidia.com/nemo/megatron-bridge/latest/apidocs/bridge/bridge.training.config.html#bridge.training.config.ProfilingConfig)`.
+{py:class}`bridge.training.config.ProfilingConfig` is a dataclass that encapsulates profiling-related settings for training. It resides inside the overall {py:class}`bridge.training.config.ConfigContainer`, which represents the complete configuration for a training run.
 
 
 ### Profiling Options
@@ -69,7 +69,7 @@ Replace `<profile_filepath>` with your desired output path and `<path_to_script>
 
 ### Configure Profiling with the NeMo Run NSys Plugin
 
-Recipe users can leverage the `NsysPlugin` to configure NSys profiling through NeMo Run executors. The plugin provides a convenient interface for setting up profiling without manually configuring the underlying NSys command.
+Recipe users can leverage the {py:class}`bridge.recipes.run_plugins.NsysPlugin` to configure NSys profiling through NeMo Run executors. The plugin provides a convenient interface for setting up profiling without manually configuring the underlying NSys command.
 
 ```python
 import nemo_run as run
@@ -125,7 +125,7 @@ cfg.profiling = ProfilingConfig(
 
 ### Configure Profiling with the PyTorch Profiler Plugin
 
-Similar to NSys, recipe users can use the `PyTorchProfilerPlugin` for convenient configuration:
+Similar to NSys, recipe users can use the {py:class}`bridge.recipes.run_plugins.PyTorchProfilerPlugin` for convenient configuration:
 
 ```python
 from megatron.bridge.recipes.run_plugins import PyTorchProfilerPlugin
