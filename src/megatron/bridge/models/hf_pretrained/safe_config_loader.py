@@ -26,10 +26,9 @@ import time
 from pathlib import Path
 from typing import Union
 
+import filelock
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
-
-import filelock
 
 
 def safe_load_config_with_retry(

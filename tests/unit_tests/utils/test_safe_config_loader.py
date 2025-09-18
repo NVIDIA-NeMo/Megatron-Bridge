@@ -99,8 +99,6 @@ class TestSafeLoadConfigWithRetry:
 
                 assert result == self.mock_config
 
-    
-
     def test_retry_on_transient_failure(self):
         """Test retry mechanism on transient network failures."""
         with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
