@@ -48,7 +48,6 @@ def model_config(
     expert_parallelism: int = 64,
     sequence_parallelism: bool = True,
     # MTP support
-    use_mtp: bool = True,
     mtp_num_layers: Optional[int] = 1,
     mtp_loss_scaling_factor: Optional[float] = 0.1,
     # Recomputation
@@ -70,9 +69,8 @@ def model_config(
         context_parallelism: Degree of context parallelism.
         expert_parallelism: Degree of expert model parallelism.
         sequence_parallelism: Whether to use sequence parallelism.
-        use_mtp: Enable multi-token prediction (MTP).
-        mtp_num_layers: Number of MTP layers (used when use_mtp=True).
-        mtp_loss_scaling_factor: Loss scaling factor for MTP (used when use_mtp=True).
+        mtp_num_layers: Number of MTP layers.
+        mtp_loss_scaling_factor: Loss scaling factor for MTP.
         recompute_granularity: Recomputation granularity. For V3 we recommend "selective".
         recompute_modules: Modules to selectively recompute when granularity is "selective".
         recompute_method: Method for activation recomputation.
@@ -91,8 +89,8 @@ def model_config(
         expert_tensor_parallel_size=1,
         sequence_parallel=sequence_parallelism,
         # MTP
-        mtp_num_layers=mtp_num_layers if use_mtp else None,
-        mtp_loss_scaling_factor=mtp_loss_scaling_factor if use_mtp else None,
+        mtp_num_layers=mtp_num_layers,
+        mtp_loss_scaling_factor=mtp_loss_scaling_factor,
         # Recomputation
         recompute_granularity=recompute_granularity,
         recompute_modules=recompute_modules,
@@ -114,7 +112,7 @@ def model_config(
     # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
     if mtp_num_layers is None:
         mtp_num_layers = 0
-    last_layer = ["mtp"] * mtp_num_layers * int(use_mtp) + ["loss"]
+    last_layer = ["mtp"] * mtp_num_layers + ["loss"]
     map_pp_vp_to_layout = {
         (1, 1): None,
         (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
@@ -166,7 +164,6 @@ def pretrain_config(
     expert_parallelism: int = 64,
     sequence_parallelism: bool = True,
     use_megatron_fsdp: bool = False,
-    use_mtp: bool = True,
     mtp_num_layers: Optional[int] = 1,
     mtp_loss_scaling_factor: Optional[float] = 0.1,
     # Training hyperparameters
@@ -211,7 +208,6 @@ def pretrain_config(
         context_parallelism=context_parallelism,
         expert_parallelism=expert_parallelism,
         sequence_parallelism=sequence_parallelism,
-        use_mtp=use_mtp,
         mtp_num_layers=mtp_num_layers,
         mtp_loss_scaling_factor=mtp_loss_scaling_factor,
         recompute_granularity=recompute_granularity,
