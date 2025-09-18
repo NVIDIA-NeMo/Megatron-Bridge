@@ -4,7 +4,7 @@ This guide describes how to configure logging in Megatron Bridge. It introduces 
 
 ## LoggerConfig Overview
 
-`LoggerConfig` is a dataclass that encapsulates logging‑related settings for training. It resides inside the overall `ConfigContainer`, which represents the complete configuration for a training run. For the complete API and all available fields, see {py:class}`~megatron.bridge.training.config.LoggerConfig`.
+{py:class}`~bridge.training.config.LoggerConfig` is the dataclass that encapsulates logging‑related settings for training. It resides inside the overall {py:class}`bridge.training.config.ConfigContainer`, which represents the complete configuration for a training run.
 
 ### Timer Configuration Options
 
@@ -136,11 +136,11 @@ In addition, the full run configuration is synced at initialization, allowing fo
 W&B is initialized lazily on the last rank when `wandb_project` is set and `wandb_exp_name` is non-empty.
 ```  
 
-#### W&B Configuration for NeMo Run Recipes
+#### W&B Configuration with NeMo Run Launching
 
-For users running training recipes with NeMo Run, W&B can be optionally configured using the `WandbPlugin`.
+For users launching training scripts with NeMo Run, W&B can be optionally configured using the {py:class}`bridge.recipes.run_plugins.WandbPlugin`.
 
-The plugin automatically forwards the `WANDB_API_KEY` and injects CLI overrides for the following logger parameters:
+The plugin automatically forwards the `WANDB_API_KEY` and by default injects CLI overrides for the following logger parameters:
 
 - `logger.wandb_project`  
 - `logger.wandb_entity`  
