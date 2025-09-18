@@ -35,7 +35,6 @@ from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as 
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
     print_rank_0,
-    get_rank_safe,
     warn_rank_0,
 )
 
@@ -862,10 +861,10 @@ class ConfigContainer(Container):
         
         # Validate external_cg
         if self.model.enable_cuda_graph or self.model.external_cuda_graph:
-            assert (
-                not self.model.enable_cuda_graph or not self.model.external_cuda_graph
-            ), "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
-            if self.model.transformer_impl == 'transformer_engine' and not self.model.use_te_rng_tracker:
+            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
+            "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
+            )
+            if self.model.transformer_impl == "transformer_engine" and not self.model.use_te_rng_tracker:
                 self.model.use_te_rng_tracker = True
                 warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
 
@@ -874,9 +873,9 @@ class ConfigContainer(Container):
                 "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
                 "The training may crash with illegal memory access."
             )
-            assert (
-                self.model.recompute_granularity != 'full'
-            ), 'recompute_granularity must not be full when CUDA Graphs are enabled.'
+            assert self.model.recompute_granularity != "full", (
+                "recompute_granularity must not be full when CUDA Graphs are enabled."
+            )
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.

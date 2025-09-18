@@ -39,7 +39,6 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 def mock_get_world_size_safe(world_size_to_return: int):
@@ -1482,9 +1481,8 @@ class TestSyncAndValidateExternalCudaGraph:
         gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=False)
         rng_cfg = RNGConfig(te_rng_tracker=True)
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
         container.rng = rng_cfg
 
         container._sync_and_validate_external_cuda_graph()
@@ -1496,9 +1494,8 @@ class TestSyncAndValidateExternalCudaGraph:
         gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
         rng_cfg = RNGConfig(te_rng_tracker=False)
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
         container.rng = rng_cfg
 
         container._sync_and_validate_external_cuda_graph()
@@ -1511,9 +1508,7 @@ class TestSyncAndValidateExternalCudaGraph:
             enable_cuda_graph=True, external_cuda_graph=True
         )
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         with pytest.raises(
             AssertionError,
@@ -1530,16 +1525,12 @@ class TestSyncAndValidateExternalCudaGraph:
             enable_cuda_graph=True,
         )
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         container._sync_and_validate_external_cuda_graph()
         # Should auto-enable te_rng_tracker and warn
         assert container.model.use_te_rng_tracker is True
-        mock_warn_rank_0.assert_called_once_with(
-            "te_rng_tracker is not enabled, enabling it for CUDA graphs."
-        )
+        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
 
     @patch("megatron.bridge.training.config.warn_rank_0")
     def test_te_rng_tracker_auto_enable_with_external_cuda_graph(
@@ -1552,16 +1543,12 @@ class TestSyncAndValidateExternalCudaGraph:
             external_cuda_graph=True,
         )
 
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         container._sync_and_validate_external_cuda_graph()
         # Should auto-enable te_rng_tracker and warn
         assert container.model.use_te_rng_tracker is True
-        mock_warn_rank_0.assert_called_once_with(
-            "te_rng_tracker is not enabled, enabling it for CUDA graphs."
-        )
+        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
 
     @patch("megatron.bridge.training.config.warn_rank_0")
     def test_te_rng_tracker_no_warn_when_already_enabled(self, mock_warn_rank_0):
@@ -1572,9 +1559,8 @@ class TestSyncAndValidateExternalCudaGraph:
             enable_cuda_graph=True,
         )
 
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
         container._sync_and_validate_external_cuda_graph()
         # Should not warn since te_rng_tracker is already enabled
         mock_warn_rank_0.assert_not_called()
@@ -1586,9 +1572,7 @@ class TestSyncAndValidateExternalCudaGraph:
 
         gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         with pytest.raises(
             AssertionError,
@@ -1604,9 +1588,7 @@ class TestSyncAndValidateExternalCudaGraph:
 
         gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         container._sync_and_validate_external_cuda_graph()  # Should pass
 
@@ -1619,9 +1601,7 @@ class TestSyncAndValidateExternalCudaGraph:
             use_te_rng_tracker=False,
         )
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
         container._sync_and_validate_external_cuda_graph()  # Should pass without any changes
         assert container.model.use_te_rng_tracker is False
@@ -1637,9 +1617,7 @@ class TestSyncAndValidateExternalCudaGraph:
 
         rng_cfg = RNGConfig(te_rng_tracker=True)
 
-        container, _, _ = create_test_config_container(
-            world_size_override=1, model_config=gpt_model_cfg
-        )
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
         container.rng = rng_cfg
 
         container._sync_and_validate_external_cuda_graph()
