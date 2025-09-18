@@ -121,4 +121,15 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True)
+    # workaround: update the experiment name to align LLMB naming convention
+    tp_size = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["tp"]
+    pp_size = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["pp"]
+    cp_size = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["cp"]
+    vp_size = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["vp"]
+    ep_size = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["ep"]
+    mbs = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["mbs"]
+    gbs = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]["gbs"]
+    exp_config = f"gpus{args.num_gpus}_tp{tp_size}_pp{pp_size}_cp{cp_size}_vp{vp_size}_ep{ep_size}_mbs{mbs}_gbs{gbs}"
+    exp_name = f"pretrain_{args.model_name}_{args.model_size}_{args.compute_dtype}_{exp_config}"
+
+    run.run(train_script, executor=executor, name=exp_name, plugins=plugins, dryrun=args.dryrun, detach=True)
