@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import LlamaForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -26,44 +23,38 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider, LlamaModelProvider
+from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider
 
 
-@MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
-class LlamaBridge(MegatronModelBridge):
+@MegatronModelBridge.register_bridge(source="DeciLMForCausalLM", target=GPTModel)
+class LlamaNemotronBridge(MegatronModelBridge):
     """
-    Megatron Bridge for Llama Causal LM.
+    Megatron Bridge for Heterogeneous Llama-Nemotron models.
 
-    As a user you would not use this bridge directly, but through `AutoBridge`.
+    This bridge specifically handles heterogeneous Llama-Nemotron models (Super/Ultra)
+    that have block_configs and require special heterogeneous architecture handling.
+
+    Homogeneous Llama-Nemotron models (Nano/70B) are handled by the regular LlamaBridge
+    since they use standard Llama architecture with only kv_channels=128 difference.
+
+    Note: This bridge is NOT registered with @register_bridge decorator because it's
+    used conditionally by the AutoBridge system when heterogeneous configs are detected.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+        >>> # Heterogeneous models will use this bridge
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Llama-3_3-Nemotron-Super-49B-v1")
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Llama31ModelProvider:
         hf_config = hf_pretrained.config
 
-        # Check if this is a Nemotron model by model name
-        model_name = getattr(hf_pretrained, "model_name_or_path", "")
-        is_nemotron = "nemotron" in model_name.lower() or "Nemotron" in model_name
+        # Detect model variant based on configuration
+        provider_class = self._detect_nemotron_variant(hf_config)
 
-        if (
-            getattr(hf_config, "rope_scaling", None) is not None
-            and hf_config.rope_scaling.get("rope_type") == "llama3"
-        ):
-            # Apply Llama3.1 customize rope scaling
-            if is_nemotron:
-                # Use Nemotron-specific providers for homogeneous models
-                cls = self._get_nemotron_provider_class(hf_config)
-            else:
-                # Regular Llama 3.1 models
-                cls = partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-        else:
-            cls = LlamaModelProvider
-
-        provider = cls(
+        # Prepare kwargs for provider creation
+        provider_kwargs = dict(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
             ffn_hidden_size=hf_config.intermediate_size,
@@ -73,7 +64,8 @@ class LlamaBridge(MegatronModelBridge):
             num_query_groups=hf_config.num_key_value_heads,
             seq_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
-            gated_linear_unit=True,
+            kv_channels=getattr(hf_config, "head_dim", None),
+            gated_linear_unit=True,  # Llama uses SwiGLU
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
@@ -83,41 +75,48 @@ class LlamaBridge(MegatronModelBridge):
             vocab_size=hf_config.vocab_size,
         )
 
+        # Handle rope scaling for Llama 3.1/3.3
+        if hasattr(hf_config, "rope_scaling") and hf_config.rope_scaling:
+            if hf_config.rope_scaling.get("rope_type") == "llama3":
+                provider_kwargs["scale_factor"] = hf_config.rope_scaling.get("factor", 8.0)
+
+        # Handle heterogeneous configurations
+        if hasattr(hf_config, "block_configs") and hf_config.block_configs:
+            # For heterogeneous models, pass the encoded JSON from the HF config
+            provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
+
+        provider = provider_class(**provider_kwargs)
         return provider
 
-    def _get_nemotron_provider_class(self, hf_config):
-        """Get the appropriate Nemotron provider class for homogeneous models."""
-        from functools import partial
+    def _detect_nemotron_variant(self, hf_config) -> type:
+        """Detect which heterogeneous Llama-Nemotron variant based on model configuration.
 
-        # Import Nemotron providers
-        try:
-            from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
-                Llama31Nemotron70BProvider,
-                Llama31NemotronNano8BProvider,
-            )
-        except ImportError:
-            # Fallback to regular Llama provider if Nemotron providers not available
-            return partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
+        This method only handles heterogeneous models since homogeneous Nemotron models
+        are handled by the regular LlamaBridge.
+        """
+        from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
+            Llama31NemotronUltra253BProvider,
+            Llama33NemotronSuper49BProvider,
+        )
 
         num_layers = hf_config.num_hidden_layers
-        hidden_size = hf_config.hidden_size
 
-        # Detect homogeneous Nemotron models
-        if num_layers == 32 and hidden_size == 4096:
-            return partial(Llama31NemotronNano8BProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-        elif num_layers == 80 and hidden_size == 8192:
-            return partial(Llama31Nemotron70BProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
+        # Only handle heterogeneous models (they have block_configs)
+        if hasattr(hf_config, "block_configs") and hf_config.block_configs:
+            if num_layers == 80:
+                return Llama33NemotronSuper49BProvider
+            elif num_layers == 162:
+                return Llama31NemotronUltra253BProvider
 
-        # For other Nemotron models, use regular Llama provider with kv_channels=128
-        return partial(
-            Llama31ModelProvider,
-            scale_factor=hf_config.rope_scaling.get("factor", 8.0),
-            kv_channels=getattr(hf_config, "head_dim", 128),
+        # This bridge should only be used for heterogeneous models
+        raise ValueError(
+            f"LlamaNemotronBridge only handles heterogeneous models with block_configs. "
+            f"Model with {num_layers} layers and no block_configs should use LlamaBridge."
         )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
-        # First create simple 1:1 parameter mappings using a dictionary for readability
+        # Similar to Llama bridge but adapted for Llama-Nemotron specifics
 
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
@@ -125,10 +124,8 @@ class LlamaBridge(MegatronModelBridge):
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",  # te implementation
-            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",  # local implementation
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",  # te implementation
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",  # local implementation
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         }
