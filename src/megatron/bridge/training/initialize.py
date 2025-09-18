@@ -154,6 +154,7 @@ def torch_dist_init(
             rng_config.data_parallel_random_init,
             rng_config.te_rng_tracker,
             rng_config.inference_rng_tracker,
+            use_cudagraphable_rng=model_config.enable_cuda_graph or model_config.external_cuda_graph,
         )
 
         if model_config.num_moe_experts is not None:
@@ -339,6 +340,10 @@ def _initialize_distributed(
             else:
                 torch.cuda.set_device(get_local_rank_preinit())
 
+        # Set to non-default stream for cudagraph capturing.
+        if model_config.external_cuda_graph:
+            torch.cuda.set_stream(torch.cuda.Stream())
+
         # Call the init process
         init_process_group_kwargs = {
             "backend": dist_config.distributed_backend,
@@ -395,6 +400,7 @@ def _set_random_seed(
     data_parallel_random_init: bool = False,
     te_rng_tracker: bool = False,
     inference_rng_tracker: bool = False,
+    use_cudagraphable_rng: bool = False,
 ) -> None:
     """Set random seed for reproducability."""
     assert seed_ is not None and seed_ > 0, f"Seed ({seed_}) should be a positive integer."
@@ -412,7 +418,9 @@ def _set_random_seed(
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.device_count() > 0:
-        tensor_parallel.model_parallel_cuda_manual_seed(seed, te_rng_tracker, inference_rng_tracker)
+        tensor_parallel.model_parallel_cuda_manual_seed(
+            seed, te_rng_tracker, inference_rng_tracker, use_cudagraphable_rng
+        )
 
 
 def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
