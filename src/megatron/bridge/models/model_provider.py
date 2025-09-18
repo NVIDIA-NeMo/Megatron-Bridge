@@ -403,6 +403,7 @@ class GetModelKwargs(TypedDict, total=False):
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
         use_cpu_initialization: Initialize model on CPU.
+        move_model_to_cuda_device: Move model to GPU.
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
@@ -419,6 +420,7 @@ class GetModelKwargs(TypedDict, total=False):
     data_parallel_random_init: bool
     use_cpu_initialization: bool | None
     init_model_with_meta_device: bool | None
+    move_model_to_cuda_device: bool
     pre_wrap_hook: (
         Union[
             Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -442,6 +444,7 @@ def get_model(
     data_parallel_random_init: bool = True,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
+    move_model_to_cuda_device: bool = True,
     pre_wrap_hook: Union[
         Callable[[list[MegatronModule]], list[MegatronModule]],
         list[Callable[[list[MegatronModule]], list[MegatronModule]]],
@@ -474,6 +477,7 @@ def get_model(
             data parallel ranks (vs broadcasting from rank 0)
         use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
         init_model_with_meta_device: Whether to initialize the model on the meta device
+        move_model_to_cuda_device: Whether to move the model to GPU
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
             hooks will be executed in order.
@@ -524,7 +528,11 @@ def get_model(
     # GPU allocation.
     # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
     # in the fully_shard function of FSDP2 instead.
-    if not (use_torch_fsdp2 and model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
+    if (
+        not (use_torch_fsdp2 and model_config.use_cpu_initialization)
+        and not model_config.init_model_with_meta_device
+        and move_model_to_cuda_device
+    ):
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 
