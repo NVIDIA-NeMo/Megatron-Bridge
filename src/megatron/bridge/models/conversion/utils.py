@@ -20,10 +20,9 @@ from typing import Iterable, List, Optional, Tuple
 
 import torch
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.utils import unwrap_model
 from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
-
-from megatron.bridge.utils.common_utils import unwrap_model
 
 
 def weights_verification_table(bridge, megatron_model) -> Table:
@@ -45,7 +44,7 @@ def weights_verification_table(bridge, megatron_model) -> Table:
     table.add_column("Matches Original", justify="center")
 
     # Check each weight against the original HF-model
-    for name, param in bridge(megatron_model, show_progress=True):
+    for name, param in bridge.export_hf_weights(megatron_model, show_progress=True):
         original_param = bridge.hf_pretrained.state[name]
         table.add_row(
             name,

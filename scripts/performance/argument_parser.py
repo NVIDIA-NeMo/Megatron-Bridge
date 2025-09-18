@@ -150,8 +150,7 @@ def parse_cli_args():
         "--num_gpus",
         type=int,
         help="Number of gpus.",
-        required=False,
-        default=None,
+        required=True,
     )
     parser.add_argument(
         "-gn",
@@ -215,6 +214,13 @@ def parse_cli_args():
         help="Path to the config yaml file to use for the experiment.",
         required=False,
         default=None,
+    )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        help="Domain to use for the experiment- llm, vlm, diffusion. Default: llm",
+        required=False,
+        default="llm",
     )
 
     args, cli_dotlist_overrides = parser.parse_known_args()

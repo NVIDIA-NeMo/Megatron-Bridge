@@ -21,6 +21,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from megatron.core import mpu
+from megatron.core.fp8_utils import FP8_TENSOR_CLASS, HAVE_TE_FP8_TENSOR_CLASS
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -32,6 +33,11 @@ from megatron.bridge.models.conversion.utils import get_module_and_param_from_na
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
+
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class MegatronParamMapping(ABC, Generic[WeightType]):
@@ -89,6 +95,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         self.megatron_param = megatron_param
         self.hf_param = hf_param
         self._validate_patterns()
+
+        # Cache for metadata and tensor_spec_output
+        self._broadcast_obj_cache = {}
+        self._tensor_spec_output_cache = {}
 
         if mpu.is_initialized():
             self.pp_group = mpu.get_pipeline_model_parallel_group()
@@ -154,20 +164,53 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return ".mlp.experts.linear_fc" in self.megatron_param
 
     def _resolve_names(self, captures: Tuple[str, ...]) -> Tuple[str, Union[str, Dict[str, str]]]:
+        """Resolve wildcard patterns with captured values.
+
+        Handles both ** (any characters) and * (digits) wildcards in order.
+        ** patterns are processed before * patterns to avoid conflicts.
+        """
         resolved_megatron_param = self.megatron_param
-        for value in captures:
-            resolved_megatron_param = resolved_megatron_param.replace("*", value, 1)
+        capture_index = 0
+
+        # First pass: resolve ** wildcards
+        while "**" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("**", captures[capture_index], 1)
+            capture_index += 1
+
+        # Second pass: resolve * wildcards
+        while "*" in resolved_megatron_param and capture_index < len(captures):
+            resolved_megatron_param = resolved_megatron_param.replace("*", captures[capture_index], 1)
+            capture_index += 1
 
         if isinstance(self.hf_param, str):
             resolved_hf_param = self.hf_param
-            for value in captures:
-                resolved_hf_param = resolved_hf_param.replace("*", value, 1)
+            capture_index = 0
+
+            # First pass: resolve ** wildcards
+            while "**" in resolved_hf_param and capture_index < len(captures):
+                resolved_hf_param = resolved_hf_param.replace("**", captures[capture_index], 1)
+                capture_index += 1
+
+            # Second pass: resolve * wildcards
+            while "*" in resolved_hf_param and capture_index < len(captures):
+                resolved_hf_param = resolved_hf_param.replace("*", captures[capture_index], 1)
+                capture_index += 1
         else:
             resolved_hf_param = {}
             for k, v in self.hf_param.items():
                 resolved_v = v
-                for value in captures:
-                    resolved_v = resolved_v.replace("*", value, 1)
+                capture_index = 0
+
+                # First pass: resolve ** wildcards
+                while "**" in resolved_v and capture_index < len(captures):
+                    resolved_v = resolved_v.replace("**", captures[capture_index], 1)
+                    capture_index += 1
+
+                # Second pass: resolve * wildcards
+                while "*" in resolved_v and capture_index < len(captures):
+                    resolved_v = resolved_v.replace("*", captures[capture_index], 1)
+                    capture_index += 1
+
                 resolved_hf_param[k] = resolved_v
 
         return resolved_megatron_param, resolved_hf_param
@@ -234,7 +277,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         ...
 
-    def broadcast_from_pp_rank(self, tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    def broadcast_from_pp_rank(
+        self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None
+    ) -> Optional[torch.Tensor]:
         """Broadcast a tensor from the pipeline-parallel rank that owns it.
 
         Broadcasts to **all** PP ranks. This mirrors the behaviour of
@@ -260,17 +305,21 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # 1.  Gather (shape, dtype, tensor_parallel flag, partition_dim) from
         #     every PP rank so that we can find the source rank.
         # ------------------------------------------------------------------
-        if tensor is not None:
-            shape = tensor.shape
-            dtype = tensor.dtype
-            tensor_parallel = getattr(tensor, "tensor_model_parallel", None)
-            partition_dim = getattr(tensor, "partition_dim", None)
-            tensor_spec = (shape, dtype, tensor_parallel, partition_dim)
+        if cache_key is not None and cache_key in self._tensor_spec_output_cache:
+            tensor_spec_output = self._tensor_spec_output_cache[cache_key]
         else:
-            tensor_spec = None
+            if tensor is not None:
+                shape = tensor.shape
+                dtype = tensor.dtype
+                tensor_parallel = getattr(tensor, "tensor_model_parallel", None)
+                partition_dim = getattr(tensor, "partition_dim", None)
+                tensor_spec = (shape, dtype, tensor_parallel, partition_dim)
+            else:
+                tensor_spec = None
 
-        tensor_spec_output: list[Optional[tuple]] = [None] * self.pp_size
-        torch.distributed.all_gather_object(tensor_spec_output, tensor_spec, group=self.pp_group)
+            tensor_spec_output: list[Optional[tuple]] = [None] * self.pp_size
+            torch.distributed.all_gather_object(tensor_spec_output, tensor_spec, group=self.pp_group)
+            self._tensor_spec_output_cache[cache_key] = tensor_spec_output
 
         # ------------------------------------------------------------------
         # 2.  Identify the owning rank (the only rank with a non-None spec).
@@ -310,14 +359,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         return tensor
 
-    def broadcast_obj_from_pp_rank(self, obj: Optional[Any]) -> Any:
+    def broadcast_obj_from_pp_rank(self, obj: Optional[Any], cache_key: Optional[str] = None) -> Any:
         """Broadcast any Python object from the PP rank that owns it.
 
         This method is useful for broadcasting configuration objects or
-        other metadata across pipeline parallel ranks.
+        other metadata across pipeline parallel ranks. Results are cached
+        after the first call to avoid redundant broadcasts.
 
         Args:
             obj (Optional[Any]): Object to broadcast (None on non-owning ranks).
+            cache_key (Optional[str]): Optional cache key. If not provided,
+                no caching will be performed.
 
         Returns:
             Any: Broadcasted object on all ranks.
@@ -327,6 +379,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         if self.pp_size == 1:
             return obj
+
+        # Check if we already have a cached result (only if cache_key is provided)
+        if cache_key is not None and cache_key in self._broadcast_obj_cache:
+            return self._broadcast_obj_cache[cache_key]
 
         # ------------------------------------------------------------------
         # 1. Gather presence flags from all PP ranks to find the source rank
@@ -358,7 +414,29 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         global_src = pp_ranks[src_rank]
         torch.distributed.broadcast_object_list(obj_list, src=global_src, group=self.pp_group)
 
-        return obj_list[0]
+        result = obj_list[0]
+
+        # Cache the result for future calls (only if cache_key is provided)
+        if cache_key is not None:
+            self._broadcast_obj_cache[cache_key] = result
+
+        return result
+
+    def clear_broadcast_cache(self):
+        """Clear the broadcast object cache.
+
+        This can be useful for testing or if the objects being broadcast
+        might change during the lifetime of the mapping.
+        """
+        self._broadcast_obj_cache.clear()
+
+    def clear_tensor_spec_output_cache(self):
+        """Clear the tensor spec output cache.
+
+        This can be useful for testing or if the tensor spec output
+        might change during the lifetime of the mapping.
+        """
+        self._tensor_spec_output_cache.clear()
 
     def broadcast_tensor_to_tp_ranks(self, tensor: torch.Tensor, src_rank: int = 0) -> torch.Tensor:
         """Broadcast a tensor to all TP ranks.
@@ -435,11 +513,37 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
+    def _count_wildcard_groups(self, pattern: str) -> int:
+        """Count the number of wildcard capture groups in a pattern.
+
+        Args:
+            pattern: Pattern string with * and ** wildcards
+
+        Returns:
+            Number of capture groups that will be generated
+
+        Note:
+            ** counts as 1 group, * counts as 1 group
+            ** must be counted before * to avoid double-counting
+        """
+        count = 0
+        remaining = pattern
+
+        # Count ** patterns first
+        while "**" in remaining:
+            count += 1
+            remaining = remaining.replace("**", "", 1)
+
+        # Count remaining * patterns
+        count += remaining.count("*")
+
+        return count
+
     def _validate_patterns(self):
         """Validate wildcard consistency between patterns."""
-        megatron_param_wildcards = self.megatron_param.count("*")
+        megatron_param_wildcards = self._count_wildcard_groups(self.megatron_param)
         if isinstance(self.hf_param, str):
-            hf_param_wildcards = self.hf_param.count("*")
+            hf_param_wildcards = self._count_wildcard_groups(self.hf_param)
             if megatron_param_wildcards != hf_param_wildcards:
                 raise ValueError(
                     f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
@@ -447,7 +551,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 )
         else:
             for key, pattern in self.hf_param.items():
-                hf_param_wildcards = pattern.count("*")
+                hf_param_wildcards = self._count_wildcard_groups(pattern)
                 if megatron_param_wildcards != hf_param_wildcards:
                     raise ValueError(
                         f"Wildcard count mismatch: megatron_param='{self.megatron_param}' has "
@@ -517,12 +621,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Dictionary of expert weights mapped to HF parameter names.
         """
         if megatron_module is None:
-            num_experts_per_rank = self.broadcast_obj_from_pp_rank(None)
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
         else:
             model_config = self._get_config(megatron_module)
             num_experts = model_config.num_moe_experts
             num_experts_per_rank = num_experts // self.ep_size
-            num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank)
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
 
         # Extract local expert number from parameter name
         # Handle both .weight and .bias suffixes
@@ -551,6 +655,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Return dictionary mapping HF parameter names to weights
         return {param_name: gathered_weights[i] for i, param_name in enumerate(gathered_expert_param_names)}
 
+    def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Dequantize FP8 tensor if needed."""
+        if HAVE_TE_FP8_TENSOR_CLASS and isinstance(tensor, FP8_TENSOR_CLASS):
+            return tensor.dequantize(dtype=tensor.dtype)
+        return tensor
+
 
 class DirectMapping(MegatronParamMapping[torch.Tensor]):
     """Direct 1:1 weight mapping with no transformation or tensor parallelism."""
@@ -570,10 +680,13 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
     ) -> Dict[str, torch.Tensor]:
         """Direct copy with PP broadcast."""
         # Handle cross-PP broadcast
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights)
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         return {str(self.hf_param): megatron_weights}
 
@@ -641,6 +754,18 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             if hf_weights is None:
                 raise ValueError("hf_weights should not be None on rank 0")
 
+            # For MCore MambaMixer, A_log is initialized in FP32 but cast to BF16 when
+            # saving ckpts, including the ckpt uploaded to HF. Without this cast,
+            # self.scatter_to_tp_ranks will try to scatter the HF A_log weights in BF16 to
+            # the Megatron tensor which is in FP32. This will error. So we cast before the scatter.
+            if hf_weights.dtype != target_param.dtype:
+                logger.warning(
+                    f"WARNING: Dtype mismatch between HuggingFace weights and Megatron module. "
+                    f"HF dtype: {hf_weights.dtype}. Megatron dtype: {target_param.dtype}. "
+                    f"Casting HF weights to Megatron dtype. THIS MAY RESULT IN A LOSS OF PRECISION. "
+                )
+                hf_weights = hf_weights.to(target_param.dtype)
+
             # For bias (1D), we still split along dim 0
             # For weight (2D), we split along dim 0 (output dimension)
             full_size = hf_weights.shape[0]
@@ -666,10 +791,13 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate."""
         # Handle cross-PP broadcast
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights)
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.tp_size == 1:
             full_weights = megatron_weights
@@ -761,10 +889,13 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate."""
         # Handle cross-PP broadcast
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights)
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.tp_size == 1:
             full_weights = megatron_weights
@@ -819,10 +950,13 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
     ) -> Dict[str, torch.Tensor]:
         """Return weight only from rank 0 to avoid duplication."""
         # Handle cross-PP broadcast
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights)
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         if self.is_expert:
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
@@ -1024,10 +1158,10 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             if megatron_module is not None:
                 self._detected_type = self._detect_parallelism_type(megatron_module)
                 # Broadcast to other ranks
-                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type)
+                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
             else:
                 # Receive from owning rank
-                self._detected_type = self.broadcast_obj_from_pp_rank(None)
+                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
 
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
@@ -1126,18 +1260,22 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather QKV shards and split into Q, K, V."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
         # ------------------------------------------------------------------
         # Broadcast / retrieve the transformer configuration so that every PP
         # rank (also the ones that will early-return) participates in the
         # collective communication.
         # ------------------------------------------------------------------
         if megatron_module is None:
-            config = self.broadcast_obj_from_pp_rank(None)
+            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
         else:
             config = self._get_config(megatron_module)
             # create shallow copy and remove non-picklable objects with max depth=2
             config = remove_non_pickleables(config, max_depth=2)
-            config = self.broadcast_obj_from_pp_rank(config)
+            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
 
         # Delegate TP/PP gathering.
         packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
@@ -1265,10 +1403,13 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     ) -> Dict[str, torch.Tensor]:
         """Gather concatenated shards and split into gate and up."""
         # Handle cross-PP broadcast first
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights)
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
 
         if megatron_weights is None:
             return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         # Handle TP gathering
         if self.tp_size == 1:

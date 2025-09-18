@@ -28,6 +28,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 def parse_plugin_config_overrides(unknown_args: list[str]) -> list[str]:
@@ -262,11 +263,12 @@ def apply_args_to_config(config, args):
         # Validation configuration for convergence
         if args.max_steps <= 100:
             config.train.eval_interval = args.max_steps
+            config.train.eval_iters = 0  # Disable evaluation for short convergence runs
         else:
             config.train.eval_interval = 800
 
-        # Scheduler warmup for convergence
-        config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
+        if args.max_steps > 100:
+            config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
     # Profiling configuration
     if args.nsys or args.mem:
@@ -402,8 +404,9 @@ def main():
     final_config = apply_args_to_config(base_config, args)
 
     # Log final configuration
-    logging.info("Final configuration:")
-    final_config.to_yaml()
+    if get_rank_safe() == 0:
+        logging.info("Final configuration:")
+        final_config.print_yaml()
 
     if args.pretrain:
         logging.info("Starting pretraining")

@@ -25,6 +25,7 @@ from typing import Any, Callable, List, Optional, Type
 
 import numpy as np
 import torch
+from megatron.core.msc_utils import MultiStorageClientFeature
 from torch.utils.data import Dataset
 
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -57,7 +58,11 @@ def build_index_from_memdata(fn, newline_int):
     Returns a 1D array of ints.
     """
     # use memmap to read file
-    mdata = np.memmap(fn, dtype=np.uint8, mode="r")
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        mdata = msc.numpy.memmap(fn, dtype=np.uint8, mode="r")
+    else:
+        mdata = np.memmap(fn, dtype=np.uint8, mode="r")
     # find newline positions
     midx = np.where(mdata == newline_int)[0]
     midx_dtype = midx.dtype
@@ -270,18 +275,33 @@ class _TextMemMapDataset(Dataset):
         idx_fn = _index_fn(fn, index_mapping_dir)
 
         # create data map
-        mdata = np.memmap(fn, dtype=np.uint8, mode="r")
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            mdata = msc.numpy.memmap(fn, dtype=np.uint8, mode="r")
+        else:
+            mdata = np.memmap(fn, dtype=np.uint8, mode="r")
 
         if _index_file_exists(idx_fn):
             # load index file into memory map
-            midx = np.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                midx = msc.numpy.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+            else:
+                midx = np.load(idx_fn + ".npy", allow_pickle=True, mmap_mode="r")
+
             # test for header
             if len(midx) < self._header_lines:
                 raise RuntimeError(f"Missing header, expected {self._header_lines} header lines")
 
             # load meta info
-            with open(idx_fn + ".info", "rb") as fp:
-                idx_info_dict = pickle.load(fp)
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                with msc.open(idx_fn + ".info", "rb") as fp:
+                    idx_info_dict = pickle.load(fp)
+            else:
+                with open(idx_fn + ".info", "rb") as fp:
+                    idx_info_dict = pickle.load(fp)
+
             # test for mismatch in expected newline_int
             if "newline_int" in idx_info_dict:
                 newline_int = idx_info_dict["newline_int"]
@@ -1022,9 +1042,17 @@ def _build_memmap_index_files(newline_int, build_index_fn, fn, index_mapping_dir
 
         # save index as numpy array to enable memmap reading
         logger.info(f"Saving idx file = {idx_fn}.npy")
-        np.save(idx_fn + ".npy", midx, allow_pickle=True)
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            msc.numpy.save(idx_fn + ".npy", midx, allow_pickle=True)
+        else:
+            np.save(idx_fn + ".npy", midx, allow_pickle=True)
         logger.info(f"Saving metadata file = {idx_fn}.info")
-        pickle.dump(data, open(idx_fn + ".info", "wb"))
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            msc.pickle.dump(data, idx_fn + ".info")
+        else:
+            pickle.dump(data, open(idx_fn + ".info", "wb"))
 
         return True
 
@@ -1062,7 +1090,11 @@ def _index_fn(fn: str, index_mapping_dir: str) -> str:
                 fn = fn.lstrip("/")
         idx_fn = f"{os.path.join(index_mapping_dir, fn)}.{__idx_suffix__}"
         # Create parent directory if needed.
-        os.makedirs(os.path.dirname(idx_fn), exist_ok=True)
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            msc.Path(idx_fn).parent.mkdir(parents=True, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(idx_fn), exist_ok=True)
     else:
         idx_fn = f"{fn}.{__idx_suffix__}"
     return idx_fn
@@ -1070,10 +1102,17 @@ def _index_fn(fn: str, index_mapping_dir: str) -> str:
 
 def _index_file_exists(idx_fn):
     """Helper function to test if index file exists"""
-    if os.path.exists(idx_fn + ".npy") and os.path.exists(idx_fn + ".info"):
-        return True
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        if msc.Path(idx_fn + ".npy").exists() and msc.Path(idx_fn + ".info").exists():
+            return True
+        else:
+            return False
     else:
-        return False
+        if os.path.exists(idx_fn + ".npy") and os.path.exists(idx_fn + ".info"):
+            return True
+        else:
+            return False
 
 
 def _deallocate_indexed_dataset_memory(indexed_dataset):
