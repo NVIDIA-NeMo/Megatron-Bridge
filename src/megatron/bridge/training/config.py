@@ -864,8 +864,10 @@ class ConfigContainer(Container):
             assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
                 "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
             )
-            if self.model.transformer_impl == "transformer_engine" and not self.model.use_te_rng_tracker:
-                self.model.use_te_rng_tracker = True
+            if self.model.transformer_impl == "transformer_engine" and not (
+                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
+            ):
+                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
                 warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
 
         if self.model.external_cuda_graph:
