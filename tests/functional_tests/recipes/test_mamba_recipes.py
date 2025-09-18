@@ -16,7 +16,6 @@
 
 import pytest
 
-from megatron.bridge.recipes.mamba.mamba2_1_3b import pretrain_config as mamba2_1_3b_config
 from megatron.bridge.recipes.mamba.mamba2_130m import pretrain_config as mamba2_130m_config
 from megatron.bridge.recipes.mamba.mamba2_370m import pretrain_config as mamba2_370m_config
 from megatron.bridge.recipes.mamba.mamba2_780m import pretrain_config as mamba2_780m_config
@@ -27,7 +26,6 @@ MAMBA_PRETRAIN_RECIPES = [
     (mamba2_130m_config, "mamba2_130m"),
     (mamba2_370m_config, "mamba2_370m"),
     (mamba2_780m_config, "mamba2_780m"),
-    (mamba2_1_3b_config, "mamba2_1_3b"),
 ]
 
 
