@@ -14,12 +14,22 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from functools import partial
+from typing import Callable, List, Optional, Union
+
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
 
 
 logger = logging.getLogger(__name__)
@@ -401,3 +411,54 @@ class Qwen3MoEModelProvider235B_A22B(Qwen3MoEModelProvider):
     num_query_groups: int = 4
     ffn_hidden_size: int = 12288
     moe_ffn_hidden_size: int = 1536
+
+
+# =============================================================================
+# Qwen 3 Next Model Provider (based on Qwen3MoEModelProvider)
+# =============================================================================
+
+
+@dataclass
+class Qwen3NextModelProvider(Qwen3MoEModelProvider):
+    """Base provider for Qwen 3 Next Models."""
+
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
+        get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
+    )
+
+    normalization: str = "RMSNorm"
+    apply_layernorm_1p: bool = True  # Zero-Centered RMSNorm
+    rotary_percent: float = 0.25  # Qwen3-Next applies RoPE only to the first 25% of dims
+    attention_output_gate: bool = True  # Qwen3-Next applies output gate to standard attention
+    kv_channels: Optional[int] = 256
+    seq_length: int = 262144  # Qwen3-Next-80B-A3B supports up to 256k sequence length
+    rotary_base: float = 10000000.0
+
+    # GDN specific parameters
+    linear_attention_type: str = "gated_delta_net"
+    linear_attention_freq: Union[int, List[int]] = 4  # 1 standard attention layer per 4 layers
+    gdn_conv_kernel_dim: int = 4
+    gdn_qk_head_dim: int = 128
+    gdn_v_head_dim: int = 128
+    gdn_num_qk_heads: int = 16
+    gdn_num_v_heads: int = 32
+
+    # MoE specific parameters
+    num_moe_experts: int = 512
+    moe_router_topk: int = 10
+    moe_ffn_hidden_size: int = 512
+    moe_shared_expert_intermediate_size: int = 512  # 512 * 1 shared expert
+    moe_shared_expert_gate: bool = True
+
+
+class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
+    """
+    Provider for Qwen 3 Next: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct
+    """
+
+    num_layers: int = 48
+    hidden_size: int = 2048
+    num_attention_heads: int = 16
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 5120
+    moe_ffn_hidden_size: int = 512
