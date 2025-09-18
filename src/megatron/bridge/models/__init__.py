@@ -103,6 +103,11 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.models.nemotron_vl import (
+    NemotronVLBridge,
+    NemotronVLModel,
+    NemotronVLModelProvider,
+)
 
 
 __all__ = [
@@ -183,4 +188,8 @@ __all__ = [
     "Qwen25VLModel",
     "Qwen25VLBridge",
     "Qwen25VLModelProvider",
+    # Nemotron VL
+    "NemotronVLModel",
+    "NemotronVLBridge",
+    "NemotronVLModelProvider",
 ]

@@ -132,7 +132,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if not architectures:
             return False
 
-        return any(arch.endswith(("ForCausalLM", "ForConditionalGeneration")) for arch in architectures)
+        return any(arch.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL")) for arch in architectures)
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -817,7 +817,7 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
+            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL")):
                 causal_lm_arch = architecture_name
                 break
 
@@ -825,7 +825,7 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(
                 f"\n✗ No CausalLM architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
-                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration'.\n"
+                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration' or 'NemotronH_Nano_VL'.\n"
                 f"This bridge only supports causal language models.\n"
                 f"For other model types, use a different bridge class."
             )
