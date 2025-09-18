@@ -72,30 +72,6 @@ class SetupOutput(NamedTuple):
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpointing_context: dict[str, Any]
 
-def runtime_config_update(cfg: ConfigContainer) -> None:
-    """Apply runtime configuration updates prior to initialization.
-
-    - Validate configuration
-    - Resolve mixed precision configuration
-    - Apply communication overlap configuration
-    - Validate configuration again after resolving mixed precision and communication overlap
-    """
-    # Validate
-    cfg.validate()
-
-    # Mixed precision
-    if cfg.mixed_precision is not None:
-        if isinstance(cfg.mixed_precision, str):
-            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Communication overlap
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    cfg.validate()
-
-
 def setup(
     state: GlobalState,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
