@@ -72,7 +72,6 @@ class TestSafeLoadConfigWithRetry:
                 self.test_path, trust_remote_code=True, cache_dir="/custom/cache", local_files_only=True
             )
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_with_file_locking(self):
         """Test configuration loading with file locking enabled."""
         mock_lock = MagicMock()
@@ -100,16 +99,7 @@ class TestSafeLoadConfigWithRetry:
 
                 assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", False)
-    def test_without_file_locking(self):
-        """Test configuration loading without file locking (fallback mode)."""
-        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
-            mock_auto_config.from_pretrained.return_value = self.mock_config
-
-            result = safe_load_config_with_retry(self.test_path)
-
-            assert result == self.mock_config
-            mock_auto_config.from_pretrained.assert_called_once_with(self.test_path, trust_remote_code=False)
+    
 
     def test_retry_on_transient_failure(self):
         """Test retry mechanism on transient network failures."""
@@ -272,7 +262,6 @@ class TestSafeLoadConfigWithRetry:
                 delay = sleep_calls[0][0][0]
                 assert 0.5 <= delay <= 1.0  # base_delay + jitter
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_lock_file_creation(self):
         """Test that lock files are created in the correct location."""
         mock_lock = MagicMock()
@@ -352,7 +341,6 @@ class TestSafeLoadConfigWithRetry:
                 mock_auto_config.from_pretrained.assert_called_with(path, trust_remote_code=False)
                 mock_auto_config.reset_mock()
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_custom_lock_directory_env_var(self):
         """Test that MEGATRON_CONFIG_LOCK_DIR environment variable overrides default lock directory."""
         mock_lock = MagicMock()
@@ -376,7 +364,6 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_default_lock_directory_when_env_var_not_set(self):
         """Test that default lock directory is used when MEGATRON_CONFIG_LOCK_DIR is not set."""
         mock_lock = MagicMock()
@@ -402,7 +389,6 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_custom_lock_directory_with_pathlib_path(self):
         """Test that custom lock directory works with pathlib.Path inputs."""
         mock_lock = MagicMock()
@@ -427,7 +413,6 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_lock_directory_creation_with_env_var(self):
         """Test that custom lock directory is created if it doesn't exist."""
         custom_lock_dir = "/tmp/test_megatron_locks"
@@ -454,7 +439,6 @@ class TestSafeLoadConfigWithRetry:
                         # Verify directory creation was attempted
                         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_different_paths_different_locks_with_custom_dir(self):
         """Test that different model paths create different lock files in custom directory."""
         mock_lock = MagicMock()
