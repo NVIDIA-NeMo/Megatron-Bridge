@@ -1,9 +1,11 @@
 # Training Loop Configuration
 
-The `TrainingConfig` contains settings related to the training loop bounds, exit conditions, validation, batch sizing, and memory management.
+The {py:class}`bridge.training.config.TrainingConfig` contains settings related to the training loop bounds, exit conditions, validation, batch sizing, and memory management.
 
 ## Key Parameters
+
 Configure these parameters to control core training behavior, resource utilization, and monitoring across distributed setups.
+
 ### Batch Configuration
 Define how data is batched and distributed across devices during training.
 

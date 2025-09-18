@@ -2,7 +2,7 @@
 
 Megatron Bridge incorporates resilient training features from the [NVIDIA Resiliency Extension](https://github.com/NVIDIA/nvidia-resiliency-ext). This extension provides fault-tolerant capabilities that help minimize downtime due to failures and interruptions during training.
 
-## Fault Tolerance
+## Fault Tolerance: In Job Restart
 
 The fault tolerance feature can detect hangs during training and automatically restart a workload due to a hang or error. This is particularly useful when training on unreliable hardware, at very large scale, or when transient faults are common.
 
@@ -27,9 +27,9 @@ Before using fault tolerance features, ensure the following:
 
 Megatron Bridge provides two ways to enable fault tolerance:
 
-#### Option 1: NeMo Run Plugin (Recommended)
+#### Option 1: NeMo Run Plugin
 
-If you're using NeMo Run, the `FaultTolerancePlugin` provides the simplest integration:
+If you're using NeMo Run, the {py:class}`bridge.recipes.run_plugins.FaultTolerancePlugin` provides the simplest integration:
 
 ```python
 from megatron.bridge.recipes.run_plugins import FaultTolerancePlugin
@@ -54,9 +54,9 @@ run_plugins = [
 run.run(task, plugins=run_plugins, executor=executor)
 ```
 
-#### Option 2: Direct Configuration (Advanced)
+#### Option 2: Direct Configuration
 
-If you’re an advanced user and want more control, you can configure fault tolerance manually:
+If you’re a user who wants more direct control, you can configure fault tolerance manually:
 
 ```python
 from megatron.bridge.training.config import FaultToleranceConfig
@@ -84,7 +84,7 @@ ft_launcher \
 
 ### Configuration Options
 
-The fault tolerance system can be configured through `FaultToleranceConfig`:
+The fault tolerance system can be configured through {py:class}`bridge.training.config.FaultToleranceConfig`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -97,7 +97,7 @@ The fault tolerance system can be configured through `FaultToleranceConfig`:
 
 ### Plugin Configuration Options
 
-When using the `FaultTolerancePlugin`, additional options are available:
+When using the {py:class}`bridge.recipes.run_plugins.FaultTolerancePlugin`, additional options are available:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -163,7 +163,7 @@ The straggler detection feature identifies slow-performing ranks and can optiona
 
 ### Configuration
 
-Enable straggler detection through the `NVRxStragglerDetectionConfig`:
+Enable straggler detection through the {py:class}`bridge.training.config.NVRxStragglerDetectionConfig`:
 
 ```python
 from megatron.bridge.training.config import NVRxStragglerDetectionConfig
@@ -275,7 +275,7 @@ The straggler detection system:
 
 The straggler detection integrates directly with the training loop:
 
-- Automatically initializes when `NVRxStragglerDetectionManager` is configured.
+- Automatically initializes when {py:class}`bridge.training.resiliency.NVRxStragglerDetectionManager` is configured.
 - Monitors training steps without affecting the training logic.
 - Provides exit conditions that the training loop respects.
 - Safely shuts down when training completes.
@@ -301,7 +301,7 @@ Megatron Bridge provides two ways to enable preemption handling:
 
 > **Warning**: This plugin is currently only supported on Slurm-based clusters.
 
-If you're using NeMo Run, the `PreemptionPlugin` provides the simplest integration:
+If you're using NeMo Run, the {py:class}`bridge.recipes.run_plugins.PreemptionPlugin` provides the simplest integration:
 
 ```python
 from megatron.bridge.recipes.run_plugins import PreemptionPlugin
@@ -378,7 +378,7 @@ The system will:
 
 The preemption system operates through several components:
 
-1. **Signal Handler Installation**: Sets up a distributed signal handler using `DistributedSignalHandler`.
+1. **Signal Handler Installation**: Sets up a distributed signal handler using {py:class}`bridge.training.resiliency.DistributedSignalHandler`.
 2. **Signal Detection**: Checks for received signals at the end of each training step.
 3. **Distributed Coordination**: Uses all-gather to ensure all ranks are aware of the signal.
 4. **Checkpoint Saving**: Automatically saves a checkpoint before exiting.
@@ -431,7 +431,7 @@ The re-run state machine operates through several stages:
 
 ### Configuration
 
-Configure the re-run state machine through `RerunStateMachineConfig`:
+Configure the re-run state machine through {py:class}`bridge.training.config.RerunStateMachineConfig`:
 
 ```python
 from megatron.bridge.training.config import RerunStateMachineConfig

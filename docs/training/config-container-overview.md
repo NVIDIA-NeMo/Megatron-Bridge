@@ -1,4 +1,4 @@
-# ConfigContainer Overview
+# Configuration Overview
 
 The `ConfigContainer` is the central configuration object in Megatron Bridge that orchestrates all aspects of training. It acts as a single source of truth that brings together model architecture, training parameters, data loading, optimization, checkpointing, logging, and distributed training settings.
 
@@ -36,7 +36,7 @@ The `ConfigContainer` organizes training settings into three categories—**requ
 
 ### Required Attributes
 
-The following configuration attributes must be provided when creating a `ConfigContainer`:
+The following configuration attributes must be provided when creating a `ConfigContainer` for training:
 
 | Attribute | Purpose |
 |-----------|---------|
@@ -52,7 +52,6 @@ The following configuration attributes must be provided when creating a `ConfigC
 ### Default Attributes
 
 These attributes have predefined defaults, but can be customized to suit specific training needs:
-
 
 | Attribute | Purpose |
 |-----------|---------|
@@ -84,8 +83,6 @@ Several configuration components in `ConfigContainer` are directly derived from 
 | `optimizer`   | Uses `OptimizerConfig` from Megatron Core for optimization settings |
 | `ddp`         | Uses `DistributedDataParallelConfig` from Megatron Core for data parallel configuration |
 
-
-
 These configurations provide seamless integration with the Megatron Core library.
 
 ## Automatic Configuration Processing
@@ -99,8 +96,6 @@ At the start of training, Megatron Bridge automatically validates, adjusts, and 
 You do not need to manually validate configurations - this process occurs automatically at the start of training.
 
 ## Configuration Export and Import
-The `ConfigContainer` supports serialization to and from YAML, allowing configurations to be saved, shared, and reloaded across training sessions.
-The `ConfigContainer` supports serialization to and from YAML, allowing configurations to be saved, shared, and reloaded across training sessions.
 
 ### Export to YAML
 ```python

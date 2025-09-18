@@ -1,10 +1,8 @@
-# Parameter-Efficient Fine-Tuning (PEFT) Configuration
-
+# Parameter-Efficient Fine-Tuning (PEFT)
 
 This guide explains how to configure and use PEFT in Megatron Bridge—covering LoRA and DoRA, required checkpoints, example configurations, and the internal design and training workflow—so you can integrate, scale, and checkpoint adapters efficiently.
 
 ## Model Customization
-
 Customizing models enables you to adapt a general pre-trained model to a specific use case or domain. This process produces a fine-tuned model that retains the broad knowledge from pretraining while delivering more accurate outputs for targeted downstream tasks.
 
 Model customization is typically achieved through supervised fine-tuning, which falls into two main approaches: Full-Parameter Fine-Tuning, known as Supervised Fine-Tuning (SFT), and Parameter-Efficient Fine-Tuning (PEFT).
@@ -14,7 +12,6 @@ In SFT, all model parameters are updated to align the model’s outputs with the
 PEFT, by contrast, updates only a small subset of parameters that are inserted into the base model at strategic locations. The base model weights remain frozen, and only the adapter modules are trained. This significantly reduces the number of trainable parameters—often to less than 1%—while still achieving near-SFT levels of accuracy.
 
 As language models continue to grow in size, PEFT is gaining popularity for its efficiency and minimal hardware demands, making it a practical choice for many real-world applications.
-
 
 ## PEFT Configuration
 
@@ -44,7 +41,6 @@ config = ConfigContainer(
 ```
 
 ## Supported PEFT Methods
-Megatron Bridge supports two efficient fine-tuning techniques—LoRA and DoRA—that adapt large language models with minimal overhead. These methods update only a small set of parameters, preserving the original weights and avoiding changes to model architecture or inference speed. Below is a quick guide to configuring and applying them.
 
 ### [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
 
@@ -57,7 +53,6 @@ In Megatron Bridge, you can configure both the adapter bottleneck dimension and 
 3. One or both MLP layers  
 
 Megatron Bridge fuses the QKV projections into a single linear layer. As a result, LoRA learns a unified low-rank adaptation for the combined QKV representation.
-
 
 ```python
 from megatron.bridge.peft.lora import LoRA
@@ -72,30 +67,22 @@ lora_config = LoRA(
 ```
 
 #### Key Parameters
-
-The following parameters define how LoRA is applied to your model. They control which modules are targeted, the adaptation rank, scaling behavior, and dropout configuration:
-
-
+The following table lists key hyperparameters for configuring DoRA, which control its module targeting, adaptation rank, scaling behavior, and regularization strategy.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `target_modules` | `List[str]` | All linear layers | Modules to apply LoRA to |
+| `target_modules` | `List[str]` | All linear layers | Modules to apply DoRA to |
 | `dim` | `int` | `32` | Rank of the low-rank adaptation |
-| `alpha` | `float` | `16` | Scaling parameter for LoRA |
-| `dropout` | `float` | `0.0` | Dropout rate for LoRA layers |
-| `network_alpha` | `Optional[float]` | `None` | Network-wide alpha scaling |
-
+| `alpha` | `float` | `16` | Scaling parameter for DoRA |
+| `dropout` | `float` | `0.0` | Dropout rate for DoRA layers |
 
 #### Target Modules
-
 The following table lists specific submodules within transformer architectures that are commonly targeted for LoRA, enabling efficient fine-tuning of attention and feedforward components:
-
 | Module        | Description                                 |
 |---------------|---------------------------------------------|
 | `linear_qkv`  | Query, key, value projections in attention  |
 | `linear_proj` | Attention output projection                 |
 | `linear_fc1`  | First MLP layer                             |
 | `linear_fc2`  | Second MLP layer                            |
-
 
 #### Wildcard Target Modules
 For more granular targeting, individual layers can be targeted for the adapters.
@@ -128,7 +115,7 @@ dora_config = DoRA(
 
 #### Key Parameters
 
-The following table lists key hyperparameters for configuring DoRA, which control its module targeting, adaptation rank, scaling behavior, and regularization strategy.
+The following parameters define how LoRA is applied to your model. They control which modules are targeted, the adaptation rank, scaling behavior, and dropout configuration:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -138,7 +125,6 @@ The following table lists key hyperparameters for configuring DoRA, which contro
 | `dropout` | `float` | `0.0` | Dropout rate for DoRA layers |
 
 ## Full Configuration Example
-The following example demonstrates a complete setup for PEFT fine-tuning using LoRA within the Megatron framework.
 
 ```python
 from megatron.bridge.training.config import (
@@ -198,7 +184,7 @@ This section describes the internal design and architecture for how PEFT is inte
 
 The PEFT framework introduces a modular design for integrating adapters into large-scale models. Its architecture consists of the following components:
 
-1. **Base PEFT Class**: All PEFT methods inherit from the abstract `PEFT` base class, which defines the core interface for module transformation.
+1. **Base PEFT Class**: All PEFT methods inherit from the abstract {py:class}`bridge.peft.base.PEFT` base class, which defines the core interface for module transformation.
 2. **Module Transformation**: PEFT traverses the model structure to identify and transform target modules individually.
 3. **Adapter Integration**: Adapters are injected into selected modules using a pre-wrap hook during model initialization.
 4. **Checkpoint Integration**: Only adapter parameters are saved and loaded during checkpointing; base model weights remain frozen and unchanged.
@@ -206,7 +192,6 @@ The PEFT framework introduces a modular design for integrating adapters into lar
 ### PEFT Workflow in Training
 
 The training workflow for PEFT follows a structured sequence that ensures efficient fine-tuning with minimal overhead:
-
 1. **Model Loading**: The base model is initialized from a specified pretrained checkpoint.
 2. **PEFT Application**: Adapter transformations are applied after Megatron Core model initialization, but before distributed wrapping.
 3. **Parameter Freezing**: Base model parameters are frozen to reduce training complexity; only adapter parameters are updated.
@@ -214,6 +199,7 @@ The training workflow for PEFT follows a structured sequence that ensures effici
 5. **Checkpoint Saving**: Only adapter states are saved, resulting in significantly smaller checkpoint files.
 
 ### Key Benefits
+
 PEFT offers several advantages for scalable and efficient model fine-tuning:
 
 - **Reduced Checkpoint Size**: Adapter-only checkpoints are dramatically smaller than full model checkpoints.

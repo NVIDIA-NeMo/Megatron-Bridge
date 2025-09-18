@@ -27,7 +27,6 @@ The `OptimizerConfig` contains all parameters for the optimization algorithm and
 The `SchedulerConfig` controls learning rate scheduling and weight decay progression throughout training.
 
 ### Learning Rate Scheduling
-Parameters for controlling the learning rate schedule, including decay strategy, warmup behavior, and iteration-based adjustments:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -38,7 +37,6 @@ Parameters for controlling the learning rate schedule, including decay strategy,
 | `lr_warmup_init` | `float` | `0.0` | Initial learning rate for warmup phase |
 
 ### WSD (Warmup-Stable-Decay) Scheduling
-Parameters for configuring the annealing phase of the WSD schedule, including decay style and iteration count:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -46,7 +44,9 @@ Parameters for configuring the annealing phase of the WSD schedule, including de
 | `lr_wsd_decay_iters` | `Optional[int]` | `None` | Iterations for WSD annealing phase |
 
 ### Weight Decay Scheduling
+
 Parameters for controlling the progression of weight decay during training, including start and end values and the scheduling strategy:
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `start_weight_decay` | `Optional[float]` | `None` | Initial weight decay coefficient |
@@ -54,7 +54,9 @@ Parameters for controlling the progression of weight decay during training, incl
 | `weight_decay_incr_style` | `Literal["constant", "linear", "cosine"]` | `"constant"` | Weight decay progression style |
 
 ### Checkpoint Integration
+
 Parameters for managing how scheduler settings are applied during checkpoint loading, allowing control over whether to prioritize config values or restore from saved state:
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `override_opt_param_scheduler` | `bool` | `False` | Reset scheduler values from config, ignoring checkpoint |
@@ -64,7 +66,6 @@ Parameters for managing how scheduler settings are applied during checkpoint loa
 
 These fields are automatically calculated during configuration validation and help align training schedules with the configured batch size and iteration counts:
 
-
 | Field | Description |
 |-------|-------------|
 | `lr_warmup_steps` | Total steps for warmup (calculated from iterations and batch size) |
@@ -73,8 +74,8 @@ These fields are automatically calculated during configuration validation and he
 | `wsd_decay_steps` | Total steps for WSD annealing phase |
 
 ## Learning Rate Schedules
-The following scheduling strategies define how the learning rate evolves during training, each suited to different convergence behaviors and model types:
 
+The following scheduling strategies define how the learning rate evolves during training, each suited to different convergence behaviors and model types:
 | Schedule Type           | Description                                                                 |
 |-------------------------|-----------------------------------------------------------------------------|
 | **Constant**            | Learning rate remains fixed throughout training.                            |
@@ -82,24 +83,19 @@ The following scheduling strategies define how the learning rate evolves during 
 | **Cosine**              | Learning rate follows a cosine decay curve from base LR to minimum LR.      |
 | **Inverse Square Root** | Learning rate decays proportionally to the inverse square root of the step. |
 
-
 ## WSD (Warmup-Stable-Decay)
-
 The WSD schedule divides learning rate progression into three distinct phases, offering fine-grained control over early ramp-up, mid-training stability, and final decay:
-
 | Phase     | Description                                              |
 |-----------|----------------------------------------------------------|
 | **Warmup** | Learning rate increases linearly from initial value to base LR. |
 | **Stable** | Learning rate remains constant at base LR.              |
 | **Decay**  | Learning rate decays to minimum LR using a specified style (e.g., exponential, linear, cosine). |
 
-
 ## Weight Decay Scheduling
-These scheduling options control how the weight decay coefficient changes over time, allowing for regularization strategies that adapt to different training phases:
 
+These scheduling options control how the weight decay coefficient changes over time, allowing for regularization strategies that adapt to different training phases:
 | Schedule Type | Description                                                                 |
 |---------------|-----------------------------------------------------------------------------|
 | **Constant**  | Fixed weight decay throughout training.                                     |
 | **Linear**    | Linear progression from start to end weight decay.                          |
 | **Cosine**    | Cosine progression from start to end weight decay.                          |
-

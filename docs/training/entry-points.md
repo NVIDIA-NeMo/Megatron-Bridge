@@ -4,7 +4,7 @@ Megatron Bridge provides unified training entry points for pretraining, Supervis
 
 ## Main Entry Points
 
-The [`pretrain`](../apidocs/bridge/bridge.training.pretrain.md) and [`finetune`](../apidocs/bridge/bridge.training.finetune.md) functions are the primary entry points for pretraining models—either from scratch or through fine-tuning. Each function accepts a [`ConfigContainer`](../apidocs/bridge/bridge.training.config.md) along with a `forward_step_func` that defines how the training loop should be run.
+The {py:func}`bridge.training.pretrain.pretrain` and {py:func}`bridge.training.finetune.finetune` functions are the primary entry points for pretraining models—either from scratch or through fine-tuning. Each function accepts a {py:class}`bridge.training.config.ConfigContainer` along with a `forward_step_func` that defines how the training loop should be run.
 
 
 ## Forward Step Function
@@ -43,7 +43,7 @@ The forward step function has three main responsibilities:
 
 ### State Access
 
-Megatron Bridge automatically provides the [`GlobalState`](../apidocs/bridge/bridge.training.state.md) object containing:
+Megatron Bridge automatically provides the {py:class}`bridge.training.state.GlobalState` object containing:
 - **Configuration**: Complete training configuration (`global_state.cfg`).
 - **Timers**: Performance monitoring utilities (`global_state.timers`).
 - **Training Progress**: Current step, consumed samples (`global_state.train_state`).
@@ -51,7 +51,7 @@ Megatron Bridge automatically provides the [`GlobalState`](../apidocs/bridge/bri
 
 All configuration and state information are accessible through the injected `state` object.
 
-For complete implementation examples, see [`gpt_step.forward_step`](../apidocs/bridge/bridge.training.gpt_step.md).
+For complete implementation examples, see {py:func}`bridge.training.gpt_step.forward_step`.
 
 ## Loss Calculation and Reduction
 
@@ -82,7 +82,7 @@ The training loop automatically handles:
 - **Pipeline Coordination**: Only the last pipeline stage computes and reduces losses.
 - **Logging Integration**: Automatically logs loss components to TensorBoard/WandB.
 
-For implementation details, see [`train.train_step`](../apidocs/bridge/bridge.training.train.md) and [`losses`](../apidocs/bridge/bridge.training.losses.md).
+For implementation details, see {py:func}`bridge.training.train.train_step` and {py:func}`bridge.training.losses.masked_token_loss`, as an example.
 
 ## Customization
 
