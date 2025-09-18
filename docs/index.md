@@ -19,6 +19,7 @@ training/entry-points.md
 training/training-config.md
 training/optimizer-scheduler-config.md
 training/logging.md
+training/profiling.md
 training/checkpointing-config.md
 training/resiliency.md
 training/peft-config.md
