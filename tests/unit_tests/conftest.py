@@ -20,8 +20,6 @@ from unittest.mock import patch
 import pytest
 from megatron.core.msc_utils import MultiStorageClientFeature
 
-from tests.unit_tests.download_unit_tests_dataset import get_oldest_release_and_assets
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

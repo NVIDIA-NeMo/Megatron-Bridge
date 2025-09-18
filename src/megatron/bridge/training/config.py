@@ -858,11 +858,11 @@ class ConfigContainer(Container):
         # Sync config. If TE RNG tracker is set in either ways, set them in both places.
         if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
             self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
-        
+
         # Validate external_cg
         if self.model.enable_cuda_graph or self.model.external_cuda_graph:
             assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
-            "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
+                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
             )
             if self.model.transformer_impl == "transformer_engine" and not self.model.use_te_rng_tracker:
                 self.model.use_te_rng_tracker = True

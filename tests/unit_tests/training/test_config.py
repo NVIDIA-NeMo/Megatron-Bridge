@@ -1473,6 +1473,7 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+
 class TestSyncAndValidateExternalCudaGraph:
     """Tests for the `_sync_and_validate_external_cuda_graph` method of the `ConfigContainer` class."""
 
@@ -1504,9 +1505,7 @@ class TestSyncAndValidateExternalCudaGraph:
 
     def test_cuda_graph_mutual_exclusivity_error(self):
         """Test that enable_cuda_graph and external_cuda_graph cannot both be True."""
-        gpt_model_cfg = create_test_gpt_config(
-            enable_cuda_graph=True, external_cuda_graph=True
-        )
+        gpt_model_cfg = create_test_gpt_config(enable_cuda_graph=True, external_cuda_graph=True)
 
         container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
 
@@ -1533,9 +1532,7 @@ class TestSyncAndValidateExternalCudaGraph:
         mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
 
     @patch("megatron.bridge.training.config.warn_rank_0")
-    def test_te_rng_tracker_auto_enable_with_external_cuda_graph(
-        self, mock_warn_rank_0
-    ):
+    def test_te_rng_tracker_auto_enable_with_external_cuda_graph(self, mock_warn_rank_0):
         """Test that te_rng_tracker is auto-enabled when using transformer_engine with external CUDA graphs."""
         gpt_model_cfg = create_test_gpt_config(
             transformer_impl="transformer_engine",
