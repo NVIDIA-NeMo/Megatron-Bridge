@@ -555,7 +555,7 @@ class CheckpointConfig:
 
     replication_jump: Optional[int] = None
     """Specifies `J`, the spacing between ranks storing replicas of a given rank's data. Replicas
-    for rank `n` may be on ranks `nJ`, `n2J`, ..., or `n-J`, `n-2J`, etc. This flag has an
+    for rank `n` may be on ranks `n+J`, `n+2J`, ..., or `n-J`, `n-2J`, etc. This flag has an
     effect only if --replication is used. and must be consistent across all ranks."""
 
     replication_factor: int = 2
