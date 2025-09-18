@@ -780,8 +780,8 @@ class ConfigContainer(Container):
         if hasattr(self.model, 'microbatch_group_size_per_vp_stage'):
             self.model.microbatch_group_size_per_vp_stage = None
 
-        if hasattr(self.model, 'expert_tensor_parallel_size'):
-            self.model.expert_tensor_parallel_size = None
+        # if hasattr(self.model, 'expert_tensor_parallel_size'):
+        #     self.model.expert_tensor_parallel_size = None
 
         if hasattr(self.model, 'autocast_dtype'):
             self.model.autocast_dtype = None

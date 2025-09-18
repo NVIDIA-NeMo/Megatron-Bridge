@@ -55,7 +55,7 @@ def main():
             precision_config=precision_config,
             # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
             pipeline_parallelism=8,
-            virtual_pipeline_parallelism=2,
+            virtual_pipeline_parallelism=4,
             enable_deepep=enable_deepep,
         )
         from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
