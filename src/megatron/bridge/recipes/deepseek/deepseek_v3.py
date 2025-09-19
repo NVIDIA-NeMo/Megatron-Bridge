@@ -310,7 +310,7 @@ def pretrain_config(
     return cfg
 
 
-def pretrain_config_32nodes(**kwargs):    
+def pretrain_config_32nodes(**kwargs):
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model with minimal number of nodes (32).
 
