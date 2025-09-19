@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.llama import Llama2ModelProvider7B
+from megatron.bridge.models.llama import LlamaModelProvider
 from megatron.bridge.recipes.llama.llama2_7b import model_config, pretrain_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -34,7 +34,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, Llama2ModelProvider7B)
+        assert isinstance(config, LlamaModelProvider)
         assert config.tensor_model_parallel_size == 2
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype is None
@@ -111,7 +111,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Llama2ModelProvider7B)
+        assert isinstance(config.model, LlamaModelProvider)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251

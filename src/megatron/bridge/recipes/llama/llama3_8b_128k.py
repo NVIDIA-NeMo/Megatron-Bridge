@@ -16,8 +16,7 @@ from typing import List, Optional, Union
 
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider8B
-from megatron.bridge.recipes.llama import llama3_8b
+from megatron.bridge import AutoBridge
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
@@ -32,7 +31,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 8,
     sequence_parallelism: bool = True,
-) -> Llama3ModelProvider8B:
+):
     """
     Configure the Llama3 8B model for 128k sequence length training.
 
@@ -45,21 +44,20 @@ def model_config(
         sequence_parallelism (bool): Whether to use sequence parallelism. Default optimized for 128k sequences.
 
     Returns:
-        Llama3ModelProvider8B: Configuration for the Llama3 8B model optimized for 128k sequences.
+        Configuration for the Llama3 8B model optimized for 128k sequences.
     """
-    # Get base model config and override sequence length to 128k
-    model_cfg = llama3_8b.model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
-    )
-
-    model_cfg.seq_length = SEQUENCE_LENGTH_128K
-
-    return model_cfg
+    bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
+    provider = bridge.to_megatron_provider(load_weights=False)
+    
+    provider.tensor_model_parallel_size = tensor_parallelism
+    provider.pipeline_model_parallel_size = pipeline_parallelism
+    provider.pipeline_dtype = pipeline_parallelism_dtype
+    provider.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    provider.context_parallel_size = context_parallelism
+    provider.sequence_parallel = sequence_parallelism
+    provider.seq_length = SEQUENCE_LENGTH_128K
+    
+    return provider
 
 
 def pretrain_config(

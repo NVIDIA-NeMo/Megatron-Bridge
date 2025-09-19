@@ -18,7 +18,7 @@ import tempfile
 import pytest
 import torch
 
-from megatron.bridge.models.qwen import Qwen3MoEModelProvider235B_A22B
+from megatron.bridge.models.qwen import Qwen3MoEModelProvider
 from megatron.bridge.recipes.qwen.qwen3_235b_a22b import model_config, pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -31,7 +31,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, Qwen3MoEModelProvider235B_A22B)
+        assert isinstance(config, Qwen3MoEModelProvider)
         assert config.tensor_model_parallel_size == 4  # Default for Qwen3 235B-A22B MoE
         assert config.pipeline_model_parallel_size == 16  # Default for Qwen3 235B-A22B MoE
         assert config.pipeline_dtype == torch.bfloat16
@@ -54,7 +54,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Qwen3MoEModelProvider235B_A22B)
+        assert isinstance(config.model, Qwen3MoEModelProvider)
 
         # Check training configuration
         assert config.train.train_iters == 300000

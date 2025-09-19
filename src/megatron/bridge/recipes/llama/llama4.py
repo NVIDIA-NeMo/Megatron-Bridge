@@ -17,11 +17,10 @@ from typing import List, Optional, Union
 
 import torch
 
-from megatron.bridge.models.qwen import Qwen25ModelProvider500M
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -35,39 +34,38 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def model_config(
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
-) -> Qwen25ModelProvider500M:
-    """
-    Configure the Qwen2.5 500M model.
-
-    Args:
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-
-    Returns:
-        Qwen25ModelProvider500M: Configuration for the Qwen2.5 500M model.
-    """
-    return Qwen25ModelProvider500M(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-    )
+def llama4_e16(**user_kwargs):
+    recommended_kwargs = {
+        "hf_path": "meta-llama/Llama-Scout-8B-E16",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 1,
+        "context_parallelism": 1,
+        "sequence_parallelism": True,
+        "expert_tensor_parallelism": 4,
+        "expert_model_parallelism": 16,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs = recommended_kwargs | user_kwargs
+    return _llama4_common(**combined_kwargs)
 
 
-def pretrain_config(
+def llama4_e128(**user_kwargs):
+    recommended_kwargs = {
+        "hf_path": "meta-llama/Llama-Maverick-8B-E128",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 1,
+        "context_parallelism": 1,
+        "sequence_parallelism": True,
+        "expert_tensor_parallelism": 4,
+        "expert_model_parallelism": 128,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs = recommended_kwargs | user_kwargs
+    return _llama4_common(**combined_kwargs)
+
+
+def _llama4_common(
+    hf_path: str,
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -79,12 +77,14 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
+    tensor_parallelism: int = 4,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallelism: bool = True,
+    expert_tensor_parallelism: int = 4,
+    expert_model_parallelism: int = 16,
     use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
@@ -96,12 +96,12 @@ def pretrain_config(
     lr_warmup_iters: int = 500,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for Qwen2.5 500M model.
+    Create a pre-training configuration for Llama4 MoE models using a given HuggingFace path.
 
     Args:
+        hf_path (str): HuggingFace model path (e.g., "meta-llama/Llama-Scout-8B-E16").
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
@@ -115,8 +115,10 @@ def pretrain_config(
         pipeline_parallelism (int): Degree of pipeline model parallelism.
         pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
         virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
+        context_parallelism (int): Degree of context parallelism.
         sequence_parallelism (bool): Whether to use sequence parallelism.
+        expert_tensor_parallelism (int): Degree of expert tensor parallelism.
+        expert_model_parallelism (int): Degree of expert model parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
@@ -139,14 +141,16 @@ def pretrain_config(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
 
-    model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
-    )
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_parallelism
+    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
+    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    model_cfg.context_parallel_size = context_parallelism
+    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
+    model_cfg.expert_model_parallel_size = expert_model_parallelism
     model_cfg.seq_length = seq_length
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -173,8 +177,12 @@ def pretrain_config(
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
+            use_megatron_fsdp=use_megatron_fsdp,
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -205,7 +213,6 @@ def pretrain_config(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
-        comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
 

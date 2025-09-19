@@ -16,7 +16,7 @@ import pytest
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.llama import Llama4Experts128ModelProvider
+from megatron.bridge.models.llama import LlamaModelProvider
 from megatron.bridge.recipes.llama.llama4_e128 import model_config, pretrain_config
 from megatron.bridge.training.config import ConfigContainer, TrainingConfig
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -30,7 +30,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, Llama4Experts128ModelProvider)
+        assert isinstance(config, LlamaModelProvider)
         assert config.tensor_model_parallel_size == 4
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype is None
@@ -112,7 +112,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Llama4Experts128ModelProvider)
+        assert isinstance(config.model, LlamaModelProvider)
         assert isinstance(config.train, TrainingConfig)
         assert isinstance(config.ddp, DistributedDataParallelConfig)
 

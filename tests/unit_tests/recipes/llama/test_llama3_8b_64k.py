@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.llama import Llama3ModelProvider8B
+from megatron.bridge.models.llama import LlamaModelProvider
 from megatron.bridge.recipes.llama.llama3_8b_64k import SEQUENCE_LENGTH_64K, model_config, pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -32,7 +32,7 @@ class TestModelConfig:
         """Test model_config with default parameters optimized for 64k sequences."""
         config = model_config()
 
-        assert isinstance(config, Llama3ModelProvider8B)
+        assert isinstance(config, LlamaModelProvider)
         # Verify 64k-optimized defaults
         assert config.tensor_model_parallel_size == 4  # Higher than 8k version (1)
         assert config.pipeline_model_parallel_size == 2  # Higher than 8k version (1)
@@ -66,7 +66,7 @@ class TestModelConfig:
     def test_model_config_inheritance_from_llama3_8b(self):
         """Test that model_config correctly delegates to llama3_8b.model_config."""
         with patch("megatron.bridge.recipes.llama.llama3_8b.model_config") as mock_base_config:
-            mock_base_config.return_value = Llama3ModelProvider8B(
+            mock_base_config.return_value = LlamaModelProvider(
                 tensor_model_parallel_size=4,
                 pipeline_model_parallel_size=2,
                 pipeline_dtype=torch.bfloat16,
@@ -85,7 +85,7 @@ class TestModelConfig:
                 context_parallelism=4,
                 sequence_parallelism=True,
             )
-            assert isinstance(config, Llama3ModelProvider8B)
+            assert isinstance(config, LlamaModelProvider)
 
 
 @pytest.mark.unit
@@ -97,7 +97,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, Llama3ModelProvider8B)
+        assert isinstance(config.model, LlamaModelProvider)
 
         # Check that sequence length is set to 64k in both model and dataset
         assert config.dataset.sequence_length == SEQUENCE_LENGTH_64K
