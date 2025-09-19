@@ -20,7 +20,7 @@ from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 def distributed_fused_adam_with_cosine_annealing(
     precision: str = "bf16-mixed",
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: int = 2000,
+    lr_decay_iters: Optional[int] = None,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
     adam_eps: float = 1e-5,
@@ -31,6 +31,22 @@ def distributed_fused_adam_with_cosine_annealing(
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler.
+
+    Args:
+        precision: Mixed precision type ("bf16-mixed", "16-mixed", etc.)
+        lr_warmup_iters: Number of iterations for learning rate warmup
+        lr_decay_iters: Number of iterations for learning rate decay. If None,
+            defaults to train_iters during training.
+        adam_beta1: Adam optimizer beta1 parameter
+        adam_beta2: Adam optimizer beta2 parameter
+        adam_eps: Adam optimizer epsilon parameter
+        weight_decay: Weight decay coefficient
+        max_lr: Maximum learning rate
+        min_lr: Minimum learning rate (defaults to 0.1 * max_lr)
+        clip_grad: Gradient clipping value
+
+    Returns:
+        Tuple of (OptimizerConfig, SchedulerConfig)
     """
     min_lr = min_lr if min_lr is not None else (0.1 * max_lr)
     optimizer = OptimizerConfig(

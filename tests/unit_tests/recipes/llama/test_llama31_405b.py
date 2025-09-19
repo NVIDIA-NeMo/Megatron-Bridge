@@ -170,7 +170,7 @@ class TestPretrainConfig:
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
         assert config.scheduler.lr_warmup_iters == 1000  # Note: fixed in scheduler config
-        assert config.scheduler.lr_decay_iters == 10000  # Should match train_iters
+        assert config.scheduler.lr_decay_iters is None  # Will be set to train_iters during validation
 
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
@@ -344,7 +344,7 @@ class TestPretrainConfig:
         assert config.scheduler.lr_decay_style == "cosine"
         assert config.scheduler.lr_warmup_iters == 2000
         assert config.scheduler.lr_warmup_init == 0.0
-        assert config.scheduler.lr_decay_iters == 50000  # Should match train_iters
+        assert config.scheduler.lr_decay_iters is None  # Will be set to train_iters during validation
         assert config.scheduler.override_opt_param_scheduler is True
 
     @pytest.mark.parametrize("vocab_size", [2048, 4096, 8192, 16384])
