@@ -674,7 +674,9 @@ class TestAutoBridge:
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Llama-3-8B")
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
-        mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
+        mock_bridge.save_megatron_model.assert_called_once_with(
+            mock_megatron_model, "./megatron_checkpoint", hf_tokenizer_path="meta-llama/Llama-3-8B"
+        )
 
     @patch.object(AutoBridge, "save_megatron_model")
     @patch.object(AutoBridge, "to_megatron_model")
@@ -695,7 +697,9 @@ class TestAutoBridge:
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
-        mock_bridge.save_megatron_model.assert_called_once_with(mock_megatron_model, "./megatron_checkpoint")
+        mock_bridge.save_megatron_model.assert_called_once_with(
+            mock_megatron_model, "./megatron_checkpoint", hf_tokenizer_path="./local_model"
+        )
 
     def test_export_ckpt_basic(self):
         """Test basic export_ckpt functionality."""
@@ -762,7 +766,30 @@ class TestAutoBridge:
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path")
 
-            mock_save_megatron_model.assert_called_once_with(mock_megatron_model, "./checkpoint_path")
+            mock_save_megatron_model.assert_called_once_with(
+                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path=None
+            )
+
+    def test_save_megatron_model_with_tokenizer(self):
+        """Test save_megatron_model method with tokenizer path."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
+            bridge.save_megatron_model(
+                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Llama-3-8B"
+            )
+
+            mock_save_megatron_model.assert_called_once_with(
+                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Llama-3-8B"
+            )
 
     def test_save_megatron_model_import_error(self):
         """Test save_megatron_model import error handling."""

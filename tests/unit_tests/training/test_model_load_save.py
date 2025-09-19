@@ -423,6 +423,125 @@ class TestSaveMegatronModel:
             num_floating_point_operations_so_far=0,
         )
 
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_megatron_model_with_tokenizer(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+    ):
+        """Test saving megatron model with tokenizer configuration."""
+        # Setup mocks
+        mock_model = Mock()
+
+        class MockModelConfig(ModelProviderMixin, Mock):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return Mock()
+
+        mock_model_config = MockModelConfig()
+        mock_get_model_config.return_value = mock_model_config
+
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        # Mock the ConfigContainer to capture tokenizer config
+        mock_container_instance = Mock()
+        mock_config_container.return_value = mock_container_instance
+
+        # Test with tokenizer path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_model(
+                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path="meta-llama/Llama-3-8B"
+            )
+
+        # Assertions
+        mock_get_model_config.assert_called_once_with(mock_model)
+        mock_global_state.assert_called_once()
+
+        # Check that ConfigContainer was called with a tokenizer config
+        mock_config_container.assert_called_once()
+        call_kwargs = mock_config_container.call_args[1]
+        assert "tokenizer" in call_kwargs
+        tokenizer_config = call_kwargs["tokenizer"]
+        assert tokenizer_config.tokenizer_type == "HuggingFaceTokenizer"
+        assert tokenizer_config.tokenizer_model == "meta-llama/Llama-3-8B"
+        assert tokenizer_config.vocab_size is None
+
+        mock_save_checkpoint.assert_called_once_with(
+            state=mock_state,
+            model=[mock_model],
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+        )
+
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_megatron_model_without_tokenizer(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+    ):
+        """Test saving megatron model without tokenizer configuration."""
+        # Setup mocks
+        mock_model = Mock()
+
+        class MockModelConfig(ModelProviderMixin, Mock):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return Mock()
+
+        mock_model_config = MockModelConfig()
+        mock_get_model_config.return_value = mock_model_config
+
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        # Mock the ConfigContainer to capture tokenizer config
+        mock_container_instance = Mock()
+        mock_config_container.return_value = mock_container_instance
+
+        # Test without tokenizer path (should be None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None)
+
+        # Assertions
+        mock_get_model_config.assert_called_once_with(mock_model)
+        mock_global_state.assert_called_once()
+
+        # Check that ConfigContainer was called with tokenizer=None
+        mock_config_container.assert_called_once()
+        call_kwargs = mock_config_container.call_args[1]
+        assert "tokenizer" in call_kwargs
+        assert call_kwargs["tokenizer"] is None
+
+        mock_save_checkpoint.assert_called_once_with(
+            state=mock_state,
+            model=[mock_model],
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+        )
+
 
 class TestDtypeFromStr:
     """Test dtype_from_str function."""
