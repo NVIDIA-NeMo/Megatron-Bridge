@@ -13,15 +13,15 @@
 # limitations under the License.
 
 """
-Fault Tolerance (FT) package integration for Megatron-Hub, using the FT section-based API.
+Fault Tolerance (FT) package integration for Megatron-Bridge, using the FT section-based API.
 
 The FT package is included in "nvidia-resiliency-ext"
 (https://github.com/NVIDIA/nvidia-resiliency-ext).
 
 NOTE: The workload must be run using the `ft_launcher` tool provided by `nvidia-resiliency-ext.`
 NOTE: Calls to the public API of this module are no-ops if FT is not initialized
-(`ft_integration.setup` was not called).
-NOTE: Default distributed process group should be initialized before calling `ft_integration.setup`
+(`fault_tolerance.setup` was not called).
+NOTE: Default distributed process group should be initialized before calling `fault_tolerance.setup`
 
 The "setup" FT section is opened during FT initialization and closed before the first training or
 eval iteration. Training and evaluation steps are wrapped in the "step" section, but only after a

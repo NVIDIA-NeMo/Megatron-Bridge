@@ -120,7 +120,7 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Check if this bridge supports the given model configuration.
 
-        A model is supported if it has at least one architecture ending with 'ForCausalLM'.
+        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration'.
 
         Args:
             config: HuggingFace model config object
@@ -132,7 +132,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if not architectures:
             return False
 
-        return any(arch.endswith("ForCausalLM") for arch in architectures)
+        return any(arch.endswith(("ForCausalLM", "ForConditionalGeneration")) for arch in architectures)
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -641,6 +641,11 @@ class AutoBridge(Generic[MegatronModelT]):
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
         provider = self.to_megatron_provider(load_weights, hf_path)
+
+        # Finalize the provider before creating models
+        if hasattr(provider, "finalize"):
+            provider.finalize()
+
         return provider.provide_distributed_model(**kwargs)
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
@@ -771,11 +776,21 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def transformer_config(self) -> TransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, TransformerConfig)
 
     @property
     def mla_transformer_config(self) -> MLATransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, MLATransformerConfig)
 
     @property
@@ -817,7 +832,7 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith("ForCausalLM"):
+            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
                 causal_lm_arch = architecture_name
                 break
 
@@ -825,7 +840,7 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(
                 f"\n✗ No CausalLM architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
-                f"None of the architectures end with 'ForCausalLM'.\n"
+                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration'.\n"
                 f"This bridge only supports causal language models.\n"
                 f"For other model types, use a different bridge class."
             )
@@ -857,7 +872,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"\n✗ Model architecture not supported by AutoBridge\n\n"
                 f"Model: {path}\n"
                 f"Architectures: {architectures}\n\n"
-                f"AutoBridge only supports models with architectures ending in 'ForCausalLM'.\n"
+                f"AutoBridge only supports models with architectures ending in 'ForCausalLM' or 'ForConditionalGeneration'.\n"
                 f"Found architectures that don't match this pattern.\n\n"
                 f"If this is a different model type (e.g., Vision, Sequence-to-Sequence),\n"
                 f"you may need to use a different bridge class."
@@ -866,7 +881,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith("ForCausalLM"):
+            if arch_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
                 architecture = arch_name
                 break
 

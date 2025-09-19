@@ -17,19 +17,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     DistributedInitConfig,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
+    OptimizerConfig,
     ProfilingConfig,
     RerunStateMachineConfig,
     RNGConfig,
@@ -157,6 +159,11 @@ def create_test_distributed_init_config(**kwargs: Any) -> DistributedInitConfig:
     return DistributedInitConfig(**defaults)
 
 
+def create_test_ddp_config(**kwargs: Any) -> DistributedDataParallelConfig:
+    """Creates an instance of DistributedDataParallelConfig with defaults for testing."""
+    return DistributedDataParallelConfig(**kwargs)
+
+
 def create_test_profiling_config(**kwargs: Any) -> ProfilingConfig:
     """Creates an instance of ProfilingConfig with defaults for testing."""
     defaults = {
@@ -189,6 +196,7 @@ def create_test_config_container(
     checkpoint_config: Optional[CheckpointConfig] = None,
     dist_config: Optional[DistributedInitConfig] = None,
     profiling_config: Optional[ProfilingConfig] = None,
+    ddp_config: Optional[DistributedDataParallelConfig] = None,
 ):
     """
     Helper to create a ConfigContainer with specified or default test configurations.
@@ -221,8 +229,6 @@ def create_test_config_container(
     else:
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
 
-    from megatron.core.distributed import DistributedDataParallelConfig
-
     container = ConfigContainer(
         train=train_config or create_test_training_config(),
         model=model_config,
@@ -233,7 +239,7 @@ def create_test_config_container(
         tokenizer=tokenizer_config or create_test_tokenizer_config(),
         checkpoint=checkpoint_config or create_test_checkpoint_config(),
         dist=dist_config or create_test_distributed_init_config(),
-        ddp=DistributedDataParallelConfig(),
+        ddp=ddp_config or create_test_ddp_config(),
         rng=RNGConfig(),
         rerun_state_machine=RerunStateMachineConfig(),
         profiling=profiling_config,
@@ -262,8 +268,6 @@ def restore_get_world_size_safe(original_func, module_ref):
 
 def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collective, dataset_type="finetuning"):
     """Helper to create config container for context parallel tests."""
-    from megatron.core.distributed import DistributedDataParallelConfig
-
     gpt_model_cfg = create_test_gpt_config(
         seq_length=512,
         context_parallel_size=cp_size,
@@ -301,6 +305,7 @@ class TestMockGPTDatasetConfig:
             reset_attention_mask=False,
             eod_mask_loss=False,
         )
+        config.finalize()
 
         # Should be an instance of both MockGPTDatasetConfig and GPTDatasetConfig
         from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
@@ -334,7 +339,7 @@ class TestMockGPTDatasetConfig:
                 reset_attention_mask=False,
                 eod_mask_loss=False,
                 blend=(["some", "data", "paths"], None),  # This should fail
-            )
+            ).finalize()
 
         with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend_per_split'"):
             MockGPTDatasetConfig(
@@ -348,7 +353,7 @@ class TestMockGPTDatasetConfig:
                     (["valid", "paths"], None),
                     (["test", "paths"], None),
                 ],  # This should fail
-            )
+            ).finalize()
 
         with pytest.raises(TypeError, match="got an unexpected keyword argument"):
             MockGPTDatasetConfig(
@@ -359,7 +364,7 @@ class TestMockGPTDatasetConfig:
                 eod_mask_loss=False,
                 blend=(["some", "data", "paths"], None),
                 blend_per_split=[(["train", "paths"], None), (["valid", "paths"], None), (["test", "paths"], None)],
-            )
+            ).finalize()
 
 
 class TestConfigContainerValidation:
@@ -469,6 +474,7 @@ class TestConfigContainerValidation:
         dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=False)
         opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
         chkpt_cfg = create_test_checkpoint_config(ckpt_format="torch_dist")
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=4,
@@ -476,6 +482,7 @@ class TestConfigContainerValidation:
             dist_config=dist_cfg,
             optimizer_config=opt_cfg,
             checkpoint_config=chkpt_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -632,26 +639,24 @@ class TestConfigContainerValidation:
     def test_profiling_config_instantiation_validation(
         self, monkeypatch, use_pytorch_profiler, use_nsys_profiler, expect_assertion_error
     ):
-        """Test ProfilingConfig __post_init__ validation for profiler exclusivity."""
+        """Test ProfilingConfig finalize validation for profiler exclusivity."""
 
-        if expect_assertion_error:
-            with pytest.raises(AssertionError, match="Exactly one of pytorch or nsys profiler should be enabled"):
-                prof_cfg = create_test_profiling_config(
-                    use_pytorch_profiler=use_pytorch_profiler, use_nsys_profiler=use_nsys_profiler
-                )
-        else:
-            # No error expected at instantiation
-            prof_cfg = create_test_profiling_config(
-                use_pytorch_profiler=use_pytorch_profiler, use_nsys_profiler=use_nsys_profiler
-            )
-            gpt_model_cfg = create_test_gpt_config()
-            container, og_ws, cfg_mod = create_test_config_container(
-                world_size_override=1, model_config=gpt_model_cfg, profiling_config=prof_cfg
-            )
-            try:
-                container.validate()
-            finally:
-                restore_get_world_size_safe(og_ws, cfg_mod)
+        prof_cfg = create_test_profiling_config(
+            use_pytorch_profiler=use_pytorch_profiler, use_nsys_profiler=use_nsys_profiler
+        )
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, profiling_config=prof_cfg
+        )
+
+        try:
+            if expect_assertion_error:
+                with pytest.raises(AssertionError, match="Exactly one of pytorch or nsys profiler should be enabled"):
+                    container.validate()  # Validation error should occur here during finalize
+            else:
+                container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_packed_sequence_micro_batch_size_validation_error(self, monkeypatch):
         """Test validation error when micro_batch_size > 1 with packed sequences."""
@@ -921,93 +926,121 @@ class TestConfigContainerValidation:
 
 class TestRerunConfigValidation:
     """
-    Test that any assertions or modifications done by __post_init__() functions
-    are idempotent when the config is unchanged. Tests the same for ConfigContainer.validate().
+    Test that finalize() functions behave correctly when called multiple times:
+    - All configs now use finalize() method for validation and computed field calculation to handle deferred overrides.
+    - finalize() may change computed fields on first call, but subsequent calls are idempotent
+    - Tests the same behavior for ConfigContainer.validate().
     """
 
-    def _check_post_init_idempotency(self, cfg_init_fn):
+    def _check_finalize_idempotency(self, cfg_init_fn):
         import copy
 
         cfg = cfg_init_fn()
         cfg_copy = copy.deepcopy(cfg)
         assert cfg == cfg_copy
 
-        # rerun post-init
-        cfg.__post_init__()
-        assert cfg == cfg_copy
+        # All configs now use finalize() method
+        cfg.finalize()
+        # For configs that may change computed fields, take a new snapshot after first finalization
+        cfg_after_finalize = copy.deepcopy(cfg)
+        # Second finalize() should be idempotent (no further changes)
+        cfg.finalize()
+        assert cfg == cfg_after_finalize
 
     def test_scheduler_config(self):
-        self._check_post_init_idempotency(create_test_scheduler_config)
+        self._check_finalize_idempotency(create_test_scheduler_config)
 
-        # Test rerun of post-init with valid and invalid changes
+        # Test rerun of finalize with valid and invalid changes
         cfg = create_test_scheduler_config(lr_decay_iters=10)
         cfg.lr_decay_iters = 20
-        cfg.__post_init__()
+        cfg.finalize()
 
         with pytest.raises(AssertionError, match="start_weight_decay"):
             cfg.start_weight_decay = -5.2
-            cfg.__post_init__()
+            cfg.finalize()
 
     def test_gptdataset_config(self):
         def gpt_dataset_seqlen_1024():
             return create_test_gpt_dataset_config(1024)
 
-        self._check_post_init_idempotency(gpt_dataset_seqlen_1024)
+        self._check_finalize_idempotency(gpt_dataset_seqlen_1024)
 
-        # Test rerun of post-init with valid and invalid changes
+        # Test rerun of finalize with valid and invalid changes
         cfg = gpt_dataset_seqlen_1024()
         cfg.random_seed = 2468
-        cfg.__post_init__()
+        cfg.finalize()
 
         with pytest.raises(AssertionError, match="reset_position_ids"):
             cfg.reset_position_ids = None
-            cfg.__post_init__()
+            cfg.finalize()
 
     def test_profiling_config(self):
-        self._check_post_init_idempotency(create_test_profiling_config)
+        self._check_finalize_idempotency(create_test_profiling_config)
 
-        # Test rerun of post-init with valid and invalid changes
+        # Test rerun of finalize with valid and invalid changes
         cfg = create_test_profiling_config()
         cfg.profile_step_end = 1000
-        cfg.__post_init__()
+        cfg.finalize()
 
         with pytest.raises(AssertionError, match="one of pytorch or nsys profiler should be enabled"):
             cfg.use_nsys_profiler = True
             cfg.use_pytorch_profiler = True
-            cfg.__post_init__()
+            cfg.finalize()
 
     def test_nvrx_straggler_config(self):
-        self._check_post_init_idempotency(create_test_nvrx_straggler_config)
+        self._check_finalize_idempotency(create_test_nvrx_straggler_config)
 
-        # Test rerun of post-init with valid and invalid changes
+        # Test rerun of finalize with valid and invalid changes
         cfg = create_test_nvrx_straggler_config(enabled=True)
         cfg.num_gpu_perf_scores_to_print = 2
-        cfg.__post_init__()
+        cfg.finalize()
 
         with pytest.raises(ValueError, match="report_time_interval must be positive"):
             cfg.report_time_interval = -100.0
-            cfg.__post_init__()
+            cfg.finalize()
 
     def test_checkpoint_config(self):
-        self._check_post_init_idempotency(create_test_checkpoint_config)
+        self._check_finalize_idempotency(create_test_checkpoint_config)
 
-        # Test rerun of post-init with valid and invalid changes
+        # Test rerun of finalize with valid and invalid changes
         cfg = create_test_checkpoint_config(ckpt_format="torch_dist")
         cfg.save = "/tmp/test_checkpoint_config"
-        cfg.__post_init__()
+        cfg.finalize()
 
         with pytest.raises(AssertionError, match="load_main_params_from_ckpt must be used with load_optim=False"):
             cfg.load_main_params_from_ckpt = True
             cfg.load_optim = True
-            cfg.__post_init__()
+            cfg.finalize()
 
     def test_mixed_precision_config(self):
         from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 
-        self._check_post_init_idempotency(bf16_with_mxfp8_mixed)
+        self._check_finalize_idempotency(bf16_with_mxfp8_mixed)
         cfg = bf16_with_mxfp8_mixed()
         cfg.grad_reduce_in_fp32 = False
-        cfg.__post_init__()
+        cfg.finalize()
+
+    def test_comm_overlap_config(self):
+        """Test that CommOverlapConfig.finalize() is idempotent and preserves user configuration."""
+
+        def create_comm_overlap_config():
+            return CommOverlapConfig(
+                tp_comm_overlap=True,
+                tp_comm_bootstrap_backend="nccl",
+            )
+
+        # Use the standard idempotency check
+        self._check_finalize_idempotency(create_comm_overlap_config)
+
+        cfg = create_comm_overlap_config()
+        cfg.finalize()
+        assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
+        assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
+        cfg.finalize()
+
+        # The user configuration should be preserved across all re-runs
+        assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
+        assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
 
     def test_rerun_validate_config_container(self):
         import copy
@@ -1066,32 +1099,71 @@ class TestCheckpointConfig:
         self, load_main_params_from_ckpt, load_optim, expect_assertion_error
     ):
         """Parametrized test for load_main_params_from_ckpt validation."""
-        if expect_assertion_error:
-            with pytest.raises(AssertionError, match="load_main_params_from_ckpt must be used with load_optim=False"):
-                create_test_checkpoint_config(
-                    load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim
-                )
-        else:
-            create_test_checkpoint_config(load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim)
+        ckpt_cfg = create_test_checkpoint_config(
+            load_main_params_from_ckpt=load_main_params_from_ckpt, load_optim=load_optim
+        )
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, checkpoint_config=ckpt_cfg
+        )
+
+        try:
+            if expect_assertion_error:
+                with pytest.raises(
+                    AssertionError, match="load_main_params_from_ckpt must be used with load_optim=False"
+                ):
+                    container.validate()  # Validation error should occur here during finalize
+            else:
+                container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_async_save_validation_error(self):
         """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
+
         # Test that async_save requires a save path
-        with pytest.raises(
-            AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
-        ):
-            create_test_checkpoint_config(async_save=True, save=None)
+        ckpt_cfg1 = create_test_checkpoint_config(async_save=True, save=None)
+        gpt_model_cfg1 = create_test_gpt_config()
+        container1, og_ws1, cfg_mod1 = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg1, checkpoint_config=ckpt_cfg1
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError, match="async_save is enabled, but save is not set. Set save to a valid path."
+            ):
+                container1.validate()
+        finally:
+            restore_get_world_size_safe(og_ws1, cfg_mod1)
 
         # Test that async_save requires use_persistent_ckpt_worker=True
-        with pytest.raises(AssertionError, match="async_save requires use_persistent_ckpt_worker=True."):
-            create_test_checkpoint_config(
-                async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=False
-            )
+        ckpt_cfg2 = create_test_checkpoint_config(
+            async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=False
+        )
+        gpt_model_cfg2 = create_test_gpt_config()
+        container2, og_ws2, cfg_mod2 = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg2, checkpoint_config=ckpt_cfg2
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="async_save requires use_persistent_ckpt_worker=True."):
+                container2.validate()
+        finally:
+            restore_get_world_size_safe(og_ws2, cfg_mod2)
 
         # should not raise an error when both conditions are met
-        create_test_checkpoint_config(
+        ckpt_cfg3 = create_test_checkpoint_config(
             async_save=True, save="/tmp/test_checkpoint_config", use_persistent_ckpt_worker=True
         )
+        gpt_model_cfg3 = create_test_gpt_config()
+        container3, og_ws3, cfg_mod3 = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg3, checkpoint_config=ckpt_cfg3
+        )
+
+        try:
+            container3.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws3, cfg_mod3)
 
     def test_async_save_format_validation_torch_dist(self, monkeypatch):
         """Test that async_save works with torch_dist format."""
@@ -1201,6 +1273,7 @@ class TestCheckpointConfig:
         optim_cfg.use_distributed_optimizer = True  # Required for precision aware optimizer
 
         dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1209,6 +1282,7 @@ class TestCheckpointConfig:
             scheduler_config=sched_cfg,
             optimizer_config=optim_cfg,
             dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -1231,6 +1305,7 @@ class TestCheckpointConfig:
         optim_cfg.use_distributed_optimizer = True  # Enable distributed optimizer for consistency
 
         dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1239,6 +1314,7 @@ class TestCheckpointConfig:
             scheduler_config=sched_cfg,
             optimizer_config=optim_cfg,
             dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -1248,3 +1324,298 @@ class TestCheckpointConfig:
             # preserve_fp32_weights should remain at its default
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestRuntimeConfigUpdate:
+    """Tests for the runtime_config_update function."""
+
+    def test_runtime_config_update_with_mixed_precision_string(self):
+        """Test runtime_config_update with mixed precision as string."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=4, model_config=gpt_cfg)
+
+        # Set mixed precision as string
+        full_cfg.mixed_precision = "bf16_mixed"
+
+        try:
+            # Verify initial state
+            assert isinstance(full_cfg.mixed_precision, str)
+            assert not hasattr(full_cfg, "data_parallel_size")
+
+            # Run runtime config update
+            runtime_config_update(full_cfg)
+
+            # Verify results
+            assert not isinstance(full_cfg.mixed_precision, str)  # Should be resolved to config object
+            assert hasattr(full_cfg, "data_parallel_size")
+            assert full_cfg.data_parallel_size == 4  # world_size / model_parallel_size
+            assert full_cfg.model.bf16 is True  # Mixed precision should be applied
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_with_comm_overlap(self):
+        """Test runtime_config_update with communication overlap configuration."""
+        from megatron.bridge.training.comm_overlap import CommOverlapConfig
+        from megatron.bridge.training.config import runtime_config_update
+
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_cfg)
+
+        full_cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+        try:
+            # Verify initial state
+            assert not hasattr(full_cfg, "data_parallel_size")
+            assert full_cfg.comm_overlap.data_parallel_size is None  # Field exists but is None
+
+            # Run runtime config update
+            runtime_config_update(full_cfg)
+
+            # Verify results
+            assert hasattr(full_cfg, "data_parallel_size")
+            assert full_cfg.data_parallel_size == 8  # world_size / model_parallel_size
+            assert full_cfg.comm_overlap.data_parallel_size == 8  # Should be set by runtime_config_update
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_finalization(self):
+        """Test that runtime_config_update properly finalizes configs."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=4, model_config=gpt_cfg)
+
+        try:
+            # Verify configs are not finalized initially (for configs that inherit from MCore)
+            if isinstance(full_cfg.dataset, GPTDatasetConfig):
+                # GPTDatasetConfig inherits from MCore, should have deferred post-init
+                assert getattr(full_cfg.dataset, "split", None) is None  # Computed field not set yet
+
+            # Run runtime config update
+            runtime_config_update(full_cfg)
+
+            # Verify configs are finalized
+            if isinstance(full_cfg.dataset, GPTDatasetConfig):
+                # Computed fields should now be set
+                assert getattr(full_cfg.dataset, "split", None) is not None
+
+            # Verify model config is finalized (computed fields set)
+            assert full_cfg.model.num_query_groups is not None
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_no_mixed_precision_or_comm_overlap(self):
+        """Test runtime_config_update with no mixed precision or comm overlap."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=2, model_config=gpt_cfg)
+
+        # Ensure no mixed precision or comm overlap
+        full_cfg.mixed_precision = None
+        full_cfg.comm_overlap = None
+
+        try:
+            # Run runtime config update
+            runtime_config_update(full_cfg)
+
+            # Verify basic functionality works
+            assert hasattr(full_cfg, "data_parallel_size")
+            assert full_cfg.data_parallel_size == 2
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_idempotency(self):
+        """Test that runtime_config_update can be called multiple times safely."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        def patched_init_method():
+            return torch.nn.init.normal_(mean=0.0, std=0.02)
+
+        gpt_cfg = create_test_gpt_config(init_method=patched_init_method, output_layer_init_method=patched_init_method)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=4, model_config=gpt_cfg)
+
+        try:
+            # Run runtime config update twice
+            runtime_config_update(full_cfg)
+            first_state = {
+                "data_parallel_size": full_cfg.data_parallel_size,
+                "model_num_query_groups": full_cfg.model.num_query_groups,
+            }
+
+            runtime_config_update(full_cfg)
+            second_state = {
+                "data_parallel_size": full_cfg.data_parallel_size,
+                "model_num_query_groups": full_cfg.model.num_query_groups,
+            }
+
+            # Verify idempotency - second call should not change anything
+            assert first_state == second_state
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestSyncAndValidateExternalCudaGraph:
+    """Tests for the `_sync_and_validate_external_cuda_graph` method of the `ConfigContainer` class."""
+
+    def test_rng_config_sync_to_model(self):
+        """Test that rng.te_rng_tracker syncs to model.use_te_rng_tracker."""
+        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=False)
+        rng_cfg = RNGConfig(te_rng_tracker=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container.rng = rng_cfg
+
+        container._sync_and_validate_external_cuda_graph()
+        # RNG config should sync to model config
+        assert container.model.use_te_rng_tracker is True
+
+    def test_rng_config_sync_preserves_model_override(self):
+        """Test that model.use_te_rng_tracker is preserved when already True."""
+        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
+        rng_cfg = RNGConfig(te_rng_tracker=False)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container.rng = rng_cfg
+
+        container._sync_and_validate_external_cuda_graph()
+        # Model config should sync to RNG config
+        assert container.rng.te_rng_tracker is True
+
+    def test_cuda_graph_mutual_exclusivity_error(self):
+        """Test that enable_cuda_graph and external_cuda_graph cannot both be True."""
+        gpt_model_cfg = create_test_gpt_config(enable_cuda_graph=True, external_cuda_graph=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        with pytest.raises(
+            AssertionError,
+            match="enable_cuda_graph and external_cuda_graph cannot be enabled at the same time",
+        ):
+            container._sync_and_validate_external_cuda_graph()
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_te_rng_tracker_auto_enable_with_enable_cuda_graph(self, mock_warn_rank_0):
+        """Test that te_rng_tracker is auto-enabled when using transformer_engine with CUDA graphs."""
+        gpt_model_cfg = create_test_gpt_config(
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=False,
+            enable_cuda_graph=True,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()
+        # Should auto-enable te_rng_tracker and warn
+        assert container.model.use_te_rng_tracker is True
+        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_te_rng_tracker_auto_enable_with_external_cuda_graph(self, mock_warn_rank_0):
+        """Test that te_rng_tracker is auto-enabled when using transformer_engine with external CUDA graphs."""
+        gpt_model_cfg = create_test_gpt_config(
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=False,
+            external_cuda_graph=True,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()
+        # Should auto-enable te_rng_tracker and warn
+        assert container.model.use_te_rng_tracker is True
+        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_te_rng_tracker_no_warn_when_already_enabled(self, mock_warn_rank_0):
+        """Test that no warning is issued when te_rng_tracker is already enabled."""
+        gpt_model_cfg = create_test_gpt_config(
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=True,
+            enable_cuda_graph=True,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()
+        # Should not warn since te_rng_tracker is already enabled
+        mock_warn_rank_0.assert_not_called()
+
+    @patch("os.getenv")
+    def test_expandable_segments_validation_error(self, mock_getenv):
+        """Test that expandable_segments:True in PYTORCH_CUDA_ALLOC_CONF raises error with external CUDA graphs."""
+        mock_getenv.side_effect = ["0", "0", "expandable_segments:True"]
+
+        gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        with pytest.raises(
+            AssertionError,
+            match="expandable_segments:True may not be safe when using CUDA Graphs",
+        ):
+            container._sync_and_validate_external_cuda_graph()
+
+    @patch("os.getenv")
+    def test_expandable_segments_validation_pass(self, mock_getenv):
+        """Test that expandable_segments validation passes when not set or set to False."""
+        # Test with expandable_segments:False
+        mock_getenv.side_effect = ["0", "0", ""]
+
+        gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()  # Should pass
+
+    def test_no_cuda_graph_features_enabled(self):
+        """Test normal case where no CUDA graph features are enabled."""
+        gpt_model_cfg = create_test_gpt_config(
+            enable_cuda_graph=False,
+            external_cuda_graph=False,
+            transformer_impl="local",
+            use_te_rng_tracker=False,
+        )
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        container._sync_and_validate_external_cuda_graph()  # Should pass without any changes
+        assert container.model.use_te_rng_tracker is False
+
+    def test_all_validations_combined(self):
+        """Test a valid configuration with external CUDA graphs that passes all validations."""
+        gpt_model_cfg = create_test_gpt_config(
+            external_cuda_graph=True,
+            transformer_impl="transformer_engine",
+            use_te_rng_tracker=True,
+            recompute_granularity="selective",
+        )
+
+        rng_cfg = RNGConfig(te_rng_tracker=True)
+
+        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+        container.rng = rng_cfg
+
+        container._sync_and_validate_external_cuda_graph()
+        assert container.model.use_te_rng_tracker is True

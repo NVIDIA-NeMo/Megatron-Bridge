@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 try:
@@ -98,6 +98,9 @@ class DeepSeekProvider(MLATransformerConfig, GPTModelProvider):
     num_layers_in_last_pipeline_stage: Optional[int] = None
     account_for_embedding_in_pipeline_split: bool = False
     account_for_loss_in_pipeline_split: bool = False
+
+    # MLA specific
+    multi_latent_attention: bool = True
 
     # fusions
     apply_rope_fusion: bool = False
