@@ -8,6 +8,7 @@
 
 parallelisms.md
 performance-guide.md
+recipe-usage.md
 ```
 
 ```{toctree}
