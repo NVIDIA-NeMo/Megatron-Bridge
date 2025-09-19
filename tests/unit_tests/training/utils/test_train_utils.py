@@ -13,11 +13,16 @@
 # limitations under the License.
 
 import unittest.mock as mock
+from functools import partial
 
 import pytest
 import torch
 
-from megatron.bridge.training.utils.train_utils import training_log
+from megatron.bridge.training.utils.train_utils import (
+    check_forward_step_func_num_args,
+    maybe_inject_state,
+    training_log,
+)
 
 
 class TestTrainingLog:
@@ -843,3 +848,210 @@ class TestTrainingLog:
         writer.add_scalar.assert_any_call("mem-allocated-bytes", 1536000000, 10)
         writer.add_scalar.assert_any_call("mem-max-allocated-bytes", 1792000000, 10)
         writer.add_scalar.assert_any_call("mem-allocated-count", 5000, 10)
+
+
+class TestCheckForwardStepFuncNumArgs:
+    """Test suite for the check_forward_step_func_num_args function."""
+
+    def test_two_args_function(self):
+        """Test function with 2 arguments."""
+
+        def forward_step_func_2_args(data_iterator, model):
+            return None
+
+        result = check_forward_step_func_num_args(forward_step_func_2_args)
+        assert result == 2
+
+    def test_three_args_function(self):
+        """Test function with 3 arguments."""
+
+        def forward_step_func_3_args(data_iterator, model, return_schedule_plan=False):
+            return None
+
+        result = check_forward_step_func_num_args(forward_step_func_3_args)
+        assert result == 3
+
+    def test_four_args_function(self):
+        """Test function with 4 arguments."""
+
+        def forward_step_func_4_args(state, data_iterator, model, return_schedule_plan=False):
+            return None
+
+        result = check_forward_step_func_num_args(forward_step_func_4_args)
+        assert result == 4
+
+    def test_one_arg_function_raises_assertion_error(self):
+        """Test function with 1 argument raises AssertionError."""
+
+        def forward_step_func_1_arg(data_iterator):
+            return None
+
+        with pytest.raises(AssertionError) as exc_info:
+            check_forward_step_func_num_args(forward_step_func_1_arg)
+
+        error_message = str(exc_info.value)
+        assert "forward_step_func has 1 arguments" in error_message
+        assert "Only the following signatures are supported" in error_message
+        assert "2 args:" in error_message
+        assert "3 args:" in error_message
+        assert "4 args:" in error_message
+
+    def test_five_args_function_raises_assertion_error(self):
+        """Test function with 5 arguments raises AssertionError."""
+
+        def forward_step_func_5_args(state, data_iterator, model, return_schedule_plan, extra_arg):
+            return None
+
+        with pytest.raises(AssertionError) as exc_info:
+            check_forward_step_func_num_args(forward_step_func_5_args)
+
+        error_message = str(exc_info.value)
+        assert "forward_step_func has 5 arguments" in error_message
+        assert "Only the following signatures are supported" in error_message
+
+    def test_zero_args_function_raises_assertion_error(self):
+        """Test function with 0 arguments raises AssertionError."""
+
+        def forward_step_func_0_args():
+            return None
+
+        with pytest.raises(AssertionError) as exc_info:
+            check_forward_step_func_num_args(forward_step_func_0_args)
+
+        error_message = str(exc_info.value)
+        assert "forward_step_func has 0 arguments" in error_message
+
+    def test_lambda_function_two_args(self):
+        """Test lambda function with 2 arguments."""
+        forward_step_func = lambda data_iterator, model: None
+
+        result = check_forward_step_func_num_args(forward_step_func)
+        assert result == 2
+
+    def test_lambda_function_four_args(self):
+        """Test lambda function with 4 arguments."""
+        forward_step_func = lambda state, data_iterator, model, return_schedule_plan=False: None
+
+        result = check_forward_step_func_num_args(forward_step_func)
+        assert result == 4
+
+    def test_partial_function(self):
+        """Test partial function (should count remaining parameters)."""
+
+        def original_func(state, data_iterator, model, return_schedule_plan=False):
+            return None
+
+        # Create partial function with state bound
+        partial_func = partial(original_func, mock.MagicMock())
+
+        result = check_forward_step_func_num_args(partial_func)
+        assert result == 3  # 4 original args - 1 bound arg = 3 remaining
+
+
+class TestMaybeInjectState:
+    """Test suite for the maybe_inject_state function."""
+
+    def test_inject_state_four_args_function(self):
+        """Test state injection for 4-argument function."""
+
+        def forward_step_func_4_args(state, data_iterator, model, return_schedule_plan=False):
+            return f"Called with state: {state.name}"
+
+        mock_state = mock.MagicMock()
+        mock_state.name = "test_state"
+
+        result_func = maybe_inject_state(forward_step_func_4_args, mock_state)
+
+        # Result should be a partial function
+        assert isinstance(result_func, partial)
+
+        # Test calling the partial function
+        mock_data_iterator = mock.MagicMock()
+        mock_model = mock.MagicMock()
+
+        result = result_func(mock_data_iterator, mock_model, return_schedule_plan=True)
+        assert result == "Called with state: test_state"
+
+    def test_inject_state_four_args_with_explicit_num_args(self):
+        """Test state injection when num_fw_args is explicitly provided."""
+
+        def forward_step_func_4_args(state, data_iterator, model, return_schedule_plan=False):
+            return f"Called with state: {state.name}"
+
+        mock_state = mock.MagicMock()
+        mock_state.name = "test_state"
+
+        result_func = maybe_inject_state(forward_step_func_4_args, mock_state, num_fw_args=4)
+
+        # Result should be a partial function
+        assert isinstance(result_func, partial)
+
+    def test_no_injection_three_args_function(self):
+        """Test no state injection for 3-argument function."""
+
+        def forward_step_func_3_args(data_iterator, model, return_schedule_plan=False):
+            return "Called without state injection"
+
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(forward_step_func_3_args, mock_state)
+
+        # Result should be the original function
+        assert result_func is forward_step_func_3_args
+        assert not isinstance(result_func, partial)
+
+    def test_no_injection_two_args_function(self):
+        """Test no state injection for 2-argument function."""
+
+        def forward_step_func_2_args(data_iterator, model):
+            return "Called without state injection"
+
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(forward_step_func_2_args, mock_state)
+
+        # Result should be the original function
+        assert result_func is forward_step_func_2_args
+        assert not isinstance(result_func, partial)
+
+    def test_no_injection_three_args_with_explicit_num_args(self):
+        """Test no state injection when num_fw_args is explicitly provided as 3."""
+
+        def forward_step_func_3_args(data_iterator, model, return_schedule_plan=False):
+            return "Called without state injection"
+
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(forward_step_func_3_args, mock_state, num_fw_args=3)
+
+        # Result should be the original function
+        assert result_func is forward_step_func_3_args
+
+    def test_no_injection_two_args_with_explicit_num_args(self):
+        """Test no state injection when num_fw_args is explicitly provided as 2."""
+
+        def forward_step_func_2_args(data_iterator, model):
+            return "Called without state injection"
+
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(forward_step_func_2_args, mock_state, num_fw_args=2)
+
+        # Result should be the original function
+        assert result_func is forward_step_func_2_args
+
+    def test_inject_state_with_partial_function(self):
+        """Test state injection with a function that's already partial."""
+
+        def original_func(arg1, arg2, data_iterator, model):
+            return f"Called with {arg1}, {arg2}"
+
+        # Create partial function (simulating pre-bound arguments)
+        partial_func = partial(original_func, "bound_arg1", "bound_arg2")
+
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(partial_func, mock_state)
+
+        # Should return original partial since it has 2 remaining args
+        assert result_func is partial_func

@@ -611,11 +611,13 @@ def report_memory(name: str) -> None:
 
 
 def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_args: Optional[int] = None) -> Callable:
-    """Optionally inject the GlobalState object into the forward step function.
+    """Optionally inject GlobalState into a 4-arg forward_step function.
 
-    Checks the number of arguments of `forward_step_func`. If it expects 3 arguments,
-    it assumes the first argument is the GlobalState and returns a partial function
-    with the state injected.
+    - If the function has 4 parameters (state, data_iterator, model, return_schedule_plan),
+      bind the provided state via functools.partial to produce a callable that accepts
+      (data_iterator, model, return_schedule_plan).
+    - If the function already has 3 parameters (data_iterator, model, return_schedule_plan)
+      or 2 parameters (data_iterator, model), return it unchanged.
 
     Args:
         forward_step_func: The original forward step function.
@@ -638,8 +640,9 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
 def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
     """Check if the forward step function has a supported number of arguments.
 
-    Currently supports 2 or 4 arguments:
+    Currently supports 2, 3, or 4 arguments:
     - func(data_iterator, model)
+    - func(data_iterator, model, return_schedule_plan: bool = False)  # state pre-bound via partial
     - func(state, data_iterator, model, return_schedule_plan: bool = False)
 
     Args:
@@ -655,8 +658,9 @@ def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
     fail_msg = f"""
     forward_step_func has {num_fw_args} arguments. Only the following signatures are supported:
         2 args: forward_step_func(data_iterator: Iterable, model: GPTModel)
+        3 args: forward_step_func(data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
         4 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
     """
-    assert num_fw_args in (2, 4), fail_msg
+    assert num_fw_args in (2, 3, 4), fail_msg
 
     return num_fw_args
