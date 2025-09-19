@@ -12,34 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from typing import List
+import copy
+from dataclasses import dataclass
+from typing import Any, Optional
+from megatron.bridge.models.mamba.nemotron_h_provider import NemotronNano12Bv2Provider
+from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
+from megatron.core.models.multimodal.llava_spec import decoder_model_with_transformer_engine_default_spec
+from megatron.core.models.multimodal.llava_model import LLaVAModel
+from megatron.core.jit import jit_fuser
+import torch
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-
+@jit_fuser
+def fast_gelu(x: torch.Tensor) -> torch.Tensor:
+    return 0.5 * x * (1.0 + torch.tanh(x * 0.7978845608 * (1.0 + 0.044715 * x * x)))
 
 @dataclass
-class NemotronVLModelProvider(GPTModelProvider):
+class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
     """Configuration provider for Nemotron-VL models."""
 
     # ------------------------------------------------------------------
-    # Language configuration – inherit sensible defaults from GPTProvider
+    # Language configuration – inherit sensible defaults from NemotronNano12Bv2Provider
     # ------------------------------------------------------------------
-    gated_linear_unit: bool = False
+
     # For VL models we do *not* scatter embeddings across the sequence
     # parallel region because we need to splice vision embeddings later.
     scatter_embedding_sequence_parallel: bool = False
+    calculate_per_token_loss: bool = True
+    attention_softmax_in_fp32: bool = True
 
-    # vision_config: _DummyVisionConfig = field(default_factory=_DummyVisionConfig)
-
-    # Special tokens (values here follow Qwen-VL for convenience)
-    # bos_token_id: int = 151643
-    # eos_token_id: int = 151645
-    # vision_start_token_id: int = 151652
-    # vision_end_token_id: int = 151653
-    # vision_token_id: int = 151654
-    # image_token_id: int = 151655
-    # video_token_id: int = 151656
+    vision_model_type: str = "radio"
+    language_model_type: str = "nemotron5-hybrid-12b"
+    generation_config: Optional[Any] = None
 
     # Freeze knobs useful for transfer-learning scenarios
     freeze_language_model: bool = False
@@ -62,94 +65,58 @@ class NemotronVLModelProvider(GPTModelProvider):
         # ------------------------------------------------------------------
         # Build configs and layer specs
         # ------------------------------------------------------------------
-        import copy
-        from megatron.core.transformer.enums import AttnMaskType
-        from megatron.core.transformer.spec_utils import import_module
-        from megatron.core.models.multimodal.llava_model import LLaVAModel
-        from megatron.core.models.vision.vit_layer_specs import (
-            get_vit_layer_with_local_spec,
-        )
 
         # Language config is basically *self* (GPTModelProvider), but we make a
         # shallow copy so tweaks do not leak back.
-        language_cfg = copy.copy(self)
-
-        # Determine language layer spec using the same helper logic as GPTProvider
-        if callable(language_cfg.transformer_layer_spec):
-            language_spec = language_cfg.transformer_layer_spec(language_cfg)
-        else:
-            language_spec = language_cfg.transformer_layer_spec
+        language_cfg = copy.deepcopy(self)
 
         # Vision transformer config – start from language_cfg but ensure SP/CP disabled
-        vision_cfg = copy.copy(language_cfg)
+        vision_cfg = copy.deepcopy(language_cfg)
         vision_cfg.sequence_parallel = False
         vision_cfg.context_parallel_size = 1
         vision_cfg.tp_comm_overlap = False
-
-        # Use simple local ViT spec (no TE dependency)
-        vision_spec = get_vit_layer_with_local_spec()
+        vision_cfg.recompute_granularity = None
+        vision_cfg.recompute_method = None
+        vision_cfg.recompute_num_layers = None
+        # Overrides for vision_model_type = "radio"
+        vision_cfg.num_layers = 32
+        vision_cfg.num_attention_heads = 16
+        vision_cfg.add_bias_linear = True
+        vision_cfg.add_qkv_bias = True
+        vision_cfg.hidden_size = 1280
+        vision_cfg.ffn_hidden_size = 5120
+        vision_cfg.gated_linear_unit = False
+        vision_cfg.activation_func = fast_gelu
+        vision_cfg.kv_channels = 80
+        vision_cfg.num_query_groups = 16
+        vision_cfg.layernorm_zero_centered_gamma = False
+        vision_cfg.apply_query_key_layer_scaling = False
+        vision_cfg.attention_softmax_in_fp32 = True
+        vision_cfg.normalization = 'LayerNorm'
+        vision_cfg.qk_layernorm = False
+        vision_cfg.layernorm_epsilon = 1e-6
 
         # Vision-projection config/spec: a tiny two-layer MLP; for now just reuse
         # the MLP sub-modules from the language layer spec if available.
-        vision_proj_cfg = copy.copy(language_cfg)
+        vision_proj_cfg = copy.deepcopy(language_cfg)
         vision_proj_cfg.sequence_parallel = False
         vision_proj_cfg.context_parallel_size = 1
+        vision_proj_cfg.tp_comm_overlap = False
+        vision_proj_cfg.recompute_granularity = None
+        vision_proj_cfg.recompute_method = None
+        vision_proj_cfg.recompute_num_layers = None
+        # Overrides for language_model_type = "nemotron5-hybrid-12b"
+        vision_proj_cfg.ffn_hidden_size = 20480
+        vision_proj_cfg.bias_activation_fusion = False
 
-        if hasattr(language_spec.submodules, "mlp") and hasattr(language_spec.submodules.mlp, "submodules"):
-            vision_proj_spec = copy.deepcopy(language_spec.submodules.mlp.submodules)
-        else:
-            vision_proj_spec = vision_spec.submodules  # fallback
+
+        language_spec = mamba_stack_spec
+        vision_spec = decoder_model_with_transformer_engine_default_spec()
+        vision_proj_spec = copy.deepcopy(language_spec.submodules.mlp_layer.submodules.mlp.submodules)
 
         # ------------------------------------------------------------------
         # Instantiate LLaVA
         # ------------------------------------------------------------------
-        # model = LLaVAModel(
-        #     language_transformer_config=language_config,
-        #     language_transformer_layer_spec=language_transformer_layer_spec,
-        #     language_vocab_size=args.padded_vocab_size,
-        #     language_max_sequence_length=args.decoder_seq_length,
-        #     vision_transformer_config=vision_config,
-        #     vision_transformer_layer_spec=vision_transformer_layer_spec,
-        #     drop_vision_class_token=args.disable_vision_class_token,
-        #     vision_projection_config=vision_projection_config,
-        #     vision_projection_layer_spec=vision_projection_layer_spec,
-        #     vision_projection_type="mlp",
-        #     allow_missing_vision_projection_checkpoint=args.allow_missing_vision_projection_checkpoint,
-        #     parallel_output=parallel_output,
-        #     share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
-        #     language_position_embedding_type=args.position_embedding_type,
-        #     language_rotary_percent=args.rotary_percent,
-        #     pre_process=pre_process,
-        #     post_process=post_process,
-        #     add_encoder=add_encoder,
-        #     add_decoder=add_decoder,
-        #     img_h=args.img_h,
-        #     img_w=args.img_w,
-        #     patch_dim=args.patch_dim,
-        #     language_rotary_base=args.rotary_base,
-        #     language_rope_scaling=args.use_rope_scaling,
-        #     hybrid_attention_ratio=args.hybrid_attention_ratio,
-        #     hybrid_mlp_ratio=args.hybrid_mlp_ratio,
-        #     hybrid_override_pattern=args.hybrid_override_pattern,
-        #     fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
-        #     image_token_index=image_token_index,
-        #     pixel_shuffle=args.pixel_shuffle,
-        #     tile_tags=tile_tags,
-        #     dynamic_resolution=args.dynamic_resolution,
-        #     max_num_tiles=args.max_num_tiles,
-        #     tokenizer_type=args.tokenizer_prompt_format,
-        #     use_vision_backbone_fp8_arch=args.use_vision_backbone_fp8_arch,
-        #     image_break_token=tokenizer.convert_tokens_to_ids(args.image_break_token) if args.image_break_token is not None else None,
-        #     conv_merging=args.conv_merging,
-        #     allow_missing_conv_merge_checkpoint=args.allow_missing_conv_merge_checkpoint,
-        #     efficient_video_sampling_variant=args.efficient_video_sampling_variant,
-        #     sound_model=sound_model,
-        #     sound_projection=sound_projection,
-        #     sound_token_index=sound_token_index,
-        # )
-
-
-
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,
             language_transformer_layer_spec=language_spec,
@@ -157,14 +124,13 @@ class NemotronVLModelProvider(GPTModelProvider):
             language_max_sequence_length=self.seq_length,
             vision_transformer_config=vision_cfg,
             vision_transformer_layer_spec=vision_spec,
-            drop_vision_class_token=False,
+            drop_vision_class_token=True,
             vision_projection_config=vision_proj_cfg,
             vision_projection_layer_spec=vision_proj_spec,
             vision_projection_type="mlp",
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
             language_position_embedding_type=self.position_embedding_type,
-            language_rotary_percent=self.rotary_percent,
             pre_process=pre_process if pre_process is not None else True,
             post_process=post_process if post_process is not None else True,
             add_encoder=True,
@@ -172,6 +138,14 @@ class NemotronVLModelProvider(GPTModelProvider):
             img_h=512,
             img_w=512,
             patch_dim=16,
+            hybrid_attention_ratio=0.0,
+            hybrid_mlp_ratio=0.0,
+            hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+            image_token_index=131072,
+            pixel_shuffle=True,
+            max_num_tiles=12,
+            tokenizer_type="nemotron-h-5p5-reasoning",
+            use_vision_backbone_fp8_arch=True,  # Note: this is true in mlm code
         )
 
         from .modeling_nemotron_vl import NemotronVLModel

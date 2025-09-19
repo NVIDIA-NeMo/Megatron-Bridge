@@ -162,11 +162,14 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             text=[text],
             images=image_inputs,
             videos=video_inputs,
-            padding=True,
+            padding=processor.tokenizer.pad_token is not None,
             return_tensors="pt",
         )
-
-        return inputs.input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        try: 
+            image_grid_thw = inputs.image_grid_thw
+        except AttributeError:
+            image_grid_thw = None
+        return inputs.input_ids, inputs.pixel_values, image_grid_thw, messages
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")

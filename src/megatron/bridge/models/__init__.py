@@ -106,7 +106,7 @@ from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.models.nemotron_vl import (
     NemotronVLBridge,
     NemotronVLModel,
-    NemotronVLModelProvider,
+    NemotronNano12Bv2Provider,
 )
 
 
@@ -191,5 +191,5 @@ __all__ = [
     # Nemotron VL
     "NemotronVLModel",
     "NemotronVLBridge",
-    "NemotronVLModelProvider",
+    "NemotronNano12Bv2VLModelProvider",
 ]
