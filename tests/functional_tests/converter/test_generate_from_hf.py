@@ -47,7 +47,7 @@ class TestGenerateFromHF:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp_file:
             output_file = tmp_file.name
 
-        # Run generate_from_hf.py with specified parallelism configuration
+        # Run hf_to_megatron_generate_text.py with specified parallelism configuration
         cmd = [
             "python",
             "-m",
@@ -60,7 +60,7 @@ class TestGenerateFromHF:
             "--data-file=/workspace/.coverage",
             "--source=/workspace/",
             "--parallel-mode",
-            "examples/models/generate_from_hf.py",
+            "examples/conversion/hf_to_megatron_generate_text.py",
             "--hf_model_path",
             "meta-llama/Llama-3.2-1B",
             "--prompt",
