@@ -552,6 +552,7 @@ def save_checkpoint(
     sharded_sd_metadata = _build_sharded_state_dict_metadata(
         cfg.optimizer.use_distributed_optimizer, ckpt_cfg.fully_parallel_save, ckpt_cfg.ckpt_format
     )
+    sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
     if cfg.optimizer.use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
@@ -630,7 +631,7 @@ def save_checkpoint(
                 content_metadata=sharded_sd_metadata,
             )
             # [ModelOpt]: save sharded modelopt_state
-            save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
+            # save_sharded_modelopt_state(model, checkpoint_name, (ckpt_cfg.ckpt_format, 1))
     else:
         # [ModelOpt]: Inject modelopt_state into state_dict
         if ckpt_type == CheckpointType.LOCAL:
