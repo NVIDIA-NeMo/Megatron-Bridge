@@ -879,12 +879,34 @@ class ConfigContainer(Container):
                 "recompute_granularity must not be full when CUDA Graphs are enabled."
             )
 
+    def _reset_dependent_attributes(self) -> None:
+        """Reset attributes that are auto-calculated based on other attributes.
+        
+        This ensures that when recipe overrides change the base attributes,
+        the dependent attributes get recalculated properly in __post_init__.
+        
+        This fixes issues like microbatch_group_size_per_vp_stage not being
+        updated when pipeline_model_parallel_size changes via recipe overrides.
+        """
+        # These are set in Megatron-LM's ModelParallelConfig.__post_init__()
+        if hasattr(self.model, 'microbatch_group_size_per_vp_stage'):
+            self.model.microbatch_group_size_per_vp_stage = None
+
+        # if hasattr(self.model, 'expert_tensor_parallel_size'):
+        #     self.model.expert_tensor_parallel_size = None
+
+        if hasattr(self.model, 'autocast_dtype'):
+            self.model.autocast_dtype = None
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+
+        self._reset_dependent_attributes()
+
 
         if isinstance(self.dataset, GPTDatasetConfig):
             self.dataset.finalize()
@@ -900,6 +922,8 @@ class ConfigContainer(Container):
             self.profiling.finalize()
         if self.nvrx_straggler is not None:
             self.nvrx_straggler.finalize()
+
+
 
         # Re-run post-inits of sub-configs
         for f in fields(self):

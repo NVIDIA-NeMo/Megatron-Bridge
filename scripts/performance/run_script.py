@@ -49,16 +49,21 @@ def main():
     elif args.model_name == "llama31" and args.model_size == "405b":
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
+        enable_deepep = bool(args.gpu.lower() in ["h100"])
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
             # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
-            pipeline_parallelism=4,
-            virtual_pipeline_parallelism=1,
+            pipeline_parallelism=8,
+            virtual_pipeline_parallelism=2,
+            enable_deepep=enable_deepep,
         )
         from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
-        recipe.model = apply_moe_token_drop(recipe.model)
+        if enable_deepep:
+            recipe.model.moe_router_force_load_balancing = True
+        else:
+            recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 

@@ -106,6 +106,12 @@ def parse_cli_args():
         default="ds",
     )
     parser.add_argument(
+        "--localrun",
+        help="If true, prints sbatch script to terminal without launching experiment.",
+        required=False,
+        action="store_true",
+    )
+    parser.add_argument(
         "--task",
         choices=["pretrain", "sft", "lora"],
         help="Task to run. Defaults to 'pretrain'",
