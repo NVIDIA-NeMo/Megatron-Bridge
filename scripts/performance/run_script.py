@@ -49,7 +49,7 @@ def main():
     elif args.model_name == "llama31" and args.model_size == "405b":
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
-        enable_deepep = bool(args.gpu.lower() in ["h100"])
+        enable_deepep = False # bool(args.gpu.lower() in ["h100"])
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -109,6 +109,11 @@ def main():
     if yaml_overrides_omega is not None:
         apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
     recipe.model.gradient_accumulation_fusion = True
+
+    recipe.rng.te_rng_tracker = True
+    recipe.model.external_cuda_graph = True
+    recipe.model.cuda_graph_scope = "attn"
+    recipe.model.use_te_rng_tracker = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
