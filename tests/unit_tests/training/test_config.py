@@ -17,10 +17,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -157,6 +159,11 @@ def create_test_distributed_init_config(**kwargs: Any) -> DistributedInitConfig:
     return DistributedInitConfig(**defaults)
 
 
+def create_test_ddp_config(**kwargs: Any) -> DistributedDataParallelConfig:
+    """Creates an instance of DistributedDataParallelConfig with defaults for testing."""
+    return DistributedDataParallelConfig(**kwargs)
+
+
 def create_test_profiling_config(**kwargs: Any) -> ProfilingConfig:
     """Creates an instance of ProfilingConfig with defaults for testing."""
     defaults = {
@@ -189,6 +196,7 @@ def create_test_config_container(
     checkpoint_config: Optional[CheckpointConfig] = None,
     dist_config: Optional[DistributedInitConfig] = None,
     profiling_config: Optional[ProfilingConfig] = None,
+    ddp_config: Optional[DistributedDataParallelConfig] = None,
 ):
     """
     Helper to create a ConfigContainer with specified or default test configurations.
@@ -221,8 +229,6 @@ def create_test_config_container(
     else:
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
 
-    from megatron.core.distributed import DistributedDataParallelConfig
-
     container = ConfigContainer(
         train=train_config or create_test_training_config(),
         model=model_config,
@@ -233,7 +239,7 @@ def create_test_config_container(
         tokenizer=tokenizer_config or create_test_tokenizer_config(),
         checkpoint=checkpoint_config or create_test_checkpoint_config(),
         dist=dist_config or create_test_distributed_init_config(),
-        ddp=DistributedDataParallelConfig(),
+        ddp=ddp_config or create_test_ddp_config(),
         rng=RNGConfig(),
         rerun_state_machine=RerunStateMachineConfig(),
         profiling=profiling_config,
@@ -469,6 +475,7 @@ class TestConfigContainerValidation:
         dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=False)
         opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
         chkpt_cfg = create_test_checkpoint_config(ckpt_format="torch_dist")
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=4,
@@ -476,6 +483,7 @@ class TestConfigContainerValidation:
             dist_config=dist_cfg,
             optimizer_config=opt_cfg,
             checkpoint_config=chkpt_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -1009,6 +1017,28 @@ class TestRerunConfigValidation:
         cfg.grad_reduce_in_fp32 = False
         cfg.__post_init__()
 
+    def test_comm_overlap_config(self):
+        """Test that CommOverlapConfig.__post_init__() is idempotent and preserves user configuration."""
+
+        def create_comm_overlap_config():
+            return CommOverlapConfig(
+                tp_comm_overlap=True,
+                tp_comm_bootstrap_backend="nccl",
+            )
+
+        # Use the standard idempotency check
+        self._check_post_init_idempotency(create_comm_overlap_config)
+
+        cfg = create_comm_overlap_config()
+        assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
+        assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
+        cfg.__post_init__()
+        cfg.__post_init__()
+
+        # The user configuration should be preserved across all re-runs
+        assert cfg.user_comm_overlap_cfg.tp_comm_bootstrap_backend == "nccl"
+        assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
+
     def test_rerun_validate_config_container(self):
         import copy
         from dataclasses import fields
@@ -1201,6 +1231,7 @@ class TestCheckpointConfig:
         optim_cfg.use_distributed_optimizer = True  # Required for precision aware optimizer
 
         dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1209,6 +1240,7 @@ class TestCheckpointConfig:
             scheduler_config=sched_cfg,
             optimizer_config=optim_cfg,
             dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
@@ -1231,6 +1263,7 @@ class TestCheckpointConfig:
         optim_cfg.use_distributed_optimizer = True  # Enable distributed optimizer for consistency
 
         dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1239,6 +1272,7 @@ class TestCheckpointConfig:
             scheduler_config=sched_cfg,
             optimizer_config=optim_cfg,
             dist_config=dist_cfg,
+            ddp_config=ddp_cfg,
         )
         try:
             container.validate()
