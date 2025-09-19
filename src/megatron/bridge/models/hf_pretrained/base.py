@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, Dict, List, Optional, Union
@@ -53,15 +55,90 @@ class PreTrainedBase(ABC):
     def __init__(self, **kwargs):
         self._state_dict_accessor: Optional[StateDict] = None
         self.init_kwargs = kwargs
+        # Store the original source path for custom modeling file preservation
+        self._original_source_path: Optional[Union[str, Path]] = None
 
     def get_artifacts(self) -> Dict[str, str]:
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
 
+    def _copy_custom_modeling_files(self, source_path: Union[str, Path], target_path: Union[str, Path]) -> None:
+        """Copy custom modeling files from source to target directory.
+        
+        This preserves custom modeling files that were used during model loading
+        with trust_remote_code=True, ensuring the saved model can be loaded properly.
+        
+        Args:
+            source_path: Source directory containing custom modeling files
+            target_path: Target directory to copy files to
+        """
+        source_path = Path(source_path)
+        target_path = Path(target_path)
+        
+        # Common custom modeling file patterns
+        custom_file_patterns = [
+            "modeling_*.py",
+            "configuration_*.py", 
+            "tokenization_*.py",
+            "processing_*.py",
+            "feature_extraction_*.py"
+        ]
+        
+        copied_files = []
+        
+        # First, try to copy from local directory if it exists
+        if source_path.exists() and source_path.is_dir():
+            for pattern in custom_file_patterns:
+                for file_path in source_path.glob(pattern):
+                    if file_path.is_file():
+                        target_file = target_path / file_path.name
+                        try:
+                            shutil.copy2(file_path, target_file)
+                            copied_files.append(file_path.name)
+                        except (OSError, IOError):
+                            # Silently skip files that can't be copied
+                            pass
+        
+        # If no files were copied and source_path looks like a HuggingFace Hub ID,
+        # try to download the custom modeling files directly from the Hub
+        if not copied_files and "/" in str(source_path) and not source_path.exists():
+            try:
+                from huggingface_hub import hf_hub_download, list_repo_files
+                
+                # Get list of Python files in the repository
+                repo_files = list_repo_files(str(source_path))
+                python_files = [f for f in repo_files if f.endswith('.py')]
+                
+                for py_file in python_files:
+                    # Check if it matches our custom file patterns
+                    if any(py_file.startswith(pattern.replace('*.py', '').replace('*', '')) 
+                           for pattern in custom_file_patterns):
+                        try:
+                            downloaded_file = hf_hub_download(
+                                repo_id=str(source_path),
+                                filename=py_file,
+                                local_dir=target_path,
+                                local_dir_use_symlinks=False
+                            )
+                            copied_files.append(py_file)
+                        except Exception:
+                            # Silently skip files that can't be downloaded
+                            pass
+                            
+            except Exception:
+                # If HuggingFace Hub operations fail, silently continue
+                pass
+        
+        return copied_files
+
     def save_artifacts(self, save_directory: Union[str, Path]):
         """
         Saves all loaded, generic artifacts that have a `save_pretrained` method
         to the specified directory. Note: This does not save the `model` attribute.
+        
+        If the model was loaded with trust_remote_code=True, this method will also
+        attempt to preserve any custom modeling files to ensure the saved model
+        can be loaded properly.
         """
         save_path = Path(save_directory)
         save_path.mkdir(parents=True, exist_ok=True)
@@ -84,6 +161,21 @@ class PreTrainedBase(ABC):
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
                 artifact.save_pretrained(save_path)
+                
+        # Preserve custom modeling files if trust_remote_code was used
+        if (hasattr(self, 'trust_remote_code') and self.trust_remote_code):
+            # Try original source path first, then fallback to model_name_or_path
+            source_paths = []
+            if hasattr(self, '_original_source_path') and self._original_source_path:
+                source_paths.append(self._original_source_path)
+            if hasattr(self, 'model_name_or_path') and self.model_name_or_path:
+                source_paths.append(self.model_name_or_path)
+                
+            for source_path in source_paths:
+                copied_files = self._copy_custom_modeling_files(source_path, save_path)
+                if copied_files:
+                    # Successfully copied files, no need to try other paths
+                    break
 
     @abstractmethod
     def _load_model(self) -> PreTrainedModel:
