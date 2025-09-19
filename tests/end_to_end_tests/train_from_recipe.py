@@ -299,14 +299,18 @@ def setup_argument_parser():
     # Training modes
     parser.add_argument("--pretrain", action="store_true", help="Run pretraining")
     parser.add_argument("--finetune", action="store_true", help="Run finetuning")
-    parser.add_argument("--config-name", type=str, default=None, help="Config name (defaults to pretrain_config and finetune_config")
+    parser.add_argument(
+        "--config-name", type=str, default=None, help="Config name (defaults to pretrain_config and finetune_config"
+    )
 
     # Training configuration
     parser.add_argument("--max-steps", type=int, default=100, help="Number of training steps")
     parser.add_argument("--gbs", type=int, default=8, help="Global batch size")
     parser.add_argument("--mbs", type=int, default=1, help="Micro batch size")
     parser.add_argument("--seq-length", type=int, help="Sequence length")
-    parser.add_argument("--precision-config-name", type=str, default=None, help="Precision config name in mixed_precision.py")
+    parser.add_argument(
+        "--precision-config-name", type=str, default=None, help="Precision config name in mixed_precision.py"
+    )
 
     # PEFT configuration
     parser.add_argument("--peft-scheme", type=str, default=None, help="PEFT scheme")

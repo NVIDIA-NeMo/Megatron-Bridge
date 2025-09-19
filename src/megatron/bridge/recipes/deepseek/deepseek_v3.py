@@ -316,7 +316,7 @@ def pretrain_config_32nodes(**kwargs):
 
     Returns:
         ConfigContainer: Configuration for pre-training.
-    """    
+    """
     return pretrain_config(
         pipeline_parallelism=8,
         expert_parallelism=32,
