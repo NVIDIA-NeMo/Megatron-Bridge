@@ -17,8 +17,13 @@
 import time
 from unittest.mock import Mock, patch
 
+import torch
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+from megatron.core.transformer import MegatronModule
 
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, TrainingConfig
+from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.train import (
     _handle_mxfp8_param_buffer_copy,
     checkpoint_and_decide_exit,
@@ -760,3 +765,264 @@ class TestCheckpointAndDecideExit:
         assert save_call_args[0][0] == state  # state argument
         assert save_call_args[0][1] == args["model"]  # model argument
         assert "train_data_iterator" in save_call_args[1]
+
+
+class TestEvaluateAndPrintResults:
+    """Unit tests for evaluate_and_print_results function."""
+
+    def _create_mock_global_state(self, multiple_validation_sets=False, blend_per_split=None):
+        """Create a mock GlobalState for testing."""
+        mock_state = Mock(spec=GlobalState)
+        mock_state.train_state = Mock(spec=TrainState)
+        mock_state.train_state.step = 100
+        mock_state.train_state.consumed_train_samples = 1000
+
+        # Mock config
+        mock_config = Mock(spec=ConfigContainer)
+        mock_config.train = Mock(spec=TrainingConfig)
+        mock_config.train.eval_iters = 2
+        mock_config.train.global_batch_size = 32
+        mock_config.train.micro_batch_size = 8
+        mock_config.data_parallel_size = 4
+        mock_config.model = Mock()
+        mock_config.model.seq_length = 512
+        mock_config.logger = Mock()
+        mock_config.logger.log_validation_ppl_to_tensorboard = True
+
+        # Mock dataset config
+        mock_dataset_config = Mock(spec=GPTDatasetConfig)
+        mock_dataset_config.multiple_validation_sets = multiple_validation_sets
+        mock_dataset_config.blend_per_split = blend_per_split
+        mock_config.dataset = mock_dataset_config
+
+        mock_state.cfg = mock_config
+
+        # Mock timers
+        mock_state.timers = Mock()
+        mock_timer = Mock()
+        mock_timer.start = Mock()
+        mock_timer.stop = Mock()
+        mock_timer.elapsed = Mock(return_value=1.0)
+        mock_state.timers.return_value = mock_timer
+
+        # Mock loggers
+        mock_state.tensorboard_logger = Mock()
+        mock_state.wandb_logger = Mock()
+
+        return mock_state
+
+    def _create_mock_model(self):
+        """Create a mock model for testing."""
+        mock_model = Mock(spec=MegatronModule)
+        mock_model.eval = Mock()
+        mock_model.train = Mock()
+        return [mock_model]
+
+    def _create_mock_data_iterator(self, single=True):
+        """Create mock data iterator(s) for testing."""
+        if single:
+            return Mock()
+        else:
+            # Return list of mock data iterators for multiple datasets
+            return [Mock(), Mock()]
+
+    @patch("megatron.bridge.training.eval.evaluate")
+    @patch("megatron.bridge.utils.common_utils.is_last_rank")
+    @patch("megatron.bridge.utils.common_utils.print_rank_last")
+    @patch("torch.distributed.get_world_size")
+    @patch("torch.distributed.get_rank")
+    def test_evaluate_and_print_results_single_dataset(
+        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+    ):
+        """Test original single dataset behavior in evaluate_and_print_results."""
+        # Setup mocks
+        mock_get_rank.return_value = 0
+        mock_world_size.return_value = 1
+        mock_is_last_rank.return_value = True
+        mock_evaluate.return_value = (
+            {"loss": torch.tensor(0.5)},  # total_loss_dict
+            None,  # collected_non_loss_data
+            False,  # timelimit
+        )
+
+        # Create test data
+        state = self._create_mock_global_state(multiple_validation_sets=False)
+        model = self._create_mock_model()
+        data_iterator = self._create_mock_data_iterator(single=True)
+        forward_step_func = Mock()
+
+        # Call the function
+        evaluate_and_print_results(
+            state=state,
+            prefix="test",
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=model,
+            config=state.cfg,
+            verbose=False,
+            write_to_tensorboard=True,
+        )
+
+        # Verify evaluate was called once with correct parameters
+        mock_evaluate.assert_called_once()
+        call_args = mock_evaluate.call_args
+        # evaluate is called with positional arguments: state, forward_step_func, data_iterator, model, process_non_loss_data_func, config, verbose
+        assert call_args[0][0] == state  # state
+        assert call_args[0][2] == data_iterator  # data_iterator
+        assert call_args[0][3] == model  # model
+        assert call_args[0][5] == state.cfg  # config
+
+        # Verify TensorBoard logging
+        state.tensorboard_logger.add_scalar.assert_called()
+        state.wandb_logger.log.assert_called()
+
+    @patch("megatron.bridge.training.eval.evaluate")
+    @patch("megatron.bridge.utils.common_utils.is_last_rank")
+    @patch("megatron.bridge.utils.common_utils.print_rank_last")
+    @patch("torch.distributed.get_world_size")
+    @patch("torch.distributed.get_rank")
+    def test_evaluate_and_print_results_multiple_datasets(
+        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+    ):
+        """Test new multiple datasets behavior in evaluate_and_print_results."""
+        # Setup mocks
+        mock_get_rank.return_value = 0
+        mock_world_size.return_value = 1
+        mock_is_last_rank.return_value = True
+
+        # Mock evaluate to return different results for each dataset
+        def mock_evaluate_side_effect(*args, **kwargs):
+            data_iterator = kwargs.get("data_iterator")
+            if data_iterator == Mock():  # First dataset
+                return {"loss": torch.tensor(0.4)}, None, False
+            else:  # Second dataset
+                return {"loss": torch.tensor(0.6)}, None, False
+
+        mock_evaluate.side_effect = mock_evaluate_side_effect
+
+        # Create test data with multiple validation sets
+        blend_per_split = [
+            (["train_paths"], None),
+            (["val1", "val2"], None),  # Two validation datasets
+            (["test_paths"], None),
+        ]
+        state = self._create_mock_global_state(multiple_validation_sets=True, blend_per_split=blend_per_split)
+        model = self._create_mock_model()
+        data_iterator = self._create_mock_data_iterator(single=False)
+        forward_step_func = Mock()
+
+        # Call the function
+        evaluate_and_print_results(
+            state=state,
+            prefix="test",
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=model,
+            config=state.cfg,
+            verbose=False,
+            write_to_tensorboard=True,
+        )
+
+        # Verify evaluate was called twice (once for each dataset)
+        assert mock_evaluate.call_count == 2
+
+        # Verify individual dataset logging
+        individual_calls = [
+            call
+            for call in state.tensorboard_logger.add_scalar.call_args_list
+            if "validation val1" in str(call) or "validation val2" in str(call)
+        ]
+        assert len(individual_calls) > 0
+
+        # Verify aggregated logging
+        aggregated_calls = [
+            call
+            for call in state.tensorboard_logger.add_scalar.call_args_list
+            if "validation (aggregated)" in str(call)
+        ]
+        assert len(aggregated_calls) > 0
+
+    @patch("megatron.bridge.training.eval.evaluate")
+    @patch("megatron.bridge.utils.common_utils.is_last_rank")
+    @patch("megatron.bridge.utils.common_utils.print_rank_last")
+    @patch("torch.distributed.get_world_size")
+    @patch("torch.distributed.get_rank")
+    def test_evaluate_and_print_results_timelimit_handling(
+        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+    ):
+        """Test timelimit handling in evaluate_and_print_results."""
+        # Setup mocks
+        mock_get_rank.return_value = 0
+        mock_world_size.return_value = 1
+        mock_is_last_rank.return_value = True
+        mock_evaluate.return_value = (None, None, True)  # timelimit hit
+
+        # Create test data
+        state = self._create_mock_global_state()
+        model = self._create_mock_model()
+        data_iterator = self._create_mock_data_iterator(single=True)
+        forward_step_func = Mock()
+
+        # Call the function
+        evaluate_and_print_results(
+            state=state,
+            prefix="test",
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=model,
+            config=state.cfg,
+            verbose=False,
+            write_to_tensorboard=True,
+        )
+
+        # Verify evaluate was called
+        mock_evaluate.assert_called_once()
+
+        # Verify no logging occurred due to timelimit
+        state.tensorboard_logger.add_scalar.assert_not_called()
+        state.wandb_logger.log.assert_not_called()
+
+    @patch("megatron.bridge.training.eval.evaluate")
+    @patch("megatron.bridge.utils.common_utils.is_last_rank")
+    @patch("megatron.bridge.utils.common_utils.print_rank_last")
+    @patch("torch.distributed.get_world_size")
+    @patch("torch.distributed.get_rank")
+    def test_evaluate_and_print_results_dataset_naming(
+        self, mock_get_rank, mock_world_size, mock_print_rank_last, mock_is_last_rank, mock_evaluate
+    ):
+        """Test dataset naming from blend_per_split configuration."""
+        # Setup mocks
+        mock_get_rank.return_value = 0
+        mock_world_size.return_value = 1
+        mock_is_last_rank.return_value = True
+        mock_evaluate.return_value = ({"loss": torch.tensor(0.5)}, None, False)
+
+        # Create test data with specific dataset names
+        blend_per_split = [(["train_paths"], None), (["val_dataset_1", "val_dataset_2"], None), (["test_paths"], None)]
+        state = self._create_mock_global_state(multiple_validation_sets=True, blend_per_split=blend_per_split)
+        model = self._create_mock_model()
+        data_iterator = self._create_mock_data_iterator(single=False)
+        forward_step_func = Mock()
+
+        # Call the function
+        evaluate_and_print_results(
+            state=state,
+            prefix="test",
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=model,
+            config=state.cfg,
+            verbose=False,
+            write_to_tensorboard=True,
+        )
+
+        # Verify evaluate was called twice
+        assert mock_evaluate.call_count == 2
+
+        # Verify dataset-specific logging with correct names
+        logging_calls = [str(call) for call in state.tensorboard_logger.add_scalar.call_args_list]
+        val1_calls = [call for call in logging_calls if "val_dataset_1" in call]
+        val2_calls = [call for call in logging_calls if "val_dataset_2" in call]
+
+        assert len(val1_calls) > 0
+        assert len(val2_calls) > 0
