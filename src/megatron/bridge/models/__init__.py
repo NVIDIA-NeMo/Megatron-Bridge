@@ -48,6 +48,16 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
+from megatron.bridge.models.nemotron import (
+    NemotronBridge,
+    NemotronModelProvider,
+    Nemotron3ModelProvider22B,
+    Nemotron3ModelProvider4B,
+    Nemotron3ModelProvider8B,
+    Nemotron4ModelProvider15B,
+    Nemotron4ModelProvider340B,
+    ColosseumModelProvider355B,
+)
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
@@ -108,6 +118,14 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "NemotronBridge",
+    "NemotronModelProvider",
+    "Nemotron3ModelProvider4B",
+    "Nemotron3ModelProvider8B",
+    "Nemotron3ModelProvider22B",
+    "Nemotron4ModelProvider15B",
+    "Nemotron4ModelProvider340B",
+    "ColosseumModelProvider355B",
     "Qwen2ModelProvider",
     "Qwen2ModelProvider500M",
     "Qwen2ModelProvider1P5B",
