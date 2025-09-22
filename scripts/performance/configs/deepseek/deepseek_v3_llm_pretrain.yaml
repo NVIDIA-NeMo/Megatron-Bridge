@@ -13,6 +13,9 @@
 # limitations under the License.
 
 ConfigContainer:
+  dataset:
+    num_workers: 2
+
   model:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
