@@ -197,7 +197,7 @@ class GlobalState:
                     "dir": save_dir,
                     "name": self.cfg.logger.wandb_exp_name,
                     "project": self.cfg.logger.wandb_project,
-                    "config": yaml.safe_load(dump_dataclass_to_yaml(self.cfg)),
+                    "config": self.cfg.to_dict(),
                     "entity": self.cfg.logger.wandb_entity,
                 }
                 wandb.init(**wandb_kwargs)
