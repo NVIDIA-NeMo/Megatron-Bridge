@@ -315,7 +315,7 @@ class TestAutoBridgeIntegration:
             json.dump(tokenizer_data, f, indent=2)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
     def test_from_pretrained_with_temp_dir(
         self, mock_autoconfig, mock_pretrained, nemotronh_config_dict, nemotronh_config
     ):
@@ -344,7 +344,7 @@ class TestAutoBridgeIntegration:
             mock_pretrained.assert_called_once_with(temp_dir)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
     def test_from_pretrained_with_kwargs(
         self, mock_autoconfig, mock_pretrained, nemotronh_config_dict, nemotronh_config
     ):

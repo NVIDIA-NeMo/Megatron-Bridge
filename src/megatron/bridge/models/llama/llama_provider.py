@@ -54,6 +54,7 @@ class LlamaModelProvider(GPTModelProvider):
     masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+    gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     use_transformer_engine_op_fuser: Optional[bool] = None
 
 
