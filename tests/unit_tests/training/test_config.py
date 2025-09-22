@@ -586,7 +586,7 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             # lr_decay_iters in scheduler_config defaults to train_config.train_iters
-            expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters
+            expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters * train_cfg.global_batch_size
             assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -622,7 +622,7 @@ class TestConfigContainerValidation:
         )
         try:
             container.validate()
-            expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters
+            expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters * train_cfg.global_batch_size
             assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
