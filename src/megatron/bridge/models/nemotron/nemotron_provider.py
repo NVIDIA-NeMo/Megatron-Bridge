@@ -148,17 +148,3 @@ class Nemotron4ModelProvider340B(NemotronModelProvider):
     num_query_groups: Optional[int] = 8
     kv_channels: Optional[int] = None
     init_method_std: float = 0.0063
-
-
-@dataclass
-class ColosseumModelProvider355B(NemotronModelProvider):
-    """
-    Configuration class for the Colosseum 355B model, inheriting from NemotronModelProvider
-    """
-
-    num_layers: int = 100
-    seq_length: int = 16384
-    hidden_size: int = 18432
-    ffn_hidden_size: Optional[int] = 73728
-    num_attention_heads: int = 96
-    num_query_groups: Optional[int] = 8

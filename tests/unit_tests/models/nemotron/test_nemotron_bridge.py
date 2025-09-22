@@ -22,7 +22,6 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron.nemotron_bridge import NemotronBridge
 from megatron.bridge.models.nemotron.nemotron_provider import (
-    ColosseumModelProvider355B,
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
     Nemotron3ModelProvider22B,
@@ -213,18 +212,6 @@ class TestNemotronSpecificProviders:
         assert provider.seq_length == 4096
         assert provider.init_method_std == 0.0063
 
-    def test_colosseum_355b_config(self):
-        """Test Colosseum 355B provider configuration"""
-        provider = ColosseumModelProvider355B()
-
-        assert provider.hidden_size == 18432
-        assert provider.num_layers == 100
-        assert provider.num_attention_heads == 96
-        assert provider.num_query_groups == 8
-        assert provider.ffn_hidden_size == 73728
-        assert provider.kv_channels is None
-        assert provider.seq_length == 16384
-
     def test_all_providers_have_nemotron_defaults(self):
         """Test that all specific providers inherit Nemotron-specific defaults."""
         providers = [
@@ -233,7 +220,6 @@ class TestNemotronSpecificProviders:
             Nemotron3ModelProvider22B(),
             Nemotron4ModelProvider15B(),
             Nemotron4ModelProvider340B(),
-            ColosseumModelProvider355B(),
         ]
 
         for provider in providers:
