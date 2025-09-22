@@ -270,9 +270,12 @@ class TestPretrainConfig:
         """Test default CommOverlapConfig setup."""
         config = pretrain_config()
 
-        # Default setup should have comm overlap config
-        assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
+        # Default setup should have not comm overlap config
+        assert config.comm_overlap is None
+
+        # Re-enable once comm overlap with multiple quantization modes in UB communicators is supported
+        # assert config.comm_overlap is not None
+        # assert config.comm_overlap.tp_comm_overlap is True
 
     def test_pretrain_config_custom_comm_overlap(self):
         """Test custom CommOverlapConfig."""
