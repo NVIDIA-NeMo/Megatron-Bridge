@@ -36,7 +36,7 @@ from megatron.core import parallel_state, tensor_parallel
 from megatron.core.distributed import (
     DistributedDataParallel,
     DistributedDataParallelConfig,
-    # FullyShardedDataParallel,
+    FullyShardedDataParallel,
     TorchFullyShardedDataParallel,
 )
 from megatron.core.enums import ModelType
@@ -637,8 +637,7 @@ def _ddp_wrap(
         list[MegatronModule]: List of DDP/FSDP wrapped model modules
     """
     if use_megatron_fsdp:
-        # DP = FullyShardedDataParallel
-        DP = TorchFullyShardedDataParallel
+        DP = FullyShardedDataParallel
         if use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
     elif use_torch_fsdp2:
