@@ -838,7 +838,7 @@ class ConfigContainer(Container):
         """
         return world_size // total_model_size
 
- 
+
     def set_data_parallel_size(self) -> None:
         """Calculate and set data_parallel_size for this config and comm_overlap config.
 
@@ -879,7 +879,6 @@ class ConfigContainer(Container):
             assert self.model.recompute_granularity != "full", (
                 "recompute_granularity must not be full when CUDA Graphs are enabled."
             )
-
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
