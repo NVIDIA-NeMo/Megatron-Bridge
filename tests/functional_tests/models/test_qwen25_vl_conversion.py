@@ -238,7 +238,7 @@ class TestQwen25VLConversion:
             "--data-file=/workspace/.coverage",
             "--source=/workspace/",
             "--parallel-mode",
-            "hf_megatron_roundtrip_multi_gpu.py",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
             qwen25_vl_toy_model_path,  # Use our local toy model instead of downloading
             "--output-dir",
@@ -253,6 +253,7 @@ class TestQwen25VLConversion:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
             )
+            print(cmd)
 
             # Check that the conversion completed successfully
             if result.returncode != 0:
