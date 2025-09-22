@@ -14,7 +14,6 @@
 
 from megatron.bridge.models.nemotron.nemotron_bridge import NemotronBridge
 from megatron.bridge.models.nemotron.nemotron_provider import (
-    ColosseumModelProvider355B,
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
     Nemotron3ModelProvider22B,
@@ -25,7 +24,6 @@ from megatron.bridge.models.nemotron.nemotron_provider import (
 
 
 __all__ = [
-    "ColosseumModelProvider355B",
     "NemotronBridge",
     "NemotronModelProvider",
     "Nemotron3ModelProvider4B",
