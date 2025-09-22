@@ -89,6 +89,9 @@ def setup(config: ConfigContainer, global_state: GlobalState) -> None:
         # it can happen before the checkpointing, so create it in advance
         os.makedirs(checkpoint_dir, exist_ok=True)
 
+    if global_state.rank_monitor_client is not None and global_state.rank_monitor_client.is_initialized:
+        global_state.rank_monitor_client.shutdown_workload_monitoring()
+
     global_state.rank_monitor_client = RankMonitorClient()
 
     global_state.fault_tolerance_state.ft_state_path = os.path.join(checkpoint_dir, "ft_state.json")
