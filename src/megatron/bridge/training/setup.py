@@ -35,16 +35,16 @@ from megatron.bridge.training.checkpointing import (
     checkpoint_exists,
     init_checkpointing_context,
     load_checkpoint,
-    init_async_checkpoint_worker,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
+
+
 
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
@@ -72,59 +72,42 @@ class SetupOutput(NamedTuple):
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpointing_context: dict[str, Any]
 
-
 def setup(
-    cfg: ConfigContainer,
+    state: GlobalState,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    restart_store: Optional[torch.distributed.Store] = None,
 ) -> SetupOutput:
-    """Initializes the training/evaluation environment.
+    """Initialize the training/evaluation environment using an existing GlobalState.
 
-    Sets up logging, initializes Megatron core components (distributed,
-    timers), builds the tokenizer, creates the model, optimizer, and scheduler,
-    loads checkpoints if specified, and prepares data iterators.
+    Performs all runtime setup using the provided `state` and its attached config (`state.cfg`).
+    This includes:
+      - enabling Megatron-Core experimental features
+      - initializing async checkpoint workers (if enabled)
+      - logging setup
+      - torch.distributed and model-parallel initialization (via initialize_megatron)
+      - tokenizer/model/optimizer/scheduler construction
+      - optional checkpoint load
+      - dataloader setup
 
     Args:
-        cfg: The main configuration container holding all sub-configurations
-             (model, training, optimizer, etc.).
-        train_valid_test_datasets_provider: A callable function that takes
-            configuration and potentially a tokenizer, and returns tuples
-            representing the training, validation, and test datasets.
-        get_embedding_ranks: Optional callable to determine ranks for embedding layers,
-                             used during Megatron initialization.
-        get_position_embedding_ranks: Optional callable to determine ranks for
-                                      position embedding layers, used during Megatron
-                                      initialization.
+        state: The GlobalState instance to populate and use throughout setup.
+        train_valid_test_datasets_provider: Callable returning the train/valid/test datasets or iterators.
+        get_embedding_ranks: Optional function to determine embedding layer ranks for model-parallel init.
+        get_position_embedding_ranks: Optional function to determine positional embedding ranks.
+        restart_store: Optional torch.distributed Store used when in-process restart is enabled.
 
     Returns:
-        A SetupOutput named tuple containing the initialized state, model,
-        optimizer, scheduler, data iterators, and checkpointing context.
+        SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
     """
-    # TODO: Freeze state.cfg
-
-    cfg.validate()
-
-    # Apply mixed precision configuration if provided
-    if cfg.mixed_precision is not None:
-        if isinstance(cfg.mixed_precision, str):
-            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Apply communication overlap configuration if provided at the very beginning
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    cfg.validate()
-
-    state = GlobalState()
-    state.cfg = cfg
+    cfg = state.cfg
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
 
-    # Initialize async checkpoint worker if enabled
-    init_async_checkpoint_worker(state)
+    # Initialize async checkpoint worker if enabled (idempotent if already initialized)
+    state.initialize_async_checkpoint_worker()
 
     setup_logging(
         logging_level=cfg.logger.logging_level,
@@ -137,6 +120,7 @@ def setup(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
+        restart_store=restart_store,
     )
 
     timers = state.timers

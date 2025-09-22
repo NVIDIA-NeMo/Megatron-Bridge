@@ -13,15 +13,15 @@
 # limitations under the License.
 
 """
-Fault Tolerance (FT) package integration for Megatron-Hub, using the FT section-based API.
+Fault Tolerance (FT) package integration for Megatron-Bridge, using the FT section-based API.
 
 The FT package is included in "nvidia-resiliency-ext"
 (https://github.com/NVIDIA/nvidia-resiliency-ext).
 
 NOTE: The workload must be run using the `ft_launcher` tool provided by `nvidia-resiliency-ext.`
 NOTE: Calls to the public API of this module are no-ops if FT is not initialized
-(`ft_integration.setup` was not called).
-NOTE: Default distributed process group should be initialized before calling `ft_integration.setup`
+(`fault_tolerance.setup` was not called).
+NOTE: Default distributed process group should be initialized before calling `fault_tolerance.setup`
 
 The "setup" FT section is opened during FT initialization and closed before the first training or
 eval iteration. Training and evaluation steps are wrapped in the "step" section, but only after a
@@ -88,6 +88,9 @@ def setup(config: ConfigContainer, global_state: GlobalState) -> None:
         # MLM checkpoint dir will be needed for saving FT state.
         # it can happen before the checkpointing, so create it in advance
         os.makedirs(checkpoint_dir, exist_ok=True)
+
+    if global_state.rank_monitor_client is not None and global_state.rank_monitor_client.is_initialized:
+        global_state.rank_monitor_client.shutdown_workload_monitoring()
 
     global_state.rank_monitor_client = RankMonitorClient()
 

@@ -436,7 +436,9 @@ class AutoBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
 
-    def save_megatron_model(self, model: list[MegatronModule], path: str | Path) -> None:
+    def save_megatron_model(
+        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
+    ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
         state.
@@ -449,11 +451,19 @@ class AutoBridge(Generic[MegatronModelT]):
         Args:
             model: Megatron model instance or list of instances
             path: Directory path where the checkpoint will be saved
-            ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats)
+            hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
+                If provided, the tokenizer metadata will be included in the checkpoint.
 
         Example:
             >>> # Save model checkpoint after conversion
             >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+            >>> # Save model checkpoint with tokenizer metadata
+            >>> bridge.save_megatron_model(
+            ...     megatron_model,
+            ...     "./megatron_checkpoint",
+            ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+            ... )
 
         Note:
             - This method is collective and must be called by all ranks
@@ -464,7 +474,7 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
-        save_megatron_model(model, path)
+        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
 
     def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
         """
@@ -574,7 +584,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        bridge.save_megatron_model(megatron_model, megatron_path)
+        bridge.save_megatron_model(megatron_model, megatron_path, hf_tokenizer_path=hf_model_id)
 
     def export_ckpt(
         self,
@@ -635,6 +645,11 @@ class AutoBridge(Generic[MegatronModelT]):
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
         provider = self.to_megatron_provider(load_weights, hf_path)
+
+        # Finalize the provider before creating models
+        if hasattr(provider, "finalize"):
+            provider.finalize()
+
         return provider.provide_distributed_model(**kwargs)
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
@@ -765,11 +780,21 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def transformer_config(self) -> TransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, TransformerConfig)
 
     @property
     def mla_transformer_config(self) -> MLATransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, MLATransformerConfig)
 
     @property

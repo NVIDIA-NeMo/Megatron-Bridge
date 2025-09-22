@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import warnings
 
 import torch
 import torch.distributed
@@ -81,6 +82,13 @@ def print_rank_0(message: str) -> None:
     rank = get_rank_safe()
     if rank == 0:
         print(message, flush=True)
+
+
+def warn_rank_0(message):
+    """Warn only on rank 0."""
+    rank = get_rank_safe()
+    if rank == 0:
+        warnings.warn(message)
 
 
 def is_last_rank() -> bool:

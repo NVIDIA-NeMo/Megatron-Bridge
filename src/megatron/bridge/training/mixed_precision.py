@@ -75,7 +75,7 @@ class MixedPrecisionConfig:
             if self.fp8_param_gather != value:
                 object.__setattr__(self, "fp8_param_gather", value)
 
-    def __post_init__(self):
+    def finalize(self):
         # If fp8_param is None, initialize it from fp8_param_gather
         if self.fp8_param is None:
             self.fp8_param = self.fp8_param_gather
