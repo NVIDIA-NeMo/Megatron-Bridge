@@ -52,7 +52,7 @@ def main():
         enable_deepep = bool(args.gpu.lower() in ["h100"])
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
-        pp, vp = 8, 4 if args.gpu.lower() in ["h100"] else 4, 8
+        pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
