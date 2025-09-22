@@ -64,7 +64,7 @@ if __name__ == "__main__":
                 enable_vboost=args.enable_vboost,
                 nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
                 gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
-                layernorm_sm_margin=20 if args.gpu.lower() in ["h100"] else 16,
+                layernorm_sm_margin=20 if (args.gpu.lower() in ["h100"] and args.model_name in ["deepseek"]) else 16,
             )
         ]
         if HAS_NEMO_RUN
