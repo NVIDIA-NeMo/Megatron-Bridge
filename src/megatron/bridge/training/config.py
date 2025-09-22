@@ -838,7 +838,6 @@ class ConfigContainer(Container):
         """
         return world_size // total_model_size
 
-
     def set_data_parallel_size(self) -> None:
         """Calculate and set data_parallel_size for this config and comm_overlap config.
 
