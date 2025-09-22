@@ -15,9 +15,10 @@
 import logging
 import os
 import signal
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Tuple, Union
 
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
@@ -31,6 +32,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -222,6 +224,73 @@ class DataloaderConfig:
 
     persistent_workers: bool = False
     """Whether to keep data loading workers persistent across epochs."""
+
+
+@dataclass(frozen=True)
+class DatasetBuildContext:
+    """Interface that encapsulates framework internals.
+
+    This context provides metadata needed to build datasets
+    while hiding implementation details of the framework.
+
+    Attributes:
+        train_samples: Number of samples for training dataset
+        valid_samples: Number of samples for validation dataset
+        test_samples: Number of samples for test dataset
+        tokenizer: Optional tokenizer instance for text processing
+    """
+
+    train_samples: int
+    valid_samples: int
+    test_samples: int
+    tokenizer: Optional[MegatronTokenizer] = None
+
+
+@dataclass
+class DatasetProvider(DataloaderConfig, ABC):
+    """Abstract base class for custom dataset configurations.
+
+    Provides an interface for users to implement their own dataset builders
+    while automatically inheriting all DataloaderConfig functionality.
+
+    Users must:
+    1. Inherit from this class
+    2. Implement the build_datasets() method
+
+    Example:
+        @dataclass
+        class S3DatasetConfig(DatasetProvider):
+            bucket_name: str
+            data_prefix: str
+            seq_length: int
+
+            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                # Custom implementation to load data from S3
+                train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
+                valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
+                test_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/test", context.tokenizer)
+                return train_ds, valid_ds, test_ds
+    """
+
+    @abstractmethod
+    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+        """Build train, validation, and test datasets.
+
+        This method is called by the framework during dataset initialization.
+        Implementations should use the provided context to create appropriate
+        datasets for each split.
+
+        Args:
+            context: Build context with sample counts and tokenizer
+
+        Returns:
+            Tuple of (train_dataset, valid_dataset, test_dataset)
+            Any element can be None if that split shouldn't be created.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        pass
 
 
 @dataclass
@@ -812,7 +881,7 @@ class ConfigContainer(Container):
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | FinetuningDatasetConfig
+    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
