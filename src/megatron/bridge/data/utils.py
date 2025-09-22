@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import fields
-from typing import Any, Callable, Dict, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, Union
 
 from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
@@ -173,7 +173,11 @@ def get_dataset_provider(
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):
 
-        def protocol_adapter(train_val_test_num_samples: list[int], config, tokenizer=None):
+        def protocol_adapter(
+            train_val_test_num_samples: list[int],
+            config: DatasetProvider,
+            tokenizer: Optional[MegatronTokenizer] = None,
+        ) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
             """Adapter function that bridges the protocol interface with the legacy interface."""
             context = DatasetBuildContext(
                 train_samples=train_val_test_num_samples[0],
