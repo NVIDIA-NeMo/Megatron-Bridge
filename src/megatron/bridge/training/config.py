@@ -1037,7 +1037,7 @@ class ConfigContainer(Container):
         if self.scheduler.lr_wsd_decay_iters is not None:
             self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
         if self.scheduler.lr_warmup_fraction is not None:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
+            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
         else:
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
