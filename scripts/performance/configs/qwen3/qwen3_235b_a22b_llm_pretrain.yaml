@@ -19,6 +19,7 @@ ConfigContainer:
     recompute_granularity: null
     recompute_method: null
     recompute_num_layers: null
+    moe_router_fusion: true
 
   train:
     train_iters: 25
