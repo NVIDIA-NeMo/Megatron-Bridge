@@ -6,6 +6,7 @@
 :caption: Guides
 :hidden:
 
+parallelisms.md
 performance-guide.md
 ```
 
