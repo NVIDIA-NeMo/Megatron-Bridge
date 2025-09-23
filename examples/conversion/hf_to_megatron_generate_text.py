@@ -15,10 +15,10 @@
 """
 Example:
   # Load from HuggingFace model:
-  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
 """
 
 import argparse
