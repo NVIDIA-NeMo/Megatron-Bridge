@@ -822,8 +822,6 @@ run.run(task, executor=executor)
 
 **Recommendation**: Use `run.Script` mode with Megatron Bridge for better dependency management, environment isolation, and cleaner configuration override handling.
 
-
-
 ## Quick Migration Checklist
 
 1. **Configuration Structure**: Move from NeMo-Run recipes to Megatron Bridge `ConfigContainer` with typed sub-configs
