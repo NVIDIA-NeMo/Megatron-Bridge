@@ -227,7 +227,7 @@ def parse_cli_args():
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
         type=bool_arg,
         required=False,
-        default=False,
+        default=None,
     )
 
     args, cli_dotlist_overrides = parser.parse_known_args()

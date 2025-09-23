@@ -50,7 +50,8 @@ def main():
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
         enable_deepep = bool(args.gpu.lower() in ["h100"])
-        use_tokendrop = bool(args.use_tokendrop or args.gpu.lower() in ["b200", "gb200"])
+        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
         if use_tokendrop:
             enable_deepep = False
             logger.info("Using token drop, disabling DeepEP")
