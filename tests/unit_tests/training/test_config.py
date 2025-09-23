@@ -938,7 +938,7 @@ class TestConfigContainerValidation:
             dist_config=dist_cfg,
         )
         try:
-            with pytest.raises(ValueError):
+            with pytest.raises(AssertionError):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
