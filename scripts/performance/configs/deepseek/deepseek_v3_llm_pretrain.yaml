@@ -66,7 +66,7 @@ perf_matrix:
         vp: 2
         ep: 64
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
       fp8_cs:
       fp8_ss:
@@ -83,7 +83,7 @@ perf_matrix:
         vp: null
         ep: 8
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
         cuda_graphs: false
       fp8_cs:
@@ -103,7 +103,7 @@ perf_matrix:
         vp: null
         ep: 64
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
         cuda_graphs: true
       bf16:
       fp8_cs:

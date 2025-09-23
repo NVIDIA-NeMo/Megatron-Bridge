@@ -42,7 +42,7 @@ COMM_OVERLAP_CONFIG_MAP = {
         },
         "gb200": {
             "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
-            "fp8": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
         },
     },
     "llama31_405b": {
@@ -60,6 +60,23 @@ COMM_OVERLAP_CONFIG_MAP = {
         },
     },
 }
+
+def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
+    """Set the mcore fsdp overrides from the performance matrix."""
+    use_megatron_fsdp = perf_overrides.get("use_megatron_fsdp", False)
+    if use_megatron_fsdp:
+        recipe.ddp.use_megatron_fsdp = True
+        recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        recipe.ddp.keep_fp8_transpose_cache = False
+        recipe.ddp.average_in_collective = False # TODO: enable/keep it default after resolving the issue
+
+        recipe.model.init_model_with_meta_device = True
+        recipe.model.gradient_accumulation_fusion = False
+
+        if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
+            if recipe.comm_overlap.defer_embedding_wgrad_compute:
+                logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
+                recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
 
 def get_precision_config(compute_dtype: str, fp8_recipe: str):
@@ -149,7 +166,7 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     recipe.model.expert_model_parallel_size = perf_overrides.get("ep", 1)
     recipe.model.expert_tensor_parallel_size = perf_overrides.get("etp", None)
 
-    recipe.ddp.use_megatron_fsdp = perf_overrides.get("fsdp", False)
+    set_megatron_fsdp_overrides(recipe, perf_overrides)
     set_cuda_graph_overrides(recipe, perf_overrides)
     set_recompute_overrides(recipe, perf_overrides)
 
