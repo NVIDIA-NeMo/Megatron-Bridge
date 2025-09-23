@@ -25,8 +25,8 @@ from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.nemotron_h_bridge import NemotronHBridge
-from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
+from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronHModelProvider
 
 
 class TestNemotronHBridge:
