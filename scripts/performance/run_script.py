@@ -50,6 +50,10 @@ def main():
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
         enable_deepep = bool(args.gpu.lower() in ["h100"])
+        use_tokendrop = bool(args.use_tokendrop or args.gpu.lower() in ["b200", "gb200"])
+        if use_tokendrop:
+            enable_deepep = False
+            logger.info("Using token drop, disabling DeepEP")
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
         pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
@@ -65,7 +69,7 @@ def main():
 
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
-        else:
+        if use_tokendrop:
             recipe.model = apply_moe_token_drop(recipe.model)
 
         if A2A_1F1B:

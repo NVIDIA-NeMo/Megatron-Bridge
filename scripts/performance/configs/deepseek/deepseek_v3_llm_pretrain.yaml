@@ -47,7 +47,7 @@ ConfigContainer:
     grad_reduce_in_fp32: false
   
   comm_overlap:
-    overlap_grad_reduce: false
+    overlap_grad_reduce: false # TODO: enable when 1F1B_A2A is fixed in Megatron-LM
 
   profiling:
     # For optional fields in the config, specify the target to instantiate the object.
