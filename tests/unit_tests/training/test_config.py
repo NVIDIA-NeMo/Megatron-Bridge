@@ -922,7 +922,7 @@ class TestConfigContainerValidation:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
-    
+
     def test_megatron_fsdp_config_with_dp_last_dim(self, monkeypatch):
         """Test MegatronFSDP config with use_tp_pp_dp_mapping, should raise ValueError."""
         gpt_model_cfg = create_test_gpt_config()
