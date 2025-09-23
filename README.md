@@ -2,19 +2,21 @@
 
 # Megatron Bridge
 
-<!-- [![codecov](https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge/graph/badge.svg?token=4NMKZVOW2Z)](https://codecov.io/github/NVIDIA-NeMo/Megatron-Hub) -->
+[![codecov](https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge/graph/badge.svg?token=4NMKZVOW2Z)](https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge)
 [![CICD NeMo](https://github.com/NVIDIA-NeMo/Megatron-Bridge/actions/workflows/cicd-main.yml/badge.svg)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/actions/workflows/cicd-main.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-[![GitHub Stars](https://img.shields.io/github/stars/NVIDIA-NeMo/Megatron-Bridge.svg?style=social&label=Star&maxAge=2592000)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/stargazers/)
+[![GitHub Stars](https://img.shields.io/github/stars/NVIDIA-NeMo/Megatron-Bridge.svg?style=social&label=Star&cacheSeconds=14400)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/stargazers/)
 
-[Recipes](#supported-models) | [Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples) | [Contributing](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
+[Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) | [Recipes](#supported-models) | [Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples) | [Contributing](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
 </div>
 
 ## Overview
 
-NeMo Megatron Bridge is a PyTorch native library under [NeMo Framework](https://github.com/NVIDIA-NeMo) that leverages [megatron-core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) to provide state-of-the-art training throughput for top models. It enables researchers and community developers to do both pre and post training using a performant and scalable training loop, with features like model parallelisms and mixed precisions (FP8, BF16, FP4 etc.).  NeMo Megatron Bridge users can either leverage existing 🤗HuggingFace models or define their custom PyTorch model definitions for end-to-end workflows with flexibility.
+NeMo Megatron Bridge is a PyTorch native library under [NeMo Framework](https://github.com/NVIDIA-NeMo) that leverages [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) to provide state-of-the-art training throughput for top models. It enables researchers and community developers to do both pre and post training using a performant and scalable training loop, with features like model parallelism and mixed precisions (FP8, BF16, FP4 etc.).  NeMo Megatron Bridge users can either leverage existing 🤗Hugging Face models or define their custom PyTorch model definitions for end-to-end workflows with flexibility.
 
 NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVIDIA/NeMo) that adopts a PyTorch native training loop to provide more flexibility and customizability for developers.
+
+Additionally, it can serve as a **standalone converter** for seamless bidirectional conversion between Hugging Face and Megatron checkpoint formats. 
 
 ![image](Repo-Mbridge.png)
 
@@ -31,10 +33,11 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
   nvcr.io/nvidia/nemo:${TAG}
 ```
 
-### 📦 Bare metal install with TransformerEngine
+### 📦 Bare metal install with Transformer Engine
 
-TransformerEngine is a required dependency for Megatron Bridge. To install on bare metal (without any container), the following system requirements need to be fulfilled:
+Transformer Engine is a required dependency for Megatron Bridge. To install on bare metal (without any container), the following system requirements need to be fulfilled:
 
+- Python >= 3.10
 - PyTorch >= 2.7
 - CUDA >= 12.8
 - cuDNN >= 9.3
@@ -57,13 +60,19 @@ pip install --no-build-isolation megatron-bridge
 
 ### uv
 
-For installing Megatron Bridge with uv, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
+```bash
+uv pip install torch --torch-backend=auto
+uv pip install --no-build-isolation transformer_engine[pytorch]
+uv pip install megatron-bridge
+```
+
+For development installation and additional details, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
 
 ## ⚡ Quickstart
 
 To get started, first install Megatron Bridge or download a NeMo Framework container as described [above](#-installation).
 
-Log in to HuggingFace Hub:
+Log in to Hugging Face Hub:
 ```sh
 huggingface-cli login --token <your token>
 ```
@@ -77,7 +86,7 @@ from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
-    # Load Llama from HuggingFace Hub and convert to Megatron
+    # Load Llama from Hugging Face Hub and convert to Megatron
     bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
     model_provider = bridge.to_megatron_provider()
 
@@ -86,7 +95,7 @@ if __name__ == "__main__":
     cfg.model = model_provider
     cfg.train.train_iters = 10
 
-    cfg.dataset.sequence_length = cfg.model.seq_length
+    cfg.dataset.seq_length = cfg.model.seq_length
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
 
     pretrain(cfg, forward_step)
@@ -99,7 +108,7 @@ torchrun --nproc-per-node=<num devices> /path/to/script.py
 
 ## 🚀 Key Features
 
-- **Bridge with 🤗Hugging Face**: Seamless bidirectional conversion between 🤗Hugging Face and Megatron formats for interoperability ([model bridges](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models), [auto bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/conversion/auto_bridge.py), [conversion examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models))
+- **Bridge with 🤗Hugging Face**: Bidirectional conversion between 🤗Hugging Face and Megatron formats for interoperability ([model bridges](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models), [auto bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/conversion/auto_bridge.py), [conversion examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/conversion))
 - **Flexible to Customize**: Lightweight custom training loop making it easy to configure custom logic in data loading, distributed training, checkpointing, evaluation and logging ([training framework](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/training), [training utilities](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/training/utils))
 - **Supervised & Parameter-Efficient Finetuning**: SFT & PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods ([PEFT implementations](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/peft), [finetune module](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/finetune.py), [SFT dataset](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/data/datasets/sft.py))
 - **SoTA Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration ([Llama recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/recipes/llama), [recipe examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/recipes))

@@ -21,6 +21,7 @@ from typing import Any, Callable, NamedTuple, Optional
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
@@ -34,23 +35,15 @@ from megatron.bridge.training.checkpointing import (
     checkpoint_exists,
     init_checkpointing_context,
     load_checkpoint,
-    init_async_checkpoint_worker,
 )
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 
-try:
-    from megatron.core.distributed import TorchFullyShardedDataParallel  # noqa: F401 pylint: disable=unused-import
-
-    HAVE_FSDP2 = True
-except ImportError:
-    HAVE_FSDP2 = False
 
 
 class SetupOutput(NamedTuple):
@@ -79,57 +72,42 @@ class SetupOutput(NamedTuple):
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpointing_context: dict[str, Any]
 
-
 def setup(
-    cfg: ConfigContainer,
+    state: GlobalState,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    restart_store: Optional[torch.distributed.Store] = None,
 ) -> SetupOutput:
-    """Initializes the training/evaluation environment.
+    """Initialize the training/evaluation environment using an existing GlobalState.
 
-    Sets up logging, initializes Megatron core components (distributed,
-    timers), builds the tokenizer, creates the model, optimizer, and scheduler,
-    loads checkpoints if specified, and prepares data iterators.
+    Performs all runtime setup using the provided `state` and its attached config (`state.cfg`).
+    This includes:
+      - enabling Megatron-Core experimental features
+      - initializing async checkpoint workers (if enabled)
+      - logging setup
+      - torch.distributed and model-parallel initialization (via initialize_megatron)
+      - tokenizer/model/optimizer/scheduler construction
+      - optional checkpoint load
+      - dataloader setup
 
     Args:
-        cfg: The main configuration container holding all sub-configurations
-             (model, training, optimizer, etc.).
-        train_valid_test_datasets_provider: A callable function that takes
-            configuration and potentially a tokenizer, and returns tuples
-            representing the training, validation, and test datasets.
-        get_embedding_ranks: Optional callable to determine ranks for embedding layers,
-                             used during Megatron initialization.
-        get_position_embedding_ranks: Optional callable to determine ranks for
-                                      position embedding layers, used during Megatron
-                                      initialization.
+        state: The GlobalState instance to populate and use throughout setup.
+        train_valid_test_datasets_provider: Callable returning the train/valid/test datasets or iterators.
+        get_embedding_ranks: Optional function to determine embedding layer ranks for model-parallel init.
+        get_position_embedding_ranks: Optional function to determine positional embedding ranks.
+        restart_store: Optional torch.distributed Store used when in-process restart is enabled.
 
     Returns:
-        A SetupOutput named tuple containing the initialized state, model,
-        optimizer, scheduler, data iterators, and checkpointing context.
+        SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
     """
-    # TODO: Freeze state.cfg
-
-    cfg.validate()
-
-    # Apply mixed precision configuration if provided
-    if cfg.mixed_precision is not None:
-        if isinstance(cfg.mixed_precision, str):
-            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
-        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    # Apply communication overlap configuration if provided at the very beginning
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
-
-    state = GlobalState()
-    state.cfg = cfg
+    cfg = state.cfg
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
 
-    # Initialize async checkpoint worker if enabled
-    init_async_checkpoint_worker(state)
+    # Initialize async checkpoint worker if enabled (idempotent if already initialized)
+    state.initialize_async_checkpoint_worker()
 
     setup_logging(
         logging_level=cfg.logger.logging_level,
@@ -142,6 +120,7 @@ def setup(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
+        restart_store=restart_store,
     )
 
     timers = state.timers
@@ -193,6 +172,7 @@ def setup(
 
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
+        use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
@@ -226,7 +206,7 @@ def setup(
             optimizer,
             scheduler,
             checkpointing_context=checkpointing_context,
-            skip_load_to_model_and_opt=HAVE_FSDP2 and cfg.dist.use_torch_fsdp2,
+            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2 or cfg.dist.use_megatron_fsdp,
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
@@ -261,6 +241,11 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
+    if get_rank_safe() == 0:
+        # Print final resolved/updated/overridden configs
+        print("------- Task Configuration -------")
+        cfg.print_yaml()
+        print("----------------------------------")
 
     return SetupOutput(
         state,
@@ -283,18 +268,18 @@ def _update_model_config_funcs(
     align_grad_reduce: bool = True,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
-    if isinstance(model[0], DistributedDataParallel) and ddp_config.overlap_grad_reduce:
+    if isinstance(model[0], (DistributedDataParallel, megatron_FSDP)) and ddp_config.overlap_grad_reduce:
         assert model_config.no_sync_func is None, (
             "When overlap_grad_reduce is True, config.no_sync_func must be None; "
             "a custom no_sync_func is not supported when overlapping grad-reduce"
         )
-    model_config.no_sync_func = [model_chunk.no_sync for model_chunk in model]
-    if len(model) == 1:
-        model_config.no_sync_func = model_config.no_sync_func[0]
-    if align_grad_reduce:
-        model_config.grad_sync_func = [model_chunk.start_grad_sync for model_chunk in model]
+        model_config.no_sync_func = [model_chunk.no_sync for model_chunk in model]
         if len(model) == 1:
-            model_config.grad_sync_func = model_config.grad_sync_func[0]
+            model_config.no_sync_func = model_config.no_sync_func[0]
+        if align_grad_reduce:
+            model_config.grad_sync_func = [model_chunk.start_grad_sync for model_chunk in model]
+            if len(model) == 1:
+                model_config.grad_sync_func = model_config.grad_sync_func[0]
     if ddp_config.overlap_param_gather and ddp_config.align_param_gather:
         model_config.param_sync_func = [model_chunk.start_param_sync for model_chunk in model]
         if len(model) == 1:

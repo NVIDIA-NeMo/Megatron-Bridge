@@ -21,7 +21,6 @@ import pytest
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

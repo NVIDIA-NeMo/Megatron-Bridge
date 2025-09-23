@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import dataclasses
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
@@ -31,6 +31,7 @@ from megatron.bridge.models.conversion.model_bridge import (
     MegatronModelBridge,
     WeightConversionTask,
 )
+from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
@@ -106,7 +107,10 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if hasattr(model_bridge.get_model_bridge, "_exact_types"):
             for arch_type in model_bridge.get_model_bridge._exact_types.keys():
-                if hasattr(arch_type, "__name__"):
+                # Support both type and string registrations
+                if isinstance(arch_type, str):
+                    supported.append(arch_type)
+                elif hasattr(arch_type, "__name__"):
                     supported.append(arch_type.__name__)
 
         return sorted(supported)
@@ -116,7 +120,7 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Check if this bridge supports the given model configuration.
 
-        A model is supported if it has at least one architecture ending with 'ForCausalLM'.
+        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration'.
 
         Args:
             config: HuggingFace model config object
@@ -128,7 +132,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if not architectures:
             return False
 
-        return any(arch.endswith("ForCausalLM") for arch in architectures)
+        return any(arch.endswith(("ForCausalLM", "ForConditionalGeneration")) for arch in architectures)
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -339,7 +343,7 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     cpu=True
             ... ))
         """
-        dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
+        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         return model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance,
             model,
@@ -420,7 +424,7 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
-        dispatch_instance = (self._get_causal_lm_architecture(), self._get_model_instance(model))
+        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
         )
@@ -438,7 +442,9 @@ class AutoBridge(Generic[MegatronModelT]):
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             torch.distributed.barrier()
 
-    def save_megatron_model(self, model: list[MegatronModule], path: str | Path) -> None:
+    def save_megatron_model(
+        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
+    ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
         state.
@@ -451,11 +457,19 @@ class AutoBridge(Generic[MegatronModelT]):
         Args:
             model: Megatron model instance or list of instances
             path: Directory path where the checkpoint will be saved
-            ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats)
+            hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
+                If provided, the tokenizer metadata will be included in the checkpoint.
 
         Example:
             >>> # Save model checkpoint after conversion
             >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+            >>> # Save model checkpoint with tokenizer metadata
+            >>> bridge.save_megatron_model(
+            ...     megatron_model,
+            ...     "./megatron_checkpoint",
+            ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+            ... )
 
         Note:
             - This method is collective and must be called by all ranks
@@ -466,7 +480,7 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
-        save_megatron_model(model, path)
+        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
 
     def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
         """
@@ -576,7 +590,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        bridge.save_megatron_model(megatron_model, megatron_path)
+        bridge.save_megatron_model(megatron_model, megatron_path, hf_tokenizer_path=hf_model_id)
 
     def export_ckpt(
         self,
@@ -637,6 +651,11 @@ class AutoBridge(Generic[MegatronModelT]):
         **kwargs: Unpack[GetModelKwargs],
     ) -> list[MegatronModelT]:
         provider = self.to_megatron_provider(load_weights, hf_path)
+
+        # Finalize the provider before creating models
+        if hasattr(provider, "finalize"):
+            provider.finalize()
+
         return provider.provide_distributed_model(**kwargs)
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
@@ -767,31 +786,51 @@ class AutoBridge(Generic[MegatronModelT]):
     @property
     def transformer_config(self) -> TransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, TransformerConfig)
 
     @property
     def mla_transformer_config(self) -> MLATransformerConfig:
         _model_provider = self.to_megatron_provider(load_weights=False)
+
+        # Finalize the provider before extracting config
+        if hasattr(_model_provider, "finalize"):
+            _model_provider.finalize()
+
         return self._create_config_from_provider(_model_provider, MLATransformerConfig)
 
     @property
     def _model_bridge(self) -> "MegatronModelBridge":
-        return model_bridge.get_model_bridge(self._get_causal_lm_architecture())
+        return model_bridge.get_model_bridge(self._causal_lm_architecture)
 
-    def _get_causal_lm_architecture(self):
-        """
-        Get the CausalLM architecture class from the HuggingFace model.
+    @cached_property
+    def _causal_lm_architecture(self):
+        """Resolve the model's CausalLM architecture for dispatch.
+
+        Behavior:
+        - If the model can be imported from transformers directly, return the actual transformers class object.
+        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g., "DeepseekV2ForCausalLM").
 
         Returns:
-            The transformers class for the CausalLM architecture
+            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a string for auto_map models.
 
         Raises:
-            ValueError: If no CausalLM architecture is found or if the class cannot be imported
+            ValueError: If no CausalLM architecture is found or cannot be resolved.
         """
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
-            architectures = getattr(self.hf_pretrained.config, "architectures", [])
+            config = self.hf_pretrained.config
+            model_name_or_path = getattr(config, "_name_or_path", None) or getattr(
+                self.hf_pretrained, "model_name_or_path", None
+            )
         else:
-            architectures = getattr(self.hf_pretrained, "architectures", [])
+            config = self.hf_pretrained
+            model_name_or_path = getattr(config, "_name_or_path", None)
+
+        architectures = getattr(config, "architectures", [])
 
         if not architectures:
             raise ValueError(
@@ -803,7 +842,7 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith("ForCausalLM"):
+            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
                 causal_lm_arch = architecture_name
                 break
 
@@ -811,10 +850,16 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(
                 f"\n✗ No CausalLM architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
-                f"None of the architectures end with 'ForCausalLM'.\n"
+                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration'.\n"
                 f"This bridge only supports causal language models.\n"
                 f"For other model types, use a different bridge class."
             )
+
+        # Try auto_map first
+        cls = get_causal_lm_class_via_auto_map(model_name_or_path=model_name_or_path, config=config)
+        if cls is not None:
+            # For auto_map models, return the class name as a string
+            return getattr(cls, "__name__", str(cls))
 
         try:
             return getattr(transformers, causal_lm_arch)
@@ -837,7 +882,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"\n✗ Model architecture not supported by AutoBridge\n\n"
                 f"Model: {path}\n"
                 f"Architectures: {architectures}\n\n"
-                f"AutoBridge only supports models with architectures ending in 'ForCausalLM'.\n"
+                f"AutoBridge only supports models with architectures ending in 'ForCausalLM' or 'ForConditionalGeneration'.\n"
                 f"Found architectures that don't match this pattern.\n\n"
                 f"If this is a different model type (e.g., Vision, Sequence-to-Sequence),\n"
                 f"you may need to use a different bridge class."
@@ -846,19 +891,32 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith("ForCausalLM"):
+            if arch_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
                 architecture = arch_name
                 break
 
         if architecture:
-            # Try to get the transformers class to check dispatch registration
-            try:
-                arch_class = getattr(transformers, architecture)
-                # Test if we have a registered implementation
-                # Check if this architecture is registered in the dispatch system
-                has_implementation = False
-                if hasattr(model_bridge.get_model_bridge, "_exact_types"):
-                    has_implementation = arch_class in model_bridge.get_model_bridge._exact_types
+            # Try auto_map first
+            arch_class = get_causal_lm_class_via_auto_map(model_name_or_path=path, config=config) if path else None
+            if arch_class is not None:
+                # For auto_map models, use class-name string
+                arch_key = getattr(arch_class, "__name__", str(arch_class))
+            else:
+                try:
+                    arch_class = getattr(transformers, architecture)
+                    arch_key = arch_class
+                except AttributeError:
+                    # Fall back to name-based registration
+                    arch_key = architecture
+
+            # Test if we have a registered implementation (type or class-name string)
+            has_implementation = False
+            if hasattr(model_bridge.get_model_bridge, "_exact_types"):
+                registry = model_bridge.get_model_bridge._exact_types
+                if isinstance(arch_key, str):
+                    has_implementation = arch_key in registry
+                else:
+                    has_implementation = (arch_key in registry) or (getattr(arch_key, "__name__", None) in registry)
 
                 if not has_implementation:
                     # Get list of supported models
@@ -890,15 +948,6 @@ class AutoBridge(Generic[MegatronModelT]):
                         f"  • src/megatron/bridge/models/llama/llama_bridge.py\n"
                         f"  • src/megatron/bridge/models/qwen/qwen_2_causal_bridge.py"
                     ) from None
-            except AttributeError:
-                raise ValueError(
-                    f"\n✗ Could not find architecture class '{architecture}' in transformers\n\n"
-                    f"This might be because:\n"
-                    f"1. The transformers library version is too old\n"
-                    f"2. The model requires a custom modeling file\n"
-                    f"3. The architecture name is incorrect\n\n"
-                    f"Please check your transformers installation and model requirements."
-                )
 
     def _get_model_instance(self, model: list[MegatronModelT]) -> MegatronModelT:
         model_instance = model[0]

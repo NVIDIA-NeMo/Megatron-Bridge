@@ -19,21 +19,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig
 from megatron.bridge.training.mixed_precision import (
     MixedPrecisionConfig,
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
-    bf16_with_fp8_mixed,
+    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
     fp16_mixed,
     fp16_with_fp8_current_scaling_mixed,
-    fp16_with_fp8_mixed,
+    fp16_with_fp8_delayed_scaling_mixed,
     fp16_with_fp8_subchannel_scaling_mixed,
     fp16_with_mxfp8_mixed,
     get_mixed_precision_config,
@@ -126,7 +125,10 @@ class TestMegatronMixedPrecisionConfig:
 
         # Invalid configuration: fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False
         with pytest.raises(AssertionError, match="When fp8_param_gather=True and fp8_recipe='mxfp8'"):
-            MixedPrecisionConfig(fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False)
+            config_invalid = MixedPrecisionConfig(
+                fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=False
+            )
+            config_invalid.finalize()
 
         # Valid configuration: fp8_param_gather=False with mxfp8 recipe (assertion doesn't apply)
         config_param_gather_false = MixedPrecisionConfig(
@@ -145,7 +147,7 @@ class TestMegatronMixedPrecisionConfig:
         assert config_other_recipe.reuse_grad_buf_for_mxfp8_param_ag is False
 
     def test_mxfp8_validation_after_field_modification(self):
-        """Test that the mxfp8 validation works after modifying fields and re-running __post_init__."""
+        """Test that the mxfp8 validation works after modifying fields and re-running finalize()."""
         # Start with a valid configuration
         config = MixedPrecisionConfig(
             fp8_param_gather=True, fp8_recipe="delayed", reuse_grad_buf_for_mxfp8_param_ag=False
@@ -154,14 +156,14 @@ class TestMegatronMixedPrecisionConfig:
         # Modify to make it invalid (mxfp8 with reuse_grad_buf_for_mxfp8_param_ag=False)
         config.fp8_recipe = "mxfp8"
 
-        # Re-running __post_init__ should trigger the assertion
+        # Re-running finalize() should trigger the assertion
         with pytest.raises(AssertionError, match="When fp8_param_gather=True and fp8_recipe='mxfp8'"):
-            config.__post_init__()
+            config.finalize()
 
         # Fix the configuration
         config.reuse_grad_buf_for_mxfp8_param_ag = True
         # This should not raise any error
-        config.__post_init__()
+        config.finalize()
 
     def test_fp8_param_matching_fp8_param_gather(self):
         """Test that matching values for fp8_param and fp8_param_gather work correctly."""
@@ -514,8 +516,8 @@ class TestMixedPrecisionRecipes:
         assert config.fp8_param is False
         assert config.fp8_param_gather is False
 
-    def test_bf16_with_fp8_mixed(self):
-        config = bf16_with_fp8_mixed()
+    def test_bf16_with_fp8_delayed_scaling_mixed(self):
+        config = bf16_with_fp8_delayed_scaling_mixed()
 
         # Should inherit BF16 settings
         assert config.bf16 is True
@@ -532,8 +534,8 @@ class TestMixedPrecisionRecipes:
         # fp8_param should now be kept in sync with fp8_param_gather
         assert config.fp8_param is True
 
-    def test_fp16_with_fp8_mixed(self):
-        config = fp16_with_fp8_mixed()
+    def test_fp16_with_fp8_delayed_scaling_mixed(self):
+        config = fp16_with_fp8_delayed_scaling_mixed()
 
         # Should inherit FP16 settings
         assert config.fp16 is True
@@ -559,7 +561,7 @@ class TestMixedPrecisionRecipes:
         assert config.params_dtype == torch.bfloat16
 
         # MXFP8 specific settings
-        assert config.fp8 == "hybrid"
+        assert config.fp8 == "e4m3"
         assert config.fp8_recipe == "mxfp8"
         assert config.fp8_param_gather is True
         assert config.reuse_grad_buf_for_mxfp8_param_ag is True
@@ -574,7 +576,7 @@ class TestMixedPrecisionRecipes:
         assert config.params_dtype == torch.half
 
         # MXFP8 specific settings
-        assert config.fp8 == "hybrid"
+        assert config.fp8 == "e4m3"
         assert config.fp8_recipe == "mxfp8"
         assert config.fp8_param_gather is True
         assert config.reuse_grad_buf_for_mxfp8_param_ag is True
@@ -673,7 +675,7 @@ class TestMixedPrecisionRecipes:
 
     def test_recipe_with_setup(self):
         """Test that recipe configs work with the setup method."""
-        config = bf16_with_fp8_mixed()
+        config = bf16_with_fp8_delayed_scaling_mixed()
 
         # Create mock model config
         model_config = MagicMock(spec=GPTModelProvider)

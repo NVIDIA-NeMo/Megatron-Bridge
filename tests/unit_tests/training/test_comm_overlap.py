@@ -14,9 +14,6 @@
 import os
 from unittest.mock import MagicMock, patch
 
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
-
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import (
@@ -25,6 +22,7 @@ from megatron.bridge.training.comm_overlap import (
     _CommOverlapConfig,
     userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
 )
+from megatron.bridge.training.config import DistributedDataParallelConfig, OptimizerConfig
 
 
 def create_gpt_config(**kwargs):
@@ -71,29 +69,33 @@ def create_t5_config(**kwargs):
 
 
 class TestMegatronCommOverlapConfig:
-    def test_post_init(self):
+    def test_finalize(self):
         cfg = CommOverlapConfig(
             tp_comm_overlap=True,
             tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
             tp_comm_bootstrap_backend="nccl",
             data_parallel_size=2,
         )
+        cfg.finalize()
+
         assert cfg.tp_comm_overlap is True
-        assert cfg.tp_comm_overlap_cfg is None  # Should be reset to None in __post_init__
-        assert cfg.tp_comm_bootstrap_backend is None  # Should be reset to None in __post_init__
+        assert cfg.tp_comm_overlap_cfg is None  # Should be reset to None in finalize()
+        assert cfg.tp_comm_bootstrap_backend is None  # Should be reset to None in finalize()
         assert cfg.user_comm_overlap_cfg.tp_comm_overlap is True
         assert isinstance(cfg.user_comm_overlap_cfg.tp_comm_overlap_cfg, TransformerLayerTPOverlapCfg)
 
     def test_get_model_comm_overlap_cfgs_with_tp_disabled(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
             virtual_pipeline_model_parallel_size=None,
             sequence_parallel=False,
         )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
-        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
         assert result.tp_comm_overlap is False
         assert result.overlap_p2p_comm is False
         assert result.batch_p2p_comm is False
@@ -101,6 +103,7 @@ class TestMegatronCommOverlapConfig:
     @patch("megatron.bridge.training.comm_overlap.HAVE_TE", False)
     def test_get_model_comm_overlap_cfgs_no_te(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
             pipeline_model_parallel_size=1,
@@ -108,28 +111,32 @@ class TestMegatronCommOverlapConfig:
             sequence_parallel=True,
             num_attention_heads=16,  # Must be divisible by TP size
         )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
-            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
             assert result.tp_comm_overlap is False
             mock_warning.assert_called_with("Disabling tensor parallel communication overlap due to TE not detected.")
 
     def test_get_model_comm_overlap_cfgs_tp_size_too_small(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
             virtual_pipeline_model_parallel_size=None,
             sequence_parallel=False,  # Cannot use sequence_parallel with TP size 1
         )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
-            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
             assert result.tp_comm_overlap is False
             mock_warning.assert_called_with("Disabling tensor parallel communication overlap due to TP size < 2.")
 
     def test_get_model_comm_overlap_cfgs_no_sequence_parallel(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
             pipeline_model_parallel_size=1,
@@ -137,9 +144,9 @@ class TestMegatronCommOverlapConfig:
             sequence_parallel=False,
             num_attention_heads=16,  # Must be divisible by TP size
         )
-
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
         with patch("megatron.bridge.training.comm_overlap.logging.warning") as mock_warning:
-            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
             assert result.tp_comm_overlap is False
             mock_warning.assert_called_with(
                 "Disabling tensor parallel communication overlap due to sequence_parallel=False."
@@ -147,32 +154,35 @@ class TestMegatronCommOverlapConfig:
 
     def test_get_model_comm_overlap_cfgs_pp_with_vp(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=4,
             virtual_pipeline_model_parallel_size=2,
             sequence_parallel=False,
         )
-
-        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
         assert result.overlap_p2p_comm is True
         assert result.batch_p2p_comm is False
 
     def test_get_model_comm_overlap_cfgs_pp_without_vp(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=4,
             virtual_pipeline_model_parallel_size=1,
             sequence_parallel=False,
         )
-
-        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
         assert result.overlap_p2p_comm is False
         assert result.batch_p2p_comm is True
 
     def test_get_optimizer_overlap_cfgs_dp_enabled(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=4)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
@@ -189,6 +199,7 @@ class TestMegatronCommOverlapConfig:
 
     def test_get_optimizer_overlap_cfgs_dp_disabled(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
@@ -203,6 +214,7 @@ class TestMegatronCommOverlapConfig:
 
     def test_get_optimizer_overlap_cfgs_with_pp_vp(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=4)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=4,
@@ -215,6 +227,7 @@ class TestMegatronCommOverlapConfig:
 
     def test_apply_cfgs(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
 
         src_cfg = _CommOverlapConfig(
             tp_comm_overlap=True, overlap_p2p_comm=True, batch_p2p_comm=False, bucket_size=1024
@@ -237,6 +250,7 @@ class TestMegatronCommOverlapConfig:
         user_cfg = _CommOverlapConfig(tp_comm_overlap=True, overlap_p2p_comm=True, bucket_size=2048)
 
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         comm_cfg.user_comm_overlap_cfg = user_cfg
 
         default_cfg = _CommOverlapConfig(
@@ -253,6 +267,7 @@ class TestMegatronCommOverlapConfig:
     @patch("torch.cuda.get_device_capability", return_value=(10, 0))
     def test_set_num_cuda_device_max_connections_hopper_multi_parallel(self, mock_cuda):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=2)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
             pipeline_model_parallel_size=1,
@@ -269,6 +284,7 @@ class TestMegatronCommOverlapConfig:
     @patch("torch.cuda.get_device_capability", return_value=(10, 0))
     def test_set_num_cuda_device_max_connections_hopper_single_parallel(self, mock_cuda):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
@@ -284,6 +300,7 @@ class TestMegatronCommOverlapConfig:
     @patch("torch.cuda.get_device_capability", return_value=(8, 0))
     def test_set_num_cuda_device_max_connections_ampere_with_tp(self, mock_cuda):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
             pipeline_model_parallel_size=1,
@@ -300,6 +317,7 @@ class TestMegatronCommOverlapConfig:
     @patch("torch.cuda.get_device_capability", return_value=(8, 0))
     def test_set_num_cuda_device_max_connections_ampere_no_tp(self, mock_cuda):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
@@ -322,6 +340,7 @@ class TestMegatronCommOverlapConfig:
             overlap_p2p_comm=True,
             data_parallel_size=4,
         )
+        comm_cfg.finalize()
 
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
@@ -356,6 +375,7 @@ class TestMegatronCommOverlapConfig:
 
     def test_setup_with_t5_config(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=2)
+        comm_cfg.finalize()
 
         model_cfg = create_t5_config(
             tensor_model_parallel_size=2,
@@ -385,6 +405,7 @@ class TestMegatronCommOverlapConfig:
 
     def test_setup_without_distributed_optimizer(self):
         comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=4)
+        comm_cfg.finalize()
 
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
@@ -412,6 +433,8 @@ class TestMegatronCommOverlapConfig:
             batch_p2p_comm=False,  # User explicitly sets to False
             data_parallel_size=1,
         )
+        comm_cfg.finalize()
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
 
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=1,
@@ -420,7 +443,7 @@ class TestMegatronCommOverlapConfig:
             sequence_parallel=False,
         )
 
-        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg)
+        result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
         # Even though PP > 1 and VP > 1, user override should take precedence
         assert result.overlap_p2p_comm is False
         assert result.batch_p2p_comm is False
@@ -428,6 +451,7 @@ class TestMegatronCommOverlapConfig:
     def test_tp_overlap_config_conversion_to_dict(self):
         tp_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, tp_comm_overlap_cfg=tp_overlap_cfg, data_parallel_size=1)
+        comm_cfg.finalize()
 
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
@@ -457,6 +481,7 @@ class TestMegatronCommOverlapConfig:
         """Test that TP overlap handles the case when no tp_comm_overlap_cfg is provided."""
         # Create CommOverlapConfig with tp_comm_overlap=True but no tp_comm_overlap_cfg
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, data_parallel_size=1)
+        comm_cfg.finalize()
 
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
@@ -483,7 +508,6 @@ class TestMegatronCommOverlapConfig:
         assert model_cfg.tp_comm_overlap_cfg is None
         assert model_cfg.tp_comm_bootstrap_backend is None
 
-    @patch("megatron.bridge.training.comm_overlap.HAVE_TE", True)
     def test_tp_overlap_config_filters_none_values(self):
         """Test that None values are filtered from tp_comm_overlap_cfg dict."""
         from dataclasses import dataclass
@@ -499,6 +523,7 @@ class TestMegatronCommOverlapConfig:
 
         mock_tp_cfg = MockTPOverlapCfg()
         comm_cfg = CommOverlapConfig(tp_comm_overlap=True, tp_comm_overlap_cfg=mock_tp_cfg, data_parallel_size=1)
+        comm_cfg.finalize()
 
         model_cfg = create_gpt_config(
             tensor_model_parallel_size=4,
@@ -526,3 +551,128 @@ class TestMegatronCommOverlapConfig:
         # Check that None value keys are filtered out
         for key in filtered_keys:
             assert key not in model_cfg.tp_comm_overlap_cfg
+
+    def test_moe_ep_overlap_config_validation(self):
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        # Minimal valid config to pass MOE EP overlap assertions
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            fp16=False,
+            recompute_granularity=None,
+            recompute_method=None,
+            recompute_num_layers=None,
+            moe_shared_expert_overlap=False,
+            mtp_num_layers=None,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
+        )
+
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True):
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+
+        assert result.overlap_moe_expert_parallel_comm is True
+
+    def test_delay_wgrad_config_validation(self):
+        """delay_wgrad_compute passes when TE and EP overlap conditions are met."""
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            delay_wgrad_compute=True,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
+        )
+
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True):
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+            assert result.delay_wgrad_compute is True
+
+    def test_delay_wgrad_config_validation_with_overlap_grad_reduce(self):
+        """delay_wgrad_compute passes when TE and EP overlap conditions are met."""
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            delay_wgrad_compute=True,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
+            gradient_accumulation_fusion=True,
+        )
+
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=True, overlap_grad_reduce=True)
+
+        with patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True):
+            result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+            assert result.delay_wgrad_compute is True
+
+    def test_delay_wgrad_requires_ep_overlap(self):
+        """delay_wgrad_compute requires EP overlap to be enabled."""
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            delay_wgrad_compute=True,
+            overlap_moe_expert_parallel_comm=False,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            moe_use_legacy_grouped_gemm=False,
+            add_bias_linear=False,
+        )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with patch("megatron.bridge.training.comm_overlap.is_te_min_version", return_value=True):
+            try:
+                comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+                assert False, "Expected AssertionError when EP overlap is not enabled"
+            except AssertionError:
+                pass

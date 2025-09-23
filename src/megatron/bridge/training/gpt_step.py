@@ -64,12 +64,17 @@ def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
     )
 
 
-def get_batch_from_iterator(data_iterator: Iterable, use_mtp: bool = False) -> dict[str, torch.Tensor]:
+def get_batch_from_iterator(
+    data_iterator: Iterable,
+    use_mtp: bool = False,
+    skip_getting_attention_mask_from_dataset: bool = True,
+) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
     Args:
         data_iterator: The data iterator to get the batch from.
         use_mtp: Whether Multi-Token Prediction layers are enabled.
+        skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -79,7 +84,9 @@ def get_batch_from_iterator(data_iterator: Iterable, use_mtp: bool = False) -> d
     required_device_keys = set()
     required_host_keys = set()
 
-    required_device_keys.add("attention_mask")
+    if not skip_getting_attention_mask_from_dataset:
+        required_device_keys.add("attention_mask")
+
     if "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
         required_host_keys.add("cu_seqlens_argmin")
@@ -269,14 +276,11 @@ def get_batch(
     if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None, None, None, None
 
-    if isinstance(cfg.dataset, FinetuningDatasetConfig):
-        batch = get_batch_from_iterator(data_iterator, use_mtp)
-    else:
-        # get batches based on the TP rank you are on
-        batch = get_batch_on_this_tp_rank(data_iterator, cfg, use_mtp)
-        batch["cu_seqlens"] = None
-        batch["cu_seqlens_argmin"] = None
-        batch["max_seqlen"] = None
+    batch = get_batch_from_iterator(
+        data_iterator,
+        use_mtp,
+        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+    )
 
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)
@@ -293,13 +297,16 @@ def get_batch(
     )
 
 
-def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -> tuple[torch.Tensor, partial]:
+def forward_step(
+    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
+) -> tuple[torch.Tensor, partial]:
     """Forward training step.
 
     Args:
         state: Global state for the run
         data_iterator: Input data iterator
         model: The GPT Model
+        return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
 
     Returns:
         tuple containing the output tensor and the loss function
@@ -333,7 +340,41 @@ def forward_step(state: GlobalState, data_iterator: Iterable, model: GPTModel) -
         }
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
-    with straggler_timer:
-        output_tensor = model(**forward_args)
+    check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
+    check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
 
-    return output_tensor, partial(masked_next_token_loss, loss_mask)
+    with straggler_timer:
+        if return_schedule_plan:
+            assert config.overlap_moe_expert_parallel_comm, (
+                "overlap_moe_expert_parallel_comm must be enabled to return the schedule plan"
+            )
+            schedule_plan = model.build_schedule_plan(
+                tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
+            )
+            loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+            return schedule_plan, loss_function
+        else:
+            output_tensor = model(**forward_args)
+
+    loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+
+    return output_tensor, loss_function
+
+
+def _create_loss_function(loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool) -> partial:
+    """Create a partial loss function with the specified configuration.
+
+    Args:
+        loss_mask: Used to mask out some portions of the loss
+        check_for_nan_in_loss: Whether to check for NaN values in the loss
+        check_for_spiky_loss: Whether to check for spiky loss values
+
+    Returns:
+        A partial function that can be called with output_tensor to compute the loss
+    """
+    return partial(
+        masked_next_token_loss,
+        loss_mask,
+        check_for_nan_in_loss=check_for_nan_in_loss,
+        check_for_spiky_loss=check_for_spiky_loss,
+    )

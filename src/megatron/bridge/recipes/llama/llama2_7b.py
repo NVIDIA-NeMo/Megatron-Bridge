@@ -16,7 +16,6 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.llama import Llama2ModelProvider7B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -26,6 +25,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
@@ -85,6 +85,7 @@ def pretrain_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
+    use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 1_168_251,
     global_batch_size: int = 512,
@@ -180,6 +181,7 @@ def pretrain_config(
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -194,7 +196,8 @@ def pretrain_config(
             # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
-            num_workers=1,
+            num_workers=8,
+            skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(
             log_interval=10,

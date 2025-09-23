@@ -363,7 +363,7 @@ class TestPretrainConfig:
         assert config.dataset.num_dataset_builder_threads == 1
         assert config.dataset.data_sharding is True
         assert config.dataset.dataloader_type == "single"
-        assert config.dataset.num_workers == 1
+        assert config.dataset.num_workers == 8
 
     def test_pretrain_config_logger_configuration(self):
         """Test logger configuration."""
@@ -428,7 +428,7 @@ class TestPretrainConfig:
         # Check dataset defaults
         assert config.dataset.sequence_length == 8192  # Standard 8k sequence length
 
-    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_mixed"])
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_with_fp8_delayed_scaling_mixed"])
     def test_precision_recipes(self, precision):
         cfg = pretrain_config(precision_config=precision)
         assert cfg.mixed_precision == precision

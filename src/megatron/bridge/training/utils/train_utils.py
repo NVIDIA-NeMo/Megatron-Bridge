@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+from collections import defaultdict
 from datetime import datetime
 from functools import partial
 from typing import Any, Callable, Optional, Union
@@ -68,7 +69,10 @@ def param_is_not_shared(param: nn.Parameter) -> bool:
 
 
 def calc_params_l2_norm(
-    model: Union[MegatronModule, list[MegatronModule]], model_config: Any, force_create_fp32_copy: bool = False
+    model: Union[MegatronModule, list[MegatronModule]],
+    model_config: Any,
+    use_megatron_fsdp: bool = False,
+    force_create_fp32_copy: bool = False,
 ) -> float:
     """Calculate the L2 norm of model parameters across all GPUs.
 
@@ -87,6 +91,22 @@ def calc_params_l2_norm(
     """
     if not isinstance(model, list):
         model = [model]
+
+    if use_megatron_fsdp:
+        # All Megatron FSDP parameters are expected to be PyTorch DTensor.
+        # params_data is a dict of device_mesh -> list of local tensors.
+        params = []
+        for model_chunk in model:
+            model_chunk.stop_communication()
+            for name, param in model_chunk.named_parameters():
+                if not hasattr(param, "_local_tensor"):
+                    raise RuntimeError(
+                        f"Megatron FSDP requires parameters are PyTorch DTensor. Parameter {name} is not a DTensor."
+                    )
+                params.append(param)
+
+        return calc_dtensor_params_l2_norm(params)
+
     # Seperate moe and dense params
     params_data = []
     moe_params_data = []
@@ -194,6 +214,42 @@ def calc_params_l2_norm(
         norm_2 += moe_norm_2
 
     return norm_2.item() ** 0.5
+
+
+def calc_dtensor_params_l2_norm(params):
+    """Calculate l2 norm of DTensor parameters."""
+    params_data = defaultdict(list)
+    for param in params:
+        params_data[param._spec].append(param._local_tensor)
+
+    total_norm_2 = torch.zeros((1,), dtype=torch.float32, device="cuda")
+    dummy_overflow_buf = torch.zeros((1,), dtype=torch.int, device="cuda")
+    for dtensor_spec, local_tensors in params_data.items():
+        local_tensors = [t for t in local_tensors if t.numel() > 0]
+        if len(local_tensors) == 0:
+            norm = torch.zeros((1,), dtype=torch.float32, device="cuda")
+        else:
+            norm, _ = multi_tensor_applier(
+                multi_tensor_l2norm,
+                dummy_overflow_buf,
+                [local_tensors],
+                False,  # no per-parameter norm.
+            )
+        norm_2 = norm * norm
+        for pg, placement in zip(
+            dtensor_spec.device_mesh.get_all_groups(),
+            dtensor_spec.placements,
+        ):
+            if placement.is_shard():
+                torch.distributed.all_reduce(norm_2, op=torch.distributed.ReduceOp.SUM, group=pg)
+            elif placement.is_replicate():
+                # Replicated parameters are already summed across all ranks.
+                pass
+            else:
+                raise RuntimeError(f"Unsupported placement {placement} for Megatron FSDP.")
+        total_norm_2 += norm_2
+
+    return total_norm_2.item() ** 0.5
 
 
 def reduce_max_stat_across_model_parallel_group(stat: Optional[float]) -> Optional[float]:
@@ -559,11 +615,13 @@ def report_memory(name: str) -> None:
 
 
 def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_args: Optional[int] = None) -> Callable:
-    """Optionally inject the GlobalState object into the forward step function.
+    """Optionally inject GlobalState into a 4-arg forward_step function.
 
-    Checks the number of arguments of `forward_step_func`. If it expects 3 arguments,
-    it assumes the first argument is the GlobalState and returns a partial function
-    with the state injected.
+    - If the function has 4 parameters (state, data_iterator, model, return_schedule_plan),
+      bind the provided state via functools.partial to produce a callable that accepts
+      (data_iterator, model, return_schedule_plan).
+    - If the function already has 3 parameters (data_iterator, model, return_schedule_plan)
+      or 2 parameters (data_iterator, model), return it unchanged.
 
     Args:
         forward_step_func: The original forward step function.
@@ -576,7 +634,7 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
     """
     if not num_fw_args:
         num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    if num_fw_args == 3:
+    if num_fw_args == 4:  # megatron bridge gpt_step.py forward_step has 4 args
         # inject global_state
         return partial(forward_step_func, state)
     else:
@@ -586,9 +644,10 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
 def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
     """Check if the forward step function has a supported number of arguments.
 
-    Currently supports 2 or 3 arguments:
+    Currently supports 2, 3, or 4 arguments:
     - func(data_iterator, model)
-    - func(state, data_iterator, model)
+    - func(data_iterator, model, return_schedule_plan: bool = False)  # state pre-bound via partial
+    - func(state, data_iterator, model, return_schedule_plan: bool = False)
 
     Args:
         forward_step_func: The function to check.
@@ -597,14 +656,15 @@ def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
         The number of arguments the function takes.
 
     Raises:
-        AssertionError: If the function does not have 2 or 3 arguments.
+        AssertionError: If the function does not have 2 or 4 arguments.
     """
     num_fw_args = len(inspect.signature(forward_step_func).parameters)
     fail_msg = f"""
     forward_step_func has {num_fw_args} arguments. Only the following signatures are supported:
         2 args: forward_step_func(data_iterator: Iterable, model: GPTModel)
-        3 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel)
+        3 args: forward_step_func(data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
+        4 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
     """
-    assert num_fw_args in (2, 3), fail_msg
+    assert num_fw_args in (2, 3, 4), fail_msg
 
     return num_fw_args

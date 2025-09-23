@@ -15,10 +15,10 @@
 """
 Example:
   # Load from HuggingFace model:
-  python examples/bridge/generate_from_hf.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
+  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/bridge/generate_from_hf.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
+  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
 """
 
 import argparse
@@ -112,7 +112,7 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -121,6 +121,9 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+
+        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
@@ -129,13 +132,16 @@ def main(args) -> None:
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+
+        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 

@@ -23,11 +23,13 @@ import logging
 
 import torch
 
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 def parse_plugin_config_overrides(unknown_args: list[str]) -> list[str]:
@@ -262,11 +264,15 @@ def apply_args_to_config(config, args):
         # Validation configuration for convergence
         if args.max_steps <= 100:
             config.train.eval_interval = args.max_steps
+            config.train.eval_iters = 0  # Disable evaluation for short convergence runs
         else:
             config.train.eval_interval = 800
 
-        # Scheduler warmup for convergence
-        config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
+        if args.max_steps > 100:
+            config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
+
+    if args.precision_config_name:
+        config.mixed_precision = get_mixed_precision_config(args.precision_config_name)
 
     # Profiling configuration
     if args.nsys or args.mem:
@@ -294,12 +300,18 @@ def setup_argument_parser():
     # Training modes
     parser.add_argument("--pretrain", action="store_true", help="Run pretraining")
     parser.add_argument("--finetune", action="store_true", help="Run finetuning")
+    parser.add_argument(
+        "--config-name", type=str, default=None, help="Config name (defaults to pretrain_config and finetune_config"
+    )
 
     # Training configuration
     parser.add_argument("--max-steps", type=int, default=100, help="Number of training steps")
     parser.add_argument("--gbs", type=int, default=8, help="Global batch size")
     parser.add_argument("--mbs", type=int, default=1, help="Micro batch size")
     parser.add_argument("--seq-length", type=int, help="Sequence length")
+    parser.add_argument(
+        "--precision-config-name", type=str, default=None, help="Precision config name in mixed_precision.py"
+    )
 
     # PEFT configuration
     parser.add_argument("--peft-scheme", type=str, default=None, help="PEFT scheme")
@@ -382,15 +394,15 @@ def main():
 
     # Get base configuration from recipe based on training mode
     if args.pretrain:
-        if not hasattr(recipe_module, "pretrain_config"):
-            raise ValueError(f"Recipe {recipe_module_path} must have 'pretrain_config' function for pretraining")
-        base_config = recipe_module.pretrain_config(dir="/nemo_run/", name=args.exp_name)
+        config_name = args.config_name or "pretrain_config"
     elif args.finetune:
-        if not hasattr(recipe_module, "finetune_config"):
-            raise ValueError(f"Recipe {recipe_module_path} must have 'finetune_config' function for finetuning")
-        base_config = recipe_module.finetune_config(dir="/nemo_run/", name=args.exp_name)
+        config_name = args.config_name or "finetune_config"
     else:
         raise ValueError("Must specify either --pretrain or --finetune")
+
+    if not hasattr(recipe_module, config_name):
+        raise ValueError(f"Recipe {recipe_module_path} must have '{config_name}' function")
+    base_config = getattr(recipe_module, config_name)(dir="/nemo_run/", name=args.exp_name)
 
     # Apply plugin config overrides first (lower priority)
     if plugin_config_overrides:
@@ -402,8 +414,9 @@ def main():
     final_config = apply_args_to_config(base_config, args)
 
     # Log final configuration
-    logging.info("Final configuration:")
-    final_config.to_yaml()
+    if get_rank_safe() == 0:
+        logging.info("Final configuration:")
+        final_config.print_yaml()
 
     if args.pretrain:
         logging.info("Starting pretraining")

@@ -24,6 +24,7 @@ import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
+from megatron.core.msc_utils import MultiStorageClientFeature
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.datasets.utils import (
@@ -759,8 +760,13 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
         self.pack_metadata = None
         if pack_metadata_file_path is not None:
-            with open(pack_metadata_file_path) as f:
-                self.pack_metadata = json.load(f)
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                with msc.open(str(pack_metadata_file_path), "r") as f:
+                    self.pack_metadata = json.load(f)
+            else:
+                with open(pack_metadata_file_path) as f:
+                    self.pack_metadata = json.load(f)
 
     def __getitem__(self, idx):
         if self.samples_mapping is not None:
@@ -776,7 +782,11 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
     def _load_dataset(self):
         try:
-            self.indexed_dataset = np.load(self.file_path, allow_pickle=True)
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                self.indexed_dataset = msc.numpy.load(self.file_path, allow_pickle=True)
+            else:
+                self.indexed_dataset = np.load(self.file_path, allow_pickle=True)
         except Exception as e:
             logger.error(
                 f"Failed to load packed dataset. The dataset should be a `.npy` file. "

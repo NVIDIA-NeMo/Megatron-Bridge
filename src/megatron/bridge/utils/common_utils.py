@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import Type, Union
+import warnings
 
 import torch
 import torch.distributed
@@ -84,6 +84,13 @@ def print_rank_0(message: str) -> None:
         print(message, flush=True)
 
 
+def warn_rank_0(message):
+    """Warn only on rank 0."""
+    rank = get_rank_safe()
+    if rank == 0:
+        warnings.warn(message)
+
+
 def is_last_rank() -> bool:
     """Check if the current rank is the last rank in the default process group.
 
@@ -104,42 +111,3 @@ def print_rank_last(message: str) -> None:
             print(message, flush=True)
     else:
         print(message, flush=True)
-
-
-def unwrap_model(
-    model: Union[torch.nn.Module, list[torch.nn.Module]],
-    module_instances: tuple[Type[torch.nn.Module], ...] = ALL_MODULE_WRAPPER_CLASSNAMES,
-) -> Union[torch.nn.Module, list[torch.nn.Module]]:
-    """Recursively unwraps a model or list of models from common wrapper modules.
-
-    Args:
-        model: The model or list of models to unwrap.
-        module_instances: A tuple of wrapper module types to remove (e.g., DDP, Float16Module).
-
-    Returns:
-        The unwrapped model or list of models.
-    """
-    return_list = True
-    if not isinstance(model, list):
-        model = [model]
-        return_list = False
-    unwrapped_model = []
-    for model_module in model:
-        while isinstance(model_module, module_instances):
-            model_module = model_module.module
-        unwrapped_model.append(model_module)
-    if not return_list:
-        return unwrapped_model[0]
-    return unwrapped_model
-
-
-def use_dist_ckpt(ckpt_format: str) -> bool:
-    """Check if the checkpoint format indicates a distributed checkpoint.
-
-    Args:
-        ckpt_format: The checkpoint format string (e.g., "torch", "torch_dist").
-
-    Returns:
-        True if the format is not "torch", False otherwise.
-    """
-    return ckpt_format != "torch"

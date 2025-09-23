@@ -276,13 +276,14 @@ class TestNemotronNano9Bv2Provider:
     def test_nemotron_nano_9b_v2_default_configuration(self):
         """Test Nemotron Nano v2 9B model has correct default configuration."""
         provider = NemotronNano9Bv2Provider()
+        provider.finalize()
 
         # Check Nemotron Nano v2 9B specific configuration
         assert provider.num_layers == 56
         assert provider.hidden_size == 4480
         assert provider.num_attention_heads == 40
         assert provider.mamba_num_heads == 128
-        assert provider.kv_channels == 128
+        assert provider.kv_channels == 112
         assert provider.mamba_state_dim == 128
         assert provider.ffn_hidden_size == 15680
         assert provider.mamba_head_dim == 80
@@ -314,6 +315,7 @@ class TestNemotronNano12Bv2Provider:
     def test_nemotron_nano_12b_v2_default_configuration(self):
         """Test Nemotron Nano v2 12B model has correct default configuration."""
         provider = NemotronNano12Bv2Provider()
+        provider.finalize()
 
         # Check Nemotron Nano v2 12B specific configuration
         assert provider.num_layers == 62

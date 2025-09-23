@@ -43,6 +43,7 @@ class TestSetup:
 
         mock_global_state = MagicMock(spec=GlobalState)
         mock_global_state.fault_tolerance_state = MagicMock(spec=FaultToleranceState)
+        mock_global_state.rank_monitor_client = None  # Initially no client
 
         mock_rank_monitor_client = MagicMock()
         mock_rank_monitor_client.section_timeouts = {"setup": 600, "step": 180}
@@ -88,6 +89,7 @@ class TestSetup:
 
         mock_global_state = MagicMock(spec=GlobalState)
         mock_global_state.fault_tolerance_state = MagicMock(spec=FaultToleranceState)
+        mock_global_state.rank_monitor_client = None  # Initially no client
 
         mock_rank_monitor_client = MagicMock()
 
@@ -113,6 +115,7 @@ class TestSetup:
 
         mock_global_state = MagicMock(spec=GlobalState)
         mock_global_state.fault_tolerance_state = MagicMock(spec=FaultToleranceState)
+        mock_global_state.rank_monitor_client = None  # Initially no client
 
         mock_rank_monitor_client = MagicMock()
 
@@ -738,15 +741,21 @@ class TestTrainingIntegration:
         mock_ft_state.seen_checkpoints_cnt = 0
         mock_global_state.fault_tolerance_state = mock_ft_state
 
-        mock_rank_monitor_client = MagicMock()
-        mock_rank_monitor_client.section_timeouts = {"setup": 600, "step": 180}
-        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+        # Create separate mock clients for existing and new clients
+        mock_existing_client = MagicMock()
+        mock_existing_client.is_initialized = True
+        mock_global_state.rank_monitor_client = mock_existing_client
+
+        mock_new_rank_monitor_client = MagicMock()
+        mock_new_rank_monitor_client.section_timeouts = {"setup": 600, "step": 180}
 
         with (
             patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=0),
             patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
             patch("os.path.exists", return_value=True),
-            patch("nvidia_resiliency_ext.fault_tolerance.RankMonitorClient", return_value=mock_rank_monitor_client),
+            patch(
+                "nvidia_resiliency_ext.fault_tolerance.RankMonitorClient", return_value=mock_new_rank_monitor_client
+            ),
             patch("megatron.bridge.training.fault_tolerance._load_state_if_exists"),
             patch("megatron.bridge.training.fault_tolerance._maybe_update_timeouts"),
         ):
@@ -773,8 +782,11 @@ class TestTrainingIntegration:
                 call("checkpointing"),
             ]
 
-            mock_rank_monitor_client.start_section.assert_has_calls(expected_start_calls, any_order=False)
-            mock_rank_monitor_client.shutdown_workload_monitoring.assert_called_once()
+            mock_new_rank_monitor_client.start_section.assert_has_calls(expected_start_calls, any_order=False)
+
+            # Verify shutdown calls - existing client shutdown during setup, new client shutdown during shutdown
+            mock_existing_client.shutdown_workload_monitoring.assert_called_once()
+            mock_new_rank_monitor_client.shutdown_workload_monitoring.assert_called_once()
 
     def test_complete_training_with_evaluation_workflow(self):
         """Test a complete training and evaluation workflow with fault tolerance."""

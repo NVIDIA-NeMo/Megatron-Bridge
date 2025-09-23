@@ -200,7 +200,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_rank=mpu.get_data_parallel_rank(),
         data_parallel_size=mpu.get_data_parallel_world_size(),
     )
-    if cfg.train.skip_train:
+    if cfg.train.skip_train and cfg.train.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             0,
@@ -215,7 +215,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
         )
-    else:
+    elif cfg.train.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
             valid_ds,
             train_state.consumed_valid_samples,
@@ -230,20 +230,22 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
         )
-    test_dataloader = build_pretraining_data_loader(
-        test_ds,
-        0,
-        cfg.dataset.dataloader_type,
-        cfg.train.micro_batch_size,
-        cfg.dataset.num_workers,
-        cfg.dataset.data_sharding,
-        worker_init_fn=maybe_worker_init_fn,
-        collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
-        pin_memory=cfg.dataset.pin_memory,
-        persistent_workers=cfg.dataset.persistent_workers,
-        data_parallel_rank=mpu.get_data_parallel_rank(),
-        data_parallel_size=mpu.get_data_parallel_world_size(),
-    )
+
+    if cfg.train.eval_iters > 0:
+        test_dataloader = build_pretraining_data_loader(
+            test_ds,
+            0,
+            cfg.dataset.dataloader_type,
+            cfg.train.micro_batch_size,
+            cfg.dataset.num_workers,
+            cfg.dataset.data_sharding,
+            worker_init_fn=maybe_worker_init_fn,
+            collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
+            pin_memory=cfg.dataset.pin_memory,
+            persistent_workers=cfg.dataset.persistent_workers,
+            data_parallel_rank=mpu.get_data_parallel_rank(),
+            data_parallel_size=mpu.get_data_parallel_world_size(),
+        )
 
     # Flags to know if we need to do training/validation/testing.
     do_train = train_dataloader is not None and cfg.train.train_iters > 0
