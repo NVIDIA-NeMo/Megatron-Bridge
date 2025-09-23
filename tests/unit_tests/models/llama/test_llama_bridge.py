@@ -251,7 +251,7 @@ class TestMegatronLlamaBridge:
         result = bridge.provider_bridge(mock_pretrained_llama)
 
         # These should always be set to these values for Llama
-        assert result.share_embeddings_and_output_weights == False
+        assert result.bias_activation_fusion == True
 
 
 class TestAutoBridgeIntegration:
