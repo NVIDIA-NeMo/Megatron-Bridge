@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import sys
-from os.path import basename, splitext
 from pathlib import Path
 
 from omegaconf import OmegaConf
@@ -40,7 +39,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     args, _ = parse_cli_args()
-    exp_name = f"{splitext(basename(__file__))[0]}_{args.compute_dtype}"
+    exp_name = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}"
+    exp_name += "_bf16" if args.compute_dtype == "bf16" else f"_{args.compute_dtype}_{args.fp8_recipe}"
 
     SCRIPT_DIR: Path = Path(__file__).parent.resolve()
     RUN_SCRIPT_FILENAME: str = "run_script.py"
@@ -121,4 +121,4 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True)
+    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True, name=exp_name)
