@@ -376,6 +376,7 @@ class TestGlobalState:
         mock_config.logger.wandb_save_dir = "/tmp/wandb"
         mock_config.logger.wandb_entity = "test_entity"
         mock_config.checkpoint.save = "/tmp/checkpoints"
+        mock_config.to_dict.return_value = {"config": "data"}
         state._cfg = mock_config
 
         mock_wandb = MagicMock()
