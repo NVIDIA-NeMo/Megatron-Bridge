@@ -114,15 +114,15 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the recompute num layers overrides from the performance matrix."""
     recompute_num_layers = perf_overrides.get("recompute_num_layers", None)
     if recompute_num_layers is not None:
-        recipe.model.config.recompute_granularity = "full"
-        recipe.model.config.recompute_method = "block"
-        recipe.model.config.recompute_num_layers = recompute_num_layers
+        recipe.model.recompute_granularity = "full"
+        recipe.model.recompute_method = "block"
+        recipe.model.recompute_num_layers = recompute_num_layers
 
     cpu_offloading_num_layers = perf_overrides.get("cpu_offloading_num_layers", 0)
     if cpu_offloading_num_layers > 0:
-        recipe.model.config.cpu_offloading = True
-        recipe.model.config.cpu_offloading_weights = False
-        recipe.model.config.cpu_offloading_num_layers = activation_offload_layers
+        recipe.model.cpu_offloading = True
+        recipe.model.cpu_offloading_weights = False
+        recipe.model.cpu_offloading_num_layers = activation_offload_layers
 
 
 def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
