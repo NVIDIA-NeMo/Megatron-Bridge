@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import pytest
 
 from megatron.bridge.training.setup import _validate_and_set_vocab_size

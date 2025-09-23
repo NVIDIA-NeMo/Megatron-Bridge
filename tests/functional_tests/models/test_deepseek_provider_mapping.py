@@ -42,5 +42,11 @@ class TestDeepSeekProviderMapping:
         bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
         converted_provider = bridge.to_megatron_provider(load_weights=False)
 
+        # Finalize the converted provider to ensure computed fields are set
+        converted_provider.finalize()
+
         predefined_provider = provider_class()
+        # Also finalize the predefined provider for fair comparison
+        predefined_provider.finalize()
+
         compare_provider_configs(converted_provider, predefined_provider, hf_model_id)

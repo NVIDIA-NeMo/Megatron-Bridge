@@ -58,6 +58,9 @@ provider.pipeline_model_parallel_size = 2
 provider.bias_activation_fusion = True
 provider.bias_dropout_fusion = True
 
+# Finalize the provider to run validation checks and complete initialization
+provider.finalize()
+
 # Create the model with all configurations applied
 model = provider.provide_distributed_model(wrap_with_ddp=False)
 ```
@@ -142,7 +145,7 @@ for name, weight in bridge.export_hf_weights(
 
 ### Round-Trip Conversion Example
 
-```{literalinclude} ../examples/models/2_way_hf_binding.py
+```{literalinclude} ../examples/conversion/hf_megatron_roundtrip.py
 :lines: 31-
 ```
 
@@ -184,6 +187,7 @@ When using the provider pattern, always configure parallelism and other settings
 # ✅ Correct: Configure provider before creating model
 provider = bridge.to_megatron_provider()
 provider.tensor_model_parallel_size = 8
+provider.finalize()
 model = provider.provide_distributed_model(wrap_with_ddp=False)
 
 # ❌ Avoid: Creating model before configuring parallelism

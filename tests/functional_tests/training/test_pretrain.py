@@ -16,15 +16,15 @@ import os
 
 import pytest
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models.llama import Llama32ModelProvider1B
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
+    OptimizerConfig,
     RNGConfig,
     SchedulerConfig,
     TokenizerConfig,
@@ -230,14 +230,7 @@ class TestPretrain:
             from megatron.bridge.training.comm_overlap import CommOverlapConfig
 
             comm_overlap = CommOverlapConfig(
-                data_parallel_size=1,
                 tp_comm_overlap=False,
-            )
-
-            comm_overlap.setup(
-                model_config=model_cfg,
-                optimizer_config=optimizer_cfg,
-                ddp_config=ddp_cfg,
             )
 
             # Create config container
@@ -289,6 +282,7 @@ class TestPretrain:
                     async_save=True,
                 ),
                 rng=RNGConfig(seed=1234),
+                comm_overlap=comm_overlap,
             )
 
             # Run training

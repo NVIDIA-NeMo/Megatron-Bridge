@@ -16,7 +16,6 @@ import os
 from typing import Optional, Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.mamba import NemotronHModel56BProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -25,6 +24,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
@@ -211,9 +211,10 @@ def pretrain_config(
         mixed_precision=precision_config,
     )
 
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=True,
-        )
+    # Disable comm overlap until issues with nemotron_h_bf16_with_fp8_current_scaling_mixed are fixed
+    # if cfg.comm_overlap is None:
+    #     cfg.comm_overlap = CommOverlapConfig(
+    #         tp_comm_overlap=True,
+    #     )
 
     return cfg
