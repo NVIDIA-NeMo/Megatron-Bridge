@@ -22,6 +22,7 @@ training/logging.md
 training/profiling.md
 training/checkpointing.md
 training/resiliency.md
+training/mixed-precision.md
 training/peft.md
 ```
 
