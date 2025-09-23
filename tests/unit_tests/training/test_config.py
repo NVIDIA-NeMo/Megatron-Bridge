@@ -922,6 +922,26 @@ class TestConfigContainerValidation:
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+    
+    def test_megatron_fsdp_config_with_dp_last_dim(self, monkeypatch):
+        """Test MegatronFSDP config with use_tp_pp_dp_mapping, should raise ValueError."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True, use_tp_pp_dp_mapping=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+            dist_config=dist_cfg,
+        )
+        try:
+            with pytest.raises(ValueError):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
 
 class TestRerunConfigValidation:
