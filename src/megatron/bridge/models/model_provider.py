@@ -524,7 +524,7 @@ def get_model(
     # GPU allocation.
     # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
     # in the fully_shard function of FSDP2 instead.
-    if not (use_torch_fsdp2 and model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
+    if not use_torch_fsdp2 and not model_config.use_cpu_initialization and not model_config.init_model_with_meta_device:
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 
