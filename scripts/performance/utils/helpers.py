@@ -122,7 +122,7 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
     if cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
-        recipe.model.cpu_offloading_num_layers = activation_offload_layers
+        recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
 def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
