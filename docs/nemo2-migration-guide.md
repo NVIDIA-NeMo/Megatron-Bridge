@@ -550,6 +550,68 @@ tokenizer_config = TokenizerConfig(
 )
 ```
 
+---
+
+## Logging Configuration Migration
+
+Logging configuration moves from NeMo 2.0's `NeMoLogger` with separate logger instances to Megatron Bridge's unified {py:class}`bridge.training.config.LoggerConfig`.
+
+### Before (NeMo 2.0)
+```python
+from nemo.lightning import NeMoLogger
+from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
+
+# Separate logger instances
+tensorboard = TensorBoardLogger(
+    save_dir="tb_logs",
+    name="experiment1",
+)
+
+wandb_logger = WandbLogger(
+    project="my_project",
+    name="my_experiment", 
+    entity="my_team",
+)
+
+# NeMoLogger ties them together
+logger = NeMoLogger(
+    log_dir="/path/to/logs",
+    name="experiment1",
+    tensorboard=tensorboard,
+    wandb=wandb_logger,
+    update_logger_directory=True,
+)
+
+trainer = nl.Trainer()
+logger.setup(trainer, resume_if_exists=False)
+```
+
+### After (Megatron Bridge)
+```python
+# Unified logging configuration
+logger_config = LoggerConfig(
+    log_interval=100,
+    tensorboard_dir="/path/to/logs/tensorboard",
+    tensorboard_log_interval=1,
+    wandb_project="my_project",
+    wandb_exp_name="my_experiment",
+    wandb_entity="my_team",
+    wandb_save_dir="/path/to/logs/wandb",
+)
+```
+
+| **Logging Setting** | **NeMo 2.0** | **Megatron Bridge** |
+|---------------------|-------------|-----------|
+| **Log frequency** | `trainer.log_every_n_steps` | {py:attr}`bridge.training.config.LoggerConfig.log_interval` |
+| **TensorBoard directory** | `TensorBoardLogger(save_dir=...)` | {py:attr}`bridge.training.config.LoggerConfig.tensorboard_dir` |
+| **TensorBoard frequency** | TensorBoard logger settings | {py:attr}`bridge.training.config.LoggerConfig.tensorboard_log_interval` |
+| **W&B project** | `WandbLogger(project=...)` | {py:attr}`bridge.training.config.LoggerConfig.wandb_project` |
+| **W&B experiment name** | `WandbLogger(name=...)` | {py:attr}`bridge.training.config.LoggerConfig.wandb_exp_name` |
+| **W&B entity** | `WandbLogger(entity=...)` | {py:attr}`bridge.training.config.LoggerConfig.wandb_entity` |
+| **W&B save directory** | `NeMoLogger` configuration | {py:attr}`bridge.training.config.LoggerConfig.wandb_save_dir` |
+
+---
+
 ## Profiling Migration
 
 Megatron Bridge centralizes all profiling functionality in {py:class}`bridge.training.config.ProfilingConfig`, replacing multiple NeMo callbacks.
