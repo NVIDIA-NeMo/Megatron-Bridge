@@ -45,6 +45,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
+from megatron.bridge.training.config import print_config_container
 
 class SetupOutput(NamedTuple):
     """Represents the output of the main setup function.
@@ -119,6 +120,9 @@ def setup(
 
     state = GlobalState()
     state.cfg = cfg
+
+    if get_rank_safe() == 0:
+        print_config_container(cfg)
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)

@@ -30,6 +30,8 @@ def distributed_fused_adam_with_cosine_annealing(
     max_lr: float = 1e-4,
     min_lr: Optional[float] = None,
     clip_grad: float = 1.0,
+    start_weight_decay: float = 0.033,
+    end_weight_decay: float = 0.033,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
     Creates a distributed fused Adam optimizer with cosine annealing scheduler.
@@ -50,8 +52,8 @@ def distributed_fused_adam_with_cosine_annealing(
     )
 
     scheduler = SchedulerConfig(
-        start_weight_decay=0.033,
-        end_weight_decay=0.033,
+        start_weight_decay=start_weight_decay,
+        end_weight_decay=end_weight_decay,
         weight_decay_incr_style="constant",
         lr_decay_style="cosine",
         lr_warmup_iters=lr_warmup_iters,

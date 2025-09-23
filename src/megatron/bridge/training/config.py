@@ -15,9 +15,9 @@
 import logging
 import os
 import signal
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -910,3 +910,104 @@ class ConfigContainer(Container):
         assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
             "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
         )
+
+def print_config_container(config_container, title="Configuration", rank=0):
+    """
+    Print a ConfigContainer object in flattened format.
+    
+    Args:
+        config_container: The ConfigContainer object to print
+        title: Title to display in the header
+        rank: Process rank (only rank 0 will print)
+    
+    The function flattens the two-level configuration structure by removing
+    the first level groups (checkpoint, dataset, etc.) and prints all
+    parameters in a sorted, aligned format similar to Megatron's _print_args.
+    
+    Example:
+        Input ConfigContainer with:
+        checkpoint:
+          async_save: false
+        dataset:
+          add_extract: true
+        comm_overlap:
+          null
+          
+        Output:
+        add_extract ..................................... true
+        async_save ...................................... false
+        comm_overlap .................................... None
+    """
+    if rank != 0:
+        return
+        
+    print(f'------------------------ {title} ------------------------', flush=True)
+    
+    # Collect all flattened parameters
+    flattened_params = {}
+    
+    # Iterate through all fields of the ConfigContainer
+    for field in fields(config_container):
+        field_name = field.name
+        field_value = getattr(config_container, field_name)
+        
+        # Skip only private fields
+        if field_name.startswith('_'):
+            continue
+            
+        # If the field value is None, add it directly
+        if field_value is None:
+            flattened_params[field_name] = field_value
+        # If the field value is a dataclass, flatten its contents
+        elif is_dataclass(field_value):
+            _flatten_dataclass(field_value, flattened_params)
+        else:
+            # For non-dataclass values, add them directly
+            flattened_params[field_name] = field_value
+    
+    # Sort parameters and format for printing
+    str_list = []
+    for param_name in sorted(flattened_params.keys(), key=str.lower):
+        param_value = flattened_params[param_name]
+        dots = '.' * (48 - len(param_name))
+        str_list.append(f'  {param_name} {dots} {param_value}')
+    
+    # Print all parameters
+    for param_str in str_list:
+        print(param_str, flush=True)
+        
+    print(f'-------------------- end of {title} ---------------------', flush=True)
+
+
+def _flatten_dataclass(obj, result_dict, prefix=""):
+    """
+    Recursively flatten a dataclass object into a dictionary.
+    
+    Args:
+        obj: The dataclass object to flatten
+        result_dict: Dictionary to store the flattened results
+        prefix: Prefix for nested keys (used for recursion)
+    """
+    if not is_dataclass(obj):
+        return
+        
+    for field in fields(obj):
+        field_name = field.name
+        field_value = getattr(obj, field_name)
+        
+        # Skip only private fields
+        if field_name.startswith('_'):
+            continue
+            
+        # Create the full parameter name
+        full_name = f"{prefix}{field_name}" if prefix else field_name
+        
+        # If the field value is None, add it directly
+        if field_value is None:
+            result_dict[full_name] = field_value
+        # If the field value is also a dataclass, recurse
+        elif is_dataclass(field_value):
+            _flatten_dataclass(field_value, result_dict, f"{full_name}_")
+        else:
+            # Add the parameter to our result dictionary
+            result_dict[full_name] = field_value
