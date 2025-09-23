@@ -159,4 +159,4 @@ The mixed precision configuration will set `bf16=True` on both the model and opt
 
 - [Transformer Engine Documentation](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/index.html)
 - [Intro to FP8, floating point formats, and mixed precision training](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html#Introduction-to-FP8)
-- [Performance optimizations that are natively supported in Megatron Bridge by enabling FP8 training with TE](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/advanced_optimizations.html)
+- [Performance optimizations](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/advanced_optimizations.html) that are natively supported in Megatron Bridge by enabling FP8 training with TE
