@@ -24,8 +24,10 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deep
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_30b_a3b import pretrain_config as qwen3_30b_a3b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -58,6 +60,9 @@ def main():
         )
         from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
+        recipe.model = apply_moe_token_drop(recipe.model)
+    elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
+        recipe = qwen3_30b_a3b_pretrain_config(mock=True, precision_config=precision_config)
         recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
