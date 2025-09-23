@@ -127,7 +127,9 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
-        model = bridge.load_megatron_model(args.megatron_model_path, wrap_with_ddp=False)
+        model = bridge.load_megatron_model(
+            args.megatron_model_path, override_provider=model_provider, wrap_with_ddp=False
+        )
 
     else:
         # Load from HuggingFace and convert to Megatron

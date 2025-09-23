@@ -89,7 +89,9 @@ def main(
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
-        megatron_model = bridge.load_megatron_model(megatron_load_path, wrap_with_ddp=False)
+        megatron_model = bridge.load_megatron_model(
+            megatron_load_path, override_provider=model_provider, wrap_with_ddp=False
+        )
         megatron_model = [m.cuda() for m in megatron_model]
 
     else:

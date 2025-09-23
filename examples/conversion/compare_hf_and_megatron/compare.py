@@ -491,7 +491,9 @@ def _load_megatron_model(args):
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
-        megatron_model = bridge.load_megatron_model(args.megatron_model_path, wrap_with_ddp=False)
+        megatron_model = bridge.load_megatron_model(
+            args.megatron_model_path, override_provider=model_provider, wrap_with_ddp=False
+        )
     else:
         # Convert from HF to Megatron
         bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)

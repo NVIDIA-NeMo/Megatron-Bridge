@@ -307,6 +307,7 @@ def load_megatron_model(
     return_state_dict: bool = False,
     use_cpu_init: bool = False,
     skip_temp_dist_context: Optional[bool] = None,
+    override_provider: TransformerConfig = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
 
@@ -323,15 +324,22 @@ def load_megatron_model(
         skip_temp_dist_context: If True, skip temporary distributed context setup.
                                If None, automatically skip if distributed is already initialized.
                                Default: None.
+        override_provider: If provided, use this model config instead of loading from checkpoint.
+                              Must be a TransformerConfig or ModelProviderMixin instance. Default: None.
 
     Returns:
         The model instance with loaded weights if return_state_dict is False,
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
 
-    model_cfg, mlm_args = load_model_config(checkpoint_path)
+    if override_provider is not None:
+        model_cfg = override_provider
+        mlm_args = None
+    else:
+        model_cfg, mlm_args = load_model_config(checkpoint_path)
+    model_cfg.pipeline_model_parallel_size = 4
     # If in single GPU environment, reset additional parallel settings
-    if use_cpu_init or not skip_temp_dist_context:
+    if override_provider is None:
         model_cfg.tensor_model_parallel_size = 1
         model_cfg.pipeline_model_parallel_size = 1
         model_cfg.context_parallel_size = 1
@@ -341,7 +349,7 @@ def load_megatron_model(
         model_cfg.sequence_parallel = False
         model_cfg.virtual_pipeline_model_parallel_size = None
         model_cfg.hierarchical_context_parallel_sizes = None
-        
+
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
     )
