@@ -137,6 +137,35 @@ def get_checkpoint_version() -> Optional[float]:
     return _CHECKPOINT_VERSION
 
 
+def delete_extra_state(state_dict):
+    """Delete all extra state keys from the model state dictionary.
+    
+    This function removes all keys containing '_extra_state' from the model
+    portion of the state dictionary. This is useful for cleaning up corrupted
+    or problematic extra state that can cause issues during model loading.
+    
+    Args:
+        state_dict: The state dictionary. Can be either:
+                   - A full checkpoint dict with a "model" key, or 
+                   - A model state dict directly
+    
+    Returns:
+        The modified state dictionary with extra state keys removed.
+    """
+    # Handle both cases: full checkpoint dict with "model" key or direct model state dict
+    if "model" in state_dict:
+        # Full checkpoint dict case
+        target_dict = state_dict["model"]
+    else:
+        # Direct model state dict case
+        target_dict = state_dict
+        
+    for key in list(target_dict.keys()):
+        if "_extra_state" in key:
+            del target_dict[key]
+    return state_dict
+
+
 def _get_checkpoint_format(checkpoint_path: str) -> str:
     """Determine the checkpoint format by examining the checkpoint directory.
 
@@ -834,6 +863,7 @@ def _generate_model_state_dict(
             else:  # fsdp_dtensor and other formats
                 state_dict["model%d" % i] = model[i].state_dict_for_save_checkpoint()
 
+    delete_extra_state(state_dict)
     return state_dict
 
 
@@ -1048,11 +1078,15 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
     """Helper function to load state dict with fallback for missing extra states."""
     try:
         module.load_state_dict(state_dict, strict=strict)
-    except Exception:
+    except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
+            print(f"Warning: Exception during strict loading: {e}")
             load_return = module.load_state_dict(state_dict, strict=False)
             print(f"load_return: {load_return}")
+        else:
+            # Re-raise if we were already in non-strict mode
+            raise
 
 
 def _load_checkpoint_from_path(
