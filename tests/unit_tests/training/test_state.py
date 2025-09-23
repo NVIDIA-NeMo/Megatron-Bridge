@@ -383,8 +383,6 @@ class TestGlobalState:
         with (
             patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
-            patch("megatron.bridge.training.state.yaml.safe_load", return_value={"config": "data"}),
-            patch("megatron.bridge.training.state.dump_dataclass_to_yaml", return_value="yaml_data"),
             patch(
                 "builtins.__import__",
                 side_effect=lambda name, *args, **kwargs: mock_wandb
