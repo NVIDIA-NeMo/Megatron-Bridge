@@ -25,6 +25,7 @@ from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
 from megatron.bridge.recipes.qwen.qwen3_30b_a3b import pretrain_config as qwen3_30b_a3b_pretrain_config
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -58,11 +59,13 @@ def main():
             pipeline_parallelism=4,
             virtual_pipeline_parallelism=1,
         )
-        from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
-
         recipe.model = apply_moe_token_drop(recipe.model)
     elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
-        recipe = qwen3_30b_a3b_pretrain_config(mock=True, precision_config=precision_config)
+        recipe = qwen3_30b_a3b_pretrain_config(
+            mock=True, 
+            precision_config=precision_config,
+            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+            )
         recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")

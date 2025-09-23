@@ -41,9 +41,6 @@ ConfigContainer:
   mixed_precision:
     grad_reduce_in_fp32: false
 
-  comm_overlap:
-    tp_comm_overlap: true
-
   profiling:
     # For optional fields in the config, specify the target to instantiate the object.
     _target_: megatron.bridge.training.config.ProfilingConfig
