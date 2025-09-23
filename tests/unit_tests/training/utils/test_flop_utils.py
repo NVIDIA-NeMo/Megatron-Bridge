@@ -19,7 +19,7 @@ import importlib
 import pytest
 import math
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
-from megatron.bridge.training.tokenizers.tokenizer import _vocab_size_with_padding
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 class TestFlops:
     @pytest.mark.parametrize("recipe, expected_flops", [
@@ -34,7 +34,7 @@ class TestFlops:
         cfg = module.pretrain_config()
 
         # Calculate padded vocab size to ensure it's divisible by tensor parallel size
-        cfg.tokenizer.padded_vocab_size = _vocab_size_with_padding(
+        cfg.tokenizer.padded_vocab_size = calculate_padded_vocab_size(
             cfg.tokenizer.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
             cfg.model.tensor_model_parallel_size,
