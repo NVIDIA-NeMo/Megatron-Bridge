@@ -330,6 +330,18 @@ def load_megatron_model(
     """
 
     model_cfg, mlm_args = load_model_config(checkpoint_path)
+    # If in single GPU environment, reset additional parallel settings
+    if use_cpu_init or not skip_temp_dist_context:
+        model_cfg.tensor_model_parallel_size = 1
+        model_cfg.pipeline_model_parallel_size = 1
+        model_cfg.context_parallel_size = 1
+        model_cfg.expert_model_parallel_size = 1
+        model_cfg.expert_tensor_parallel_size = 1
+        model_cfg.moe_extended_tp = False
+        model_cfg.sequence_parallel = False
+        model_cfg.virtual_pipeline_model_parallel_size = None
+        model_cfg.hierarchical_context_parallel_sizes = None
+        
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
     )
