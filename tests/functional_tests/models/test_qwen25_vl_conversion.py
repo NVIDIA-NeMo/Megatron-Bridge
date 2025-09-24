@@ -225,7 +225,7 @@ class TestQwen25VLConversion:
         test_output_dir = tmp_path / f"qwen25_vl_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        # Run multi_gpu_hf.py with specified parallelism configuration on our toy model
+        # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration on our toy model
         cmd = [
             "python",
             "-m",
@@ -238,7 +238,7 @@ class TestQwen25VLConversion:
             "--data-file=/workspace/.coverage",
             "--source=/workspace/",
             "--parallel-mode",
-            "examples/models/multi_gpu_hf.py",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
             qwen25_vl_toy_model_path,  # Use our local toy model instead of downloading
             "--output-dir",
@@ -253,6 +253,7 @@ class TestQwen25VLConversion:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
             )
+            print(cmd)
 
             # Check that the conversion completed successfully
             if result.returncode != 0:

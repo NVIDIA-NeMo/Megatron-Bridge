@@ -33,8 +33,8 @@ The process is as follows:
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-torchrun --nproc_per_node 1 examples/models/multi_gpu_hf.py
-torchrun --nproc_per_node 1 examples/models/multi_gpu_hf.py --megatron-save-path ./megatron_checkpoint
+torchrun --nproc_per_node 1 examples/models/hf_megatron_roundtrip_multi_gpu.py
+torchrun --nproc_per_node 1 examples/models/hf_megatron_roundtrip_multi_gpu.py --megatron-save-path ./megatron_checkpoint
 """
 
 import argparse

@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.mamba import NemotronHModel47BProvider
-from megatron.bridge.recipes.mamba.nemotronh_47b import model_config, pretrain_config
+from megatron.bridge.models.nemotronh import NemotronNano12Bv2Provider
+from megatron.bridge.recipes.nemotronh.nemotron_nano_12b_v2 import model_config, pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
@@ -33,8 +33,8 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, NemotronHModel47BProvider)
-        assert config.tensor_model_parallel_size == 8
+        assert isinstance(config, NemotronNano12Bv2Provider)
+        assert config.tensor_model_parallel_size == 4
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype == torch.bfloat16
         assert config.virtual_pipeline_model_parallel_size is None
@@ -43,9 +43,9 @@ class TestModelConfig:
 
     def test_model_config_custom_tensor_parallelism(self):
         """Test model_config with custom tensor parallelism."""
-        config = model_config(tensor_parallelism=4)  # NemotronH 47B has 64 attention heads
+        config = model_config(tensor_parallelism=8)  # Nemotron Nano 12B v2 has 40 attention heads
 
-        assert config.tensor_model_parallel_size == 4
+        assert config.tensor_model_parallel_size == 8
         assert config.pipeline_model_parallel_size == 1  # default
         assert config.context_parallel_size == 1  # default
 
@@ -53,7 +53,7 @@ class TestModelConfig:
         """Test model_config with custom pipeline parallelism."""
         config = model_config(pipeline_parallelism=8, pipeline_parallelism_dtype=torch.float16)
 
-        assert config.tensor_model_parallel_size == 8  # default
+        assert config.tensor_model_parallel_size == 4  # default
         assert config.pipeline_model_parallel_size == 8
         assert config.pipeline_dtype is torch.float16
 
@@ -78,20 +78,20 @@ class TestModelConfig:
 
     def test_model_config_sequence_parallelism_enabled(self):
         """Test model_config with sequence parallelism enabled (default)."""
-        config = model_config(sequence_parallelism=True, tensor_parallelism=8)
+        config = model_config(sequence_parallelism=True, tensor_parallelism=4)
 
         assert config.sequence_parallel is True
 
     def test_model_config_sequence_parallelism_disabled(self):
         """Test model_config with sequence parallelism disabled."""
-        config = model_config(sequence_parallelism=False, tensor_parallelism=8)
+        config = model_config(sequence_parallelism=False, tensor_parallelism=4)
 
         assert config.sequence_parallel is False
 
     def test_model_config_all_custom_parameters(self):
         """Test model_config with all parameters customized."""
         config = model_config(
-            tensor_parallelism=4,  # NemotronH 47B has 64 attention heads
+            tensor_parallelism=8,  # Nemotron Nano 12B v2 has 40 attention heads
             pipeline_parallelism=4,
             pipeline_parallelism_dtype=torch.bfloat16,
             virtual_pipeline_parallelism=8,
@@ -99,7 +99,7 @@ class TestModelConfig:
             sequence_parallelism=True,
         )
 
-        assert config.tensor_model_parallel_size == 4
+        assert config.tensor_model_parallel_size == 8
         assert config.pipeline_model_parallel_size == 4
         assert config.pipeline_dtype == torch.bfloat16
         assert config.virtual_pipeline_model_parallel_size == 8
@@ -116,7 +116,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel47BProvider)
+        assert isinstance(config.model, NemotronNano12Bv2Provider)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251
@@ -157,20 +157,20 @@ class TestPretrainConfig:
         assert config.dataset.sequence_length == 8192
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
-        assert config.scheduler.lr_warmup_iters == 1000  # Note: fixed in scheduler config
+        assert config.scheduler.lr_warmup_iters == 1000  # Should use the passed value
         assert config.scheduler.lr_decay_iters == 10000  # Should match train_iters
 
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
         config = pretrain_config(
-            tensor_parallelism=4,  # NemotronH 47B has 64 attention heads
+            tensor_parallelism=8,  # Nemotron Nano 12B v2 has 40 attention heads
             pipeline_parallelism=2,
             context_parallelism=8,
             sequence_parallelism=True,
             pipeline_parallelism_dtype=torch.bfloat16,
         )
 
-        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 2
         assert config.model.context_parallel_size == 8
         assert config.model.sequence_parallel is True
@@ -263,7 +263,7 @@ class TestPretrainConfig:
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.grad_reduce_in_fp32 is True
         assert config.ddp.overlap_grad_reduce is True
-        assert config.ddp.overlap_param_gather is False  # Different from other models
+        assert config.ddp.overlap_param_gather is False
         assert config.ddp.use_distributed_optimizer is True
 
     def test_pretrain_config_default_comm_overlap(self):
@@ -271,8 +271,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         # Default setup should have comm overlap config
-        assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap is None  # 12B v2 doesn't set default comm overlap
 
     def test_pretrain_config_custom_comm_overlap(self):
         """Test custom CommOverlapConfig."""
@@ -306,7 +305,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-        assert config.tokenizer.tokenizer_model == "nvidia/Nemotron-H-47B-Base-8K"
+        assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base"
 
     def test_pretrain_config_rng_configuration(self):
         """Test RNG configuration."""
@@ -331,15 +330,14 @@ class TestPretrainConfig:
         """Test logger configuration."""
         config = pretrain_config()
 
-        assert config.logger.log_interval == 1  # Different from other models
+        assert config.logger.log_interval == 10
         assert "tb_logs" in config.logger.tensorboard_dir
 
     @pytest.mark.parametrize(
         "tensor_parallelism,pipeline_parallelism,context_parallelism",
         [
-            (8, 1, 1),  # Default tensor parallelism (max for 47B due to 8 query groups)
-            (4, 1, 4),
-            (2, 2, 2),
+            (4, 1, 4),  # Default tensor parallelism
+            (8, 2, 2),
         ],
     )
     def test_pretrain_config_parallelism_combinations(
@@ -374,16 +372,14 @@ class TestPretrainConfig:
         assert config.train.global_batch_size == global_batch_size
         assert config.train.micro_batch_size == micro_batch_size
 
-    @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384, 32768, 65536])
+    @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384, 32768])
     def test_pretrain_config_sequence_lengths(self, seq_length):
         """Test various sequence lengths."""
         config = pretrain_config(seq_length=seq_length)
 
         assert config.dataset.sequence_length == seq_length
 
-    @pytest.mark.parametrize(
-        "precision", ["fp16_mixed", "bf16_mixed", "nemotron_h_bf16_with_fp8_current_scaling_mixed"]
-    )
+    @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed", "nanov2_bf16_with_fp8_current_scaling_mixed"])
     def test_precision_recipes(self, precision):
         """Test precision configuration."""
         cfg = pretrain_config(precision_config=precision)

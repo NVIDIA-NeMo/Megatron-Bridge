@@ -15,16 +15,16 @@
 """
 Example:
   # Vision-Language generation with image from URL:
-  python examples/models/generate_from_hf_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
+  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" --prompt="Describe this image."
 
   # Vision-Language generation with local image:
-  python examples/models/generate_from_hf_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
+  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --image_path="/path/to/image.jpg" --prompt="What do you see in this image?"
 
   # Text-only generation (no image):
-  python examples/models/generate_from_hf_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/models/generate_from_hf_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
+  python examples/conversion/hf_to_megatron_generate_vlm.py --hf_model_path="Qwen/Qwen2.5-VL-3B-Instruct" --megatron_model_path="/path/to/megatron/checkpoint" --image_path="/path/to/image.jpg" --prompt="Describe this image."
 """
 
 import argparse

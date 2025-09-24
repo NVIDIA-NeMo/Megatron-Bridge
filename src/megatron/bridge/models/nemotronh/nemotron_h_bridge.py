@@ -21,7 +21,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
+from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronHModelProvider
 
 
 logger = logging.getLogger(__name__)

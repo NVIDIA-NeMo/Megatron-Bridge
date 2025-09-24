@@ -17,7 +17,7 @@ from typing import Optional, Union
 
 import torch
 
-from megatron.bridge.models.mamba import NemotronHModel4BProvider
+from megatron.bridge.models.nemotronh import NemotronHModel8BProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -35,15 +35,15 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def model_config(
-    tensor_parallelism: int = 1,
+    tensor_parallelism: int = 2,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
-) -> NemotronHModel4BProvider:
+    sequence_parallelism: bool = True,
+) -> NemotronHModel8BProvider:
     """
-    Configure the NemotronH Hybrid 4B model.
+    Configure the NemotronH Hybrid 8B model.
 
     Args:
         tensor_parallelism: Degree of tensor model parallelism.
@@ -54,9 +54,9 @@ def model_config(
         sequence_parallelism: Whether to use sequence parallelism.
 
     Returns:
-        NemotronHModel4BProvider: Configuration for the NemotronH Hybrid 4B model.
+        NemotronHModel8BProvider: Configuration for the NemotronH Hybrid 8B model.
     """
-    return NemotronHModel4BProvider(
+    return NemotronHModel8BProvider(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,
@@ -78,12 +78,12 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
+    tensor_parallelism: int = 2,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallelism: bool = True,
     # Training hyperparameters
     train_iters: int = 1_168_251,
     global_batch_size: int = 768,
@@ -97,7 +97,7 @@ def pretrain_config(
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for NemotronH Hybrid 4B model.
+    Create a pre-training configuration for NemotronH Hybrid 8B model.
 
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
@@ -197,7 +197,7 @@ def pretrain_config(
             tensorboard_dir=tensorboard_dir,
         ),
         tokenizer=TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/Nemotron-H-4B-Base-8K"
+            tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/Nemotron-H-8B-Base-8K"
         ),
         checkpoint=CheckpointConfig(
             save_interval=10,

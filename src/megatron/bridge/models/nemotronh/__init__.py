@@ -12,25 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.mamba.mamba_provider import (
-    MambaProvider,
-    MambaProvider1_3B,
-    MambaProvider2_7B,
-    MambaProvider130M,
-    MambaProvider370M,
-    MambaProvider780M,
-    NVIDIAMambaHybridProvider8B,
-    NVIDIAMambaProvider8B,
+from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+from megatron.bridge.models.nemotronh.nemotron_h_provider import (
+    NemotronHModel4BProvider,
+    NemotronHModel8BProvider,
+    NemotronHModel47BProvider,
+    NemotronHModel56BProvider,
+    NemotronHModelProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
 )
 
 
 __all__ = [
-    "MambaProvider",
-    "MambaProvider1_3B",
-    "MambaProvider2_7B",
-    "MambaProvider130M",
-    "MambaProvider370M",
-    "MambaProvider780M",
-    "NVIDIAMambaHybridProvider8B",
-    "NVIDIAMambaProvider8B",
+    "NemotronHModelProvider",
+    "NemotronHModel4BProvider",
+    "NemotronHModel8BProvider",
+    "NemotronHModel47BProvider",
+    "NemotronHModel56BProvider",
+    "NemotronNano9Bv2Provider",
+    "NemotronNano12Bv2Provider",
 ]

@@ -121,6 +121,11 @@ def main():
         apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
     recipe.model.gradient_accumulation_fusion = True
 
+    if recipe.model.use_transformer_engine_op_fuser:
+        if args.fp8_recipe == "mx" or recipe.ddp.use_megatron_fsdp:
+            logger.warning("Disabling model.use_transformer_engine_op_fuser as it cannot work with MXFP8 or FSDP.")
+            recipe.model.use_transformer_engine_op_fuser = False
+
     pretrain(config=recipe, forward_step_func=forward_step)
 
 

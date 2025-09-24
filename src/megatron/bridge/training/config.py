@@ -800,6 +800,67 @@ class NVRxStragglerDetectionConfig:
                 raise ValueError("gpu_individual_perf_threshold must be between 0.0 and 1.0.")
 
 
+@dataclass
+class InProcessRestartConfig:
+    """Configuration settings for NVIDIA Resiliency Extension in-process restart functionality."""
+
+    enabled: bool = False
+    """Enable in-process restart mechanism from nvidia-resiliency-ext."""
+
+    max_iterations: Optional[int] = None
+    """Maximum number of in-process restart iterations."""
+
+    monitor_thread_interval: float = 1.0
+    """Monitoring interval (in seconds) for the monitoring thread."""
+
+    monitor_process_interval: float = 1.0
+    """Monitoring interval (in seconds) for the monitoring process."""
+
+    progress_watchdog_interval: float = 1.0
+    """Interval (in seconds) for automatic progress watchdog timestamp updates."""
+
+    heartbeat_interval: float = 30.0
+    """Monitoring interval (in seconds) for detecting unresponsive ranks."""
+
+    soft_timeout: float = 60.0
+    """Soft progress timeout (in seconds)."""
+
+    hard_timeout: float = 90.0
+    """Hard progress timeout (in seconds)."""
+
+    heartbeat_timeout: float = 60.0
+    """Timeout (in seconds) for a missing rank detection heartbeat."""
+
+    barrier_timeout: float = 120.0
+    """Timeout (in seconds) for internal distributed barrier."""
+
+    completion_timeout: float = 120.0
+    """Timeout (in seconds) for barrier on completion on all ranks."""
+
+    last_call_wait: float = 1.0
+    """Time interval (in seconds) for other ranks to report concurrent terminal failures."""
+
+    termination_grace_time: float = 1.0
+    """Interval (in seconds) between SIGTERM and SIGKILL issued on hard timeout."""
+
+    granularity: Literal["node", "rank"] = "node"
+    """Granularity for in-process restart."""
+
+    active_world_size: Optional[int] = None
+    """The number of ranks initially executing the workload.
+    The remaining ranks from the allocation are set aside as warm reserve.
+    If None, defaults to WORLD_SIZE environment variable."""
+
+    empty_cuda_cache: bool = True
+    """Empty CUDA cache during restart finalization."""
+
+    max_rank_faults: Optional[int] = None
+    """Maximum number of rank faults allowed before terminating the job."""
+
+    monitor_process_logdir: Optional[str] = None
+    """Directory for monitor process log files. If None, monitor process logging is disabled."""
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -824,6 +885,7 @@ class ConfigContainer(Container):
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    inprocess_restart: Optional[InProcessRestartConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -924,6 +986,8 @@ class ConfigContainer(Container):
             # Set Megatron FSDP Configs
             self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
+
+            assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
 
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading
