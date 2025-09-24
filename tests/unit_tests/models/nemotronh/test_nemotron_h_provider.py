@@ -15,7 +15,7 @@
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.models.mamba.nemotron_h_provider import (
+from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,

@@ -17,7 +17,7 @@ from typing import Optional, Union
 
 import torch
 
-from megatron.bridge.models.mamba import NemotronHModel47BProvider
+from megatron.bridge.models.nemotronh import NemotronNano9Bv2Provider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -35,15 +35,15 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 def model_config(
-    tensor_parallelism: int = 8,
+    tensor_parallelism: int = 2,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = True,
-) -> NemotronHModel47BProvider:
+) -> NemotronNano9Bv2Provider:
     """
-    Configure the NemotronH Hybrid 47B model.
+    Configure the Nemotron Nano 9B v2 model.
 
     Args:
         tensor_parallelism: Degree of tensor model parallelism.
@@ -54,9 +54,9 @@ def model_config(
         sequence_parallelism: Whether to use sequence parallelism.
 
     Returns:
-        NemotronHModel47BProvider: Configuration for the NemotronH Hybrid 47B model.
+        NemotronNano9Bv2Provider: Configuration for the Nemotron Nano 9B v2 model.
     """
-    return NemotronHModel47BProvider(
+    return NemotronNano9Bv2Provider(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,
@@ -78,7 +78,7 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 8,
+    tensor_parallelism: int = 2,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
@@ -93,11 +93,11 @@ def pretrain_config(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "nemotron_h_bf16_with_fp8_current_scaling_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for NemotronH Hybrid 47B model.
+    Create a pre-training configuration for Nemotron Nano 9B v2 model.
 
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
@@ -193,11 +193,11 @@ def pretrain_config(
             skip_getting_attention_mask_from_dataset=True,
         ),
         logger=LoggerConfig(
-            log_interval=1,
+            log_interval=10,
             tensorboard_dir=tensorboard_dir,
         ),
         tokenizer=TokenizerConfig(
-            tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/Nemotron-H-47B-Base-8K"
+            tokenizer_type="HuggingFaceTokenizer", tokenizer_model="nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base"
         ),
         checkpoint=CheckpointConfig(
             save_interval=10,
@@ -211,10 +211,10 @@ def pretrain_config(
         mixed_precision=precision_config,
     )
 
-    # Disable comm overlap until issues with nemotron_h_bf16_with_fp8_current_scaling_mixed are fixed
-    # if cfg.comm_overlap is None:
-    #     cfg.comm_overlap = CommOverlapConfig(
-    #         tp_comm_overlap=True,
-    #     )
+    if cfg.comm_overlap is None:
+        cfg.comm_overlap = CommOverlapConfig(
+            tp_comm_bootstrap_backend="nccl",
+            tp_comm_overlap=True,
+        )
 
     return cfg

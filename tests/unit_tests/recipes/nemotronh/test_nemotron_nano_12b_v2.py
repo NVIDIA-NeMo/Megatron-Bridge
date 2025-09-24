@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.mamba import NemotronNano12Bv2Provider
-from megatron.bridge.recipes.mamba.nemotron_nano_12b_v2 import model_config, pretrain_config
+from megatron.bridge.models.nemotronh import NemotronNano12Bv2Provider
+from megatron.bridge.recipes.nemotronh.nemotron_nano_12b_v2 import model_config, pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 

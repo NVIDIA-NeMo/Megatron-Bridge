@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-import yaml
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
 from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
@@ -32,7 +31,6 @@ from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManage
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
-from megatron.bridge.utils.yaml_utils import dump_dataclass_to_yaml
 
 
 @dataclass
@@ -197,7 +195,7 @@ class GlobalState:
                     "dir": save_dir,
                     "name": self.cfg.logger.wandb_exp_name,
                     "project": self.cfg.logger.wandb_project,
-                    "config": yaml.safe_load(dump_dataclass_to_yaml(self.cfg)),
+                    "config": self.cfg.to_dict(),
                     "entity": self.cfg.logger.wandb_entity,
                 }
                 wandb.init(**wandb_kwargs)

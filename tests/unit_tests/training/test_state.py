@@ -376,6 +376,7 @@ class TestGlobalState:
         mock_config.logger.wandb_save_dir = "/tmp/wandb"
         mock_config.logger.wandb_entity = "test_entity"
         mock_config.checkpoint.save = "/tmp/checkpoints"
+        mock_config.to_dict.return_value = {"config": "data"}
         state._cfg = mock_config
 
         mock_wandb = MagicMock()
@@ -383,8 +384,6 @@ class TestGlobalState:
         with (
             patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
-            patch("megatron.bridge.training.state.yaml.safe_load", return_value={"config": "data"}),
-            patch("megatron.bridge.training.state.dump_dataclass_to_yaml", return_value="yaml_data"),
             patch(
                 "builtins.__import__",
                 side_effect=lambda name, *args, **kwargs: mock_wandb

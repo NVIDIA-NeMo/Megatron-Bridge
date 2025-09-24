@@ -28,7 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.nemotron_h_provider import NemotronHModelProvider
+from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronHModelProvider
 
 
 logger = logging.getLogger(__name__)

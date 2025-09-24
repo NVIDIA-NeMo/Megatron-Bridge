@@ -987,6 +987,8 @@ class ConfigContainer(Container):
             self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
 
+            assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
+
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading
                 assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
