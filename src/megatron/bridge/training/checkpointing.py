@@ -153,15 +153,25 @@ def delete_extra_state(state_dict):
         The modified state dictionary with extra state keys removed.
     """
     # Handle both cases: full checkpoint dict with "model" key or direct model state dict
-    if "model" in state_dict:
+    if isinstance(state_dict, dict) and "model" in state_dict:
         # Full checkpoint dict case
         target_dict = state_dict["model"]
     else:
         # Direct model state dict case
         target_dict = state_dict
 
-    for key in list(target_dict.keys()):
-        if "_extra_state" in key:
+    # If target is not a mapping-like object, nothing to clean
+    if not hasattr(target_dict, "keys"):
+        return state_dict
+
+    # Some objects may implement keys() but not be directly iterable into a list (e.g., mocks)
+    try:
+        keys = list(target_dict.keys())
+    except Exception:
+        return state_dict
+
+    for key in keys:
+        if isinstance(key, str) and "_extra_state" in key:
             del target_dict[key]
     return state_dict
 
