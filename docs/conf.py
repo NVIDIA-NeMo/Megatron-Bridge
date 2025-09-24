@@ -63,7 +63,6 @@ myst_fence_as_directive = ["mermaid"]
 # -- Options for Mermaid -----------------------------------------------------
 # Configure mermaid diagrams
 mermaid_version = "latest"  # Use the latest version of mermaid
-mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 
 # -- Options for Autodoc2 ---------------------------------------------------
 sys.path.insert(0, os.path.abspath(".."))
