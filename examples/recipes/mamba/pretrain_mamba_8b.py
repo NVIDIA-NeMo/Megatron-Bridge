@@ -22,7 +22,7 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.mamba.nemotron_next_3b_v2 import pretrain_config
+from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import pretrain_config
 
 # from megatron.bridge.recipes.mamba.nemotron_nano_9b_v2 import pretrain_config
 from megatron.bridge.training.config import ConfigContainer
