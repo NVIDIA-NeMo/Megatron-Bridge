@@ -492,10 +492,18 @@ def training_log(
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
-        if config.model.moe_router_load_balancing_type in ("aux_loss", "seq_aux_loss"):
+        if "aux_loss" in config.model.moe_router_load_balancing_type:
             track_names.append("load_balancing_loss")
+        if "seq_aux_loss" in config.model.moe_router_load_balancing_type:
+            track_names.append("seq_load_balancing_loss")
         if config.model.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
+
+        if config.model.is_hybrid_model:
+            layers = config.model.hybrid_override_pattern.count('E')
+        else:
+            layers = config.model.num_layers
+
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
@@ -505,7 +513,7 @@ def training_log(
             per_layer_logging=config.model.moe_per_layer_logging,
             force_initialize=True,
             track_names=track_names,
-            num_layers=config.model.num_layers,
+            num_layers=layers,
             moe_layer_freq=config.model.moe_layer_freq,
             mtp_num_layers=config.model.mtp_num_layers,
         )

@@ -119,6 +119,8 @@ def pretrain_config(
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     # MoE
     enable_deepep: bool = True,
+    # Log
+    log_interval: int = 50,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Nemotron Next 3B v2 model.
@@ -185,7 +187,8 @@ def pretrain_config(
         max_lr=lr,
         min_lr=min_lr,
         start_weight_decay=0.1,
-        end_weight_decay=0.1
+        end_weight_decay=0.1,
+        lr_decay_style="cosine",
     )
 
     # Config Container
@@ -226,13 +229,13 @@ def pretrain_config(
             mmap_bin_files=False,
         ),
         logger=LoggerConfig(
-            log_interval=10,
+            log_interval=log_interval,
             tensorboard_dir=tensorboard_dir,
         ),
         #TODO(liding): what is the correct tokenizer for Nemotron Next 3B v2
         tokenizer=TokenizerConfig(tokenizer_type="TikTokenizer", tiktoken_pattern="v2", tokenizer_model="/lustre/fsw/portfolios/llmservice/projects/llmservice_nlp_fm/data-quality/tokenizers/multiMixV8.gpt4o_nc_sd.500000.128k.vocab.json"),
         checkpoint=CheckpointConfig(
-            save_interval=10,
+            save_interval=2000,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",
