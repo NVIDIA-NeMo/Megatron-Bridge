@@ -69,7 +69,7 @@ The {py:class}`bridge.training.mixed_precision.MixedPrecisionConfig` provides se
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `fp8` | `Optional[str]` | `None` | FP8 format: `"hybrid"` (E4M3 for activations/weights, E5M2 for gradients) or `"e4m3"` |
-| `fp8_recipe` | `str` | `"tensorwise"` | FP8 recipe type: `"tensorwise"`, `"delayed"`, `"mxfp8"` (Blackwell only), `"blockwise"` (Hopper only) |
+| `fp8_recipe` | `str` | `"tensorwise"` | FP8 recipe type: `"tensorwise"`, `"delayed"`, `"blockwise"`, `"mxfp8"` (Blackwell only) |
 | `first_last_layers_bf16` | `bool` | `False` | If True, retains first and last N TransformerBlocks in BF16 as opposed to FP8 |
 | `num_layers_at_start_in_bf16` | `int` | `0` | Number of layers at the start of the model to keep in BF16 precision when `first_last_layers_bf16` is True |
 | `num_layers_at_end_in_bf16` | `int` | `0` | Number of layers at the end of the model to keep in BF16 precision when `first_last_layers_bf16` is True |
@@ -90,6 +90,11 @@ config = ConfigContainer(
     # ... other config parameters
 )
 ```
+
+## Available Mixed Precision Recipes
+
+Megatron Bridge provides numerous predefined mixed precision recipes for different use cases. You can use the {py:func}`~megatron.bridge.training.mixed_precision.get_mixed_precision_config` utility function to convert from a string shortname to a class instance. For the complete list of available recipes and their specific configurations, see the {py:mod}`megatron.bridge.training.mixed_precision` module.
+
 
 ### Custom FP8 Configuration
 
@@ -118,9 +123,27 @@ config = ConfigContainer(
 )
 ```
 
-## Available Mixed Precision Recipes
+### Registering Custom Mixed Precision Recipes
 
-Megatron Bridge provides numerous predefined mixed precision recipes for different use cases. For the complete list of available recipes and their specific configurations, see the {py:data}`bridge.training.mixed_precision.MIXED_PRECISION_RECIPES` documentation in the API reference.
+You can also register your own custom mixed precision configurations to work with the shortname system. Use the {py:func}`~megatron.bridge.training.mixed_precision.register` decorator on a function that returns a `MixedPrecisionConfig` object:
+
+```python
+from megatron.bridge.training.mixed_precision import register, MixedPrecisionConfig
+
+@register
+def my_custom_fp8_recipe() -> MixedPrecisionConfig:
+    """Custom FP8 recipe with specific settings for my use case."""
+    return MixedPrecisionConfig(
+        bf16=True,
+        fp8="hybrid",
+        fp8_recipe="tensorwise",
+        fp8_param_gather=True,
+        # ... other custom settings
+    )
+
+# Now you can use it with the utility function
+config = get_mixed_precision_config("my_custom_fp8_recipe")
+```
 
 Common recipe categories include:
 - **Half-precision recipes**: Basic BF16 and FP16 mixed precision
