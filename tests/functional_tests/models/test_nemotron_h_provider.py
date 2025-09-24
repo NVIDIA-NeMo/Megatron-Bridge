@@ -15,7 +15,7 @@
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.mamba import (
+from megatron.bridge.models.nemotronh import (
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
     NemotronHModel56BProvider,
