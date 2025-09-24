@@ -95,7 +95,7 @@ perf_matrix:
         tp: 1
         pp: 1
         cp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
         cuda_graphs: false
         recompute_num_layers: 5
@@ -103,7 +103,7 @@ perf_matrix:
         tp: 1
         pp: 1
         cp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
         cuda_graphs: false
         recompute_num_layers: 5
@@ -128,18 +128,18 @@ perf_matrix:
       bf16:
         tp: 1
         pp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
         recompute_num_layers: 20
       fp8_ds:
         tp: 1
         pp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
       fp8_cs:
         tp: 1
         pp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
       fp8_mx:
         tp: 2

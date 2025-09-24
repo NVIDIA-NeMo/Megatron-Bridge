@@ -20,6 +20,7 @@ ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
     use_transformer_engine_op_fuser: true
+    seq_length: 8192
 
   train:
     train_iters: 25
@@ -110,14 +111,14 @@ perf_matrix:
         tp: 2
         pp: 1
         cp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
         cpu_offloading_num_layers: 95
       fp8_cs:
         tp: 2
         pp: 1
         cp: 1
-        vp: 1
+        vp: null
         use_megatron_fsdp: true
         cpu_offloading_num_layers: 95
       fp8_mx:
