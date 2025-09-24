@@ -1,6 +1,6 @@
 # Get Started with 🤗 Hugging Face Conversion
 
-Megatron Bridge provides seamless bidirectional conversion between 🤗 Hugging Face Transformers and Megatron-Core model formats. This guide covers the main APIs for loading models, checking compatibility, and converting between formats.
+Megatron Bridge provides seamless bidirectional conversion between 🤗 Hugging Face Transformers and Megatron model definitions. This guide covers the main APIs for loading models, checking compatibility, and converting between formats.
 
 ## Design and Goals
 
