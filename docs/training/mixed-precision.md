@@ -70,6 +70,9 @@ The {py:class}`bridge.training.mixed_precision.MixedPrecisionConfig` provides se
 |-----------|------|---------|-------------|
 | `fp8` | `Optional[str]` | `None` | FP8 format: `"hybrid"` (E4M3 for activations/weights, E5M2 for gradients) or `"e4m3"` |
 | `fp8_recipe` | `str` | `"tensorwise"` | FP8 recipe type: `"tensorwise"`, `"delayed"`, `"mxfp8"` (Blackwell only), `"blockwise"` (Hopper only) |
+| `first_last_layers_bf16` | `bool` | `False` | If True, retains first and last N TransformerBlocks in BF16 as opposed to FP8 |
+| `num_layers_at_start_in_bf16` | `int` | `0` | Number of layers at the start of the model to keep in BF16 precision when `first_last_layers_bf16` is True |
+| `num_layers_at_end_in_bf16` | `int` | `0` | Number of layers at the end of the model to keep in BF16 precision when `first_last_layers_bf16` is True |
 | `fp8_margin` | `int` | `0` | Scaling factor shift by $2^{margin}$ |
 | `fp8_amax_history_len` | `int` | `1` | Window size for amax history storage |
 | `fp8_amax_compute_algo` | `str` | `"most_recent"` | Amax selection algorithm: `"max"` or `"most_recent"` |
