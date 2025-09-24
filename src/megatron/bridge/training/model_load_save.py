@@ -337,7 +337,6 @@ def load_megatron_model(
         mlm_args = None
     else:
         model_cfg, mlm_args = load_model_config(checkpoint_path)
-    model_cfg.pipeline_model_parallel_size = 4
     # If in single GPU environment, reset additional parallel settings
     if override_provider is None:
         model_cfg.tensor_model_parallel_size = 1
