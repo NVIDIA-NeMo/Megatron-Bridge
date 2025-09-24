@@ -127,20 +127,36 @@ For more insights into this approach, see the detailed blog: [Scaling Language M
 
 The Megatron Bridge implementation of PP leverages functionalities from Megatron Core. For more detailed API usage and configurations related to PP, visit the [Megatron Core Developer Guide](https://docs.nvidia.com/Megatron-Core/developer-guide/latest/api-guide/tensor_parallel.html).
 
-### Expert Parallelism
+### Expert Parallelism and Mixture of Experts (MoE)
 
 Expert Parallelism (EP) is a type of model parallelism that distributes experts of a Mixture of Experts (MoE) model across GPUs. Unlike other model-parallel techniques, EP is applied to only the expert layers and does not impact the parallel mapping of the rest of the layers.
 
+MoE is a machine learning technique where multiple specialized models (experts, usually multi-layer perceptrons) are combined to solve a complex task. Each expert focuses on a specific subtask or domain, while a gating network dynamically activates the most appropriate expert based on the current input.
+
 ![Expert Parallelism](images/ep.png)
 *Figure: Expert Parallelism distributes MoE experts across multiple GPUs while keeping other layers replicated.*
+
+#### Basic MoE Configuration
+
+To enable MoE in Megatron Bridge, configure the basic MoE parameters in your model provider:
+
+```python
+from megatron.bridge.models import GPTModelProvider
+
+# Configure basic MoE model
+model_config = GPTModelProvider(
+    num_moe_experts=8,           # Number of experts in the MoE module
+    moe_router_topk=2,           # Number of experts activated per token
+    moe_ffn_hidden_size=8192,    # Hidden size for expert FFN layers
+    # ... other model parameters
+)
+```
 
 #### Enable Expert Parallelism
 
 To enable EP, set `expert_model_parallel_size` in your model configuration. For example, if the model has eight experts (`num_moe_experts=8`), then setting `expert_model_parallel_size=4` results in each GPU processing two experts. The number of experts should be divisible by the expert parallel size.
 
 ```python
-from megatron.bridge.models import GPTModelProvider
-
 # Configure MoE model with expert parallelism
 model_config = GPTModelProvider(
     num_moe_experts=8,
@@ -159,6 +175,61 @@ model_config = GPTModelProvider(
     expert_model_parallel_size=4,
     expert_tensor_parallel_size=2,  # Apply tensor parallelism within each expert
     # ... other model parameters
+)
+```
+
+#### Advanced MoE Features
+
+##### DeepEP Optimization
+
+Megatron Bridge includes DeepEP optimization for improved MoE performance on Ampere and Hopper GPUs:
+
+```python
+from megatron.bridge.training.deepep import apply_deepep
+
+# Apply DeepEP optimization
+apply_deepep(model_config)  # Sets moe_token_dispatcher_type="flex" and other optimizations
+```
+
+##### Token Dropping for Load Balancing
+
+Token dropping improves performance by balancing work across experts:
+
+```python
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+
+# Apply token drop settings for load balancing
+apply_moe_token_drop(model_config, moe_expert_capacity_factor=1.0)
+```
+
+#### Complete MoE Configuration Example
+
+```python
+from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.deepep import apply_deepep
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+
+# Configure MoE model with expert parallelism
+model_config = GPTModelProvider(
+    num_layers=32,
+    hidden_size=4096,
+    num_attention_heads=32,
+    
+    # MoE configuration
+    num_moe_experts=8,                    # 8 experts total
+    moe_router_topk=2,                    # Activate 2 experts per token
+    
+    # Expert parallelism
+    expert_model_parallel_size=4,         # Distribute experts across 4 GPUs
+    expert_tensor_parallel_size=2,        # Apply TP within each expert
+    
+    # ... other model parameters
+)
+
+config = ConfigContainer(
+    model=model_config,
+    # ... other config parameters
 )
 ```
 
