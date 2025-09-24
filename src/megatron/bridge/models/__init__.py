@@ -64,15 +64,6 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaHybridProvider8B,
     NVIDIAMambaProvider8B,
 )
-from megatron.bridge.models.nemotronh.nemotron_h_provider import (
-    NemotronHModel4BProvider,
-    NemotronHModel8BProvider,
-    NemotronHModel47BProvider,
-    NemotronHModel56BProvider,
-    NemotronHModelProvider,
-    NemotronNano9Bv2Provider,
-    NemotronNano12Bv2Provider,
-)
 from megatron.bridge.models.nemotron import (
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
@@ -81,6 +72,15 @@ from megatron.bridge.models.nemotron import (
     Nemotron4ModelProvider340B,
     NemotronBridge,
     NemotronModelProvider,
+)
+from megatron.bridge.models.nemotronh.nemotron_h_provider import (
+    NemotronHModel4BProvider,
+    NemotronHModel8BProvider,
+    NemotronHModel47BProvider,
+    NemotronHModel56BProvider,
+    NemotronHModelProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
 )
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
