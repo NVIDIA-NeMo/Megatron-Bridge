@@ -2009,7 +2009,7 @@ docs = [
     { name = "sphinx-autobuild", specifier = ">=2024.10.3" },
     { name = "sphinx-autodoc2", specifier = ">=0.5.0" },
     { name = "sphinx-copybutton", specifier = ">=0.5.2" },
-    { name = "sphinxcontrib-mermaid", specifier = ">=0.9.2" },
+    { name = "sphinxcontrib-mermaid" },
 ]
 test = [
     { name = "click" },
