@@ -9,7 +9,6 @@ Use this checklist-style flow: scaffold → provider mapping → parameter mappi
 
 - Familiarity with the Megatron Bridge repository structure.
 - A working Python 3.10+ environment with Megatron Bridge installed (see [installation instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/README.md#installation)), a container is recommended.
- - A working Python 3.10+ environment with Megatron Bridge installed (see [installation instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/README.md#installation)). Using a container is recommended.
 - Familiarity with Megatron-Core GPT-style modules and 🤗 Transformers config objects.
 - Access to a small HF checkpoint for local testing.
 - Read first:
