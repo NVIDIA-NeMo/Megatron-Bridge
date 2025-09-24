@@ -58,7 +58,6 @@ perf_matrix:
       common:
         num_gpus_per_node: 8
         seq_length: 4096
-        mbs: 1
         gbs: 512
         cuda_graphs: false
         tp: 1
@@ -69,13 +68,15 @@ perf_matrix:
         etp: 1
         fsdp: false
       bf16:
+        mbs: 1
       fp8_cs:
+        mbs: 2
   gb200:
     num_gpus_8:
       common:
         num_gpus_per_node: 4
         seq_length: 4096
-        mbs: 1
+        mbs: 4
         gbs: 512
         cuda_graphs: true
         tp: 1
