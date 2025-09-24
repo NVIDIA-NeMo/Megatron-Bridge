@@ -39,7 +39,7 @@ extensions = [
     "sphinx.ext.doctest",  # Allows testing in docstrings
     "sphinx.ext.napoleon",  # For google style docstrings
     "sphinx_copybutton",  # For copy button in code blocks
-    "sphinxcontrib.mermaid",  # Mermaid support for diagrams in Markdown fences
+    "sphinxcontrib.mermaid",  # For mermaid diagrams
 ]
 
 templates_path = ["_templates"]
@@ -57,11 +57,13 @@ myst_enable_extensions = [
 ]
 myst_heading_anchors = 5  # Generates anchor links for headings up to level 5
 
-# MyST will treat ```mermaid fenced blocks as mermaid diagrams when the extension
-# is active. This mapping ensures the correct directive is used under the hood.
-myst_fence_as_directive = {
-    "mermaid": "mermaid",
-}
+# Configure MyST to handle mermaid code blocks
+myst_fence_as_directive = ["mermaid"]
+
+# -- Options for Mermaid -----------------------------------------------------
+# Configure mermaid diagrams
+mermaid_version = "latest"  # Use the latest version of mermaid
+mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 
 # -- Options for Autodoc2 ---------------------------------------------------
 sys.path.insert(0, os.path.abspath(".."))
