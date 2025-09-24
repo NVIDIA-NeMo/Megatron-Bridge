@@ -211,10 +211,10 @@ def pretrain_config(
         mixed_precision=precision_config,
     )
 
-    # Disable comm overlap until issues with nemotron_h_bf16_with_fp8_current_scaling_mixed are fixed
-    # if cfg.comm_overlap is None:
-    #     cfg.comm_overlap = CommOverlapConfig(
-    #         tp_comm_overlap=True,
-    #     )
+    if cfg.comm_overlap is None:
+        cfg.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=True,
+            tp_comm_bootstrap_backend="nccl",
+        )
 
     return cfg

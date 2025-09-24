@@ -100,7 +100,7 @@ prerelease = "allow"
 # uv.sources allows us to override dependencies with VCS commits. 
 # Lets use this only for debugging purposes, but not for production (main).
 [tool.uv.sources]
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "0289e76380088358a584d809faf69effab1a7cda" } # on `release_v2.7
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "715c3bb82c3bcdef14a8c7ceff6c659f0e39aa66" } # on `release_v2.7
 
 [project.optional-dependencies]
 recipes = [
