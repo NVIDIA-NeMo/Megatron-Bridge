@@ -873,7 +873,7 @@ class TestAutoBridge:
     def test_load_megatron_model_with_override_provider(self):
         """Test load_megatron_model with override_provider argument."""
         from megatron.core.transformer.transformer_config import TransformerConfig
-        
+
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_config = Mock(spec=PretrainedConfig)
         mock_config.architectures = ["LlamaForCausalLM"]
@@ -902,21 +902,19 @@ class TestAutoBridge:
 
                         # Call load_megatron_model with override_provider
                         result = bridge.load_megatron_model(
-                            "checkpoint_path",
-                            override_provider=mock_override_config,
-                            wrap_with_ddp=False
+                            "checkpoint_path", override_provider=mock_override_config, wrap_with_ddp=False
                         )
 
                         # Verify the result
                         assert result == [mock_model]
-                        
+
                         # Verify that load_megatron_model was called with override_provider
                         mock_load_megatron_model.assert_called_once()
                         call_args = mock_load_megatron_model.call_args
-                        
+
                         # Check that override_provider was passed correctly
-                        assert call_args.kwargs['override_provider'] == mock_override_config
-                        
+                        assert call_args.kwargs["override_provider"] == mock_override_config
+
                         # Check other expected arguments
                         assert call_args.args[0] == "checkpoint_path"  # path argument
-                        assert 'skip_temp_dist_context' in call_args.kwargs
+                        assert "skip_temp_dist_context" in call_args.kwargs
