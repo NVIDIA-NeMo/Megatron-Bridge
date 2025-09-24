@@ -36,7 +36,7 @@ training/peft-config.md
 :caption: Development
 :hidden:
 
-contribute-new-model-in-bridge.md
+adding-new-models.md
 documentation.md
 apidocs/index.rst
 ```
