@@ -19,18 +19,6 @@ The easiest way to load a 🤗 Hugging Face model is using `AutoBridge.from_hf_p
 
 ### Basic Usage
 
-```mermaid
-flowchart LR
-    HF[Hugging Face<br/>PreTrained Model/Config] -->|detect| AutoBridge
-    AutoBridge -->|select| Bridge[MegatronModelBridge<br/>architecture-specific]
-    Bridge -->|provider bridge| Provider[Model Provider<br/>TransformerConfig builder]
-    Provider -->|instantiate| Megatron[Distributed Megatron Model]
-    Bridge -->|mapping registry| Registry[MegatronMappingRegistry]
-    Registry -->|maps to| Mappings[Param Mapping<br/>Auto Row Col QKV ...]
-    HF <-->|convert per-parameter| Bridge
-    Megatron --|TP/PP/VPP-aware|--> Mappings
-```
-
 ```python
 from megatron.bridge import AutoBridge
 
