@@ -67,7 +67,7 @@ def main() -> None:
     warmup_samples = 1024000
     # train_samples = 32*20
     # warmup_samples = 32*10
-    global_batch_size = 32
+    global_batch_size = 1536
     train_iters = train_samples // global_batch_size
     warmup_iters = warmup_samples // global_batch_size
 
@@ -82,8 +82,8 @@ def main() -> None:
         micro_batch_size=2,
         lr_warmup_iters=warmup_iters,
         tensor_parallelism=4,
-        pipeline_parallelism=1,
-        log_interval=2,
+        pipeline_parallelism=2,
+        log_interval=10,
         per_split_data_args_path="/lustre/fsw/portfolios/llmservice/users/jupinderp/data_blends/1T-phase1var-moresft-full.json",
         path_to_cache="/lustre/fs1/portfolios/coreai/users/liding/nemo/workspace/experiments/nm6_training/data_cache_8k",
     )

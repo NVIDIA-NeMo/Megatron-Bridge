@@ -207,7 +207,7 @@ class NemotronNanoNext3Bv2Provider(NemotronHModelProvider):
 
     hybrid_override_pattern: str = "MEMEM*EMEM*EMEM*EMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEME"
     num_layers: int = 54
-    hidden_size: int = 1344
+    hidden_size: int = 2688
     mamba_num_heads: int = 64
     kv_channels: int = 128
     mamba_state_dim: int = 128
