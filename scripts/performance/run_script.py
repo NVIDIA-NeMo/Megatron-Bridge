@@ -21,9 +21,11 @@ from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
-from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
-from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
+from megatron.bridge.recipes.llama import (
+    llama3_8b_pretrain_config,
+    llama3_70b_pretrain_config,
+    llama31_405b_pretrain_config,
+)
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (

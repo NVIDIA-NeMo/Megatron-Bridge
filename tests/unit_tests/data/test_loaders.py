@@ -22,7 +22,7 @@ from megatron.bridge.data.loaders import (
     get_blend_and_blend_per_split,
 )
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config as pretrain_config
 from megatron.bridge.training.state import TrainState
 
 

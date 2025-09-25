@@ -18,7 +18,7 @@ from megatron.bridge.data.samplers import (
     build_pretraining_data_loader,
 )
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config as pretrain_config
 
 
 class TestDataSamplers:

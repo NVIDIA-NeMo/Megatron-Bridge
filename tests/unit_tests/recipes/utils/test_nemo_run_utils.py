@@ -247,10 +247,10 @@ class TestPrepareConfigForNemoRun:
     def test_with_real_gpt_config(self):
         """Test with a real GPTConfig to ensure compatibility."""
         # Import actual configs for realistic testing
-        from megatron.bridge.recipes.llama.llama3_8b import model_config
+        from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config as pretrain_config
 
         # Get a real model config
-        model_cfg = model_config()
+        model_cfg = pretrain_config().model
 
         # Create a minimal ConfigContainer with required fields
         config = ConfigContainer(
