@@ -25,6 +25,7 @@ For example:
 ```python
 from megatron.bridge.training.config import ConfigContainer, OptimizerConfig
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 # Configure communication overlap
 comm_overlap_config = CommOverlapConfig(
@@ -40,13 +41,18 @@ optimizer_config = OptimizerConfig(
     optimizer="adam",
     lr=3e-4,
     use_distributed_optimizer=True,  # Required for DP overlap
-    grad_reduce_in_fp32=False,  # Use bf16 for gradient reduction
     # ... other optimizer parameters
 )
+
+# Mixed precision configuration controls overlap-related attributes
+mixed_precision_config = get_mixed_precision_config("bf16_mixed")
+mixed_precision_config.grad_reduce_in_fp32 = False  # Use bf16 for gradient reduction
+mixed_precision_config.fp8_param_gather = False
 
 config = ConfigContainer(
     comm_overlap=comm_overlap_config,
     optimizer=optimizer_config,
+    mixed_precision=mixed_precision_config,
     # ... other config parameters
 )
 ```
