@@ -29,8 +29,8 @@ try:
 except ImportError:
     HAS_NEMO_RUN = False
 
-# if HAS_NEMO_RUN:
-#     from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
+if HAS_NEMO_RUN:
+    from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
@@ -60,19 +60,19 @@ if __name__ == "__main__":
 
     enable_deepep = bool(args.gpu.lower() in ["h100"])
     plugins = (
-        # [
-        #     PerfEnvPlugin(
-        #         enable_vboost=args.enable_vboost,
-        #         nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
-        #         gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
-        #         layernorm_sm_margin=20 if enable_deepep else 16,
-        #     )
-        # ]
-        # if HAS_NEMO_RUN
-        # else []
+        [
+            PerfEnvPlugin(
+                enable_vboost=args.enable_vboost,
+                nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
+                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
+                layernorm_sm_margin=20 if enable_deepep else 16,
+            )
+        ]
+        if HAS_NEMO_RUN
+        else []
     )
-    #if HAS_NEMO_RUN and args.enable_nsys:
-    #    plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+    if HAS_NEMO_RUN and args.enable_nsys:
+       plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
