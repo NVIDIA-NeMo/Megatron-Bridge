@@ -17,9 +17,9 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
-from .argument_parser import parse_cli_args
-from .utils.executors import slurm_executor
-from .utils.helpers import get_perf_matrix_overrides
+from argument_parser import parse_cli_args
+from utils.executors import slurm_executor
+from utils.common import get_perf_matrix_overrides
 
 
 try:
@@ -29,8 +29,8 @@ try:
 except ImportError:
     HAS_NEMO_RUN = False
 
-if HAS_NEMO_RUN:
-    from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
+# if HAS_NEMO_RUN:
+#     from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
@@ -60,19 +60,19 @@ if __name__ == "__main__":
 
     enable_deepep = bool(args.gpu.lower() in ["h100"])
     plugins = (
-        [
-            PerfEnvPlugin(
-                enable_vboost=args.enable_vboost,
-                nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
-                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
-                layernorm_sm_margin=20 if enable_deepep else 16,
-            )
-        ]
-        if HAS_NEMO_RUN
-        else []
+        # [
+        #     PerfEnvPlugin(
+        #         enable_vboost=args.enable_vboost,
+        #         nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
+        #         gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
+        #         layernorm_sm_margin=20 if enable_deepep else 16,
+        #     )
+        # ]
+        # if HAS_NEMO_RUN
+        # else []
     )
-    if HAS_NEMO_RUN and args.enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+    #if HAS_NEMO_RUN and args.enable_nsys:
+    #    plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
@@ -103,6 +103,7 @@ if __name__ == "__main__":
         nemo_home=args.nemo_home,
         wandb_key=args.wandb_key,
     )
+    executor.gpus_per_node = 8
 
     target_script_args = [
         "--config_file",

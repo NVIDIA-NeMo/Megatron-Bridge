@@ -25,7 +25,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
-
+from megatron.bridge.performance.utils.common import get_perf_matrix_overrides
 
 logger = logging.getLogger(__name__)
 
@@ -106,21 +106,6 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.config.cpu_offloading = True
         recipe.model.config.cpu_offloading_weights = False
         recipe.model.config.cpu_offloading_num_layers = activation_offload_layers
-
-
-def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
-    """Get the performance matrix overrides from the YAML file."""
-    perf = yaml_root.get("perf_matrix") if hasattr(yaml_root, "get") else None
-    if not perf:
-        return
-    if args.gpu not in perf:
-        return
-    num_gpus_value = args.num_gpus or args.gpus_per_node
-    num_gpus_yaml_key = f"num_gpus_{num_gpus_value}"
-    gpu_block = perf.get(args.gpu) or {}
-    preset = gpu_block.get(num_gpus_yaml_key) or {}
-
-    return preset
 
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
