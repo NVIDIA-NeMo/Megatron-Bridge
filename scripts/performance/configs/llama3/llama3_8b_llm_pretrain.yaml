@@ -58,7 +58,7 @@ perf_matrix:
         gbs: 128
         cuda_graphs: false
         tp: 1
-        pp: 1
+        pp: 2
         vp: null
         ep: 1
         etp: null

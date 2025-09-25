@@ -25,7 +25,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
-from megatron.bridge.performance.utils.common import get_perf_matrix_overrides
+from .common import get_perf_matrix_overrides
 
 logger = logging.getLogger(__name__)
 
