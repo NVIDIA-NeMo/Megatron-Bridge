@@ -12,9 +12,15 @@ The DP communication is chunked by the granularity of a Transformer layer and ov
 
 ### Configuration
 
-DP communication overlap settings can be inspected in Megatron Core via the `DistributedDataParallelConfig` class. DP gradient reduce-scatter and parameter all-gather overlaps are enabled when setting `overlap_grad_sync=True` and `overlap_param_gather=True`, respectively. The precision of gradient reduce-scatter is controlled by `grad_reduce_in_fp32`. When `grad_reduce_in_fp32=False`, gradients are reduced in bf16, leading to improved performance in large-scale training compared to the default fp32 precision. When training in fp8 computing precision, setting `fp8_param_gather=True` conducts the parameter all-gather in fp8, reducing the all-gather overhead by half.
+DP communication overlap settings can be inspected in Megatron Core via the `DistributedDataParallelConfig` class. DP gradient reduce-scatter and parameter all-gather overlaps are enabled when setting `overlap_grad_reduce=True` and `overlap_param_gather=True`, respectively. The precision of gradient reduce-scatter is controlled by `grad_reduce_in_fp32`. When `grad_reduce_in_fp32=False`, gradients are reduced in bf16, leading to improved performance in large-scale training compared to the default fp32 precision. When training in fp8 computing precision, setting `fp8_param_gather=True` conducts the parameter all-gather in fp8, reducing the all-gather overhead by half.
 
-Data parallel communication overlap settings are controlled through the distributed data parallel and communication overlap configurations:
+Data parallel communication overlap settings are controlled through the distributed data parallel and communication overlap configurations.
+
+```{note}
+Data-parallel overlap relies on attributes such as `grad_reduce_in_fp32` and `fp8_param_gather`. When a mixed-precision recipe (for example `bf16_mixed`, `fp16_mixed`, `bf16_with_fp8_delayed_scaling_mixed`, etc.) is provided, those attributes are sourced from the recipe stored in the `MixedPrecisionConfig`. Set the desired values inside the mixed-precision configuration rather than overriding them directly on the optimizer or DDP configs. This ensures the communication overlap settings and the selected precision recipe remain consistent.
+```
+
+For example:
 
 ```python
 from megatron.bridge.training.config import ConfigContainer, OptimizerConfig
