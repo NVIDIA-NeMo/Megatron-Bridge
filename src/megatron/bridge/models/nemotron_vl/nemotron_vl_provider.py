@@ -15,7 +15,7 @@
 import copy
 from dataclasses import dataclass
 from typing import Any, Optional
-from megatron.bridge.models.mamba.nemotron_h_provider import NemotronNano12Bv2Provider
+from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronNano12Bv2Provider
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
 from megatron.core.models.multimodal.llava_spec import decoder_model_with_transformer_engine_default_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel

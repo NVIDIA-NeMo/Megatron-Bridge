@@ -50,6 +50,7 @@ class NemotronVLBridge(MegatronModelBridge):
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             generation_config=hf_pretrained.generation_config,
         )
+        provider.finalize()
         return provider
 
     # ------------------------------------------------------------------
