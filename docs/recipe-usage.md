@@ -139,3 +139,19 @@ srun --nodes 2 --gpus-per-node 8 \
 
 Along with any other required flags. It is also recommended to use a NeMo Framework container with Slurm. You can find a list of container tags on [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags).
 
+
+### Avoiding Hangs
+
+When working with any scripts in Megatron Bridge, please make sure you wrap your code in an `if __name__ == "__main__":`
+block. Otherwise, your code may hang unexpectedly.
+
+The reason for this is that Megatron Bridge uses Python's `multiprocessing` module in the backend when running a
+multi-GPU job. The multiprocessing module will create new Python processes that will import the current module (your
+script). If you did not add `__name__== "__main__"`,  then your module will spawn new processes which import the
+module and then each spawn new processes. This results in an infinite loop of process spawning.
+
+## Resources
+
+- [OmegaConf documentation](https://omegaconf.readthedocs.io/en/2.3_branch/)
+- [torchrun Documentation](https://docs.pytorch.org/docs/stable/elastic/run.html)
+- [PyTorch Multinode Training documentation](https://docs.pytorch.org/tutorials/intermediate/ddp_series_multinode.html)
