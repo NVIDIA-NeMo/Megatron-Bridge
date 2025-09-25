@@ -81,7 +81,7 @@ def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
                     "Disabling deferring embedding wgrad compute because it cannot work with FSDP together."
                 )
                 recipe.comm_overlap.defer_embedding_wgrad_compute = False
-        
+
         if recipe.optimizer.use_precision_aware_optimizer:
             recipe.optimizer.use_precision_aware_optimizer = False
             logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
