@@ -15,7 +15,7 @@
 ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
-    use_transformer_engine_op_fuser: true
+    use_transformer_engine_op_fuser: false
 
   train:
     train_iters: 25

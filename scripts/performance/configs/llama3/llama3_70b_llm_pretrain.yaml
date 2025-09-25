@@ -19,7 +19,7 @@
 ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
-    use_transformer_engine_op_fuser: true
+    use_transformer_engine_op_fuser: false
 
   train:
     train_iters: 25
@@ -119,29 +119,33 @@ perf_matrix:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
-        mbs: 1
         gbs: 128
         cuda_graphs: false
         cp: 1
         ep: 1
         etp: null
       bf16:
+        mbs: 1
         tp: 1
         pp: 1
         vp: null
         use_megatron_fsdp: true
-        recompute_num_layers: 20
+        cpu_offloading_num_layers: 20
       fp8_ds:
+        mbs: 1
         tp: 1
         pp: 1
         vp: null
         use_megatron_fsdp: true
       fp8_cs:
+        mbs: 2
         tp: 1
         pp: 1
         vp: null
         use_megatron_fsdp: true
+        cpu_offloading_num_layers: 40
       fp8_mx:
+        mbs: 1
         tp: 2
         pp: 4
         vp: 5

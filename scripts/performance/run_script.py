@@ -155,6 +155,10 @@ def main():
             logger.warning("Disabling model.use_transformer_engine_op_fuser as it cannot work with MXFP8 or FSDP.")
             recipe.model.use_transformer_engine_op_fuser = False
 
+    if recipe.ddp.use_megatron_fsdp = True
+        if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
+            recipe.ddp.fsdp_double_buffer = True
+
     pretrain(config=recipe, forward_step_func=forward_step)
 
 
