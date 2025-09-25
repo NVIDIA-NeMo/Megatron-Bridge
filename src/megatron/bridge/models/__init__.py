@@ -64,7 +64,7 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaHybridProvider8B,
     NVIDIAMambaProvider8B,
 )
-from megatron.bridge.models.mamba.nemotron_h_provider import (
+from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
     NemotronHModel47BProvider,
@@ -73,6 +73,15 @@ from megatron.bridge.models.mamba.nemotron_h_provider import (
     NemotronNano9Bv2Provider,
     NemotronNano12Bv2Provider,
     NemotronNanoNext3Bv2Provider,
+)
+from megatron.bridge.models.nemotron import (
+    Nemotron3ModelProvider4B,
+    Nemotron3ModelProvider8B,
+    Nemotron3ModelProvider22B,
+    Nemotron4ModelProvider15B,
+    Nemotron4ModelProvider340B,
+    NemotronBridge,
+    NemotronModelProvider,
 )
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
@@ -97,6 +106,11 @@ from megatron.bridge.models.qwen import (
     Qwen25ModelProvider32B,
     Qwen25ModelProvider72B,
     Qwen25ModelProvider500M,
+)
+from megatron.bridge.models.qwen_vl import (
+    Qwen25VLBridge,
+    Qwen25VLModel,
+    Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
@@ -176,4 +190,16 @@ __all__ = [
     "MambaProvider780M",
     "NVIDIAMambaHybridProvider8B",
     "NVIDIAMambaProvider8B",
+    # Nemotron Models
+    "NemotronBridge",
+    "NemotronModelProvider",
+    "Nemotron3ModelProvider4B",
+    "Nemotron3ModelProvider8B",
+    "Nemotron3ModelProvider22B",
+    "Nemotron4ModelProvider15B",
+    "Nemotron4ModelProvider340B",
+    # VL Models
+    "Qwen25VLModel",
+    "Qwen25VLBridge",
+    "Qwen25VLModelProvider",
 ]

@@ -59,7 +59,7 @@ ModelT = TypeVar("ModelT", bound=MegatronModule)
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
-    """A mixin that implements the ModelProvider pattern for Megatron-Hub.
+    """A mixin that implements the ModelProvider pattern for Megatron Bridge.
 
     The ModelProvider pattern solves ecosystem fragmentation by providing a standardized
     way to instantiate models. This mixin provides a consistent `provide_distributed_model()` method
@@ -495,6 +495,17 @@ def get_model(
     else:
         model = _create_model(model_provider, model_type)
 
+    model_config = get_model_config(model[0])
+
+    if model_config.fp16 or model_config.bf16:
+        model = [Float16Module(model_config, model_module) for model_module in model]
+
+        # Maintain expert bias in float32 wrapped in Float16Module
+        for model_module in model:
+            for submodule in model_module.modules():
+                if hasattr(submodule, "_maintain_float32_expert_bias"):
+                    submodule._maintain_float32_expert_bias()
+
     if pre_wrap_hook:
         if isinstance(pre_wrap_hook, list):
             # Execute hooks in order
@@ -519,17 +530,12 @@ def get_model(
 
     _print_num_params(model)
 
-    model_config = get_model_config(model[0])
-
     # GPU allocation.
     # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
     # in the fully_shard function of FSDP2 instead.
     if not (use_torch_fsdp2 and model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
-
-    if model_config.fp16 or model_config.bf16:
-        model = [Float16Module(model_config, model_module) for model_module in model]
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)

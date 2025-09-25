@@ -25,7 +25,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 @MegatronModelBridge.register_bridge(source="DeepseekV2ForCausalLM", target=GPTModel)
 class DeepSeekV2Bridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for DeepSeek-V2.
+    Megatron Bridge for DeepSeek-V2.
 
     As a user you would not use this bridge directly, but through `AutoBridge`.
 

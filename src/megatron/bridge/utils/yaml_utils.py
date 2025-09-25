@@ -67,6 +67,15 @@ def safe_yaml_representers() -> Generator[None, None, None]:
         except ModuleNotFoundError:
             pass
 
+        # Try to add PretrainedConfig representer if available (generic for HF configs)
+        try:
+            from transformers import PretrainedConfig
+
+            # Use multi-representer so subclasses of PretrainedConfig are also handled
+            yaml.SafeDumper.add_multi_representer(PretrainedConfig, _pretrained_config_representer)
+        except ModuleNotFoundError:
+            pass
+
         # General object representer
         yaml.SafeDumper.add_multi_representer(object, _safe_object_representer)
 
@@ -192,4 +201,18 @@ def _generation_config_representer(dumper, data):
         "config_dict": data.to_dict(),
     }
 
+    return dumper.represent_data(value)
+
+
+def _pretrained_config_representer(dumper, data):
+    """Represent transformers PretrainedConfig objects in YAML generically.
+
+    Uses the class's from_dict/to_dict methods to ensure full round-trip of all fields.
+    """
+    cls = data.__class__
+    value = {
+        "_target_": f"{inspect.getmodule(cls).__name__}.{cls.__qualname__}.from_dict",
+        "_call_": True,
+        "config_dict": data.to_dict(),
+    }
     return dumper.represent_data(value)

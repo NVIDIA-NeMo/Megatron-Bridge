@@ -30,6 +30,7 @@ from transformers import (
 from transformers.generation.utils import GenerateOutput
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
+from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 
 
 # Type variable for generic model type
@@ -223,11 +224,11 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         return model
 
     def _load_config(self) -> AutoConfig:
-        """Lazy load and return the model config."""
+        """Lazy load and return the model config with thread-safety protection."""
         if self.model_name_or_path is None:
             raise ValueError("model_name_or_path must be provided to load config")
 
-        return AutoConfig.from_pretrained(
+        return safe_load_config_with_retry(
             self.model_name_or_path,
             trust_remote_code=self.trust_remote_code,
             **self.init_kwargs,

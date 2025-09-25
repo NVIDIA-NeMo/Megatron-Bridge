@@ -62,9 +62,36 @@ class MegatronMappingRegistry:
         >>> mapping_registry = MegatronMappingRegistry(*mappings)
 
     Note:
-        Wildcard patterns use '*' which matches any sequence of digits (0-9).
-        This is specifically designed for layer indices in transformer models.
+        Wildcard patterns support:
+        - '*' matches any sequence of digits (0-9) - designed for layer indices
+        - '**' matches any sequence of characters - designed for nested paths
     """
+
+    def _convert_pattern_to_regex(self, pattern: str) -> str:
+        """Convert a pattern with wildcards to regex pattern.
+
+        Args:
+            pattern: Pattern string with * and ** wildcards
+
+        Returns:
+            Regex pattern string
+
+        Note:
+            ** must be processed before * to avoid conflicts.
+            ** becomes (.*) - matches any characters including dots
+            * becomes (\\d+) - matches digits only for layer indices
+        """
+        # Escape the pattern first
+        regex_pattern = re.escape(pattern)
+
+        # Process ** before * to avoid conflicts
+        # Replace \*\* with (.*)
+        regex_pattern = regex_pattern.replace(r"\*\*", r"(.*)")
+
+        # Replace remaining \* with (\d+)
+        regex_pattern = regex_pattern.replace(r"\*", r"(\d+)")
+
+        return regex_pattern
 
     def __init__(self, *mappings: MegatronParamMapping):
         """
@@ -82,10 +109,8 @@ class MegatronMappingRegistry:
         for mapping in mappings:
             # Compile source patterns
             if "*" in mapping.megatron_param:
-                # Convert glob pattern to regex
-                # decoder.layers.*.mlp.linear_fc1.weight -> decoder\.layers\.(\d+)\.mlp\.linear_fc1\.weight
-                pattern = re.escape(mapping.megatron_param)
-                pattern = pattern.replace(r"\*", r"(\d+)")
+                # Convert glob pattern to regex with support for * and **
+                pattern = self._convert_pattern_to_regex(mapping.megatron_param)
                 self._compiled_patterns.append((re.compile(f"^{pattern}$"), mapping))
             else:
                 self._compiled_patterns.append((None, mapping))
@@ -93,8 +118,7 @@ class MegatronMappingRegistry:
             # Compile destination patterns for reverse lookups
             if isinstance(mapping.hf_param, str):
                 if "*" in mapping.hf_param:
-                    pattern = re.escape(mapping.hf_param)
-                    pattern = pattern.replace(r"\*", r"(\d+)")
+                    pattern = self._convert_pattern_to_regex(mapping.hf_param)
                     self._reverse_patterns.append((re.compile(f"^{pattern}$"), mapping))
                 else:
                     self._reverse_patterns.append((None, mapping))
@@ -103,8 +127,7 @@ class MegatronMappingRegistry:
                 reverse_dict_patterns = {}
                 for key, hf_pattern in mapping.hf_param.items():
                     if "*" in hf_pattern:
-                        pattern = re.escape(hf_pattern)
-                        pattern = pattern.replace(r"\*", r"(\d+)")
+                        pattern = self._convert_pattern_to_regex(hf_pattern)
                         reverse_dict_patterns[key] = re.compile(f"^{pattern}$")
                     else:
                         reverse_dict_patterns[key] = None
@@ -197,13 +220,15 @@ class MegatronMappingRegistry:
         Get all mappings that match a given pattern.
 
         Args:
-            pattern: Pattern to match (supports * wildcards)
+            pattern: Pattern to match (supports * and ** wildcards)
 
         Returns:
             List of matching MegatronParamMapping objects
         """
-        # Convert pattern to regex
+        # Convert pattern to regex using the same logic as _convert_pattern_to_regex
+        # but for this method we want both * and ** to match anything for search purposes
         regex_pattern = re.escape(pattern)
+        regex_pattern = regex_pattern.replace(r"\*\*", r".*")
         regex_pattern = regex_pattern.replace(r"\*", r".*")
         compiled_pattern = re.compile(f"^{regex_pattern}$")
 
