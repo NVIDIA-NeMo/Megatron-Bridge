@@ -112,7 +112,7 @@ perf_matrix:
         ep: 64
         etp: 1
         use_megatron_fsdp: false
-        cuda_graphs: true
+        cuda_graphs: false
       bf16:
       fp8_cs:
       fp8_mx:
