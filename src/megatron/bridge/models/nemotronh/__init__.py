@@ -21,6 +21,7 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronHModelProvider,
     NemotronNano9Bv2Provider,
     NemotronNano12Bv2Provider,
+    NemotronNanoNext3Bv2Provider,
 )
 
 
@@ -32,4 +33,5 @@ __all__ = [
     "NemotronHModel56BProvider",
     "NemotronNano9Bv2Provider",
     "NemotronNano12Bv2Provider",
+    "NemotronNanoNext3Bv2Provider",
 ]
