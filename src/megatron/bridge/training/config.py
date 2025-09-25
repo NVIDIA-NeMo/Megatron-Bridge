@@ -995,13 +995,13 @@ class ConfigContainer(Container):
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
 
-            if self.model.gradient_accumulation_fusion:
-                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-                self.model.gradient_accumulation_fusion = False
+            # if self.model.gradient_accumulation_fusion:
+            #     print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
+            #     self.model.gradient_accumulation_fusion = False
 
-            if self.ddp.average_in_collective:
-                print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
-                self.ddp.average_in_collective = False
+            # if self.ddp.average_in_collective:
+            #     print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
+            #     self.ddp.average_in_collective = False
 
             if self.optimizer.use_precision_aware_optimizer:
                 self.ddp.preserve_fp32_weights = False
