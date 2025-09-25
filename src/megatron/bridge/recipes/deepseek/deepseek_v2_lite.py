@@ -17,7 +17,7 @@ from typing import List, Optional, Union
 
 import torch
 
-from megatron.bridge.models.deepseek import DeepSeekV2LiteProvider
+from megatron.bridge.models.deepseek import DeepSeekV2LiteModelProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -46,7 +46,7 @@ def model_config(
     recompute_granularity: str = "full",
     recompute_method: str = "uniform",
     recompute_num_layers: int = 1,
-) -> DeepSeekV2LiteProvider:
+) -> DeepSeekV2LiteModelProvider:
     """
     Configure the DeepSeek-V2-Lite (16B) model.
 
@@ -63,9 +63,9 @@ def model_config(
         recompute_num_layers (int): Number of layers to recompute.
 
     Returns:
-        DeepSeekV2LiteProvider: Configuration for the DeepSeek-V2-Lite model.
+        DeepSeekV2LiteModelProvider: Configuration for the DeepSeek-V2-Lite model.
     """
-    return DeepSeekV2LiteProvider(
+    return DeepSeekV2LiteModelProvider(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,

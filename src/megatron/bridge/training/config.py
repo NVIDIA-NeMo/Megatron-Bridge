@@ -25,7 +25,7 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.mamba.mamba_provider import MambaProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
@@ -869,7 +869,7 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaProvider
+    model: GPTModelProvider | T5ModelProvider | MambaModelProvider
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
@@ -986,6 +986,8 @@ class ConfigContainer(Container):
             # Set Megatron FSDP Configs
             self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
+
+            assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
 
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading

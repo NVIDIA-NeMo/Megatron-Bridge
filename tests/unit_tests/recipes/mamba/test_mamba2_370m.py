@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.mamba import MambaProvider370M
+from megatron.bridge.models.mamba import MambaModelProvider370M
 from megatron.bridge.recipes.mamba.mamba2_370m import model_config, pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -33,7 +33,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, MambaProvider370M)
+        assert isinstance(config, MambaModelProvider370M)
         assert config.tensor_model_parallel_size == 1
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype is None
@@ -96,7 +96,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaProvider370M)
+        assert isinstance(config.model, MambaModelProvider370M)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251

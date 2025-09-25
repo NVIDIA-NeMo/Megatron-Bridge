@@ -26,6 +26,8 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_mxfp8_mixed,
 )
 
+from .common import get_perf_matrix_overrides
+
 
 logger = logging.getLogger(__name__)
 
@@ -108,21 +110,6 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.config.cpu_offloading_num_layers = activation_offload_layers
 
 
-def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
-    """Get the performance matrix overrides from the YAML file."""
-    perf = yaml_root.get("perf_matrix") if hasattr(yaml_root, "get") else None
-    if not perf:
-        return
-    if args.gpu not in perf:
-        return
-    num_gpus_value = args.num_gpus or args.gpus_per_node
-    num_gpus_yaml_key = f"num_gpus_{num_gpus_value}"
-    gpu_block = perf.get(args.gpu) or {}
-    preset = gpu_block.get(num_gpus_yaml_key) or {}
-
-    return preset
-
-
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
     """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""
     preset = get_perf_matrix_overrides(yaml_root, args)
@@ -134,6 +121,7 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     common = preset.get("common") or {}
     compute_dtype = args.compute_dtype if args.compute_dtype == "bf16" else f"{args.compute_dtype}_{args.fp8_recipe}"
     dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
+
     # Deep-merge so dtype-specific values override common
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
     perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore

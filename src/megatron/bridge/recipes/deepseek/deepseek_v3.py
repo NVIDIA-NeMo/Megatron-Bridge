@@ -18,7 +18,7 @@ from typing import List, Optional, Union
 
 import torch
 
-from megatron.bridge.models.deepseek import DeepSeekV3Provider
+from megatron.bridge.models.deepseek import DeepSeekV3ModelProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -57,7 +57,7 @@ def model_config(
     recompute_num_layers: Optional[int] = None,
     enable_deepep: bool = False,
     apply_rope_fusion: bool = True,
-) -> DeepSeekV3Provider:
+) -> DeepSeekV3ModelProvider:
     """
     Configure the DeepSeek-V3 (671B) model.
 
@@ -77,9 +77,9 @@ def model_config(
         recompute_num_layers: Number of layers to recompute.
         apply_rope_fusion: Whether to apply MLA Yarn fusion.
     Returns:
-        DeepSeekV3Provider: Configuration for the DeepSeek-V3 model.
+        DeepSeekV3ModelProvider: Configuration for the DeepSeek-V3 model.
     """
-    cfg = DeepSeekV3Provider(
+    cfg = DeepSeekV3ModelProvider(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,
