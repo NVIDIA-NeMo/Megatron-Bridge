@@ -276,9 +276,8 @@ def get_causal_lm_class_via_auto_map(
                 local_files_only=False,
                 repo_id=repo_id,
             )
-        except Exception as e:
-            raise e
-            # return None
+        except Exception:
+            return None
 
     return None
 

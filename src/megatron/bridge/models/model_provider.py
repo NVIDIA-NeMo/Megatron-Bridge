@@ -39,7 +39,6 @@ from megatron.core.distributed import (
     FullyShardedDataParallel,
     TorchFullyShardedDataParallel,
 )
-
 from megatron.core.enums import ModelType
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
