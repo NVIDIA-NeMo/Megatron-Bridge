@@ -104,6 +104,10 @@ if __name__ == "__main__":
         wandb_key=args.wandb_key,
     )
 
+    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
+        if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
     target_script_args = [
         "--config_file",
         str(config_filepath),
