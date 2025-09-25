@@ -1,5 +1,6 @@
 from typing import Any
 
+
 def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     """Get the performance matrix overrides from the YAML file."""
     perf = yaml_root.get("perf_matrix") if hasattr(yaml_root, "get") else None
