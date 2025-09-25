@@ -6,8 +6,15 @@
 :caption: Guides
 :hidden:
 
-bridge-guide.md
 performance-guide.md
+```
+
+```{toctree}
+:caption: Bridge with 🤗 Hugging Face
+:hidden:
+
+bridge-guide.md
+bridge-tech-details.md
 ```
 
 ```{toctree}
@@ -22,6 +29,7 @@ training/logging.md
 training/profiling.md
 training/checkpointing.md
 training/resiliency.md
+training/mixed-precision.md
 training/peft.md
 ```
 
@@ -29,6 +37,7 @@ training/peft.md
 :caption: Development
 :hidden:
 
+adding-new-models.md
 documentation.md
 apidocs/index.rst
 ```
