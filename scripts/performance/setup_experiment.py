@@ -72,7 +72,7 @@ if __name__ == "__main__":
         else []
     )
     if HAS_NEMO_RUN and args.enable_nsys:
-       plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
@@ -103,7 +103,6 @@ if __name__ == "__main__":
         nemo_home=args.nemo_home,
         wandb_key=args.wandb_key,
     )
-    executor.gpus_per_node = 8
 
     target_script_args = [
         "--config_file",
