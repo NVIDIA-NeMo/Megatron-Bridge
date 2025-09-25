@@ -68,15 +68,19 @@ def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.ddp.use_megatron_fsdp = True
         recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         recipe.ddp.keep_fp8_transpose_cache = False
-        recipe.ddp.average_in_collective = False # TODO: enable/keep it default after resolving the issue
+        recipe.ddp.average_in_collective = True
 
         recipe.model.init_model_with_meta_device = True
-        recipe.model.gradient_accumulation_fusion = False
+        recipe.model.gradient_accumulation_fusion = True
 
         if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
             if recipe.comm_overlap.defer_embedding_wgrad_compute:
                 logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
                 recipe.comm_overlap.defer_embedding_wgrad_compute = False
+        
+        if recipe.optimizer.use_precision_aware_optimizer:
+            recipe.optimizer.use_precision_aware_optimizer = False
+            logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
 
 def get_precision_config(compute_dtype: str, fp8_recipe: str):
