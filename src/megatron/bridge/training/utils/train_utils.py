@@ -536,14 +536,14 @@ def training_log(
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(elapsed_time_per_iteration * 1000.0)
 
-        # TODO: enable after flops is implemented
-        # if logger_config.log_throughput:
-        #     log_string += f' throughput per GPU (TFLOP/s/GPU): {throughput:.1f} |'
-        #     if logger_config.log_timers_to_tensorboard:
-        #         if writer:
-        #             writer.add_scalar('throughput', throughput, iteration)
-        #         if wandb_writer:
-        #             wandb_writer.log({'throughput': throughput}, iteration)
+
+        if logger_config.log_throughput:
+            log_string += f' throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |'
+            if logger_config.log_timers_to_tensorboard:
+                if writer:
+                    writer.add_scalar('throughput', per_gpu_tf, iteration)
+                if wandb_writer:
+                    wandb_writer.log({'throughput': per_gpu_tf}, iteration)
 
         if energy_monitor is not None:
             energy = (energy_monitor.lap() / total_iterations) / get_world_size_safe()
