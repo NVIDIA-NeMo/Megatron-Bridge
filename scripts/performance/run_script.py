@@ -71,7 +71,6 @@ def main():
             enable_deepep=enable_deepep,
             layout="Et|(tt|)*30mL",
         )
-        recipe.model = apply_moe_token_drop(recipe.model)
 
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
