@@ -117,7 +117,12 @@ def model_config(
     if layout is None:
         map_pp_vp_to_layout = {
             (1, 1): None,
-            (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+            (4, 1): [
+                ["embedding"] + ["decoder"] * 16,
+                ["decoder"] * 16,
+                ["decoder"] * 16,
+                ["decoder"] * 13 + last_layer,
+            ],
             (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
             (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
             (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],

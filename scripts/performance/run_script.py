@@ -91,17 +91,17 @@ def main():
             recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
     elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
         recipe = qwen3_30b_a3b_pretrain_config(
-            mock=True, 
+            mock=True,
             precision_config=precision_config,
             comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
-            )
+        )
         recipe.model = apply_moe_token_drop(recipe.model)
     elif args.model_name == "qwen3" and args.model_size == "235b_a22b":
         recipe = qwen3_235b_a22b_pretrain_config(
-            mock=True, 
+            mock=True,
             precision_config=precision_config,
             comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
-            )
+        )
         recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
