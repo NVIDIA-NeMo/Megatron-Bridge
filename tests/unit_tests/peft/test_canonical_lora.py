@@ -745,6 +745,7 @@ class TestCanonicalLoRAMegatronIntegration:
         # Register CanonicalLoRA pre-wrap hook
         lora_hook = self._create_canonical_lora_pre_wrap_hook(lora)
         model_provider.register_pre_wrap_hook(lora_hook)
+        model_provider.finalize()
 
         # Get the model with CanonicalLoRA applied via hook
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
@@ -794,6 +795,7 @@ class TestCanonicalLoRAMegatronIntegration:
         lora = CanonicalLoRA(dim=4, alpha=8)
         lora_hook = self._create_canonical_lora_pre_wrap_hook(lora)
         model_provider.register_pre_wrap_hook(lora_hook)
+        model_provider.finalize()
 
         # Get and adapt model using hook
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)

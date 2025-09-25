@@ -16,7 +16,6 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.llama import Llama4Experts16ModelProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -25,6 +24,7 @@ from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,

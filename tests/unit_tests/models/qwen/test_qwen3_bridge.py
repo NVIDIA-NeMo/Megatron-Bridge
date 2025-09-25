@@ -348,7 +348,7 @@ class TestAutoBridgeIntegration:
             json.dump(tokenizer_data, f, indent=2)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
     def test_from_pretrained_with_temp_dir(self, mock_autoconfig, mock_pretrained, qwen3_configs):
         """Test AutoBridge.from_hf_pretrained with temporary directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -376,7 +376,7 @@ class TestAutoBridgeIntegration:
             mock_pretrained.assert_called_once_with(temp_dir)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
     def test_from_pretrained_multiple_models(self, mock_autoconfig, mock_pretrained, qwen3_configs):
         """Test AutoBridge.from_hf_pretrained with different Qwen3 model configs."""
         for model_name, config_dict in qwen3_configs.items():
@@ -419,7 +419,7 @@ class TestAutoBridgeIntegration:
                 mock_pretrained.reset_mock()
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
     def test_from_pretrained_with_kwargs(self, mock_autoconfig, mock_pretrained, qwen3_configs):
         """Test AutoBridge.from_hf_pretrained with various kwargs."""
         with tempfile.TemporaryDirectory() as temp_dir:
