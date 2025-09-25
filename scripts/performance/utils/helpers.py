@@ -68,7 +68,8 @@ def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.ddp.use_megatron_fsdp = True
         recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         recipe.ddp.keep_fp8_transpose_cache = False
-        recipe.ddp.average_in_collective = True
+        # average_in_collective is not supported with Megatron FSDP
+        recipe.ddp.average_in_collective = False
 
         recipe.model.init_model_with_meta_device = True
         recipe.model.gradient_accumulation_fusion = True
