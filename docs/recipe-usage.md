@@ -139,6 +139,76 @@ srun --nodes 2 --gpus-per-node 8 \
 
 Along with any other required flags. It is also recommended to use a NeMo Framework container with Slurm. You can find a list of container tags on [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags).
 
+### NeMo-Run
+
+Megatron Bridge also supports launching training with NeMo-Run. NeMo-Run is a Python package that enables configuring and executing experiments across several platforms.
+For multi-node training, NeMo-Run will generate a script with appropriate commands, similar to the `srun` command described above.
+
+#### Using `run.Script`
+
+The simplest way to launch a Megatron Bridge script is with the NeMo-Run `run.Script` API.
+You can modify the following 3 steps to your needs in a new file:
+
+```python
+import nemo_run as run
+
+if __name__ == "__main__":
+    # 1) Configure the `run.Script` object
+    train_script = run.Script(path="/path/to/pretrain/script.py", entrypoint="python")
+
+    # 2) Define an executor for the desired target platform
+    # See NeMo-Run docs for other types of executors
+    executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
+
+    # 3) Execute
+    run.run(train_script, executor=executor)
+```
+
+You can also forward arguments from the NeMo-Run launch script to the target script:
+
+```python
+import nemo_run as run
+import argparse
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    ...
+    known_args, args_to_fwd = parser.parse_known_args()
+    train_script = run.Script(..., args=args_to_fwd)
+```
+
+For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_script.py).
+
+#### Using `run.Partial`
+
+The launch script and target script can be combined into a single file with the `run.Partial` API. 
+Megatron Bridge provides the utility `get_partial_fn()` to safely convert the `ConfigContainer` and target function (e.g. `pretrain()`) into a `run.Partial` object:
+
+```python
+import nemo_run as run
+
+from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.utils.nemo_run_utils import get_partial_fn
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
+
+if __name__ == "__main__":
+    # Get the ConfigContainer from the recipe
+    cfg: ConfigContainer = pretrain_config()
+
+    # Apply any overrides
+    cfg.train.train_iters = 10
+    ...
+
+    # Create a run.Partial object for the pretrain function
+    fn = get_partial_fn(pretrain, cfg, forward_step)
+
+    executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
+    run.run(fn, executor=executor)
+```
+
+For a complete example of the `run.Partial` API, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_partial.py).
 
 ### Avoiding Hangs
 
@@ -155,3 +225,4 @@ module and then each spawn new processes. This results in an infinite loop of pr
 - [OmegaConf documentation](https://omegaconf.readthedocs.io/en/2.3_branch/)
 - [torchrun Documentation](https://docs.pytorch.org/docs/stable/elastic/run.html)
 - [PyTorch Multinode Training documentation](https://docs.pytorch.org/tutorials/intermediate/ddp_series_multinode.html)
+- [NeMo-Run documentation](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/index.html#)
