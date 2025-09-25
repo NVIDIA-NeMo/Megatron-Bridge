@@ -15,11 +15,10 @@
 import sys
 from pathlib import Path
 
-from omegaconf import OmegaConf
-
 from argument_parser import parse_cli_args
-from utils.executors import slurm_executor
+from omegaconf import OmegaConf
 from utils.common import get_perf_matrix_overrides
+from utils.executors import slurm_executor
 
 
 try:
