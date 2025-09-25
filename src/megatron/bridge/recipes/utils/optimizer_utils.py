@@ -14,9 +14,7 @@
 
 from typing import Optional
 
-from megatron.core.optimizer import OptimizerConfig
-
-from megatron.bridge.training.config import SchedulerConfig
+from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 
 
 def distributed_fused_adam_with_cosine_annealing(

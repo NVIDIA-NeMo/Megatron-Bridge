@@ -59,7 +59,7 @@ ModelT = TypeVar("ModelT", bound=MegatronModule)
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
-    """A mixin that implements the ModelProvider pattern for Megatron-Hub.
+    """A mixin that implements the ModelProvider pattern for Megatron Bridge.
 
     The ModelProvider pattern solves ecosystem fragmentation by providing a standardized
     way to instantiate models. This mixin provides a consistent `provide_distributed_model()` method

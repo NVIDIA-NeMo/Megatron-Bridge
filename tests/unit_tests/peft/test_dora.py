@@ -562,6 +562,7 @@ class TestDoRAMegatronIntegration:
         # Register DoRA pre-wrap hook
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
+        model_provider.finalize()
 
         # Get the model with DoRA applied via hook
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
@@ -596,6 +597,7 @@ class TestDoRAMegatronIntegration:
             vocab_size=100,
             ffn_hidden_size=128,
         )
+        model_provider.finalize()
 
         # Get base model first to count original parameters
         base_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
@@ -617,6 +619,7 @@ class TestDoRAMegatronIntegration:
         dora = DoRA(target_modules=["linear_qkv"], dim=4, alpha=8)
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
+        model_provider.finalize()
 
         # Get DoRA-adapted model using hook
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
@@ -645,6 +648,7 @@ class TestDoRAMegatronIntegration:
         # Register hook and apply DoRA first time
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
+        model_provider.finalize()
         first_transform = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         first_transform = [chunk.cuda() for chunk in first_transform]
@@ -703,6 +707,7 @@ class TestDoRAMegatronIntegration:
         dora = DoRA(target_modules=["linear_qkv", "linear_proj"], dim=4, alpha=8)
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
+        model_provider.finalize()
 
         # Get DoRA-adapted model using hook
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
@@ -772,6 +777,7 @@ class TestDoRAMegatronIntegration:
             dora = DoRA(target_modules=targets, dim=4, alpha=8)
             dora_hook = self._create_dora_pre_wrap_hook(dora)
             model_provider.register_pre_wrap_hook(dora_hook)
+            model_provider.finalize()
 
             # Get adapted model using hook
             adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)

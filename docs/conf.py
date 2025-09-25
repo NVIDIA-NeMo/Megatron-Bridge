@@ -27,7 +27,7 @@ import sys
 project = "Megatron Bridge"
 copyright = "2025, NVIDIA Corporation"
 author = "NVIDIA Corporation"
-release = "0.0.1"
+release = "0.2.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -39,6 +39,7 @@ extensions = [
     "sphinx.ext.doctest",  # Allows testing in docstrings
     "sphinx.ext.napoleon",  # For google style docstrings
     "sphinx_copybutton",  # For copy button in code blocks
+    "sphinxcontrib.mermaid",  # For mermaid diagrams
 ]
 
 templates_path = ["_templates"]
@@ -55,6 +56,13 @@ myst_enable_extensions = [
     "tasklist",  # Adds support for GitHub-style task lists with [ ] and [x]
 ]
 myst_heading_anchors = 5  # Generates anchor links for headings up to level 5
+
+# Configure MyST to handle mermaid code blocks
+myst_fence_as_directive = ["mermaid"]
+
+# -- Options for Mermaid -----------------------------------------------------
+# Configure mermaid diagrams
+mermaid_version = "latest"  # Use the latest version of mermaid
 
 # -- Options for Autodoc2 ---------------------------------------------------
 sys.path.insert(0, os.path.abspath(".."))
@@ -83,6 +91,13 @@ html_theme_options = {
         "json_url": "../versions1.json",
         "version_match": release,
     },
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/NVIDIA-NeMo/Megatron-Bridge/",
+            "icon": "fa-brands fa-github",
+        }
+    ],
     "extra_head": {
         """
     <script src="https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js" ></script>

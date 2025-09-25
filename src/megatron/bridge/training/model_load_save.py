@@ -244,6 +244,8 @@ def build_and_load_model(
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if isinstance(model_cfg, ModelProviderMixin):
+            if hasattr(model_cfg, "finalize"):
+                model_cfg.finalize()
             return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
@@ -333,7 +335,12 @@ def load_megatron_model(
     )
 
 
-def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckpt_format: str = "torch_dist") -> None:
+def save_megatron_model(
+    model: list[MegatronModule],
+    path: Union[str, Path],
+    ckpt_format: str = "torch_dist",
+    hf_tokenizer_path: Optional[Union[str, Path]] = None,
+) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
     This method saves the model in Megatron's native checkpoint format, which
@@ -345,16 +352,35 @@ def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckp
         model: Megatron model instance or list of instances.
         path: Directory path where the checkpoint will be saved.
         ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
+        hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
+            If provided, the tokenizer metadata will be included in the checkpoint.
 
     Example:
         >>> # Save model checkpoint
         >>> save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+        >>> # Save model checkpoint with tokenizer metadata
+        >>> save_megatron_model(
+        ...     megatron_model,
+        ...     "./megatron_checkpoint",
+        ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+        ... )
 
     Note:
         - This method is collective and must be called by all ranks
         - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
         - The checkpoint format follows Megatron's standard structure for compatibility
     """
+    # Create tokenizer config if tokenizer path is provided
+    tokenizer_config = None
+    if hf_tokenizer_path is not None:
+        from megatron.bridge.training.tokenizers.config import TokenizerConfig
+
+        tokenizer_config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=str(hf_tokenizer_path),
+        )
+
     # Get model config from the first model instance
     model_config = get_model_config(model[0])
 
@@ -377,7 +403,7 @@ def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckp
         scheduler=None,
         dataset=None,
         logger=LoggerConfig(),
-        tokenizer=None,
+        tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
             async_save=False,
             save=str(path),

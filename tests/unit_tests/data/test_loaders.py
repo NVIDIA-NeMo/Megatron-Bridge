@@ -89,6 +89,7 @@ class TestDataLoaders:
         mock_get_data_parallel_world_size.return_value = 1
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
+        cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
             cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
@@ -113,6 +114,7 @@ class TestDataLoaders:
         cfg = pretrain_config()
         cfg.train.train_iters = 1000
         cfg.train.eval_iters = 0
+        cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
             cfg=cfg, train_state=TrainState(), build_train_valid_test_datasets_provider=dataset_provider
