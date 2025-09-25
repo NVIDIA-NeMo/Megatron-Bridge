@@ -71,7 +71,7 @@ perf_matrix:
         tp: 2
         pp: 8
         cp: 1
-        vp: 4
+        vp: 2
         ep: 64
         etp: 1
         use_megatron_fsdp: false
