@@ -69,6 +69,7 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
+            layout="Et|(tt|)*30mL",
         )
         recipe.model = apply_moe_token_drop(recipe.model)
 
