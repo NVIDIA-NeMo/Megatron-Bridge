@@ -143,7 +143,10 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
-
+from megatron.bridge.models.mistral import (
+    MistralModelProvider,
+    MistralSmall3ModelProvider24B,
+)
 
 __all__ = [
     "AutoBridge",
@@ -219,6 +222,8 @@ __all__ = [
     "DeepSeekV3Provider",
     "MoonlightModelProvider16B",
     "MoonlightProvider",
+    "MistralModelProvider",
+    "MistralSmall3ModelProvider24B",
     "NemotronHModelProvider",
     "NemotronHModelProvider4B",
     "NemotronHModelProvider8B",
