@@ -15,6 +15,7 @@
 import sys
 from pathlib import Path
 
+from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
 
 
