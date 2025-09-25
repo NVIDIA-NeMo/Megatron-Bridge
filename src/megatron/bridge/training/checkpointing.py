@@ -873,7 +873,6 @@ def _generate_model_state_dict(
             else:  # fsdp_dtensor and other formats
                 state_dict["model%d" % i] = model[i].state_dict_for_save_checkpoint()
 
-    delete_extra_state(state_dict)
     return state_dict
 
 
@@ -1016,6 +1015,9 @@ def _load_model_weights_from_checkpoint(
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
+    # we keep weights only for bridge use, remove extra state
+    # because they are not needed and could cause unexpected issues.
+    delete_extra_state(state_dict)
     if return_state_dict:
         return state_dict
 
