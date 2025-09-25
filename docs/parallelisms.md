@@ -15,16 +15,16 @@ Distributed Data Parallelism (DDP) keeps the model copies consistent by synchron
 
 ### Distributed Optimizer
 
-Distributed optimizer is a memory-optimized data-parallel deployment method. It shards the optimizer states and the high-precision master parameters across data-parallel GPUs instead of replicating them. At the parameter optimizer step, each data-parallel GPU updates its shard of parameters. Since each GPU needs its own gradient shard, the distributed optimizer conducts reduce-scatter of the parameter gradients instead of all-reduce of them. Then, the updated parameter shards are all-gathered across data-parallel GPUs. This approach significantly reduces the memory need of large-scale LLM training.
+[Distributed optimizer](https://docs.nvidia.com/megatron-core/developer-guide/latest/distrib_optimizer.html) is a memory-optimized data-parallel deployment method. It shards the optimizer states and the high-precision master parameters across data-parallel GPUs instead of replicating them. At the parameter optimizer step, each data-parallel GPU updates its shard of parameters. Since each GPU needs its own gradient shard, the distributed optimizer conducts reduce-scatter of the parameter gradients instead of all-reduce of them. Then, the updated parameter shards are all-gathered across data-parallel GPUs. This approach significantly reduces the memory need of large-scale LLM training.
 
 ### Enable Data Parallelism
 
 In Megatron Bridge, DDP is the default parallel deployment method. The total number of GPUs corresponds to the size of the DP group, and training an LLM with model parallelism decreases the size of the DP group.
 
-To enable the distributed optimizer, configure the {py:class}`bridge.training.config.OptimizerConfig`:
+To enable the distributed optimizer, configure the {py:class}`bridge.training.config.OptimizerConfig` and {py:class}`bridge.training.config.DistributedDataParallelConfig`
 
 ```python
-from megatron.bridge.training.config import ConfigContainer, OptimizerConfig
+from megatron.bridge.training.config import ConfigContainer, DistributedDataParallelConfig, OptimizerConfig
 
 optimizer_config = OptimizerConfig(
     optimizer="adam",
@@ -35,8 +35,10 @@ optimizer_config = OptimizerConfig(
     use_distributed_optimizer=True,
     clip_grad=1.0,
 )
+ddp_config = DistributedDataParallelConfig(use_distributed_optimizer=True)
 
 config = ConfigContainer(
+    ddp=ddp_config,
     optimizer=optimizer_config,
     # ... other config parameters
 )
