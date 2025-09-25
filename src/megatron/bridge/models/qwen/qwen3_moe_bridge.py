@@ -30,7 +30,7 @@ from megatron.bridge.models.qwen.qwen_provider import Qwen3MoEModelProvider
 @MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel)
 class Qwen3MoEBridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for Qwen3 MoE Causal LM.
+    Megatron Bridge for Qwen3 MoE Causal LM.
 
     This bridge handles the conversion between HuggingFace Qwen3MoeForCausalLM
     and Megatron-Core GPTModel formats. Qwen3 MoE models use mixture of experts

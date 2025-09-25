@@ -33,7 +33,7 @@ T = TypeVar("T", bound="_ConfigContainerBase")
 @dataclass(kw_only=True)
 class _ConfigContainerBase:
     """
-    Base configuration container for Megatron Hub configurations.
+    Base configuration container for Megatron Bridge configurations.
 
     Provides:
     - Custom validation

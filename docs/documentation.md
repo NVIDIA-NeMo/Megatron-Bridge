@@ -2,7 +2,7 @@
 
 ## Build the Documentation
 
-The following sections describe how to set up and build the Megatron Hub documentation.
+The following sections describe how to set up and build the Megatron Bridge documentation.
 
 Switch to the documentation source folder and generate HTML output.
 
