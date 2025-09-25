@@ -53,14 +53,42 @@ def main():
     elif args.model_name == "llama31" and args.model_size == "405b":
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
+        enable_deepep = bool(args.gpu.lower() in ["h100"])
+        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
+        if use_tokendrop:
+            enable_deepep = False
+            logger.info("Using token drop, disabling DeepEP")
+        A2A_1F1B = bool(args.gpu.lower() in ["h100"])
+
+        pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
             # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
-            pipeline_parallelism=4,
-            virtual_pipeline_parallelism=1,
+            pipeline_parallelism=pp,
+            virtual_pipeline_parallelism=vp,
+            enable_deepep=enable_deepep,
         )
         recipe.model = apply_moe_token_drop(recipe.model)
+
+        if enable_deepep:
+            recipe.model.moe_router_force_load_balancing = True
+        if use_tokendrop:
+            recipe.model = apply_moe_token_drop(recipe.model)
+
+        if A2A_1F1B:
+            recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+            recipe.comm_overlap.delay_wgrad_compute = True
+            recipe.model.moe_shared_expert_overlap = False
+        else:
+            recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
+            recipe.comm_overlap.delay_wgrad_compute = False
+            recipe.model.moe_shared_expert_overlap = True
+        if args.gpu.lower() in ["h100"]:
+            recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
+        elif args.gpu.lower() in ["gb200"]:
+            recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
     elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
         recipe = qwen3_30b_a3b_pretrain_config(
             mock=True, 

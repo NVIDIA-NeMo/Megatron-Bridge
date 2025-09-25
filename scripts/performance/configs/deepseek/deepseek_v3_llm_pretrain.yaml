@@ -13,9 +13,14 @@
 # limitations under the License.
 
 ConfigContainer:
+  dataset:
+    num_workers: 2
+
   model:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
+    recompute_granularity: "selective"
+    pipeline_model_parallel_layout: "Et|(tt|)*30mL"
 
   train:
     train_iters: 25
@@ -40,6 +45,9 @@ ConfigContainer:
 
   mixed_precision:
     grad_reduce_in_fp32: false
+  
+  comm_overlap:
+    overlap_grad_reduce: false # TODO: enable when 1F1B_A2A is fixed in Megatron-LM
 
   profiling:
     # For optional fields in the config, specify the target to instantiate the object.
@@ -63,7 +71,7 @@ perf_matrix:
         tp: 2
         pp: 8
         cp: 1
-        vp: 2
+        vp: 4
         ep: 64
         etp: 1
         use_megatron_fsdp: false
@@ -97,10 +105,10 @@ perf_matrix:
         seq_length: 4096
         mbs: 1
         gbs: 2048
-        tp: 2
+        tp: 1
         pp: 4
         cp: 1
-        vp: null
+        vp: 8
         ep: 64
         etp: 1
         use_megatron_fsdp: false
