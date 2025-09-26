@@ -947,6 +947,26 @@ class TestCheckForwardStepFuncNumArgs:
         result = check_forward_step_func_num_args(partial_func)
         assert result == 3  # 4 original args - 1 bound arg = 3 remaining
 
+    def test_callable_class_three_args(self):
+        """Test callable class with 3 arguments."""
+
+        class ForwardFunctor:
+            def __call__(self, data_iterator, model, return_schedule_plan=False):
+                return None
+
+        result = check_forward_step_func_num_args(ForwardFunctor())
+        assert result == 3
+
+    def test_callable_class_four_args(self):
+        """Test callable class with 4 arguments."""
+
+        class ForwardFunctor:
+            def __call__(self, state, data_iterator, model, return_schedule_plan=False):
+                return None
+
+        result = check_forward_step_func_num_args(ForwardFunctor())
+        assert result == 4
+
 
 class TestMaybeInjectState:
     """Test suite for the maybe_inject_state function."""
@@ -1055,3 +1075,43 @@ class TestMaybeInjectState:
 
         # Should return original partial since it has 2 remaining args
         assert result_func is partial_func
+
+    def test_callable_class_four_args_injects_state(self):
+        """Test state injection for callable class with 4 arguments."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.seen_state = None
+
+            def __call__(self, state, data_iterator, model, return_schedule_plan=False):
+                self.seen_state = state
+                return "called"
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(functor, mock_state)
+
+        assert isinstance(result_func, partial)
+
+        mock_data_iterator = mock.MagicMock()
+        mock_model = mock.MagicMock()
+        result = result_func(mock_data_iterator, mock_model, return_schedule_plan=True)
+
+        assert result == "called"
+        assert functor.seen_state is mock_state
+
+    def test_callable_class_three_args_no_injection(self):
+        """Test callable class with 3 arguments does not inject state."""
+
+        class ForwardFunctor:
+            def __call__(self, data_iterator, model, return_schedule_plan=False):
+                return "no state"
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(functor, mock_state)
+
+        assert result_func is functor
+        assert not isinstance(result_func, partial)

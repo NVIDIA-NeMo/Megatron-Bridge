@@ -13,12 +13,13 @@
 # limitations under the License.
 
 from functools import partial
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
-from megatron.bridge.training.gpt_step import _create_loss_function, get_packed_seq_params
+from megatron.bridge.training.gpt_step import _create_loss_function, forward_step, get_packed_seq_params
+from megatron.bridge.training.state import GlobalState
 
 
 class TestGetPackedSeqParams:
@@ -238,3 +239,52 @@ class TestCreateLossFunction:
 
         # Verify the result
         assert result == expected_result
+
+
+class TestForwardStepFunctorIntegration:
+    """Additional tests covering callable functors with forward_step."""
+
+    @patch("megatron.bridge.training.gpt_step.get_model_config")
+    @patch("megatron.bridge.training.gpt_step.get_batch")
+    def test_forward_step_accepts_callable_class(self, mock_get_batch, mock_get_model_config):
+        class ForwardFunctor:
+            def __init__(self):
+                self.called_with = None
+
+            def __call__(
+                self,
+                state,
+                data_iterator,
+                model,
+                return_schedule_plan=False,
+            ):
+                self.called_with = (state, data_iterator, model, return_schedule_plan)
+                return torch.tensor(1.0)
+
+        state = GlobalState()
+        state.cfg = Mock()
+        state.cfg.rerun_state_machine.check_for_nan_in_loss = False
+        state.cfg.rerun_state_machine.check_for_spiky_loss = False
+        state.timers = Mock()
+        state.timers.return_value.__enter__ = lambda s: None
+        state.timers.return_value.__exit__ = lambda s, exc_type, exc, tb: None
+        state.straggler_timer = Mock()
+        state.straggler_timer.__enter__ = lambda *args, **kwargs: None
+        state.straggler_timer.__exit__ = lambda *args, **kwargs: None
+        state.straggler_timer.configure = Mock()
+
+        mock_get_batch.return_value = (Mock(),) * 8
+        mock_get_model_config.return_value = Mock(mtp_num_layers=0, overlap_moe_expert_parallel_comm=True)
+
+        functor = ForwardFunctor()
+        model = Mock()
+        data_iterator = Mock()
+
+        output, loss_fn = forward_step(state, data_iterator, model, forward_step_func=functor)
+
+        assert torch.equal(output, torch.tensor(1.0))
+        assert callable(loss_fn)
+        assert functor.called_with[0] is state
+        assert functor.called_with[1] is data_iterator
+        assert functor.called_with[2] is model
+        assert functor.called_with[3] is False
