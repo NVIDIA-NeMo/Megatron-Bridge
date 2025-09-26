@@ -29,8 +29,6 @@ jobs:
     name: Download Model
     runs-on: self-hosted-nemo
     environment: nemo-ci
-    container:
-      image: nvcr.io/nvidia/pytorch:25.05-py3
     env:
       HF_HUB_OFFLINE: 0
       HF_HOME: /mnt/datadrive/TestData/HF_HOME
@@ -42,7 +40,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install transformers
+          pip install transformers torch
 
       - name: Download model
         env:
