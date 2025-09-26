@@ -144,9 +144,7 @@ Along with any other required flags. It is also recommended to use a NeMo Framew
 Megatron Bridge also supports launching training with NeMo-Run. NeMo-Run is a Python package that enables configuring and executing experiments across several platforms.
 For multi-node training, NeMo-Run will generate a script with appropriate commands, similar to the `srun` command described above.
 
-#### Using `run.Script`
-
-The simplest way to launch a Megatron Bridge script is with the NeMo-Run `run.Script` API.
+The recommended method to launch a Megatron Bridge script with NeMo-Run is through the `run.Script` API.
 You can modify the following 3 steps to your needs in a new file:
 
 ```python
@@ -178,37 +176,6 @@ if __name__ == "__main__":
 ```
 
 For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_script.py).
-
-#### Using `run.Partial`
-
-The launch script and target script can be combined into a single file with the `run.Partial` API. 
-Megatron Bridge provides the utility `get_partial_fn()` to safely convert the `ConfigContainer` and target function (e.g. `pretrain()`) into a `run.Partial` object:
-
-```python
-import nemo_run as run
-
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
-from megatron.bridge.recipes.utils.nemo_run_utils import get_partial_fn
-from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.pretrain import pretrain
-
-if __name__ == "__main__":
-    # Get the ConfigContainer from the recipe
-    cfg: ConfigContainer = pretrain_config()
-
-    # Apply any overrides
-    cfg.train.train_iters = 10
-    ...
-
-    # Create a run.Partial object for the pretrain function
-    fn = get_partial_fn(pretrain, cfg, forward_step)
-
-    executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
-    run.run(fn, executor=executor)
-```
-
-For a complete example of the `run.Partial` API, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_partial.py).
 
 ### Avoiding Hangs
 
