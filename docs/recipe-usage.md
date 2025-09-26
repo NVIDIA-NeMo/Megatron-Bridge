@@ -37,11 +37,11 @@ from megatron.bridge.models.llama import Llama3ModelProvider
 cfg: ConfigContainer = pretrain_config()
 
 small_llama = Llama3ModelProvider(
-                    num_layers=2,
-                    hidden_size=768,
-                    ffn_hidden_size=2688,
-                    num_attention_heads=16
-              )
+    num_layers=2,
+    hidden_size=768,
+    ffn_hidden_size=2688,
+    num_attention_heads=16
+)
 cfg.model = small_llama
 ```
 
