@@ -89,6 +89,10 @@ def main():
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         elif args.gpu.lower() in ["gb200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
+        if args.gpu.lower() in ["gb200", "b200"]:
+            recipe.comm_overlap.comm_overlap = True
+        elif args.gpu.lower() in ["h100"]:
+            recipe.comm_overlap.comm_overlap = False
     elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
         recipe = qwen3_30b_a3b_pretrain_config(
             mock=True,
