@@ -15,7 +15,7 @@ Distributed Data Parallelism (DDP) keeps the model copies consistent by synchron
 
 ### Distributed Optimizer
 
-[Distributed optimizer](https://docs.nvidia.com/megatron-core/developer-guide/latest/distrib_optimizer.html) is a memory-optimized data-parallel deployment method. It shards the optimizer states and the high-precision master parameters across data-parallel GPUs instead of replicating them. At the parameter optimizer step, each data-parallel GPU updates its shard of parameters. Since each GPU needs its own gradient shard, the distributed optimizer conducts reduce-scatter of the parameter gradients instead of all-reduce of them. Then, the updated parameter shards are all-gathered across data-parallel GPUs. This approach significantly reduces the memory need of large-scale LLM training.
+[Distributed optimizer](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/dist_optimizer.html) is a memory-optimized data-parallel deployment method. It shards the optimizer states and the high-precision master parameters across data-parallel GPUs instead of replicating them. At the parameter optimizer step, each data-parallel GPU updates its shard of parameters. Since each GPU needs its own gradient shard, the distributed optimizer conducts reduce-scatter of the parameter gradients instead of all-reduce of them. Then, the updated parameter shards are all-gathered across data-parallel GPUs. This approach significantly reduces the memory need of large-scale LLM training.
 
 ### Enable Data Parallelism
 
@@ -82,7 +82,7 @@ config = ConfigContainer(
 
 #### Implement Tensor Parallelism
 
-Megatron Bridge integrates TP through the implementation from Megatron Core. For detailed API usage and additional configurations, consult the [Megatron Core Developer Guide](https://docs.nvidia.com/Megatron-Core/developer-guide/latest/api-guide/tensor_parallel.html).
+Megatron Bridge integrates TP through the implementation from Megatron Core. For detailed API usage and additional configurations, consult the [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/tensor_parallel.html).
 
 ### Pipeline Parallelism
 
@@ -375,7 +375,7 @@ For example, with 32 GPUs total and the configuration above:
 
 ## Resources
 
-- [Megatron Core Developer Guide](https://docs.nvidia.com/Megatron-Core/developer-guide/latest/)
+- [Megatron Core Developer Guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/)
 - [Scaling Language Model Training](https://developer.nvidia.com/blog/scaling-language-model-training-to-a-trillion-parameters-using-megatron/)
 - [Megatron-LM Repository](https://github.com/NVIDIA/Megatron-LM)
 - [Transformer Engine](https://github.com/NVIDIA/TransformerEngine)
