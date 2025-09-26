@@ -20,6 +20,7 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapp
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from .modeling_nemotron_vl import NemotronVLModel
 from .nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
+from ..conversion.param_mapping import ConcatenatedQKVMapping
 
 
 @MegatronModelBridge.register_bridge(source="NemotronH_Nano_VL_V2", target=NemotronVLModel)
@@ -68,8 +69,6 @@ class NemotronVLBridge(MegatronModelBridge):
             "llava_model.vision_model.decoder.layers.*.self_attention.linear_proj.bias": "vision_model.radio_model.model.blocks.*.attn.proj.bias",
             "llava_model.vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "vision_model.radio_model.model.blocks.*.norm1.weight",
             "llava_model.vision_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_bias": "vision_model.radio_model.model.blocks.*.norm1.bias",
-            "llava_model.vision_model.decoder.layers.*.self_attention.linear_qkv.weight": "vision_model.radio_model.model.blocks.*.attn.qkv.weight",
-            "llava_model.vision_model.decoder.layers.*.self_attention.linear_qkv.bias": "vision_model.radio_model.model.blocks.*.attn.qkv.bias",
             "llava_model.vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "vision_model.radio_model.model.blocks.*.norm2.weight",
             "llava_model.vision_model.decoder.layers.*.mlp.linear_fc1.layer_norm_bias": "vision_model.radio_model.model.blocks.*.norm2.bias",
             "llava_model.vision_model.decoder.layers.*.mlp.linear_fc1.weight": "vision_model.radio_model.model.blocks.*.mlp.fc1.weight",
@@ -117,6 +116,14 @@ class NemotronVLBridge(MegatronModelBridge):
                     q="language_model.backbone.layers.*.mixer.q_proj.weight",
                     k="language_model.backbone.layers.*.mixer.k_proj.weight",
                     v="language_model.backbone.layers.*.mixer.v_proj.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="llava_model.vision_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    hf_param="vision_model.radio_model.model.blocks.*.attn.qkv.weight",
+                ),
+                ConcatenatedQKVMapping(
+                    megatron_param="llava_model.vision_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    hf_param="vision_model.radio_model.model.blocks.*.attn.qkv.bias",
                 ),
             ]
         )

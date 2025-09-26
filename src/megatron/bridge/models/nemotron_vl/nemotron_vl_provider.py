@@ -21,6 +21,8 @@ from megatron.core.models.multimodal.llava_spec import decoder_model_with_transf
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.jit import jit_fuser
 import torch
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+
 
 @jit_fuser
 def fast_gelu(x: torch.Tensor) -> torch.Tensor:
@@ -111,7 +113,7 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
 
 
         language_spec = mamba_stack_spec
-        vision_spec = decoder_model_with_transformer_engine_default_spec()
+        vision_spec = get_vit_layer_with_transformer_engine_spec()
         vision_proj_spec = copy.deepcopy(language_spec.submodules.mlp_layer.submodules.mlp.submodules)
 
         # ------------------------------------------------------------------
