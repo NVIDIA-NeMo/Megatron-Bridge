@@ -271,7 +271,7 @@ class FinetuningDatasetConfig(DataloaderConfig):
     """Configuration specific to finetuning datasets, inheriting from DataloaderConfig."""
 
     dataset_root: Optional[Union[str, Path]] = None
-    seq_length: int
+    sequence_length: int
     seed: int = 1234
     memmap_workers: int = 1
     max_train_samples: Optional[int] = None
@@ -1044,7 +1044,7 @@ class ConfigContainer(Container):
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
         if self.model.context_parallel_size > 1:
-            assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
+            assert self.model.sequence_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
             if isinstance(self.dataset, FinetuningDatasetConfig):
@@ -1083,16 +1083,16 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            data_seq_length = (
-                self.dataset.seq_length
+            data_sequence_length = (
+                self.dataset.sequence_length
                 if isinstance(self.dataset, FinetuningDatasetConfig)
                 else self.dataset.sequence_length
             )
 
-            assert self.model.seq_length == data_seq_length, (
+            assert self.model.sequence_length == data_sequence_length, (
                 f"Please ensure sequence length configuration in model config and "
-                f"dataset config match.\nSequence length in model config: {self.model.seq_length}, "
-                f"Sequence length in dataset config: {data_seq_length}"
+                f"dataset config match.\nSequence length in model config: {self.model.sequence_length}, "
+                f"Sequence length in dataset config: {data_sequence_length}"
             )
 
         # Validate DeepEP is supported for the current GPU architecture

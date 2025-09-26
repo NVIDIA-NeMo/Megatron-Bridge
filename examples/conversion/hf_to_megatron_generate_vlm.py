@@ -270,7 +270,7 @@ def main(args) -> None:
                 model=model,
                 num_microbatches=1,
                 forward_only=True,
-                seq_length=input_ids.size(1),
+                sequence_length=input_ids.size(1),
                 micro_batch_size=1,
                 collect_non_loss_data=True,
             )

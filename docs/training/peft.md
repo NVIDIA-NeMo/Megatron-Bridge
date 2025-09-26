@@ -159,7 +159,7 @@ config = ConfigContainer(
     dataset=HFDatasetConfig(
         dataset_name="squad",
         process_example_fn=process_squad_example,
-        seq_length=512,
+        sequence_length=512,
     ),
     checkpoint=CheckpointConfig(
         pretrained_checkpoint="/path/to/pretrained/model",  # Required

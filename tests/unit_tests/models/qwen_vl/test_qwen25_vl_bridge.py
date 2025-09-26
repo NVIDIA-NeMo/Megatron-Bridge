@@ -103,7 +103,7 @@ class TestQwen25VLBridgeProviderBridge:
         assert provider.init_method_std == 0.02
         assert provider.layernorm_epsilon == 1e-6
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.rotary_base == 1000000.0
         assert provider.share_embeddings_and_output_weights is False
 
@@ -336,12 +336,12 @@ class TestQwen25VLBridgeEdgeCases:
 
     def test_provider_bridge_with_different_sequence_lengths(self, qwen25_vl_bridge, mock_hf_pretrained):
         """Test provider_bridge with different sequence lengths."""
-        test_seq_lengths = [2048, 4096, 8192, 32768]
+        test_sequence_lengths = [2048, 4096, 8192, 32768]
 
-        for seq_length in test_seq_lengths:
-            mock_hf_pretrained.config.max_position_embeddings = seq_length
+        for sequence_length in test_sequence_lengths:
+            mock_hf_pretrained.config.max_position_embeddings = sequence_length
             provider = qwen25_vl_bridge.provider_bridge(mock_hf_pretrained)
-            assert provider.seq_length == seq_length
+            assert provider.sequence_length == sequence_length
 
 
 class TestQwen25VLBridgeCompatibility:

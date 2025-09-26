@@ -52,7 +52,7 @@ from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
     """Create a complete minimal configuration for functional testing, based on test_pretrain.py."""
 
-    seq_length = 512
+    sequence_length = 512
     train_config = TrainingConfig(
         train_iters=10,
         micro_batch_size=1,
@@ -69,7 +69,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         attention_softmax_in_fp32=True,
         pipeline_dtype=torch.bfloat16,
         bf16=True,
-        seq_length=seq_length,
+        sequence_length=sequence_length,
         make_vocab_size_divisible_by=128,
         vocab_size=None,
     )
@@ -79,7 +79,7 @@ def create_functional_test_config(enable_nvrx: bool = True) -> ConfigContainer:
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
-        sequence_length=seq_length,
+        sequence_length=sequence_length,
         num_dataset_builder_threads=1,
         data_sharding=True,
         dataloader_type="single",

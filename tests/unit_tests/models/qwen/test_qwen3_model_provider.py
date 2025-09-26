@@ -50,7 +50,7 @@ class TestQwen3ModelProvider:
         assert provider.qk_layernorm is True  # Qwen3 specific feature
         assert provider.kv_channels == 128  # Qwen3 specific
         assert provider.num_query_groups == 8  # Default for Qwen3
-        assert provider.seq_length == 40960  # Extended context for Qwen3
+        assert provider.sequence_length == 40960  # Extended context for Qwen3
         assert provider.init_method_std == 0.02
         assert provider.hidden_dropout == 0.0
         assert provider.attention_dropout == 0.0
@@ -112,10 +112,10 @@ class TestQwen3ModelProvider:
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            seq_length=65536,
+            sequence_length=65536,
         )
 
-        assert provider.seq_length == 65536
+        assert provider.sequence_length == 65536
 
     def test_qwen3_model_provider_qk_layernorm_feature(self):
         """Test Qwen3ModelProvider QK layernorm feature."""
@@ -158,19 +158,19 @@ class TestQwen3ModelProvider600M:
         assert provider.normalization == "RMSNorm"
         assert provider.activation_func is F.silu
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
         assert provider.qk_layernorm is True
         assert provider.add_qkv_bias is False
 
     def test_qwen3_600m_override_configuration(self):
         """Test Qwen3 600M model with overridden configuration."""
         provider = Qwen3ModelProvider600M(
-            seq_length=32768,
+            sequence_length=32768,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 32768
+        assert provider.sequence_length == 32768
         assert provider.hidden_dropout == 0.1
 
         # Check defaults remain
@@ -194,7 +194,7 @@ class TestQwen3ModelProvider1P7B:
 
         # Check inherited defaults
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
         assert provider.qk_layernorm is True
 
 
@@ -232,7 +232,7 @@ class TestQwen3ModelProvider8B:
         assert provider.ffn_hidden_size == 12288
 
         # Check inherited defaults
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
         assert provider.normalization == "RMSNorm"
         assert provider.qk_layernorm is True
         # Note: share_embeddings_and_output_weights not explicitly set, so uses default False
@@ -252,7 +252,7 @@ class TestQwen3ModelProvider14B:
         assert provider.ffn_hidden_size == 17408
 
         # Check inherited defaults
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
         assert provider.normalization == "RMSNorm"
         assert provider.activation_func is F.silu
         assert provider.qk_layernorm is True
@@ -272,7 +272,7 @@ class TestQwen3ModelProvider32B:
         assert provider.ffn_hidden_size == 25600
 
         # Check inherited defaults
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
         assert provider.normalization == "RMSNorm"
         assert provider.activation_func is F.silu
         assert provider.qk_layernorm is True
@@ -327,16 +327,16 @@ class TestQwen3ProviderEdgeCases:
         # The actual vocab size should be adjusted if needed
         assert provider.make_vocab_size_divisible_by == 128
 
-    def test_seq_length_override(self):
+    def test_sequence_length_override(self):
         """Test sequence length configuration."""
         provider = Qwen3ModelProvider(
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            seq_length=131072,  # Very long context
+            sequence_length=131072,  # Very long context
         )
 
-        assert provider.seq_length == 131072
+        assert provider.sequence_length == 131072
 
     def test_rotary_base_configuration(self):
         """Test rotary base configuration."""
@@ -458,7 +458,7 @@ class TestQwen3ProviderContextLengthConsistency:
 
         # All Qwen3 models use extended context length
         for provider in providers:
-            assert provider.seq_length == 40960
+            assert provider.sequence_length == 40960
 
 
 class TestQwen3ProviderEmbeddingSharing:

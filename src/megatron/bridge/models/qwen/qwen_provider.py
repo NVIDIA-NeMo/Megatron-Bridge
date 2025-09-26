@@ -34,7 +34,7 @@ class Qwen2ModelProvider(GPTModelProvider):
     gated_linear_unit: bool = True
     add_bias_linear: bool = False
     add_qkv_bias: bool = True
-    seq_length: int = 4096
+    sequence_length: int = 4096
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -65,7 +65,7 @@ class Qwen2ModelProvider500M(Qwen2ModelProvider):
     num_query_groups: int = 2
     ffn_hidden_size: int = 4864
     share_embeddings_and_output_weights: bool = True
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -79,7 +79,7 @@ class Qwen2ModelProvider1P5B(Qwen2ModelProvider):
     num_attention_heads: int = 12
     num_query_groups: int = 2
     ffn_hidden_size: int = 8960
-    seq_length: int = 32768
+    sequence_length: int = 32768
     share_embeddings_and_output_weights: bool = True
 
 
@@ -95,7 +95,7 @@ class Qwen2ModelProvider7B(Qwen2ModelProvider):
     num_query_groups: int = 4
     ffn_hidden_size: int = 18944
     vocab_size: int = 152064
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -111,7 +111,7 @@ class Qwen2ModelProvider72B(Qwen2ModelProvider):
     ffn_hidden_size: int = 29568
     vocab_size: int = 152064
     layernorm_epsilon: float = 1e-6
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 # =============================================================================
@@ -131,7 +131,7 @@ class Qwen25ModelProvider500M(Qwen2ModelProvider):
     num_query_groups: int = 2
     ffn_hidden_size: int = 4864
     share_embeddings_and_output_weights: bool = True
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -145,7 +145,7 @@ class Qwen25ModelProvider1P5B(Qwen2ModelProvider):
     num_attention_heads: int = 12
     num_query_groups: int = 2
     ffn_hidden_size: int = 8960
-    seq_length: int = 32768
+    sequence_length: int = 32768
     share_embeddings_and_output_weights: bool = True
 
 
@@ -162,7 +162,7 @@ class Qwen25ModelProvider3B(Qwen2ModelProvider):
     ffn_hidden_size: int = 11008
     vocab_size: int = 151936
     share_embeddings_and_output_weights: bool = True
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -177,7 +177,7 @@ class Qwen25ModelProvider7B(Qwen2ModelProvider):
     num_query_groups: int = 4
     ffn_hidden_size: int = 18944
     vocab_size: int = 152064
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -193,7 +193,7 @@ class Qwen25ModelProvider14B(Qwen2ModelProvider):
     ffn_hidden_size: int = 13824
     vocab_size: int = 152064
     layernorm_epsilon: float = 1e-6
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -209,7 +209,7 @@ class Qwen25ModelProvider32B(Qwen2ModelProvider):
     ffn_hidden_size: int = 27648
     vocab_size: int = 152064
     layernorm_epsilon: float = 1e-6
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 @dataclass
@@ -225,7 +225,7 @@ class Qwen25ModelProvider72B(Qwen2ModelProvider):
     ffn_hidden_size: int = 29568
     vocab_size: int = 152064
     layernorm_epsilon: float = 1e-6
-    seq_length: int = 32768
+    sequence_length: int = 32768
 
 
 # =============================================================================
@@ -245,7 +245,7 @@ class Qwen3ModelProvider(GPTModelProvider):
     qk_layernorm: bool = True
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
-    seq_length: int = 40960
+    sequence_length: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -351,7 +351,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     qk_layernorm: bool = True
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
-    seq_length: int = 40960
+    sequence_length: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0

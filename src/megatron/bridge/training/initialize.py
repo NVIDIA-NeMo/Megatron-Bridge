@@ -294,7 +294,7 @@ def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvide
         ub_cfgs = {}
 
     input_shape = [
-        (model_config.seq_length * micro_batch_size) // model_config.context_parallel_size,
+        (model_config.sequence_length * micro_batch_size) // model_config.context_parallel_size,
         model_config.hidden_size,
     ]
 
@@ -456,7 +456,7 @@ def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro
     )
     input = torch.rand(
         (
-            model_config.seq_length // model_config.context_parallel_size,
+            model_config.sequence_length // model_config.context_parallel_size,
             micro_batch_size,
             model_config.ffn_hidden_size // model_config.tensor_model_parallel_size,
         ),
@@ -476,12 +476,12 @@ def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro
 
     # Warmup fused bias+dropout+add
     if model_config.sequence_parallel:
-        seq_length = model_config.seq_length // parallel_state.get_tensor_model_parallel_world_size()
+        sequence_length = model_config.sequence_length // parallel_state.get_tensor_model_parallel_world_size()
     else:
-        seq_length = model_config.seq_length
+        sequence_length = model_config.sequence_length
     input = torch.rand(
         (
-            seq_length // model_config.context_parallel_size,
+            sequence_length // model_config.context_parallel_size,
             micro_batch_size,
             model_config.hidden_size,
         ),
@@ -490,7 +490,7 @@ def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro
     )
     residual = torch.rand(
         (
-            seq_length // model_config.context_parallel_size,
+            sequence_length // model_config.context_parallel_size,
             micro_batch_size,
             model_config.hidden_size,
         ),

@@ -100,7 +100,7 @@ class TestMegatronQwen3Bridge:
         assert result.num_layers == qwen3_config.num_hidden_layers
         assert result.hidden_size == qwen3_config.hidden_size
         assert result.num_attention_heads == qwen3_config.num_attention_heads
-        assert result.seq_length == qwen3_config.max_position_embeddings
+        assert result.sequence_length == qwen3_config.max_position_embeddings
         assert result.rotary_base == qwen3_config.rope_theta
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3, qwen3_config):

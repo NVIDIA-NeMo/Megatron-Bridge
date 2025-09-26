@@ -151,7 +151,7 @@ def compute_activation_memory(
     train_config = config.train
 
     # Memory footprint from transformer layer (self-attention and MLP).
-    activation_memory = (model_config.seq_length * train_config.micro_batch_size * model_config.hidden_size) * (
+    activation_memory = (model_config.sequence_length * train_config.micro_batch_size * model_config.hidden_size) * (
         18 + (4 * (model_config.ffn_hidden_size / model_config.hidden_size))
     )
     if verbose:
@@ -165,11 +165,11 @@ def compute_activation_memory(
 
     # Input to embedding (pp_size microbatches in flight).
     activation_memory += (
-        8 * model_config.seq_length * train_config.micro_batch_size * model_config.pipeline_model_parallel_size
+        8 * model_config.sequence_length * train_config.micro_batch_size * model_config.pipeline_model_parallel_size
     )
     # Dropout in embedding layer (pp_size microbatches in flight).
     activation_memory += (
-        model_config.seq_length
+        model_config.sequence_length
         * train_config.micro_batch_size
         * model_config.hidden_size
         * model_config.pipeline_model_parallel_size
@@ -203,7 +203,7 @@ def compute_activation_memory(
     if model_config.pipeline_model_parallel_size == 1:
         # Inputs to output layer and CE loss.
         activation_memory += (
-            model_config.seq_length
+            model_config.sequence_length
             * train_config.micro_batch_size
             * model_config.hidden_size
             * 4

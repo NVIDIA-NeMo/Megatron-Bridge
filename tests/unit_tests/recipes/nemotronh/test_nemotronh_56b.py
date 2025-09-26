@@ -145,7 +145,7 @@ class TestPretrainConfig:
             train_iters=10000,
             global_batch_size=256,
             micro_batch_size=2,
-            seq_length=8192,
+            sequence_length=8192,
             lr=1e-4,
             min_lr=1e-5,
             lr_warmup_iters=1000,
@@ -377,12 +377,12 @@ class TestPretrainConfig:
         assert config.train.global_batch_size == global_batch_size
         assert config.train.micro_batch_size == micro_batch_size
 
-    @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384, 32768, 65536])
-    def test_pretrain_config_sequence_lengths(self, seq_length):
+    @pytest.mark.parametrize("sequence_length", [1024, 2048, 4096, 8192, 16384, 32768, 65536])
+    def test_pretrain_config_sequence_lengths(self, sequence_length):
         """Test various sequence lengths."""
-        config = pretrain_config(seq_length=seq_length)
+        config = pretrain_config(sequence_length=sequence_length)
 
-        assert config.dataset.sequence_length == seq_length
+        assert config.dataset.sequence_length == sequence_length
 
     @pytest.mark.parametrize(
         "precision", ["fp16_mixed", "bf16_mixed", "nemotron_h_bf16_with_fp8_current_scaling_mixed"]

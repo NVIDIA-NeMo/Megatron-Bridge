@@ -64,7 +64,7 @@ perf_matrix:
     num_gpus_1024:
       common:
         num_gpus_per_node: 8
-        seq_length: 4096
+        sequence_length: 4096
         mbs: 1
         gbs: 8192
         cuda_graphs: false
@@ -82,7 +82,7 @@ perf_matrix:
     num_gpus_256:
       common:
         num_gpus_per_node: 8
-        seq_length: 4096
+        sequence_length: 4096
         mbs: 1
         gbs: 2048
         tp: 2
@@ -102,7 +102,7 @@ perf_matrix:
     num_gpus_256:
       common:
         num_gpus_per_node: 4
-        seq_length: 4096
+        sequence_length: 4096
         mbs: 1
         gbs: 2048
         tp: 1

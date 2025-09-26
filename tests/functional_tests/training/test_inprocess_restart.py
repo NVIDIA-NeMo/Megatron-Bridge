@@ -47,7 +47,7 @@ from megatron.bridge.training.pretrain import pretrain
 def build_test_config(
     save_dir: str,
     train_iters: int = 20,
-    seq_length: int = 512,
+    sequence_length: int = 512,
     async_save: bool = False,
     save_interval: int = 10,
     fault_delay: Optional[float] = None,
@@ -57,7 +57,7 @@ def build_test_config(
     Args:
         save_dir: Directory to save checkpoints (must be accessible by all ranks)
         train_iters: Number of training iterations
-        seq_length: Sequence length for the model
+        sequence_length: Sequence length for the model
         async_save: Whether to enable async checkpointing
         save_interval: Save checkpoint every N iterations
         fault_delay: If set, inject a fault after this many seconds (requires ft_launcher)
@@ -73,7 +73,7 @@ def build_test_config(
         attention_softmax_in_fp32=True,
         pipeline_dtype=torch.bfloat16,
         bf16=True,
-        seq_length=seq_length,
+        sequence_length=sequence_length,
         vocab_size=None,
     )
 
@@ -123,7 +123,7 @@ def build_test_config(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            sequence_length=sequence_length,
             num_dataset_builder_threads=1,
             data_sharding=True,
             dataloader_type="single",
@@ -213,7 +213,7 @@ class TestInProcessRestartIntegration:
             config = build_test_config(
                 save_dir=checkpoint_dir,
                 train_iters=20,
-                seq_length=512,
+                sequence_length=512,
                 async_save=False,
                 save_interval=10,
             )

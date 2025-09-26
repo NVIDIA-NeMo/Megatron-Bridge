@@ -58,9 +58,9 @@ def run_pretrain_recipe_test(
         config.train.train_iters = 10
         config.train.eval_interval = 5
         config.train.eval_iters = 2
-        test_seq_length = 512
-        config.model.seq_length = test_seq_length
-        config.dataset.sequence_length = test_seq_length
+        test_sequence_length = 512
+        config.model.sequence_length = test_sequence_length
+        config.dataset.sequence_length = test_sequence_length
 
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
         eval_samples_needed = config.train.eval_iters * config.train.global_batch_size

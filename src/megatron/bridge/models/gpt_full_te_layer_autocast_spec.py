@@ -54,7 +54,7 @@ class AutocastTransformerLayer(TransformerLayer):
         params_dtype: torch.dtype = torch.float32,
         get_rng_state_tracker: Optional[Callable] = None,
         fuse_wgrad_accumulation: bool = False,
-        seq_length: Optional[int] = None,
+        sequence_length: Optional[int] = None,
         micro_batch_size: Optional[int] = None,
         sequence_parallel: bool = False,
         apply_residual_connection_post_layernorm: bool = False,
@@ -87,7 +87,7 @@ class AutocastTransformerLayer(TransformerLayer):
             "params_dtype": params_dtype,
             "get_rng_state_tracker": get_rng_state_tracker,
             "fuse_wgrad_accumulation": fuse_wgrad_accumulation,
-            "seq_length": seq_length,
+            "sequence_length": sequence_length,
             "micro_batch_size": micro_batch_size,
             "sequence_parallel": sequence_parallel,
             "apply_residual_connection_post_layernorm": apply_residual_connection_post_layernorm,
@@ -190,7 +190,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
             "params_dtype": config.params_dtype,
             "get_rng_state_tracker": tensor_parallel.random.get_cuda_rng_tracker,
             "fuse_wgrad_accumulation": config.gradient_accumulation_fusion,
-            "seq_length": None,  # used for jit warmup
+            "sequence_length": None,  # used for jit warmup
             "micro_batch_size": None,  # used for jit warmup
             "sequence_parallel": config.sequence_parallel,
             "apply_residual_connection_post_layernorm": config.apply_residual_connection_post_layernorm,

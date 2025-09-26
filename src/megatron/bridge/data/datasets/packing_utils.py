@@ -241,9 +241,9 @@ def fill_packing_strategy(
     input_ids, loss_mask, seq_start_id = {}, {}, {}
     for oindex, assignment in tqdm(enumerate(assignments), total=len(assignments)):
         _input_ids, _loss_mask, _seq_start_id = [], [], [0]
-        for seq_length in assignment:
-            _input_ids.extend(ifile_handles[seq_length][0].pop())
-            _loss_mask.extend(ifile_handles[seq_length][1].pop())
+        for sequence_length in assignment:
+            _input_ids.extend(ifile_handles[sequence_length][0].pop())
+            _loss_mask.extend(ifile_handles[sequence_length][1].pop())
             _seq_start_id.append(len(_input_ids))
         input_ids[oindex] = _input_ids
         loss_mask[oindex] = _loss_mask

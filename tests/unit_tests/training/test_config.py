@@ -64,7 +64,7 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
         "num_layers": 1,
         "hidden_size": 128,
         "num_attention_heads": 4,
-        "seq_length": 512,
+        "sequence_length": 512,
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
@@ -77,7 +77,7 @@ def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
         "num_layers": 1,
         "hidden_size": 128,
         "num_attention_heads": 4,
-        "seq_length": 512,
+        "sequence_length": 512,
         "apply_rope_fusion": False,
     }
     defaults.update(kwargs)
@@ -127,7 +127,7 @@ def create_test_gpt_dataset_config(sequence_length: int) -> GPTDatasetConfig:
 
 def create_test_finetuning_dataset_config(sequence_length: int) -> FinetuningDatasetConfig:
     """Creates an instance of FinetuningDatasetConfig with defaults for testing."""
-    return FinetuningDatasetConfig(seq_length=sequence_length)
+    return FinetuningDatasetConfig(sequence_length=sequence_length)
 
 
 def create_test_logger_config(**kwargs: Any) -> LoggerConfig:
@@ -225,7 +225,7 @@ def create_test_config_container(
     if dataset_config_override:
         final_dataset_config = dataset_config_override
     elif isinstance(model_config, (GPTModelProvider, T5ModelProvider)):  # T5 also uses GPTDataset for these tests
-        final_dataset_config = create_test_gpt_dataset_config(sequence_length=model_config.seq_length)
+        final_dataset_config = create_test_gpt_dataset_config(sequence_length=model_config.sequence_length)
     else:
         raise ValueError(f"Unsupported model_config type for default dataset_config: {type(model_config)}")
 
@@ -269,7 +269,7 @@ def restore_get_world_size_safe(original_func, module_ref):
 def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collective, dataset_type="finetuning"):
     """Helper to create config container for context parallel tests."""
     gpt_model_cfg = create_test_gpt_config(
-        seq_length=512,
+        sequence_length=512,
         context_parallel_size=cp_size,
         calculate_per_token_loss=calc_per_token_loss,
         tensor_model_parallel_size=1,
@@ -750,19 +750,19 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
-        "seq_length, context_parallel_size, expect_assertion_error",
+        "sequence_length, context_parallel_size, expect_assertion_error",
         [
             (512, 2, False),  # 512 % (2 * 2) == 0, valid
             (510, 2, True),  # 510 % (2 * 2) != 0, invalid
             (256, 3, True),  # 256 % (3 * 2) != 0, invalid
         ],
     )
-    def test_context_parallel_seq_length_divisibility(
-        self, monkeypatch, seq_length, context_parallel_size, expect_assertion_error
+    def test_context_parallel_sequence_length_divisibility(
+        self, monkeypatch, sequence_length, context_parallel_size, expect_assertion_error
     ):
         """Test sequence length must be divisible by 2 * context_parallel_size when CP > 1."""
         gpt_model_cfg = create_test_gpt_config(
-            seq_length=seq_length,
+            sequence_length=sequence_length,
             context_parallel_size=context_parallel_size,
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,

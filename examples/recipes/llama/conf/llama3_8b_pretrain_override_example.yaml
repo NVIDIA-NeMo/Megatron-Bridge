@@ -19,7 +19,7 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
-  seq_length: 4096
+  sequence_length: 4096
 
 train:
   train_iters: 20

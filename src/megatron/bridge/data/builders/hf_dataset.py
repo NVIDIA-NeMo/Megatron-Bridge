@@ -233,7 +233,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         dataset_subset: Optional[str] = None,
         dataset_root: Optional[Union[str, Path]] = None,
         split=None,
-        seq_length=1024,
+        sequence_length=1024,
         seed: int = 1234,
         memmap_workers: int = 1,
         max_train_samples: Optional[int] = None,
@@ -261,7 +261,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
             dataset_subset: Optional dataset subset name.
             dataset_root: Optional root directory for data; defaults based on dataset_name.
             split: Optional specific split to load.
-            seq_length: Sequence length for processing.
+            sequence_length: Sequence length for processing.
             seed: Random seed.
             memmap_workers: Number of workers for memmapping.
             max_train_samples: Optional maximum number of training samples.
@@ -284,7 +284,7 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         super().__init__(
             dataset_root=dataset_root,
             tokenizer=tokenizer,
-            seq_length=seq_length,
+            sequence_length=sequence_length,
             seed=seed,
             memmap_workers=memmap_workers,
             dataset_kwargs=dataset_kwargs,

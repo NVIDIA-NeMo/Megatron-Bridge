@@ -85,7 +85,7 @@ def chunkify(x, attention_chunk_size):
     is split into chunks, and the chunk dimension is combined with the batch dimension.
 
     Args:
-        x (torch.Tensor): Input tensor, expected shape [seq_length, batch_size, ...].
+        x (torch.Tensor): Input tensor, expected shape [sequence_length, batch_size, ...].
         attention_chunk_size (int): The desired size of chunks along the sequence dimension.
 
     Returns:
@@ -93,13 +93,13 @@ def chunkify(x, attention_chunk_size):
                       [attention_chunk_size, num_chunks * batch_size, ...].
     """
     # Determine original sequence length.
-    seq_length = x.shape[0]
+    sequence_length = x.shape[0]
     # Compute new sequence length (pad_seq_len) as the smallest multiple of attention_chunk_size
-    pad_seq_len = ((seq_length + attention_chunk_size - 1) // attention_chunk_size) * attention_chunk_size
+    pad_seq_len = ((sequence_length + attention_chunk_size - 1) // attention_chunk_size) * attention_chunk_size
 
     # If padding is needed, create a pad tensor with the same type and device as x.
-    if pad_seq_len != seq_length:
-        pad_size = pad_seq_len - seq_length
+    if pad_seq_len != sequence_length:
+        pad_size = pad_seq_len - sequence_length
         pad_tensor = torch.zeros(pad_size, *x.shape[1:], device=x.device, dtype=x.dtype)
         x = torch.cat([x, pad_tensor], dim=0)
 
@@ -107,7 +107,7 @@ def chunkify(x, attention_chunk_size):
     num_chunks = pad_seq_len // attention_chunk_size
 
     # Reshape from:
-    #   [seq_length, batch_size, num_heads, head_dim]
+    #   [sequence_length, batch_size, num_heads, head_dim]
     # to:
     #   [num_chunks, attention_chunk_size, batch_size, num_heads, head_dim]
     x = x.reshape(num_chunks, attention_chunk_size, *x.shape[1:])

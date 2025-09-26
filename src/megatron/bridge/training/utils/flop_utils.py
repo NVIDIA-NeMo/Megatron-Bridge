@@ -61,7 +61,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
     return (
         expansion_factor
         * batch_size
-        * cfg.model.seq_length
+        * cfg.model.sequence_length
         * cfg.model.num_layers
         * cfg.model.hidden_size
         * cfg.model.hidden_size
@@ -71,7 +71,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int) -> floa
                 (
                     1
                     + (num_query_groups / cfg.model.num_attention_heads)
-                    + (cfg.model.seq_length / cfg.model.hidden_size)
+                    + (cfg.model.sequence_length / cfg.model.hidden_size)
                 )
                 * query_projection_to_hidden_size_ratio
             )

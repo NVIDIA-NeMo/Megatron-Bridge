@@ -174,19 +174,19 @@ def get_batch_on_this_tp_rank(
 
     else:
         mbs = cfg.train.micro_batch_size
-        seq_length = cfg.model.seq_length
+        sequence_length = cfg.model.sequence_length
         tokens = torch.empty(
-            (mbs, seq_length),
+            (mbs, sequence_length),
             dtype=torch.int64,
             device=torch.cuda.current_device(),
         )
         labels = torch.empty(
-            (mbs, seq_length),
+            (mbs, sequence_length),
             dtype=torch.int64,
             device=torch.cuda.current_device(),
         )
         loss_mask = torch.empty(
-            (mbs, seq_length),
+            (mbs, sequence_length),
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
@@ -195,8 +195,8 @@ def get_batch_on_this_tp_rank(
                 (
                     mbs,
                     1,
-                    seq_length,
-                    seq_length,
+                    sequence_length,
+                    sequence_length,
                 ),
                 dtype=torch.bool,
                 device=torch.cuda.current_device(),
@@ -204,7 +204,7 @@ def get_batch_on_this_tp_rank(
         else:
             attention_mask = None
         position_ids = torch.empty(
-            (mbs, seq_length),
+            (mbs, sequence_length),
             dtype=torch.int64,
             device=torch.cuda.current_device(),
         )

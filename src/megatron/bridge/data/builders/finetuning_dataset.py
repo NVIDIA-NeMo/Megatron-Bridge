@@ -40,7 +40,7 @@ class FinetuningDatasetBuilder:
         dataset_root (Union[str, Path]): The root directory containing training, validation, and test data.
         tokenizer: The tokenizer to use for preprocessing text.
         is_built_on_rank (Callable): Function that returns True if the dataset should be built on current rank.
-        seq_length (int, optional): The maximum sequence length. Defaults to 2048.
+        sequence_length (int, optional): The maximum sequence length. Defaults to 2048.
         seed (int, optional): Random seed for data shuffling. Defaults to 1234.
         memmap_workers (int, optional): Number of worker processes for memmap datasets. Defaults to 1.
         max_train_samples (int, optional): Maximum number of training samples. Defaults to None.
@@ -54,7 +54,7 @@ class FinetuningDatasetBuilder:
         self,
         dataset_root: Union[str, Path],
         tokenizer,
-        seq_length: int = 2048,
+        sequence_length: int = 2048,
         seed: int = 1234,
         memmap_workers: int = 1,
         max_train_samples: Optional[int] = None,
@@ -69,7 +69,7 @@ class FinetuningDatasetBuilder:
         else:
             self.dataset_root = Path(dataset_root)
         self.tokenizer = tokenizer
-        self.seq_length = seq_length
+        self.sequence_length = sequence_length
         self.seed = seed
         self.memmap_workers = memmap_workers
         self.max_train_samples = max_train_samples
@@ -102,7 +102,7 @@ class FinetuningDatasetBuilder:
                     output_path=self.train_path_packed,
                     packed_sequence_size=self.packed_sequence_size,
                     tokenizer=self.tokenizer,
-                    max_seq_length=self.seq_length,
+                    max_sequence_length=self.sequence_length,
                     seed=self.seed,
                     output_metadata_path=self.pack_metadata,
                 )
@@ -114,7 +114,7 @@ class FinetuningDatasetBuilder:
                     output_path=self.validation_path_packed,
                     packed_sequence_size=self.packed_sequence_size,
                     tokenizer=self.tokenizer,
-                    max_seq_length=self.seq_length,
+                    max_sequence_length=self.sequence_length,
                     seed=self.seed,
                     output_metadata_path=self.pack_metadata,
                 )
@@ -209,7 +209,7 @@ class FinetuningDatasetBuilder:
         return create_sft_dataset(
             path,
             tokenizer=self.tokenizer,
-            seq_length=(self.seq_length if is_not_packing else self.packed_sequence_size),
+            sequence_length=(self.sequence_length if is_not_packing else self.packed_sequence_size),
             memmap_workers=self.memmap_workers,
             seed=self.seed,
             is_test=is_test,

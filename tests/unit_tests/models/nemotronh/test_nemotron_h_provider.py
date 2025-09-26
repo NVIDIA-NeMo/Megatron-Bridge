@@ -43,7 +43,7 @@ class TestNemotronHModelProvider:
         assert provider.num_attention_heads == 32
 
         # Check Nemotron-H specific defaults
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
         assert provider.mamba_num_groups == 8
         assert provider.mamba_head_dim == 64
         assert provider.num_query_groups == 8
@@ -110,13 +110,13 @@ class TestNemotronHModel4BProvider:
     def test_nemotron_h_4b_override_configuration(self):
         """Test Nemotron-H 4B model with overridden configuration."""
         provider = NemotronHModel4BProvider(
-            seq_length=16384,
+            sequence_length=16384,
             hidden_dropout=0.1,
             use_mamba_mem_eff_path=True,
         )
 
         # Check overridden values
-        assert provider.seq_length == 16384
+        assert provider.sequence_length == 16384
         assert provider.hidden_dropout == 0.1
         assert provider.use_mamba_mem_eff_path is True
 
@@ -144,12 +144,12 @@ class TestNemotronHModel8BProvider:
     def test_nemotron_h_8b_override_configuration(self):
         """Test Nemotron-H 8B model with overridden configuration."""
         provider = NemotronHModel8BProvider(
-            seq_length=32768,
+            sequence_length=32768,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 32768
+        assert provider.sequence_length == 32768
         assert provider.hidden_dropout == 0.1
 
         # Check critical defaults remain
@@ -178,12 +178,12 @@ class TestNemotronHModel47BProvider:
     def test_nemotron_h_47b_override_configuration(self):
         """Test Nemotron-H 47B model with overridden configuration."""
         provider = NemotronHModel47BProvider(
-            seq_length=65536,
+            sequence_length=65536,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 65536
+        assert provider.sequence_length == 65536
         assert provider.hidden_dropout == 0.1
 
         # Check critical defaults remain
@@ -212,12 +212,12 @@ class TestNemotronHModel56BProvider:
     def test_nemotron_h_56b_override_configuration(self):
         """Test Nemotron-H 56B model with overridden configuration."""
         provider = NemotronHModel56BProvider(
-            seq_length=131072,  # 128k context
+            sequence_length=131072,  # 128k context
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 131072
+        assert provider.sequence_length == 131072
         assert provider.hidden_dropout == 0.1
 
         # Check critical defaults remain
@@ -292,13 +292,13 @@ class TestNemotronNano9Bv2Provider:
     def test_nemotron_nano_9b_v2_override_configuration(self):
         """Test Nemotron Nano v2 9B model with overridden configuration."""
         provider = NemotronNano9Bv2Provider(
-            seq_length=16384,
+            sequence_length=16384,
             hidden_dropout=0.1,
             mamba_head_dim=96,
         )
 
         # Check overridden values
-        assert provider.seq_length == 16384
+        assert provider.sequence_length == 16384
         assert provider.hidden_dropout == 0.1
         assert provider.mamba_head_dim == 96
 
@@ -331,13 +331,13 @@ class TestNemotronNano12Bv2Provider:
     def test_nemotron_nano_12b_v2_override_configuration(self):
         """Test Nemotron Nano v2 12B model with overridden configuration."""
         provider = NemotronNano12Bv2Provider(
-            seq_length=32768,
+            sequence_length=32768,
             hidden_dropout=0.1,
             mamba_head_dim=96,
         )
 
         # Check overridden values
-        assert provider.seq_length == 32768
+        assert provider.sequence_length == 32768
         assert provider.hidden_dropout == 0.1
         assert provider.mamba_head_dim == 96
 

@@ -73,13 +73,13 @@ class TestDoRAFinetune:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             pretrain_iters = 10
             dora_iters = 5
 
             # Create configs
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, sequence_length
             )
 
             # Run pretrain
@@ -91,7 +91,7 @@ class TestDoRAFinetune:
                 dora_iters,
                 dora_checkpoint_dir,
                 dora_tensorboard_dir,
-                seq_length,
+                sequence_length,
                 pretrain_checkpoint_dir,
             )
 
@@ -103,9 +103,9 @@ class TestDoRAFinetune:
         finally:
             clear_directories(shared_base_dir)
 
-    def _create_model_provider(self, seq_length=512):
+    def _create_model_provider(self, sequence_length=512):
         """Create a model provider with specified configuration."""
-        return Llama3ModelProvider145M(seq_length=seq_length, context_parallel_size=1)
+        return Llama3ModelProvider145M(sequence_length=sequence_length, context_parallel_size=1)
 
     def _create_training_config(self, train_iters, global_batch_size=8, micro_batch_size=1):
         """Create a training configuration."""
@@ -158,26 +158,26 @@ class TestDoRAFinetune:
             use_distributed_optimizer=True,
         )
 
-    def _create_mock_dataset_config(self, seq_length, seed=1234):
+    def _create_mock_dataset_config(self, sequence_length, seed=1234):
         """Create a mock dataset configuration."""
         return MockGPTDatasetConfig(
             random_seed=seed,
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            sequence_length=sequence_length,
             num_dataset_builder_threads=1,
             data_sharding=True,
             dataloader_type="single",
             num_workers=1,
         )
 
-    def _create_squad_dataset_config(self, seq_length, seed=5678):
+    def _create_squad_dataset_config(self, sequence_length, seed=5678):
         """Create a SQuAD dataset configuration."""
         return HFDatasetConfig(
             dataset_name="squad",
             process_example_fn=process_squad_example,
-            seq_length=seq_length,
+            sequence_length=sequence_length,
             seed=seed,
             dataloader_type="single",
             num_workers=1,
@@ -221,11 +221,11 @@ class TestDoRAFinetune:
         train_iters,
         checkpoint_dir,
         tensorboard_dir,
-        seq_length,
+        sequence_length,
         seed=1234,
     ):
         """Create a complete pretrain configuration including model."""
-        model = self._create_model_provider(seq_length)
+        model = self._create_model_provider(sequence_length)
 
         return ConfigContainer(
             model=model,
@@ -233,7 +233,7 @@ class TestDoRAFinetune:
             optimizer=self._create_optimizer_config(),
             scheduler=self._create_scheduler_config(train_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_mock_dataset_config(seq_length, seed),
+            dataset=self._create_mock_dataset_config(sequence_length, seed),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=TokenizerConfig(
                 tokenizer_type="NullTokenizer",
@@ -248,13 +248,13 @@ class TestDoRAFinetune:
         train_iters,
         checkpoint_dir,
         tensorboard_dir,
-        seq_length,
+        sequence_length,
         pretrained_checkpoint,
         seed=5678,
         load_checkpoint=None,
     ):
         """Create a complete DoRA finetuning configuration including model."""
-        model = self._create_model_provider(seq_length)
+        model = self._create_model_provider(sequence_length)
 
         return ConfigContainer(
             model=model,
@@ -262,7 +262,7 @@ class TestDoRAFinetune:
             optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(train_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_squad_dataset_config(seq_length, seed),
+            dataset=self._create_squad_dataset_config(sequence_length, seed),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=TokenizerConfig(
                 tokenizer_type="HuggingFaceTokenizer",

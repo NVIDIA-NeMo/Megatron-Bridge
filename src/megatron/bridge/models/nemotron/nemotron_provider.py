@@ -53,7 +53,7 @@ class NemotronModelProvider(GPTModelProvider):
 
     # Nemotron3Config4B as default configs
     num_layers: int = 32
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 3072
     ffn_hidden_size: int = 9216
     num_attention_heads: int = 24
@@ -75,7 +75,7 @@ class Nemotron3ModelProvider4B(NemotronModelProvider):
     """
 
     num_layers: int = 32
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 3072
     ffn_hidden_size: int = 9216
     num_attention_heads: int = 24
@@ -91,7 +91,7 @@ class Nemotron3ModelProvider8B(NemotronModelProvider):
     """
 
     num_layers: int = 32
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 4096
     ffn_hidden_size: int = 16384
     num_attention_heads: int = 32
@@ -107,7 +107,7 @@ class Nemotron3ModelProvider22B(NemotronModelProvider):
     """
 
     num_layers: int = 40
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 6144
     ffn_hidden_size: int = 24576
     num_attention_heads: int = 48
@@ -123,7 +123,7 @@ class Nemotron4ModelProvider15B(NemotronModelProvider):
     """
 
     num_layers: int = 32
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 6144
     ffn_hidden_size: int = 24576
     num_attention_heads: int = 48
@@ -139,7 +139,7 @@ class Nemotron4ModelProvider340B(NemotronModelProvider):
     """
 
     num_layers: int = 96
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 18432
     ffn_hidden_size: int = 73728
     num_attention_heads: int = 96

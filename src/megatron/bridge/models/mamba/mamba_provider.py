@@ -54,7 +54,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
     hybrid_override_pattern: Optional[str] = None
-    seq_length: int = 8192
+    sequence_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
     position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
     rotary_percent: float = 1.0
@@ -108,7 +108,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             self,
             mamba_stack_spec=mamba_stack_spec,
             vocab_size=padded_vocab_size,
-            max_sequence_length=self.seq_length,
+            max_sequence_length=self.sequence_length,
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             hybrid_mlp_ratio=self.hybrid_mlp_ratio,
             hybrid_override_pattern=self.hybrid_override_pattern,
@@ -130,7 +130,7 @@ class MambaModelProvider130M(MambaModelProvider):
 
     hybrid_override_pattern: str = "M" * 24
     num_layers: int = 24
-    seq_length: int = 2048
+    sequence_length: int = 2048
     hidden_size: int = 768
     mamba_num_groups: int = 1
     ffn_hidden_size: int = 768
@@ -143,7 +143,7 @@ class MambaModelProvider370M(MambaModelProvider):
 
     hybrid_override_pattern: str = "M" * 48
     num_layers: int = 48
-    seq_length: int = 2048
+    sequence_length: int = 2048
     hidden_size: int = 1024
     mamba_num_groups: int = 1
     ffn_hidden_size: int = 1024
@@ -156,7 +156,7 @@ class MambaModelProvider780M(MambaModelProvider):
 
     hybrid_override_pattern: str = "M" * 48
     num_layers: int = 48
-    seq_length: int = 2048
+    sequence_length: int = 2048
     hidden_size: int = 1536
     mamba_num_groups: int = 1
     ffn_hidden_size: int = 1536
@@ -169,7 +169,7 @@ class MambaModelProvider1P3B(MambaModelProvider):
 
     hybrid_override_pattern: str = "M" * 48
     num_layers: int = 48
-    seq_length: int = 2048
+    sequence_length: int = 2048
     hidden_size: int = 2048
     mamba_num_groups: int = 1
     ffn_hidden_size: int = 2048
@@ -182,7 +182,7 @@ class MambaModelProvider2P7B(MambaModelProvider):
 
     hybrid_override_pattern: str = "M" * 64
     num_layers: int = 64
-    seq_length: int = 2048
+    sequence_length: int = 2048
     hidden_size: int = 2560
     mamba_num_groups: int = 1
     ffn_hidden_size: int = 2560
@@ -196,7 +196,7 @@ class NVIDIAMambaModelProvider8B(MambaModelProvider):
     hybrid_override_pattern: str = "M" * 56
     num_attention_heads: int = 32
     num_layers: int = 56
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 4096
     mamba_num_groups: int = 8
     ffn_hidden_size: int = 4096
@@ -209,7 +209,7 @@ class NVIDIAMambaHybridModelProvider8B(MambaModelProvider):
 
     hybrid_override_pattern: str = "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
     num_layers: int = 56
-    seq_length: int = 4096
+    sequence_length: int = 4096
     hidden_size: int = 4096
     mamba_num_groups: int = 8
     ffn_hidden_size: int = 16384

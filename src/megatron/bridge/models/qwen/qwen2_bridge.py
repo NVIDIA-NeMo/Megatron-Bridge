@@ -58,7 +58,7 @@ class Qwen2Bridge(MegatronModelBridge):
             rotary_base=hf_config.rope_theta,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
+            sequence_length=hf_config.max_position_embeddings,
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),

@@ -637,7 +637,7 @@ def _get_samples_mapping(
     data_prefix,
     num_epochs,
     max_num_samples,
-    max_seq_length,
+    max_sequence_length,
     short_seq_prob,
     seed,
     name,
@@ -667,7 +667,7 @@ def _get_samples_mapping(
         indexmap_filename += "_{}ep".format(num_epochs)
     if max_num_samples != (np.iinfo(np.int64).max - 1):
         indexmap_filename += "_{}mns".format(max_num_samples)
-    indexmap_filename += "_{}msl".format(max_seq_length)
+    indexmap_filename += "_{}msl".format(max_sequence_length)
     indexmap_filename += "_{:0.2f}ssp".format(short_seq_prob)
     indexmap_filename += "_{}s".format(seed)
     indexmap_filename += ".npy"
@@ -705,7 +705,7 @@ def _get_samples_mapping(
             indexed_dataset.sizes,
             num_epochs,
             max_num_samples,
-            max_seq_length,
+            max_sequence_length,
             short_seq_prob,
             seed,
             verbose,

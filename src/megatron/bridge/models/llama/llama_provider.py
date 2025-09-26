@@ -45,7 +45,7 @@ class LlamaModelProvider(GPTModelProvider):
     gated_linear_unit: bool = True
     position_embedding_type: str = "rope"
     add_bias_linear: bool = False
-    seq_length: int = 4096
+    sequence_length: int = 4096
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
     share_embeddings_and_output_weights: bool = False
@@ -179,7 +179,7 @@ class Llama3ModelProvider8B(Llama3ModelProvider):
     """
 
     rotary_base: int = 500_000
-    seq_length: int = 8192
+    sequence_length: int = 8192
     num_layers: int = 32
     hidden_size: int = 4096
     ffn_hidden_size: int = 14336
@@ -196,7 +196,7 @@ class Llama3ModelProvider70B(Llama3ModelProvider):
     """
 
     rotary_base: int = 500_000
-    seq_length: int = 8192
+    sequence_length: int = 8192
     num_layers: int = 80
     hidden_size: int = 8192
     ffn_hidden_size: int = 28672
@@ -216,7 +216,7 @@ class Llama31ModelProvider8B(Llama31ModelProvider):
     """
 
     rotary_base: int = 500_000
-    seq_length: int = 131072
+    sequence_length: int = 131072
     num_layers: int = 32
     hidden_size: int = 4096
     ffn_hidden_size: int = 14336
@@ -233,7 +233,7 @@ class Llama31ModelProvider70B(Llama31ModelProvider):
     """
 
     rotary_base: int = 500_000
-    seq_length: int = 131072
+    sequence_length: int = 131072
     num_layers: int = 80
     hidden_size: int = 8192
     ffn_hidden_size: int = 28672
@@ -251,7 +251,7 @@ class Llama31ModelProvider405B(Llama31ModelProvider):
     """
 
     rotary_base: int = 500_000
-    seq_length: int = 131072
+    sequence_length: int = 131072
     num_layers: int = 126
     hidden_size: int = 16384
     ffn_hidden_size: int = 53248
@@ -307,7 +307,7 @@ class CodeLlamaModelProvider7B(Llama2ModelProvider7B):
     """
 
     rotary_base: int = 1_000_000
-    seq_length: int = 16384
+    sequence_length: int = 16384
 
 
 @dataclass
@@ -319,7 +319,7 @@ class CodeLlamaModelProvider13B(Llama2ModelProvider13B):
     """
 
     rotary_base: int = 1_000_000
-    seq_length: int = 16384
+    sequence_length: int = 16384
 
 
 @dataclass
@@ -336,7 +336,7 @@ class CodeLlamaModelProvider34B(LlamaModelProvider):
     num_query_groups: int = 8
     ffn_hidden_size: int = 22016
     rotary_base: int = 1_000_000
-    seq_length: int = 16384
+    sequence_length: int = 16384
 
 
 @dataclass
@@ -356,7 +356,7 @@ class Llama4ModelProvider(Llama3ModelProvider):
     """
 
     rotary_base: int = 500_000
-    seq_length: int = 8192
+    sequence_length: int = 8192
     num_layers: int = 48
     hidden_size: int = 5120
     ffn_hidden_size: int = 16384

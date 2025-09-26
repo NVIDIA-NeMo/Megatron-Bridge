@@ -215,7 +215,7 @@ def train(
         cuda_graph_helper = TECudaGraphHelper(
             model=model,
             config=model_config,
-            seq_length=config.model.seq_length,
+            sequence_length=config.model.sequence_length,
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
@@ -522,9 +522,9 @@ def train_step(
             data_iterator=data_iterator,
             model=model,
             num_microbatches=get_num_microbatches(),
-            seq_length=model_config.seq_length,
+            sequence_length=model_config.sequence_length,
             micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
+            decoder_sequence_length=model_config.sequence_length,
             forward_only=False,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
@@ -781,7 +781,7 @@ def compute_throughputs_and_append_to_progress_log(
         elapsed_time * 10**12 * get_world_size_safe()
     )
 
-    tokens_so_far = state.train_state.consumed_train_samples * state.cfg.model.seq_length
+    tokens_so_far = state.train_state.consumed_train_samples * state.cfg.model.sequence_length
     saved_ckpt_prefix = "Saving async checkpoint" if state.cfg.checkpoint.async_save else "Saved checkpoint"
     append_to_progress_log(
         state.cfg.checkpoint.save,

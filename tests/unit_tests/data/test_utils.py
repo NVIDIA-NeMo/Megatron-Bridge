@@ -59,7 +59,7 @@ class TestDataUtils:
         data_path = ensure_test_data
         dataset_config = FinetuningDatasetConfig(
             dataset_root=f"{data_path}/datasets/finetune_train",
-            seq_length=8192,
+            sequence_length=8192,
         )
 
         # Build tokenizer
@@ -82,7 +82,7 @@ class TestDataUtils:
         data_path = ensure_test_data
         dataset_config = FinetuningDatasetConfig(
             dataset_root=f"{data_path}/datasets/finetune",
-            seq_length=8192,
+            sequence_length=8192,
         )
 
         # Get datasets
@@ -93,4 +93,4 @@ class TestDataUtils:
         )
 
         assert (valid_ds, test_ds) != (None, None)
-        assert train_ds.max_seq_length == 8192
+        assert train_ds.max_sequence_length == 8192

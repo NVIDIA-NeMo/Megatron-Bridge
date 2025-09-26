@@ -108,18 +108,18 @@ class TestLlama2ModelProvider7B:
         assert provider.ffn_hidden_size == 11008
         assert provider.normalization == "RMSNorm"
         assert provider.rotary_base == 10000
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.num_query_groups == 32
 
     def test_llama2_7b_override_configuration(self):
         """Test Llama2 7B model with overridden configuration."""
         provider = Llama2ModelProvider7B(
-            seq_length=8192,
+            sequence_length=8192,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
         assert provider.hidden_dropout == 0.1
 
         # Check defaults remain
@@ -141,7 +141,7 @@ class TestLlama3ModelProvider8B:
         assert provider.ffn_hidden_size == 14336
         assert provider.normalization == "RMSNorm"
         assert provider.rotary_base == 500000
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
 
     def test_llama3_8b_group_query_attention(self):
         """Test Llama3 8B uses default query groups from base class."""
@@ -154,12 +154,12 @@ class TestLlama3ModelProvider8B:
     def test_llama3_8b_override_configuration(self):
         """Test Llama3 8B model with overridden configuration."""
         provider = Llama3ModelProvider8B(
-            seq_length=16384,
+            sequence_length=16384,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 16384
+        assert provider.sequence_length == 16384
         assert provider.hidden_dropout == 0.1
 
         # Check critical defaults remain
@@ -180,14 +180,14 @@ class TestLlama31ModelProvider70B:
         assert provider.ffn_hidden_size == 28672
         assert provider.normalization == "RMSNorm"
         assert provider.rotary_base == 500000
-        assert provider.seq_length == 131072  # 128k context
+        assert provider.sequence_length == 131072  # 128k context
 
     def test_llama31_70b_large_context(self):
         """Test Llama3.1 70B supports large context window."""
         provider = Llama31ModelProvider70B()
 
         # Llama3.1 70B supports 128k context window
-        assert provider.seq_length == 131072
+        assert provider.sequence_length == 131072
 
     def test_llama31_70b_rope_scaling(self):
         """Test Llama3.1 70B RoPE configuration for long context."""
@@ -328,13 +328,13 @@ class TestLlamaProviderEdgeCases:
         # The actual vocab size should be adjusted if needed
         assert provider.make_vocab_size_divisible_by == 128
 
-    def test_seq_length_override(self):
+    def test_sequence_length_override(self):
         """Test sequence length configuration."""
         provider = LlamaModelProvider(
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            seq_length=8192,
+            sequence_length=8192,
         )
 
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192

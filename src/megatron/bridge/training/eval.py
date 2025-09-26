@@ -98,7 +98,7 @@ def evaluate(
                 data_iterator=data_iterator,
                 model=model,
                 num_microbatches=eval_num_microbatches,
-                seq_length=state.cfg.model.seq_length,
+                sequence_length=state.cfg.model.sequence_length,
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
             )
@@ -152,7 +152,7 @@ def evaluate(
                 data_iterator=data_iterator,
                 model=model,
                 num_microbatches=get_num_microbatches(),
-                seq_length=state.cfg.model.seq_length,
+                sequence_length=state.cfg.model.sequence_length,
                 micro_batch_size=state.cfg.train.micro_batch_size,
                 forward_only=True,
                 collect_non_loss_data=True,

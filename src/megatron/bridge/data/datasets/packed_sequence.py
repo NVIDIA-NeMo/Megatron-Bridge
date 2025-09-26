@@ -28,7 +28,7 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 logger = logging.getLogger(__name__)
 
 
-def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_seq_length: int, seed: int):
+def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_sequence_length: int, seed: int):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
     and prepares it for further processing.
@@ -36,7 +36,7 @@ def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_seq_length: i
     Args:
         path (Path): Path to the dataset file.
         tokenizer (TokenizerSpec): The tokenizer to use for tokenization.
-        max_seq_length (int): Maximum sequence length for the tokens.
+        max_sequence_length (int): Maximum sequence length for the tokens.
         seed (int): Random seed for shuffling the dataset (optional).
 
     Returns:
@@ -45,7 +45,7 @@ def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_seq_length: i
     dataset = create_sft_dataset(
         path=path,
         tokenizer=tokenizer,
-        seq_length=max_seq_length,
+        sequence_length=max_sequence_length,
         seed=seed,
         is_test=True,
     )
@@ -58,7 +58,7 @@ def prepare_packed_sequence_data(
     output_metadata_path: Path,
     packed_sequence_size: int,
     tokenizer: MegatronTokenizer,
-    max_seq_length: int,
+    max_sequence_length: int,
     seed: Optional[int] = 0,
     packing_algorithm: str = "first_fit_shuffle",
 ):
@@ -70,7 +70,7 @@ def prepare_packed_sequence_data(
         output_path (Path): Path to save the packed sequence data.
         packed_sequence_size (int): The maximum size for each packed sequence.
         tokenizer (TokenizerSpec): The tokenizer to use for tokenization.
-        max_seq_length (int): Maximum sequence length for the tokens.
+        max_sequence_length (int): Maximum sequence length for the tokens.
         seed (Optional[int]): Random seed for shuffling (optional).
         packing_algorithm (str): The algorithm used for packing sequences
                 currently supports "first_fit_shuffle" and "first_fit_decreasing".
@@ -79,8 +79,8 @@ def prepare_packed_sequence_data(
         None: Saves the packed sequence data to the specified output path.
     """
     logger.info(f"Preparing packed sequence from {input_path}")
-    dataset = tokenize_dataset(input_path, tokenizer, max_seq_length, seed)
-    sequences, histogram = create_hist(dataset, max_seq_length)
+    dataset = tokenize_dataset(input_path, tokenizer, max_sequence_length, seed)
+    sequences, histogram = create_hist(dataset, max_sequence_length)
 
     assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)
     output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
@@ -127,7 +127,7 @@ class PackedSequenceSpecs:
     """
     If a positive integer, this arg enables training with sequence packing and specifies the pack size
     If less than or equal to 0, sequence packing is disabled. Defaults to -1.
-    Note: This arg is distinct from `seq_length` because `seq_length` specifies the maximum length
+    Note: This arg is distinct from `sequence_length` because `sequence_length` specifies the maximum length
     of the original sequence (i.e. the length to truncate long sequences in the input data).
     """
 

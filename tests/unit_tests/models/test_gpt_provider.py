@@ -41,7 +41,7 @@ class TestGPTModelProvider:
         assert provider.position_embedding_type == "learned_absolute"
         assert provider.rotary_base == 10000
         assert provider.rotary_percent == 1.0
-        assert provider.seq_length == 1024
+        assert provider.sequence_length == 1024
         assert provider.mtp_enabled is False
 
     def test_gpt_model_provider_with_rope(self):

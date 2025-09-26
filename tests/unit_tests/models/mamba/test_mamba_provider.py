@@ -55,7 +55,7 @@ class TestMambaModelProvider:
         assert provider.hybrid_attention_ratio == 0.0
         assert provider.hybrid_mlp_ratio == 0.0
         assert provider.hybrid_override_pattern is None
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
         assert provider.position_embedding_type == "none"
         assert provider.rotary_percent == 1.0
         assert provider.rotary_base == 10000
@@ -335,19 +335,19 @@ class TestMambaModelProvider130M:
         assert provider.num_attention_heads == 1
         assert provider.mamba_num_groups == 1
         assert provider.ffn_hidden_size == 768
-        assert provider.seq_length == 2048
+        assert provider.sequence_length == 2048
         assert provider.make_vocab_size_divisible_by == 16
         assert provider.hybrid_override_pattern == "M" * 24
 
     def test_mamba_130m_override_configuration(self):
         """Test Mamba 130M model with overridden configuration."""
         provider = MambaModelProvider130M(
-            seq_length=4096,
+            sequence_length=4096,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.hidden_dropout == 0.1
 
         # Check defaults remain
@@ -369,7 +369,7 @@ class TestMambaModelProvider370M:
         assert provider.num_attention_heads == 1
         assert provider.mamba_num_groups == 1
         assert provider.ffn_hidden_size == 1024
-        assert provider.seq_length == 2048
+        assert provider.sequence_length == 2048
         assert provider.make_vocab_size_divisible_by == 16
         assert provider.hybrid_override_pattern == "M" * 48
 
@@ -387,7 +387,7 @@ class TestMambaModelProvider780M:
         assert provider.num_attention_heads == 1
         assert provider.mamba_num_groups == 1
         assert provider.ffn_hidden_size == 1536
-        assert provider.seq_length == 2048
+        assert provider.sequence_length == 2048
         assert provider.make_vocab_size_divisible_by == 16
         assert provider.hybrid_override_pattern == "M" * 48
 
@@ -405,7 +405,7 @@ class TestMambaModelProvider1P3B:
         assert provider.num_attention_heads == 1
         assert provider.mamba_num_groups == 1
         assert provider.ffn_hidden_size == 2048
-        assert provider.seq_length == 2048
+        assert provider.sequence_length == 2048
         assert provider.make_vocab_size_divisible_by == 16
         assert provider.hybrid_override_pattern == "M" * 48
 
@@ -423,7 +423,7 @@ class TestMambaModelProvider2P7B:
         assert provider.num_attention_heads == 1
         assert provider.mamba_num_groups == 1
         assert provider.ffn_hidden_size == 2560
-        assert provider.seq_length == 2048
+        assert provider.sequence_length == 2048
         assert provider.make_vocab_size_divisible_by == 16
         assert provider.hybrid_override_pattern == "M" * 64
 
@@ -441,7 +441,7 @@ class TestNVIDIAMambaModelProvider8B:
         assert provider.num_attention_heads == 32
         assert provider.mamba_num_groups == 8
         assert provider.ffn_hidden_size == 4096
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.make_vocab_size_divisible_by == 128
         assert provider.hybrid_override_pattern == "M" * 56
 
@@ -460,7 +460,7 @@ class TestNVIDIAMambaHybridModelProvider8B:
         assert provider.num_query_groups == 8
         assert provider.mamba_num_groups == 8
         assert provider.ffn_hidden_size == 16384
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.make_vocab_size_divisible_by == 128
         assert provider.hybrid_override_pattern == "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
 

@@ -108,7 +108,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     rotary_base: int = 10000
     rotary_percent: float = 1.0
     seq_len_interpolation_factor: Optional[float] = None
-    seq_length: int = 1024
+    sequence_length: int = 1024
     attention_softmax_in_fp32: bool = False
     deallocate_pipeline_outputs: bool = True
     scatter_embedding_sequence_parallel: bool = True
@@ -225,7 +225,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 self,
                 transformer_layer_spec=transformer_layer_spec,
                 vocab_size=padded_vocab_size,
-                max_sequence_length=self.seq_length,
+                max_sequence_length=self.sequence_length,
                 fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
                 parallel_output=self.parallel_output,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
@@ -308,7 +308,7 @@ class GPTProvider126M(GPTModelProvider):
     768 hidden size, and 12 attention heads.
     """
 
-    seq_length: int = 2048
+    sequence_length: int = 2048
     num_layers: int = 12
     hidden_size: int = 768
     ffn_hidden_size: int = 3072
@@ -325,7 +325,7 @@ class GPTProvider5B(GPTModelProvider):
     4096 hidden size, and 32 attention heads.
     """
 
-    seq_length: int = 2048
+    sequence_length: int = 2048
     num_layers: int = 24
     hidden_size: int = 4096
     ffn_hidden_size: int = 16384
@@ -342,7 +342,7 @@ class GPTProvider7B(GPTModelProvider):
     4096 hidden size, and 32 attention heads.
     """
 
-    seq_length: int = 2048
+    sequence_length: int = 2048
     num_layers: int = 32
     hidden_size: int = 4096
     ffn_hidden_size: int = 10880
@@ -359,7 +359,7 @@ class GPTProvider20B(GPTModelProvider):
     6144 hidden size, and 48 attention heads.
     """
 
-    seq_length: int = 2048
+    sequence_length: int = 2048
     num_layers: int = 44
     hidden_size: int = 6144
     ffn_hidden_size: int = 24576
@@ -376,7 +376,7 @@ class GPTProvider40B(GPTModelProvider):
     8192 hidden size, and 64 attention heads.
     """
 
-    seq_length: int = 2048
+    sequence_length: int = 2048
     num_layers: int = 48
     hidden_size: int = 8192
     ffn_hidden_size: int = 32768
@@ -393,7 +393,7 @@ class GPTProvider175B(GPTModelProvider):
     12288 hidden size, and 96 attention heads.
     """
 
-    seq_length: int = 2048
+    sequence_length: int = 2048
     num_layers: int = 96
     hidden_size: int = 12288
     ffn_hidden_size: int = 49152

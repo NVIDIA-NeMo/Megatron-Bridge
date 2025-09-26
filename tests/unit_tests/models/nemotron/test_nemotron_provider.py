@@ -60,7 +60,7 @@ class TestNemotronSpecificProviders:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 9216
         assert provider.kv_channels == 128
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.init_method_std == 0.0134
 
     def test_nemotron3_8b_config(self):
@@ -73,7 +73,7 @@ class TestNemotronSpecificProviders:
         assert provider.num_query_groups is None
         assert provider.ffn_hidden_size == 16384
         assert provider.kv_channels is None
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.init_method_std == 0.010
 
     def test_nemotron3_22b_config(self):
@@ -86,7 +86,7 @@ class TestNemotronSpecificProviders:
         assert provider.num_query_groups is None
         assert provider.ffn_hidden_size == 24576
         assert provider.kv_channels is None
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.init_method_std == 0.008
 
     def test_nemotron4_15b_config(self):
@@ -99,7 +99,7 @@ class TestNemotronSpecificProviders:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 24576
         assert provider.kv_channels is None
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.init_method_std == 0.0134
 
     def test_nemotron4_340b_config(self):
@@ -113,7 +113,7 @@ class TestNemotronSpecificProviders:
         assert provider.num_query_groups == 8
         assert provider.ffn_hidden_size == 73728
         assert provider.kv_channels is None
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.init_method_std == 0.0063
 
     def test_all_providers_have_nemotron_defaults(self):

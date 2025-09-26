@@ -23,7 +23,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-SEQ_LENGTH: int = 16384
+sequence_length: int = 16384
 
 
 def model_config(
@@ -56,7 +56,7 @@ def model_config(
         context_parallel_size=context_parallelism,
         sequence_parallel=sequence_parallelism,
     )
-    cfg.seq_length = SEQ_LENGTH
+    cfg.sequence_length = sequence_length
     return cfg
 
 
@@ -112,7 +112,7 @@ def pretrain_config(
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
+        sequence_length (int): Sequence length for training data.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int) Number of warmup iterations for the learning rate.
@@ -141,7 +141,7 @@ def pretrain_config(
         train_iters=train_iters,
         global_batch_size=global_batch_size,
         micro_batch_size=micro_batch_size,
-        seq_length=SEQ_LENGTH,
+        sequence_length=sequence_length,
         lr=lr,
         min_lr=min_lr,
         lr_warmup_iters=lr_warmup_iters,
@@ -160,6 +160,6 @@ def pretrain_config(
     )
 
     # Ensure dataset sequence length is set to 16k
-    cfg.dataset.sequence_length = SEQ_LENGTH
+    cfg.dataset.sequence_length = sequence_length
 
     return cfg

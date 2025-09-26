@@ -127,7 +127,7 @@ class TestQwen3MoEBridge:
         assert result.num_layers == mock_qwen3_moe_config.num_hidden_layers
         assert result.hidden_size == mock_qwen3_moe_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_moe_config.num_attention_heads
-        assert result.seq_length == mock_qwen3_moe_config.max_position_embeddings
+        assert result.sequence_length == mock_qwen3_moe_config.max_position_embeddings
         assert result.rotary_base == mock_qwen3_moe_config.rope_theta
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3_moe, mock_qwen3_moe_config):

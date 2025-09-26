@@ -83,7 +83,7 @@ class TestPretrainConfig:
             train_iters=10000,
             global_batch_size=256,
             micro_batch_size=4,
-            seq_length=2048,
+            sequence_length=2048,
             lr=1e-4,
             min_lr=1e-5,
             lr_warmup_iters=1000,
@@ -239,10 +239,10 @@ class TestPretrainConfig:
         assert config.logger.log_timers_to_tensorboard is True
         assert "tb_logs" in config.logger.tensorboard_dir
 
-    @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
-    def test_pretrain_config_sequence_lengths(self, seq_length):
+    @pytest.mark.parametrize("sequence_length", [1024, 2048, 4096, 8192, 16384])
+    def test_pretrain_config_sequence_lengths(self, sequence_length):
         """Test various sequence lengths."""
-        config = pretrain_config(seq_length=seq_length)
+        config = pretrain_config(sequence_length=sequence_length)
 
-        assert config.dataset.sequence_length == seq_length
-        assert config.model.seq_length == seq_length
+        assert config.dataset.sequence_length == sequence_length
+        assert config.model.sequence_length == sequence_length

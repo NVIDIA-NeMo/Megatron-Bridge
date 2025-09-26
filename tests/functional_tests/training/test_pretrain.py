@@ -65,7 +65,7 @@ class TestPretrain:
         try:
             global_batch_size = 8
             micro_batch_size = 1
-            seq_length = 512
+            sequence_length = 512
             total_iters = 100
 
             model_cfg = Llama32ModelProvider1B(
@@ -76,7 +76,7 @@ class TestPretrain:
                 attention_softmax_in_fp32=True,
                 pipeline_dtype=torch.bfloat16,
                 bf16=True,
-                seq_length=seq_length,
+                sequence_length=sequence_length,
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
             )
@@ -128,7 +128,7 @@ class TestPretrain:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    sequence_length=sequence_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",
@@ -184,7 +184,7 @@ class TestPretrain:
         try:
             global_batch_size = 8
             micro_batch_size = 1
-            seq_length = 512
+            sequence_length = 512
             total_iters = 100
 
             # Create model config with VPP
@@ -197,7 +197,7 @@ class TestPretrain:
                 attention_softmax_in_fp32=True,
                 pipeline_dtype=torch.bfloat16,
                 bf16=True,
-                seq_length=seq_length,
+                sequence_length=sequence_length,
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
             )
@@ -261,7 +261,7 @@ class TestPretrain:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    sequence_length=sequence_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",

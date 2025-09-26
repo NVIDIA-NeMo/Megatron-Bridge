@@ -55,7 +55,7 @@ def parse_plugin_config_overrides(unknown_args: list[str]) -> list[str]:
     return config_overrides
 
 
-def create_mock_dataset_config(seq_length):
+def create_mock_dataset_config(sequence_length):
     """Create mock dataset configuration for Megatron-Bridge."""
     from megatron.bridge.training.config import MockGPTDatasetConfig
 
@@ -65,7 +65,7 @@ def create_mock_dataset_config(seq_length):
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
-        sequence_length=seq_length,
+        sequence_length=sequence_length,
         num_dataset_builder_threads=1,
         split="99990,8,2",  # Standard train/val/test split
         # Dataloader config parameters
@@ -75,7 +75,7 @@ def create_mock_dataset_config(seq_length):
     )
 
 
-def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None):
+def create_rp2_dataset_config(dataset_paths, sequence_length, index_mapping_dir=None):
     """Create RedPajama2 dataset configuration for Megatron-Bridge."""
     from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
     from megatron.bridge.training.config import GPTDatasetConfig
@@ -88,7 +88,7 @@ def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None)
         reset_attention_mask=False,
         reset_position_ids=False,
         eod_mask_loss=False,
-        sequence_length=seq_length,
+        sequence_length=sequence_length,
         num_dataset_builder_threads=1,
         blend=blend,
         blend_per_split=blend_per_split,
@@ -102,7 +102,7 @@ def create_rp2_dataset_config(dataset_paths, seq_length, index_mapping_dir=None)
     )
 
 
-def create_squad_dataset_config(dataset_root, seq_length, packed=False):
+def create_squad_dataset_config(dataset_root, sequence_length, packed=False):
     """Create SQuAD dataset configuration for Megatron-Bridge using HF dataset."""
     from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
     from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -111,13 +111,13 @@ def create_squad_dataset_config(dataset_root, seq_length, packed=False):
     # Create packed sequence specs if needed
     packed_sequence_specs = None
     if packed:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=sequence_length)
 
     return HFDatasetConfig(
         dataset_name="squad",  # Hugging Face dataset name
         process_example_fn=process_squad_example,  # Processing function
         dataset_root=dataset_root,  # Local cache/processed files location
-        seq_length=seq_length,
+        sequence_length=sequence_length,
         seed=1234,
         memmap_workers=1,
         # Dataloader config parameters
@@ -179,26 +179,26 @@ def apply_args_to_config(config, args):
 
     # Create dataset configuration based on type
     if args.data == "mock":
-        config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
+        config.dataset = create_mock_dataset_config(sequence_length=args.sequence_length or 8192)
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
         config.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
-            seq_length=args.seq_length or 8192,
+            sequence_length=args.sequence_length or 8192,
             index_mapping_dir=args.index_mapping_dir,
         )
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
         config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=False
+            dataset_root=args.dataset_root, sequence_length=args.sequence_length or 8192, packed=False
         )
     elif args.data == "squad_packed":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad_packed dataset")
         config.dataset = create_squad_dataset_config(
-            dataset_root=args.dataset_root, seq_length=args.seq_length or 8192, packed=True
+            dataset_root=args.dataset_root, sequence_length=args.sequence_length or 8192, packed=True
         )
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
@@ -221,8 +221,8 @@ def apply_args_to_config(config, args):
         )
 
     # Model configuration
-    if args.seq_length:
-        config.model.seq_length = args.seq_length
+    if args.sequence_length:
+        config.model.sequence_length = args.sequence_length
     if args.tensor_parallel_size:
         config.model.tensor_model_parallel_size = args.tensor_parallel_size
     if args.pipeline_parallel_size:

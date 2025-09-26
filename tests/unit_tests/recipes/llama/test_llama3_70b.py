@@ -139,7 +139,7 @@ class TestPretrainConfig:
             train_iters=10000,
             global_batch_size=256,
             micro_batch_size=2,
-            seq_length=4096,
+            sequence_length=4096,
             lr=1e-4,
             min_lr=1e-5,
             lr_warmup_iters=1000,
@@ -393,12 +393,12 @@ class TestPretrainConfig:
         assert config.train.global_batch_size == global_batch_size
         assert config.train.micro_batch_size == micro_batch_size
 
-    @pytest.mark.parametrize("seq_length", [2048, 4096, 8192, 16384])
-    def test_pretrain_config_sequence_lengths(self, seq_length):
+    @pytest.mark.parametrize("sequence_length", [2048, 4096, 8192, 16384])
+    def test_pretrain_config_sequence_lengths(self, sequence_length):
         """Test various sequence lengths."""
-        config = pretrain_config(seq_length=seq_length)
+        config = pretrain_config(sequence_length=sequence_length)
 
-        assert config.dataset.sequence_length == seq_length
+        assert config.dataset.sequence_length == sequence_length
 
     def test_pretrain_config_70b_optimized_defaults(self):
         """Test that 70B specific optimizations are applied by default."""

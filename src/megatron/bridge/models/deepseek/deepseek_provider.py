@@ -59,7 +59,7 @@ class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     num_attention_heads: int = 128
     kv_channels: int = 128
     max_position_embeddings: int = 4096
-    seq_length: int = 4096
+    sequence_length: int = 4096
     rotary_base: float = 10000.0
     make_vocab_size_divisible_by: int = 3200
     mtp_num_layers: Optional[int] = None

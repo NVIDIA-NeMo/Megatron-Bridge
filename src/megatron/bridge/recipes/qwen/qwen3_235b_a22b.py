@@ -98,7 +98,7 @@ def pretrain_config(
     train_iters: int = 300000,
     global_batch_size: int = 32,
     micro_batch_size: int = 1,  # Reduced for very large model
-    seq_length: int = 4096,
+    sequence_length: int = 4096,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
@@ -130,7 +130,7 @@ def pretrain_config(
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
+        sequence_length (int): Sequence length for training data.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
@@ -157,7 +157,7 @@ def pretrain_config(
         expert_parallelism=expert_parallelism,
         sequence_parallelism=sequence_parallelism,
     )
-    model_cfg.seq_length = seq_length
+    model_cfg.sequence_length = sequence_length
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -201,7 +201,7 @@ def pretrain_config(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            sequence_length=sequence_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,

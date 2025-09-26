@@ -60,7 +60,7 @@ def model_config(
     )
 
     # Override sequence length to 16k to match dataset config
-    model_cfg.seq_length = SEQUENCE_LENGTH_16K
+    model_cfg.sequence_length = SEQUENCE_LENGTH_16K
 
     return model_cfg
 
@@ -150,7 +150,7 @@ def pretrain_config(
         train_iters=train_iters,
         global_batch_size=global_batch_size,
         micro_batch_size=micro_batch_size,
-        seq_length=SEQUENCE_LENGTH_16K,  # Override to 16k sequence length
+        sequence_length=SEQUENCE_LENGTH_16K,  # Override to 16k sequence length
         lr=lr,
         min_lr=min_lr,
         lr_warmup_iters=lr_warmup_iters,

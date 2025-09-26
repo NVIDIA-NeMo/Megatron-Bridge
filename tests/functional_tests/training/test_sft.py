@@ -69,13 +69,13 @@ class TestSupervisedFinetuning:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             pretrain_iters = 10
             finetune_iters = 5
 
             # Create pretrain config and run
             pretrain_cfg = self._create_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, sequence_length
             )
             pretrain(pretrain_cfg, forward_step)
             verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
@@ -85,7 +85,7 @@ class TestSupervisedFinetuning:
                 finetune_iters,
                 finetune_checkpoint_dir,
                 finetune_tensorboard_dir,
-                seq_length,
+                sequence_length,
                 lr=1e-4,
                 seed=5678,
                 pretrained_checkpoint=pretrain_checkpoint_dir,
@@ -101,14 +101,14 @@ class TestSupervisedFinetuning:
         train_iters,
         checkpoint_dir,
         tensorboard_dir,
-        seq_length=512,
+        sequence_length=512,
         lr=3e-3,
         seed=1234,
         pretrained_checkpoint=None,
     ):
         """Create training configuration with customizable parameters."""
         return ConfigContainer(
-            model=Llama3ModelProvider145M(seq_length=seq_length),
+            model=Llama3ModelProvider145M(sequence_length=sequence_length),
             train=TrainingConfig(
                 train_iters=train_iters,
                 eval_interval=5,
@@ -153,7 +153,7 @@ class TestSupervisedFinetuning:
                 reset_attention_mask=False,
                 reset_position_ids=False,
                 eod_mask_loss=False,
-                sequence_length=seq_length,
+                sequence_length=sequence_length,
                 num_dataset_builder_threads=1,
                 data_sharding=True,
                 dataloader_type="single",

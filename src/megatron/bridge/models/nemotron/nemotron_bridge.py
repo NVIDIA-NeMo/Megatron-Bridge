@@ -50,7 +50,7 @@ class NemotronBridge(MegatronModelBridge):
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.norm_eps,
             num_query_groups=hf_config.num_key_value_heads,
-            seq_length=hf_config.max_position_embeddings,
+            sequence_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
             rotary_percent=hf_config.partial_rotary_factor,
             kv_channels=getattr(hf_config, "head_dim", None),

@@ -110,7 +110,7 @@ class TestMegatronLlamaBridge:
         assert result.num_layers == llama_config.num_hidden_layers
         assert result.hidden_size == llama_config.hidden_size
         assert result.num_attention_heads == llama_config.num_attention_heads
-        assert result.seq_length == llama_config.max_position_embeddings
+        assert result.sequence_length == llama_config.max_position_embeddings
         assert result.rotary_base == llama_config.rope_theta
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_llama, llama_config):

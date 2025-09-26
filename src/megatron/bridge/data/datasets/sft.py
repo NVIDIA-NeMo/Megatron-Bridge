@@ -78,7 +78,7 @@ def get_dataset_root(name: str) -> Path:
 def create_sft_dataset(
     path: Path,
     tokenizer: "MegatronTokenizer",
-    seq_length: int = 2048,
+    sequence_length: int = 2048,
     add_bos: bool = False,
     add_eos: bool = True,
     add_sep: bool = False,
@@ -109,16 +109,16 @@ def create_sft_dataset(
     Args:
         path (Path): Path to the dataset file. For packed datasets, this should be a .npy file.
         tokenizer (MegatronTokenizer): The tokenizer to use for tokenizing the data.
-        seq_length (int, optional): Maximum sequence length for each example. Defaults to 2048.
+        sequence_length (int, optional): Maximum sequence length for each example. Defaults to 2048.
         add_bos (bool, optional): Whether to add a beginning-of-sentence token. Defaults to False.
         add_eos (bool, optional): Whether to add an end-of-sentence token. Defaults to True.
         add_sep (bool, optional): Whether to add a separation token between prompt and answer. Defaults to False.
         seed (int, optional): Random seed for data shuffling. Defaults to 1234.
         label_key (str, optional): The key in the dataset corresponding to the label/output. Defaults to "output".
         answer_only_loss (bool, optional): If True, compute loss only on the answer part. Defaults to True.
-        truncation_field (str, optional): Field(s) to truncate if the combined length exceeds `seq_length`.
+        truncation_field (str, optional): Field(s) to truncate if the combined length exceeds `sequence_length`.
             Comma-separated if multiple. Defaults to "input".
-        pad_to_max_length (bool, optional): Whether to pad all samples to `max_seq_length`. Defaults to False.
+        pad_to_max_length (bool, optional): Whether to pad all samples to `max_sequence_length`. Defaults to False.
         index_mapping_dir (Optional[str], optional): Directory to store/load index mapping files. Defaults to None.
         prompt_template (str, optional): F-string template for combining input fields.
             Example: "{input} {output}". Defaults to "{input} {output}".
@@ -144,7 +144,7 @@ def create_sft_dataset(
     gpt_sft_dataset_kwargs = {
         "file_path": str(path),
         "tokenizer": tokenizer,
-        "max_seq_length": seq_length,
+        "max_sequence_length": sequence_length,
         "memmap_workers": memmap_workers,
         "hf_dataset": hf_dataset,
         "global_sample_mapping": global_sample_mapping,
@@ -188,9 +188,9 @@ class GPTSFTDataset(Dataset):
         self,
         file_path: str,
         tokenizer: MegatronTokenizer,
-        max_seq_length: int = 1024,
-        min_seq_length: int = 1,
-        pad_seq_length_to_mult: int = 16,
+        max_sequence_length: int = 1024,
+        min_sequence_length: int = 1,
+        pad_sequence_length_to_mult: int = 16,
         add_bos: bool = False,
         add_eos: bool = True,
         add_sep: bool = False,
@@ -225,9 +225,9 @@ class GPTSFTDataset(Dataset):
                 'output': 'smoothed the shock transition without sacrificing basic physics'
             }
         tokenizer: Tokenizer for the dataset. Instance of a class that inherits MegatronTokenizer (ex: SentencePiece).
-        max_seq_length (int): maximum sequence length for each dataset examples.
+        max_sequence_length (int): maximum sequence length for each dataset examples.
             Examples will either be truncated to fit this length or dropped if they cannot be truncated.
-        min_seq_length (int): min length of each data example in the dataset.
+        min_sequence_length (int): min length of each data example in the dataset.
             Data examples will be dropped if they do not meet the min length requirements.
         add_bos (bool): Whether to add a beginning of sentence token to each data example
         add_eos (bool): Whether to add an end of sentence token to each data example
@@ -267,9 +267,9 @@ class GPTSFTDataset(Dataset):
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
-        self.max_seq_length = max_seq_length
-        self.min_seq_length = min_seq_length
-        self.pad_seq_length_to_mult = pad_seq_length_to_mult
+        self.max_sequence_length = max_sequence_length
+        self.min_sequence_length = min_sequence_length
+        self.pad_sequence_length_to_mult = pad_sequence_length_to_mult
         self.add_bos = add_bos
         self.add_eos = add_eos
         self.add_sep = add_sep
@@ -367,7 +367,7 @@ class GPTSFTDataset(Dataset):
                 data_prefix=self.file_path,
                 num_epochs=None,
                 max_num_samples=self.max_num_samples,
-                max_seq_length=self.max_seq_length - 2,
+                max_sequence_length=self.max_sequence_length - 2,
                 short_seq_prob=0,
                 seed=self.seed,
                 name=self.file_path.split("/")[-1],
@@ -499,8 +499,8 @@ class GPTSFTDataset(Dataset):
             + self.add_eos  # Only training need to consider eos token
         )
 
-        if total_ids > self.max_seq_length:
-            truncation_length_total = total_ids - self.max_seq_length
+        if total_ids > self.max_sequence_length:
+            truncation_length_total = total_ids - self.max_sequence_length
             num_fields = len(self.truncation_fields)
             if num_fields > 0:
                 # sorted equal divide length to each field
@@ -529,7 +529,7 @@ class GPTSFTDataset(Dataset):
                     iters = range(0, len(template_ids_lengths), 1)
                 elif self.truncation_method == "right":
                     iters = range(len(template_ids_lengths) - 1, -1, -1)
-                    # We need to truncate more to let context_ids + tokens_to_generate < self.max_seq_length
+                    # We need to truncate more to let context_ids + tokens_to_generate < self.max_sequence_length
                     truncation_length_total += min(len(label_ids), self.tokens_to_generate)
                 else:
                     raise ValueError(f"{self.truncation_method} is not supported")
@@ -654,8 +654,8 @@ class GPTSFTDataset(Dataset):
         Args:
             input_ids: A 1D tensor that holds the indices of tokens.
         """
-        # seq_length = len(input_ids)
-        # `attention_mask` has the shape of [1, seq_length, seq_length]
+        # sequence_length = len(input_ids)
+        # `attention_mask` has the shape of [1, sequence_length, sequence_length]
         attention_mask = torch.tril(torch.ones((max_length, max_length))).unsqueeze(0)
         attention_mask = attention_mask < 0.5
         return attention_mask
@@ -666,7 +666,7 @@ class GPTSFTDataset(Dataset):
 
         This function takes a list of individual processed samples (from `__getitem__`)
         and groups them into a batch. It handles padding of sequences to the maximum
-        length found in the batch (or `self.max_seq_length` if `pad_to_max_length` is True),
+        length found in the batch (or `self.max_sequence_length` if `pad_to_max_length` is True),
         and prepares all necessary tensors for the model.
 
         Args:
@@ -689,10 +689,12 @@ class GPTSFTDataset(Dataset):
         max_length = max(max([len(x) for x in input_ids]), max([len(x) for x in contexts]) + self.tokens_to_generate)
         # increase max length to nearest multiple of 4 or 8
         if self.pad_to_max_length:
-            max_length = self.max_seq_length
+            max_length = self.max_sequence_length
         else:
-            max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, self.pad_seq_length_to_mult))
-        assert max_length <= self.max_seq_length
+            max_length = min(
+                self.max_sequence_length, self._ceil_to_nearest(max_length, self.pad_sequence_length_to_mult)
+            )
+        assert max_length <= self.max_sequence_length
 
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
@@ -870,14 +872,16 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         token_count = [item.shape[0] for item in input_ids]
 
         if self.pad_to_max_length:
-            max_length = self.max_seq_length
+            max_length = self.max_sequence_length
         else:
             # pad to the nearest multiple of 16 for FP8 training
             # for many datasets in practice, all packed sequence lengths are very close to the
             # target length (2048, 4096, 8192), so there is very minimal padding
             max_length = max(len(length) for length in input_ids)
-            max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, self.pad_seq_length_to_mult))
-        assert max_length <= self.max_seq_length
+            max_length = min(
+                self.max_sequence_length, self._ceil_to_nearest(max_length, self.pad_sequence_length_to_mult)
+            )
+        assert max_length <= self.max_sequence_length
 
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
@@ -1040,7 +1044,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
 
         This function takes a list of individual processed chat samples (from `__getitem__`,
         which internally uses `_process_example`) and groups them into a batch. It handles
-        padding of sequences to the maximum length in the batch (or `self.max_seq_length`
+        padding of sequences to the maximum length in the batch (or `self.max_sequence_length`
         if `pad_to_max_length` is True), and prepares all necessary tensors for the model,
         similar to the base class collate_fn but specific to chat data structure.
 
@@ -1060,20 +1064,20 @@ class GPTSFTChatDataset(GPTSFTDataset):
         metadata = [item["metadata"] for item in batch]
 
         max_length = max(max([len(x) for x in input_ids]), max([len(x) for x in contexts]) + self.tokens_to_generate)
-        if max_length > self.max_seq_length:
-            # truncate the sequences if it is longer than max_seq_length
-            input_ids = [x[: self.max_seq_length] for x in input_ids]
-            labels = [x[: self.max_seq_length] for x in labels]
-            loss_mask = [x[: self.max_seq_length] for x in loss_mask]
-            contexts = [x[: self.max_seq_length] for x in contexts]
-            answers = [x[: self.max_seq_length] for x in answers]
+        if max_length > self.max_sequence_length:
+            # truncate the sequences if it is longer than max_sequence_length
+            input_ids = [x[: self.max_sequence_length] for x in input_ids]
+            labels = [x[: self.max_sequence_length] for x in labels]
+            loss_mask = [x[: self.max_sequence_length] for x in loss_mask]
+            contexts = [x[: self.max_sequence_length] for x in contexts]
+            answers = [x[: self.max_sequence_length] for x in answers]
 
         # increase max length to nearest multiple of 4 or 8
         if self.pad_to_max_length:
-            max_length = self.max_seq_length
+            max_length = self.max_sequence_length
         else:
-            max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 16))
-        assert max_length <= self.max_seq_length
+            max_length = min(self.max_sequence_length, self._ceil_to_nearest(max_length, 16))
+        assert max_length <= self.max_sequence_length
 
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]

@@ -57,7 +57,7 @@ class NemotronHBridge(MegatronModelBridge):
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             vocab_size=hf_config.vocab_size,
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
-            seq_length=hf_config.max_position_embeddings,
+            sequence_length=hf_config.max_position_embeddings,
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             fp32_residual_connection=hf_config.residual_in_fp32,

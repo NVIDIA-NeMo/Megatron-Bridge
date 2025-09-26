@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 class NemotronHModelProvider(MambaModelProvider):
     """Configuration for Nemotron-H models."""
 
-    seq_length: int = 8192
+    sequence_length: int = 8192
     mamba_num_groups: int = 8
     mamba_head_dim: int = 64
     num_query_groups: int = 8
@@ -115,7 +115,7 @@ class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
     ffn_hidden_size: int = 15680
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
-    seq_length: int = 131072
+    sequence_length: int = 131072
 
 
 @dataclass
@@ -130,7 +130,7 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     ffn_hidden_size: int = 20480
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
-    seq_length: int = 131072
+    sequence_length: int = 131072
 
 
 # -----------------------------------------------------------------------------

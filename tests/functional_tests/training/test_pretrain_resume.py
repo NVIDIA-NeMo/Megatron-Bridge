@@ -44,7 +44,7 @@ from tests.functional_tests.utils import (
 @dataclass
 class Llama3ModelProvider145M(Llama3ModelProvider):
     rotary_base: int = 500_000
-    seq_length: int = 8192
+    sequence_length: int = 8192
     num_layers: int = 2
     hidden_size: int = 768
     ffn_hidden_size: int = 2688
@@ -78,13 +78,13 @@ class TestPretrainResume:
         try:
             global_batch_size = 8
             micro_batch_size = 1
-            seq_length = 512
+            sequence_length = 512
             total_iters = 20
             checkpoint_iters = 10
 
             # First training run - train for 10 iterations and save checkpoint
             cfg_first = ConfigContainer(
-                model=Llama3ModelProvider145M(seq_length=seq_length),
+                model=Llama3ModelProvider145M(sequence_length=sequence_length),
                 train=TrainingConfig(
                     train_iters=checkpoint_iters,
                     eval_interval=5,
@@ -129,7 +129,7 @@ class TestPretrainResume:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    sequence_length=sequence_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",
@@ -165,7 +165,7 @@ class TestPretrainResume:
 
             # Second training run - resume from checkpoint and train for remaining 10 iterations
             cfg_second = ConfigContainer(
-                model=Llama3ModelProvider145M(seq_length=seq_length),
+                model=Llama3ModelProvider145M(sequence_length=sequence_length),
                 train=TrainingConfig(
                     train_iters=total_iters,
                     eval_interval=5,
@@ -210,7 +210,7 @@ class TestPretrainResume:
                     reset_attention_mask=False,
                     reset_position_ids=False,
                     eod_mask_loss=False,
-                    sequence_length=seq_length,
+                    sequence_length=sequence_length,
                     num_dataset_builder_threads=1,
                     data_sharding=True,
                     dataloader_type="single",

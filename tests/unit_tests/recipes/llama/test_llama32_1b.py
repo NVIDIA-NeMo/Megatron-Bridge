@@ -143,7 +143,7 @@ class TestPretrainConfig:
             train_iters=10000,
             global_batch_size=256,
             micro_batch_size=2,
-            seq_length=4096,
+            sequence_length=4096,
             lr=1e-4,
             min_lr=1e-5,
             lr_warmup_iters=1000,
@@ -402,10 +402,10 @@ class TestPretrainConfig:
         # Since default TP size is 1, it should be disabled
         assert config.comm_overlap is not None
 
-    def test_pretrain_config_seq_length_parameter(self):
-        """Test seq_length parameter."""
-        config = pretrain_config(seq_length=4096)
+    def test_pretrain_config_sequence_length_parameter(self):
+        """Test sequence_length parameter."""
+        config = pretrain_config(sequence_length=4096)
         assert config.dataset.sequence_length == 4096
 
-        config = pretrain_config(seq_length=16384)
+        config = pretrain_config(sequence_length=16384)
         assert config.dataset.sequence_length == 16384

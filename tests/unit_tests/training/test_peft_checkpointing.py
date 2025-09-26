@@ -847,7 +847,7 @@ class TestPEFTCheckpointingIntegration:
             num_layers=2,
             hidden_size=128,
             num_attention_heads=4,
-            seq_length=64,
+            sequence_length=64,
             vocab_size=256,
             ffn_hidden_size=256,
         )

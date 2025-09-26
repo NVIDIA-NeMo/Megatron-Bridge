@@ -41,7 +41,7 @@ class TestModelConfig:
         assert config.context_parallel_size == 4  # Higher than 8k version (2)
         assert config.sequence_parallel is True  # Enabled for 64k (False for 8k)
         # Verify model sequence length matches 64k
-        assert config.seq_length == SEQUENCE_LENGTH_64K  # Model configured for 64k sequences
+        assert config.sequence_length == SEQUENCE_LENGTH_64K  # Model configured for 64k sequences
 
     def test_model_config_custom_parameters(self):
         """Test model_config with custom parameters."""
@@ -61,7 +61,7 @@ class TestModelConfig:
         assert config.context_parallel_size == 8
         assert config.sequence_parallel is False
         # Verify model sequence length is still 64k with custom parameters
-        assert config.seq_length == SEQUENCE_LENGTH_64K
+        assert config.sequence_length == SEQUENCE_LENGTH_64K
 
     def test_model_config_inheritance_from_llama3_8b(self):
         """Test that model_config correctly delegates to llama3_8b.model_config."""
@@ -101,7 +101,7 @@ class TestPretrainConfig:
 
         # Check that sequence length is set to 64k in both model and dataset
         assert config.dataset.sequence_length == SEQUENCE_LENGTH_64K
-        assert config.model.seq_length == SEQUENCE_LENGTH_64K
+        assert config.model.sequence_length == SEQUENCE_LENGTH_64K
 
         # Check that model uses 64k-optimized defaults
         assert config.model.tensor_model_parallel_size == 4
@@ -124,7 +124,7 @@ class TestPretrainConfig:
 
         # Check that sequence length is still 64k in both model and dataset
         assert config.dataset.sequence_length == SEQUENCE_LENGTH_64K
-        assert config.model.seq_length == SEQUENCE_LENGTH_64K
+        assert config.model.sequence_length == SEQUENCE_LENGTH_64K
 
         # Check custom model parameters
         assert config.model.tensor_model_parallel_size == 8
@@ -151,15 +151,15 @@ class TestPretrainConfig:
             assert config.dataset.sequence_length == SEQUENCE_LENGTH_64K, (
                 "Dataset sequence length should always be 64k"
             )
-            assert config.model.seq_length == SEQUENCE_LENGTH_64K, "Model sequence length should always be 64k"
+            assert config.model.sequence_length == SEQUENCE_LENGTH_64K, "Model sequence length should always be 64k"
 
     def test_pretrain_config_model_dataset_sequence_length_match(self):
         """Test that model and dataset sequence lengths always match."""
         config = pretrain_config()
-        assert config.model.seq_length == config.dataset.sequence_length, (
+        assert config.model.sequence_length == config.dataset.sequence_length, (
             "Model and dataset sequence lengths must match"
         )
-        assert config.model.seq_length == SEQUENCE_LENGTH_64K, "Both should be 64k"
+        assert config.model.sequence_length == SEQUENCE_LENGTH_64K, "Both should be 64k"
 
     def test_pretrain_config_with_custom_directory(self):
         """Test pretrain_config with custom directory."""

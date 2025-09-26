@@ -40,7 +40,7 @@ class TestQwen25VLModelProvider:
         assert provider.gated_linear_unit is True
         assert provider.add_bias_linear is False
         assert provider.add_qkv_bias is True
-        assert provider.seq_length == 4096
+        assert provider.sequence_length == 4096
         assert provider.init_method_std == 0.02
         assert provider.hidden_dropout == 0.0
         assert provider.attention_dropout == 0.0
@@ -154,13 +154,13 @@ class TestQwen25VLModelProvider:
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            seq_length=8192,
+            sequence_length=8192,
             vocab_size=152064,
             rotary_base=500000.0,
         )
 
         # Check that inherited configurations work
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
         assert provider.vocab_size == 152064
         assert provider.rotary_base == 500000.0
 

@@ -119,7 +119,7 @@ class TestNemotronHBridge:
         assert result.hidden_size == mock_nemotronh_config.hidden_size
         assert result.add_bias_linear == mock_nemotronh_config.use_bias
         assert result.num_attention_heads == mock_nemotronh_config.num_attention_heads
-        assert result.seq_length == mock_nemotronh_config.max_position_embeddings
+        assert result.sequence_length == mock_nemotronh_config.max_position_embeddings
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_nemotronh, mock_nemotronh_config):
         """Test vocabulary size mapping."""

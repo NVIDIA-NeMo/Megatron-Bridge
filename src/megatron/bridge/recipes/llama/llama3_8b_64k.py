@@ -57,7 +57,7 @@ def model_config(
         sequence_parallelism=sequence_parallelism,
     )
 
-    model_cfg.seq_length = SEQUENCE_LENGTH_64K
+    model_cfg.sequence_length = SEQUENCE_LENGTH_64K
 
     return model_cfg
 
@@ -144,7 +144,7 @@ def pretrain_config(
         train_iters=train_iters,
         global_batch_size=global_batch_size,
         micro_batch_size=micro_batch_size,
-        seq_length=SEQUENCE_LENGTH_64K,
+        sequence_length=SEQUENCE_LENGTH_64K,
         lr=lr,
         min_lr=min_lr,
         lr_warmup_iters=lr_warmup_iters,

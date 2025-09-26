@@ -47,7 +47,7 @@ class TestQwen3MoEModelProvider:
         assert provider.qk_layernorm is True  # Qwen3 uses QK layernorm
         assert provider.kv_channels == 128
         assert provider.num_query_groups == 8
-        assert provider.seq_length == 40960  # Extended context for Qwen3
+        assert provider.sequence_length == 40960  # Extended context for Qwen3
         assert provider.init_method_std == 0.02
         assert provider.hidden_dropout == 0.0
         assert provider.attention_dropout == 0.0
@@ -139,10 +139,10 @@ class TestQwen3MoEModelProvider:
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            seq_length=8192,
+            sequence_length=8192,
         )
 
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
 
     def test_qwen3_moe_model_provider_qk_layernorm(self):
         """Test Qwen3MoEModelProvider has QK layernorm enabled by default."""
@@ -191,7 +191,7 @@ class TestQwen3MoEModelProvider30B_A3B:
         assert provider.moe_router_topk == 8
         assert provider.qk_layernorm is True
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
 
         # Check inherited base defaults
         assert provider.normalization == "RMSNorm"
@@ -201,13 +201,13 @@ class TestQwen3MoEModelProvider30B_A3B:
     def test_qwen3_moe_30b_a3b_override_configuration(self):
         """Test Qwen3 MoE 30B-A3B model with overridden configuration."""
         provider = Qwen3MoEModelProvider30B_A3B(
-            seq_length=8192,
+            sequence_length=8192,
             num_moe_experts=64,
             moe_router_topk=4,
         )
 
         # Check overridden values
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
         assert provider.num_moe_experts == 64
         assert provider.moe_router_topk == 4
 
@@ -237,7 +237,7 @@ class TestQwen3MoEModelProvider235B_A22B:
         assert provider.moe_router_topk == 8
         assert provider.qk_layernorm is True
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 40960
+        assert provider.sequence_length == 40960
 
         # Check inherited base defaults
         assert provider.normalization == "RMSNorm"
@@ -247,13 +247,13 @@ class TestQwen3MoEModelProvider235B_A22B:
     def test_qwen3_moe_235b_a22b_override_configuration(self):
         """Test Qwen3 MoE 235B-A22B model with overridden configuration."""
         provider = Qwen3MoEModelProvider235B_A22B(
-            seq_length=16384,
+            sequence_length=16384,
             moe_aux_loss_coeff=1e-2,
             hidden_dropout=0.1,
         )
 
         # Check overridden values
-        assert provider.seq_length == 16384
+        assert provider.sequence_length == 16384
         assert provider.moe_aux_loss_coeff == 1e-2
         assert provider.hidden_dropout == 0.1
 
@@ -323,16 +323,16 @@ class TestQwen3MoEProviderEdgeCases:
         # The actual vocab size should be adjusted if needed
         assert provider.make_vocab_size_divisible_by == 128
 
-    def test_seq_length_override(self):
+    def test_sequence_length_override(self):
         """Test sequence length configuration."""
         provider = Qwen3MoEModelProvider(
             num_layers=32,
             hidden_size=4096,
             num_attention_heads=32,
-            seq_length=8192,
+            sequence_length=8192,
         )
 
-        assert provider.seq_length == 8192
+        assert provider.sequence_length == 8192
 
     def test_rotary_base_configuration(self):
         """Test rotary base configuration."""
@@ -445,7 +445,7 @@ class TestQwen3MoEProviderArchitecturalFeatures:
         ]
 
         for provider in providers:
-            assert provider.seq_length == 40960  # 40K context
+            assert provider.sequence_length == 40960  # 40K context
 
     def test_qwen3_moe_dtype_defaults(self):
         """Test that Qwen3 MoE models have correct dtype defaults."""

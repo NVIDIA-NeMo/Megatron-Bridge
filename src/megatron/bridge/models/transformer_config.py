@@ -38,7 +38,7 @@ class TransformerConfig(MCoreTransformerConfig):
         config = TransformerConfig(num_layers=32, hidden_size=4096)
 
         # Modify fields as needed
-        config.seq_length = 8192
+        config.sequence_length = 8192
         config.tensor_model_parallel_size = 2
 
         # Finalize to compute derived fields

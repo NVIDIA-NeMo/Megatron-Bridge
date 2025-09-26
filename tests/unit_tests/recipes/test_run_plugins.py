@@ -70,7 +70,7 @@ def create_test_config(**kwargs):
     train_iters = kwargs.pop("train_iters", 100)
     global_batch_size = kwargs.pop("global_batch_size", 32)
     micro_batch_size = kwargs.pop("micro_batch_size", 1)
-    seq_length = kwargs.pop("seq_length", 512)
+    sequence_length = kwargs.pop("sequence_length", 512)
     lr = kwargs.pop("lr", 1e-4)
     min_lr = kwargs.pop("min_lr", 1e-5)
 
@@ -135,7 +135,7 @@ def create_test_config(**kwargs):
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            sequence_length=sequence_length,
             num_dataset_builder_threads=1,
             blend=None,  # Mock data
             blend_per_split=None,

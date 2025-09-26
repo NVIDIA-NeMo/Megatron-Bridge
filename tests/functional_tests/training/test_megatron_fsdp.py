@@ -48,7 +48,7 @@ class Llama3ModelProviderFSDP145M(Llama3ModelProvider):
     """Small Llama3 model configuration for FSDP testing."""
 
     rotary_base: int = 500_000
-    seq_length: int = 8192
+    sequence_length: int = 8192
     num_layers: int = 2
     hidden_size: int = 768
     ffn_hidden_size: int = 2688
@@ -58,10 +58,10 @@ class Llama3ModelProviderFSDP145M(Llama3ModelProvider):
     gradient_accumulation_fusion: bool = False
 
 
-def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3ModelProviderFSDP145M:
+def create_fsdp_model_config(sequence_length: int, bf16: bool = True, **kwargs) -> Llama3ModelProviderFSDP145M:
     """Create a standardized FSDP model configuration."""
     base_config = {
-        "seq_length": seq_length,
+        "sequence_length": sequence_length,
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "context_parallel_size": 1,
@@ -148,14 +148,14 @@ def create_base_ddp_config(overlap_param_gather: bool = True, **kwargs) -> Distr
     return DistributedDataParallelConfig(**base_config)
 
 
-def create_base_dataset_config(seq_length: int, **kwargs) -> MockGPTDatasetConfig:
+def create_base_dataset_config(sequence_length: int, **kwargs) -> MockGPTDatasetConfig:
     """Create a standardized dataset configuration."""
     base_config = {
         "random_seed": 1234,
         "reset_attention_mask": False,
         "reset_position_ids": False,
         "eod_mask_loss": False,
-        "sequence_length": seq_length,
+        "sequence_length": sequence_length,
         "num_dataset_builder_threads": 1,
         "data_sharding": True,
         "dataloader_type": "single",
@@ -207,7 +207,7 @@ def create_base_checkpoint_config(
 
 
 def create_fsdp_config_container(
-    seq_length: int,
+    sequence_length: int,
     train_iters: int,
     checkpoint_dir: Optional[str] = None,
     load_dir: Optional[str] = None,
@@ -218,13 +218,13 @@ def create_fsdp_config_container(
 ) -> ConfigContainer:
     """Create a complete FSDP configuration container with common defaults."""
     return ConfigContainer(
-        model=create_fsdp_model_config(seq_length, **overrides.pop("model", {})),
+        model=create_fsdp_model_config(sequence_length, **overrides.pop("model", {})),
         dist=DistributedInitConfig(use_megatron_fsdp=True),
         train=create_base_training_config(train_iters, **overrides.pop("train", {})),
         optimizer=create_base_optimizer_config(**overrides.pop("optimizer", {})),
         scheduler=create_base_scheduler_config(train_iters, **overrides.pop("scheduler", {})),
         ddp=create_base_ddp_config(overlap_param_gather, **overrides.pop("ddp", {})),
-        dataset=create_base_dataset_config(seq_length, **overrides.pop("dataset", {})),
+        dataset=create_base_dataset_config(sequence_length, **overrides.pop("dataset", {})),
         logger=create_base_logger_config(tensorboard_dir, **overrides.pop("logger", {})),
         tokenizer=create_base_tokenizer_config(**overrides.pop("tokenizer", {})),
         checkpoint=create_base_checkpoint_config(
@@ -249,11 +249,11 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             total_iters = 10
 
             cfg = create_fsdp_config_container(
-                seq_length=seq_length,
+                sequence_length=sequence_length,
                 train_iters=total_iters,
                 overlap_param_gather=False,
             )
@@ -284,12 +284,12 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             total_iters = 20
 
             # Create config with checkpointing enabled
             cfg = create_fsdp_config_container(
-                seq_length=seq_length,
+                sequence_length=sequence_length,
                 train_iters=total_iters,
                 checkpoint_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
@@ -324,13 +324,13 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             total_iters = 20
             checkpoint_iters = 10
 
             # First training run - train for 10 iterations and save checkpoint
             cfg_first = create_fsdp_config_container(
-                seq_length=seq_length,
+                sequence_length=sequence_length,
                 train_iters=checkpoint_iters,
                 checkpoint_dir=checkpoint_dir,
                 tensorboard_dir=tensorboard_dir,
@@ -350,7 +350,7 @@ class TestMegatronFSDP:
 
             # Second training run - resume from checkpoint and train for remaining 10 iterations
             cfg_second = create_fsdp_config_container(
-                seq_length=seq_length,
+                sequence_length=sequence_length,
                 train_iters=total_iters,
                 checkpoint_dir=checkpoint_dir,
                 load_dir=checkpoint_dir,  # Resume from checkpoint

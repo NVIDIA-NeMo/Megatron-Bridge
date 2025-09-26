@@ -97,7 +97,7 @@ class TestNemotronBridge:
         assert provider.ffn_hidden_size == nemotron_config.intermediate_size
         assert provider.num_attention_heads == nemotron_config.num_attention_heads
         assert provider.num_query_groups == nemotron_config.num_key_value_heads
-        assert provider.seq_length == nemotron_config.max_position_embeddings
+        assert provider.sequence_length == nemotron_config.max_position_embeddings
         assert provider.layernorm_epsilon == nemotron_config.norm_eps
         assert provider.rotary_base == nemotron_config.rope_theta
         assert provider.rotary_percent == nemotron_config.partial_rotary_factor

@@ -75,20 +75,20 @@ class TestLoRAFinetune:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             pretrain_iters = 10
             lora_iters = 5
 
             # Create pretrain config and run
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, sequence_length
             )
             pretrain(pretrain_cfg, forward_step)
             verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
-                lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
+                lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, sequence_length
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
@@ -113,14 +113,14 @@ class TestLoRAFinetune:
         torch.distributed.barrier()
 
         try:
-            seq_length = 512
+            sequence_length = 512
             pretrain_iters = 10
             initial_lora_iters = 6  # First phase of LoRA training
             total_lora_iters = 12  # Total LoRA training iterations
 
             # First run: Pretrain and save checkpoint
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, sequence_length
             )
 
             # Run pretrain
@@ -136,7 +136,7 @@ class TestLoRAFinetune:
                 lora_checkpoint_dir,
                 lora_tensorboard_dir,
                 pretrain_checkpoint_dir,
-                seq_length,
+                sequence_length,
                 scheduler_total_iters=total_lora_iters,
             )
 
@@ -151,7 +151,7 @@ class TestLoRAFinetune:
                 lora_checkpoint_dir,
                 lora_tensorboard_dir,
                 pretrain_checkpoint_dir,
-                seq_length,
+                sequence_length,
                 load_checkpoint=lora_checkpoint_dir,
                 scheduler_total_iters=total_lora_iters,  # Keep total for scheduler calculation
             )
@@ -173,10 +173,10 @@ class TestLoRAFinetune:
         finally:
             clear_directories(shared_base_dir)
 
-    def _create_model_provider(self, seq_length=512, tensor_parallel_size=1, pipeline_parallel_size=1):
+    def _create_model_provider(self, sequence_length=512, tensor_parallel_size=1, pipeline_parallel_size=1):
         """Create a model provider with specified configuration."""
         return Llama3ModelProvider145M(
-            seq_length=seq_length,
+            sequence_length=sequence_length,
             tensor_model_parallel_size=tensor_parallel_size,
             pipeline_model_parallel_size=pipeline_parallel_size,
             pipeline_dtype=torch.bfloat16,
@@ -232,25 +232,25 @@ class TestLoRAFinetune:
             use_distributed_optimizer=True,
         )
 
-    def _create_mock_dataset_config(self, seq_length, seed=1234):
+    def _create_mock_dataset_config(self, sequence_length, seed=1234):
         """Create a mock dataset configuration."""
         return MockGPTDatasetConfig(
             random_seed=seed,
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            sequence_length=sequence_length,
             num_dataset_builder_threads=1,
             data_sharding=True,
             dataloader_type="single",
             num_workers=1,
         )
 
-    def _create_squad_dataset_config(self, seq_length, seed=5678, packed_sequences=False):
+    def _create_squad_dataset_config(self, sequence_length, seed=5678, packed_sequences=False):
         """Create a SQuAD dataset configuration."""
         if packed_sequences:
             dataset_kwargs = {"pad_to_max_length": True}
-            packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
+            packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=sequence_length)
         else:
             dataset_kwargs = {}
             packed_sequence_specs = None
@@ -258,7 +258,7 @@ class TestLoRAFinetune:
         config = HFDatasetConfig(
             dataset_name="squad",
             process_example_fn=process_squad_example,
-            seq_length=seq_length,
+            sequence_length=sequence_length,
             seed=seed,
             dataloader_type="cyclic" if packed_sequences else "single",
             num_workers=1,
@@ -323,12 +323,12 @@ class TestLoRAFinetune:
         train_iters,
         checkpoint_dir,
         tensorboard_dir,
-        seq_length=512,
+        sequence_length=512,
         tensor_parallel_size=1,
         pipeline_parallel_size=1,
     ):
         """Create complete pretrain configuration with model."""
-        model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
+        model = self._create_model_provider(sequence_length, tensor_parallel_size, pipeline_parallel_size)
 
         return ConfigContainer(
             model=model,
@@ -336,7 +336,7 @@ class TestLoRAFinetune:
             optimizer=self._create_optimizer_config(),
             scheduler=self._create_scheduler_config(train_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_mock_dataset_config(seq_length),
+            dataset=self._create_mock_dataset_config(sequence_length),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=self._create_pretrain_tokenizer_config(),
             checkpoint=self._create_checkpoint_config(train_iters, checkpoint_dir),
@@ -349,7 +349,7 @@ class TestLoRAFinetune:
         checkpoint_dir,
         tensorboard_dir,
         pretrained_checkpoint_dir,
-        seq_length=512,
+        sequence_length=512,
         tensor_parallel_size=1,
         pipeline_parallel_size=1,
         packed_sequences=False,
@@ -357,7 +357,7 @@ class TestLoRAFinetune:
         scheduler_total_iters=None,
     ):
         """Create complete LoRA finetuning configuration with model and PEFT."""
-        model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
+        model = self._create_model_provider(sequence_length, tensor_parallel_size, pipeline_parallel_size)
         lora_peft = self._create_lora_peft()
 
         # Use scheduler_total_iters if provided, otherwise use train_iters
@@ -369,7 +369,7 @@ class TestLoRAFinetune:
             optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(scheduler_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_squad_dataset_config(seq_length, packed_sequences=packed_sequences),
+            dataset=self._create_squad_dataset_config(sequence_length, packed_sequences=packed_sequences),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=self._create_finetune_tokenizer_config(),
             checkpoint=self._create_checkpoint_config(
