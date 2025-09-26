@@ -23,8 +23,6 @@ import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import pretrain_config
-
-# from megatron.bridge.recipes.mamba.nemotron_nano_9b_v2 import pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -33,8 +31,6 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.utils.common_utils import get_rank_safe
-from megatron.bridge.utils.common_utils import print_rank_last
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -63,33 +59,9 @@ def main() -> None:
     """
     args, cli_overrides = parse_cli_args()
 
-    train_samples = 122070313
-    warmup_samples = 1024000
-    # train_samples = 32*20
-    # warmup_samples = 32*10
-    global_batch_size = 1536
-    train_iters = train_samples // global_batch_size
-    warmup_iters = warmup_samples // global_batch_size
-
-    # OUTPUT FOLDER/SBATCH FILE
-    # LOG INTERVAL
-    # TMUX NOT SHOWING OUTPUT???
-
     cfg: ConfigContainer = pretrain_config(
-        name="nm6_test_data_parallelism", # should be the same as the name of the experiment
-        train_iters=train_iters,
-        global_batch_size=global_batch_size,
-        micro_batch_size=2,
-        lr_warmup_iters=warmup_iters,
-        tensor_parallelism=4,
-        pipeline_parallelism=2,
-        log_interval=10,
         per_split_data_args_path="/lustre/fsw/portfolios/llmservice/users/jupinderp/data_blends/1T-phase1var-moresft-full.json",
-        path_to_cache="/lustre/fs1/portfolios/coreai/users/liding/nemo/workspace/experiments/nm6_training/data_cache_8k",
     )
-    # logger.info("Loaded base configuration")
-    # if get_rank_safe() == 0:
-    #     cfg.to_yaml()
 
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
@@ -116,12 +88,6 @@ def main() -> None:
     # Apply overrides while preserving excluded fields
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 
-    # Display final configuration
-    # logger.info("--- Final Merged Configuration ---")
-    # if get_rank_safe() == 0:
-    #     cfg.to_yaml()
-    # logger.info("----------------------------------")
-    
     # Start training
     logger.debug("Starting pretraining...")
     pretrain(config=cfg, forward_step_func=forward_step)

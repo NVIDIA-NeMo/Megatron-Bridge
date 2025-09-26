@@ -43,7 +43,6 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
-from megatron.bridge.training.config import print_config_container
 
 
 
@@ -103,9 +102,6 @@ def setup(
         SetupOutput containing the populated state, model, optimizer, scheduler, dataloaders, and ckpt context.
     """
     cfg = state.cfg
-
-    if get_rank_safe() == 0:
-        print_config_container(cfg)
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)

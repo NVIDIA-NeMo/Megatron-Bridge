@@ -35,8 +35,8 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 def model_config(
-    tensor_parallelism: int = 4,
-    pipeline_parallelism: int = 1,
+    tensor_model_parallel_size: int = 4,
+    pipeline_model_parallel_size: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
@@ -49,8 +49,8 @@ def model_config(
     Configure the Nemotron Next 3B v2 model.
 
     Args:
-        tensor_parallelism: Degree of tensor model parallelism.
-        pipeline_parallelism: Degree of pipeline model parallelism.
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
         pipeline_parallelism_dtype: Data type for pipeline parallelism.
         virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
         context_parallelism: Degree of context parallelism.
@@ -60,9 +60,10 @@ def model_config(
     Returns:
         NemotronNanoNext3Bv2Provider: Configuration for the Nemotron Next 3B v2 model.
     """
+    #FIXME: we are getting rid of Model Provider. It should come directly from the bridge
     cfg = NemotronNanoNext3Bv2Provider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
         context_parallel_size=context_parallelism,
@@ -98,8 +99,8 @@ def pretrain_config(
     path_to_cache: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 4,
-    pipeline_parallelism: int = 1,
+    tensor_model_parallel_size: int = 4,
+    pipeline_model_parallel_size: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
@@ -113,14 +114,13 @@ def pretrain_config(
     seq_length: int = 8192,
     lr: float = 1.6e-3,
     min_lr: float = 1.6e-5,
-    lr_warmup_iters: int = 2000,
+    lr_warmup_iters: int = 333,
+    lr_decay_iters: Optional[int] = None,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     # MoE
     enable_deepep: bool = True,
-    # Log
-    log_interval: int = 50,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Nemotron Next 3B v2 model.
@@ -135,8 +135,8 @@ def pretrain_config(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
         pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
         virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism to be passed to model_config.
@@ -166,8 +166,8 @@ def pretrain_config(
     )
 
     model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_parallelism_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_parallelism=virtual_pipeline_parallelism,
         context_parallelism=context_parallelism,
@@ -179,7 +179,7 @@ def pretrain_config(
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=None,
+        lr_decay_iters=lr_decay_iters,
         adam_beta1=0.9,
         adam_beta2=0.95,
         adam_eps=1e-8,
@@ -229,7 +229,7 @@ def pretrain_config(
             mmap_bin_files=False,
         ),
         logger=LoggerConfig(
-            log_interval=log_interval,
+            log_interval=50,
             tensorboard_dir=tensorboard_dir,
         ),
         #TODO(liding): what is the correct tokenizer for Nemotron Next 3B v2
@@ -247,12 +247,10 @@ def pretrain_config(
         mixed_precision=precision_config,
     )
 
-    # TODO(liding): currently not supported for training-moe-june2025 branch in mcore
-    # looks like we need the latest mcore to support this
-    # if cfg.comm_overlap is None:
-    #     cfg.comm_overlap = CommOverlapConfig(
-    #         tp_comm_bootstrap_backend="nccl",
-    #         tp_comm_overlap=True,
-    #     )
+    if cfg.comm_overlap is None:
+        cfg.comm_overlap = CommOverlapConfig(
+            tp_comm_bootstrap_backend="nccl",
+            tp_comm_overlap=True,
+        )
 
     return cfg

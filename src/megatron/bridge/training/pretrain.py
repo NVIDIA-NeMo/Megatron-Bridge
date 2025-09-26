@@ -25,8 +25,9 @@ from megatron.bridge.training.setup import setup
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 from megatron.bridge.utils.decorators import experimental_fn
+from megatron.bridge.training.config import print_config_container
 
 
 @experimental_fn
@@ -51,6 +52,9 @@ def pretrain(
     """
     # Apply runtime config updates prior to creating/attaching GlobalState
     runtime_config_update(config)
+
+    if get_rank_safe() == 0:
+        config.print_yaml()
 
     # Create a single GlobalState instance regardless of restart path
     state = GlobalState()
