@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import inspect
-import logging
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
@@ -39,10 +38,13 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
+from megatron.bridge.training.post_training import create_modelopt_pre_wrap_hook
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
+from megatron.bridge.utils.vocab_utils import validate_and_set_vocab_size
+
 
 
 
@@ -152,7 +154,7 @@ def setup(
     timers("tokenizer-setup", log_level=0).start(barrier=True)
     tokenizer = build_tokenizer(cfg.tokenizer)
     # Handle model vocab_size configuration with proper validation
-    cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
+    cfg.model.vocab_size, cfg.model.should_pad_vocab = validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
     )
@@ -169,6 +171,12 @@ def setup(
         peft_hook = _create_peft_pre_wrap_hook(cfg, state)
         cfg.model.register_pre_wrap_hook(peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
+
+    # Register ModelOpt pre-wrap hook if ModelOpt is configured
+    if cfg.modelopt is not None:
+        modelopt_hook = create_modelopt_pre_wrap_hook(cfg, state)
+        cfg.model.register_pre_wrap_hook(modelopt_hook)
+        print_rank_0("Registered ModelOpt pre-wrap hook")
 
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
@@ -380,39 +388,3 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     print_rank_0(f"  Trainable percentage: {100 * trainable_params / total_params:.2f}%")
 
     return transformed_model
-
-
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
-    """Validate and determine the correct vocab size for the model.
-
-    Args:
-        model_vocab_size: Vocab size set in model config (can be None)
-        tokenizer_vocab_size: Unpadded tokenizer vocab size
-
-    Returns:
-        tuple[int, bool]: The validated unpadded vocab size and padding flag
-            - vocab_size: The validated unpadded vocab size to use for the model
-            - should_pad_vocab: True if vocab should be padded, False otherwise
-
-    Raises:
-        ValueError: If model vocab size is invalid
-    """
-    if model_vocab_size is None:
-        # If model vocab size is not set, use the tokenizer's vocab size
-        # Enable padding since this came from tokenizer
-        return tokenizer_vocab_size, True
-    elif model_vocab_size < tokenizer_vocab_size:
-        # Vocab size smaller than tokenizer
-        raise ValueError(
-            f"Model vocab_size ({model_vocab_size}) cannot be smaller than tokenizer's vocab_size "
-            f"({tokenizer_vocab_size})."
-        )
-    else:
-        # Model vocab size is explicitly set and is >= tokenizer vocab size
-        # Disable padding since this was explicitly set
-        if model_vocab_size > tokenizer_vocab_size:
-            logging.info(
-                f"Using preset vocab_size: {model_vocab_size} over the tokenizer vocab_size: {tokenizer_vocab_size}, dummy tokens:"
-                f" {model_vocab_size - tokenizer_vocab_size}."
-            )
-        return model_vocab_size, False

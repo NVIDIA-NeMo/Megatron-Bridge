@@ -16,6 +16,7 @@ import logging
 from functools import partial
 from typing import Iterable
 
+import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
@@ -24,7 +25,9 @@ from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig
 from megatron.bridge.training.losses import masked_next_token_loss
+from megatron.bridge.training.post_training import loss_func_kd
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.utils.common_utils import unwrap_model
 
 
 logger = logging.getLogger(__name__)
@@ -361,20 +364,28 @@ def forward_step(
     return output_tensor, loss_function
 
 
-def _create_loss_function(loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool) -> partial:
+def _create_loss_function(
+    loss_mask: torch.Tensor, model: GPTModel, check_for_nan_in_loss: bool, check_for_spiky_loss: bool
+) -> partial:
     """Create a partial loss function with the specified configuration.
 
     Args:
         loss_mask: Used to mask out some portions of the loss
+        model: The GPT Model
         check_for_nan_in_loss: Whether to check for NaN values in the loss
         check_for_spiky_loss: Whether to check for spiky loss values
 
     Returns:
         A partial function that can be called with output_tensor to compute the loss
     """
-    return partial(
+    mnt_loss_func = partial(
         masked_next_token_loss,
         loss_mask,
         check_for_nan_in_loss=check_for_nan_in_loss,
         check_for_spiky_loss=check_for_spiky_loss,
     )
+    unwrapped_model = unwrap_model(model)
+    if isinstance(unwrapped_model, mtd.DistillationModel):
+        return partial(loss_func_kd, loss_mask=loss_mask, original_loss_fn=mnt_loss_func, model=unwrapped_model)
+    else:
+        return mnt_loss_func
