@@ -30,6 +30,15 @@ jobs:
       HF_HUB_OFFLINE: 0
       HF_HOME: /mnt/datadrive/TestData/HF_HOME
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install transformers
+
       - name: Download model
         env:
           MODEL_ID: ${{ github.event.inputs.hf-model-id }}
