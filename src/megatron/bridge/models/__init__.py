@@ -74,6 +74,15 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronNano12Bv2Provider,
     NemotronNanoNext3Bv2Provider,
 )
+from megatron.bridge.models.nemotron import (
+    Nemotron3ModelProvider4B,
+    Nemotron3ModelProvider8B,
+    Nemotron3ModelProvider22B,
+    Nemotron4ModelProvider15B,
+    Nemotron4ModelProvider340B,
+    NemotronBridge,
+    NemotronModelProvider,
+)
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
     Qwen2ModelProvider1P5B,
@@ -181,6 +190,14 @@ __all__ = [
     "MambaProvider780M",
     "NVIDIAMambaHybridProvider8B",
     "NVIDIAMambaProvider8B",
+    # Nemotron Models
+    "NemotronBridge",
+    "NemotronModelProvider",
+    "Nemotron3ModelProvider4B",
+    "Nemotron3ModelProvider8B",
+    "Nemotron3ModelProvider22B",
+    "Nemotron4ModelProvider15B",
+    "Nemotron4ModelProvider340B",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",
