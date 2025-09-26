@@ -20,7 +20,7 @@ try:
     from argument_parser import parse_cli_args
     from utils.common import get_perf_matrix_overrides
     from utils.executors import slurm_executor
-except ImportError, ModuleNotFoundError:
+except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.common import get_perf_matrix_overrides
     from .utils.executors import slurm_executor
