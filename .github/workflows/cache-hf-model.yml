@@ -14,15 +14,12 @@
 name: "Cache HuggingFace Model"
 
 on:
-  push:
-    branches:
-      - "maanug/cache-hf-model"
-  # workflow_dispatch:
-  #   inputs:
-  #     hf-model-id:
-  #       type: string
-  #       description: HuggingFace repo ID of the model to cache
-  #       required: true
+  workflow_dispatch:
+    inputs:
+      hf-model-id:
+        type: string
+        description: HuggingFace repo ID of the model to cache
+        required: true
 
 jobs:
   download:
@@ -50,8 +47,7 @@ jobs:
 
       - name: Download model
         env:
-          # MODEL_ID: ${{ github.event.inputs.hf-model-id }}
-          MODEL_ID: "google/gemma-3-270m"
+          MODEL_ID: ${{ github.event.inputs.hf-model-id }}
         shell: python
         run: |
           import os
