@@ -19,9 +19,7 @@
 ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
-    enable_cuda_graph: false
-    use_te_rng_tracker: false
-    use_transformer_engine_op_fuser: true
+    use_transformer_engine_op_fuser: false
 
   train:
     train_iters: 25
@@ -40,8 +38,6 @@ ConfigContainer:
   ddp:
     check_for_nan_in_grad: false
     check_for_large_grads: false
-    use_megatron_fsdp: true
-    use_torch_fsdp2: false
 
   mixed_precision:
     grad_reduce_in_fp32: false
@@ -69,7 +65,7 @@ perf_matrix:
         vp: 5
         ep: 1
         etp: null
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
         pp: 4
         cp: 2
@@ -93,22 +89,22 @@ perf_matrix:
         pp: 4
         cp: 2
         vp: 5
-        fsdp: false
+        use_megatron_fsdp: false
         cuda_graphs: true
       fp8_ds:
         tp: 1
         pp: 1
         cp: 1
-        vp: 1
-        fsdp: true
+        vp: null
+        use_megatron_fsdp: true
         cuda_graphs: false
         recompute_num_layers: 5
       fp8_cs:
         tp: 1
         pp: 1
         cp: 1
-        vp: 1
-        fsdp: true
+        vp: null
+        use_megatron_fsdp: true
         cuda_graphs: false
         recompute_num_layers: 5
       fp8_mx:
@@ -116,37 +112,41 @@ perf_matrix:
         pp: 4
         cp: 1
         vp: 5
-        fsdp: false
+        use_megatron_fsdp: false
         cuda_graphs: false
   gb200:
     num_gpus_64:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
-        mbs: 1
         gbs: 128
         cuda_graphs: false
         cp: 1
         ep: 1
         etp: null
       bf16:
+        mbs: 1
         tp: 1
         pp: 1
-        vp: 1
-        fsdp: true
-        recompute_num_layers: 20
+        vp: null
+        use_megatron_fsdp: true
+        cpu_offloading_num_layers: 20
       fp8_ds:
+        mbs: 1
         tp: 1
         pp: 1
-        vp: 1
-        fsdp: true
+        vp: null
+        use_megatron_fsdp: true
       fp8_cs:
+        mbs: 2
         tp: 1
         pp: 1
-        vp: 1
-        fsdp: true
+        vp: null
+        use_megatron_fsdp: true
+        cpu_offloading_num_layers: 40
       fp8_mx:
+        mbs: 1
         tp: 2
         pp: 4
         vp: 5
-        fsdp: false
+        use_megatron_fsdp: false

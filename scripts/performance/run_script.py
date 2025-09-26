@@ -24,8 +24,12 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deep
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_30b_a3b import pretrain_config as qwen3_30b_a3b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_235b_a22b import pretrain_config as qwen3_235b_a22b_pretrain_config
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -65,8 +69,8 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
+            layout="Et|(tt|)*30mL",
         )
-        from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
@@ -85,6 +89,24 @@ def main():
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         elif args.gpu.lower() in ["gb200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
+        if args.gpu.lower() in ["gb200", "b200"]:
+            recipe.comm_overlap.overlap_grad_reduce = True
+        elif args.gpu.lower() in ["h100"]:
+            recipe.comm_overlap.overlap_grad_reduce = False
+    elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
+        recipe = qwen3_30b_a3b_pretrain_config(
+            mock=True,
+            precision_config=precision_config,
+            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        )
+        recipe.model = apply_moe_token_drop(recipe.model)
+    elif args.model_name == "qwen3" and args.model_size == "235b_a22b":
+        recipe = qwen3_235b_a22b_pretrain_config(
+            mock=True,
+            precision_config=precision_config,
+            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        )
+        recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 
@@ -142,6 +164,11 @@ def main():
         if args.fp8_recipe == "mx" or recipe.ddp.use_megatron_fsdp:
             logger.warning("Disabling model.use_transformer_engine_op_fuser as it cannot work with MXFP8 or FSDP.")
             recipe.model.use_transformer_engine_op_fuser = False
+
+    if recipe.ddp.use_megatron_fsdp:
+        if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
+            recipe.ddp.fsdp_double_buffer = True
+    recipe.model.apply_rope_fusion = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
