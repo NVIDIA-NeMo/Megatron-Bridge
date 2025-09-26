@@ -11,15 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from megatron.bridge.models.mistral.mistral_bridge import MistralBridge  # noqa: F401
-from megatron.bridge.models.mistral.mistral_provider import (
-    MistralModelProvider,
-    MistralSmall3ModelProvider24B,
-)
-
-
-__all__ = [
-    "MistralModelProvider",
-    "MistralSmall3ModelProvider24B",
-]

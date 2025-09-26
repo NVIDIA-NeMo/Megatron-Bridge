@@ -89,6 +89,10 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaModelProvider8B,
     NVIDIAMambaProvider8B,
 )
+from megatron.bridge.models.mistral import (
+    MistralModelProvider,
+    MistralSmall3ModelProvider24B,
+)
 from megatron.bridge.models.nemotron import (
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
@@ -143,10 +147,7 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.mistral import (
-    MistralModelProvider,
-    MistralSmall3ModelProvider24B,
-)
+
 
 __all__ = [
     "AutoBridge",
@@ -190,6 +191,8 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "MistralModelProvider",
+    "MistralSmall3ModelProvider24B",
     "Qwen2ModelProvider",
     "Qwen2ModelProvider500M",
     "Qwen2ModelProvider1P5B",
@@ -222,8 +225,6 @@ __all__ = [
     "DeepSeekV3Provider",
     "MoonlightModelProvider16B",
     "MoonlightProvider",
-    "MistralModelProvider",
-    "MistralSmall3ModelProvider24B",
     "NemotronHModelProvider",
     "NemotronHModelProvider4B",
     "NemotronHModelProvider8B",

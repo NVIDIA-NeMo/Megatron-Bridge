@@ -45,19 +45,16 @@ class MistralBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
         hf_config = hf_pretrained.config
 
-        if (
-            getattr(hf_config, "rope_scaling", None) is not None
-            and hf_config.rope_scaling.get("rope_type") == "yarn"
-        ):
+        if getattr(hf_config, "rope_scaling", None) is not None and hf_config.rope_scaling.get("rope_type") == "yarn":
             # Apply Mistral customize rope scaling
             cls = partial(MistralModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
         else:
             cls = MistralModelProvider
 
         window_size, cp_comm_type = (None, None)
-        if getattr(hf_config, 'sliding_window', None) is not None:
+        if getattr(hf_config, "sliding_window", None) is not None:
             window_size = [hf_config.sliding_window, 0]
-            cp_comm_type = 'a2a'
+            cp_comm_type = "a2a"
 
         provider = cls(
             num_layers=hf_config.num_hidden_layers,
