@@ -275,7 +275,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
             )
 
         padded_vocab_size = calculate_padded_vocab_size(
-            cfg.tokenizer.vocab_size,
+            cfg.model.vocab_size,
             cfg.model.make_vocab_size_divisible_by,
             cfg.model.tensor_model_parallel_size,
         )
