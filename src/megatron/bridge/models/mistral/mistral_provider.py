@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, List, Optional
+from dataclasses import dataclass
+from typing import Callable, List
 
 import torch
 import torch.nn.functional as F
@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MistralModelProvider(GPTModelProvider):
-    """Base model provider for Mistral 7B Model."""
-
+    """
+    Base model provider for Mistral 7B Model: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
+    """
 
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
@@ -48,9 +49,11 @@ class MistralModelProvider(GPTModelProvider):
 
     init_method_std: float = 0.02
     layernorm_epsilon: float = 1e-5
-    window_size: List[int] = field(default_factory=lambda: [4096, 0])
-    cp_comm_type: str = "a2a"
+    window_size: List[int] = None
+    rotary_base: float = 1000000.0
     params_dtype: torch.dtype = torch.bfloat16
+    vocab_size: int = 32768
+    bf16: bool = True
 
 
 # =============================================================================
@@ -76,3 +79,4 @@ class MistralSmall3ModelProvider24B(MistralModelProvider):
     rotary_percent: float = 1.0
     rotary_base: float = 100000000.0
     params_dtype: torch.dtype = torch.bfloat16
+    vocab_size: int = 131072
