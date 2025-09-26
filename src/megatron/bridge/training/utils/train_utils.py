@@ -32,8 +32,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_last
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
 
 
 try:
@@ -536,14 +535,13 @@ def training_log(
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(elapsed_time_per_iteration * 1000.0)
 
-
         if logger_config.log_throughput:
-            log_string += f' throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |'
+            log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
             if logger_config.log_timers_to_tensorboard:
                 if writer:
-                    writer.add_scalar('throughput', per_gpu_tf, iteration)
+                    writer.add_scalar("throughput", per_gpu_tf, iteration)
                 if wandb_writer:
-                    wandb_writer.log({'throughput': per_gpu_tf}, iteration)
+                    wandb_writer.log({"throughput": per_gpu_tf}, iteration)
 
         if energy_monitor is not None:
             energy = (energy_monitor.lap() / total_iterations) / get_world_size_safe()
