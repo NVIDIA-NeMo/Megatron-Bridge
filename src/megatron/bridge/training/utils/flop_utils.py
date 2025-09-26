@@ -18,6 +18,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
+    """Return the number of floating point operations"""
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, and MLP layers."""
         if hasattr(cfg.model, "hybrid_override_pattern") and cfg.model.hybrid_override_pattern:
