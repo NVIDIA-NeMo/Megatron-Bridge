@@ -347,7 +347,7 @@ class TestGPTProvider:
         assert mock_layer_spec_func.call_count == 2
 
 
-class TestMambaProvider:
+class TestMambaModelProvider:
     """Test Mamba model provider function."""
 
     @pytest.fixture

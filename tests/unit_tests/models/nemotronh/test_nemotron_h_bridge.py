@@ -111,7 +111,7 @@ class TestNemotronHBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
 
-        # Check that it returns a MambaProvider instance
+        # Check that it returns a MambaModelProvider instance
         assert isinstance(result, NemotronHModelProvider)
 
         # Check basic configuration mapping
