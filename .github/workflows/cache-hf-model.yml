@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Download model
         env:
-          MODEL_ID: ${{ github.event.inputs.message }}
+          MODEL_ID: ${{ github.event.inputs.hf-model-id }}
         shell: python
         run: |
           import os
