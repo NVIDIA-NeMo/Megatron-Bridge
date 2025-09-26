@@ -15,6 +15,7 @@
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
@@ -309,7 +310,7 @@ def num_floating_point_operations(cfg: ConfigContainer, batch_size: int = 1):
                     + 2 * cfg.model.hidden_size * cfg.model.hidden_size
                 )
                 # Logit.
-                + 3 * 2 * cfg.model.hidden_size * cfg.tokenizer.padded_vocab_size * (mtp_num_layers + 1)
+                + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
             )
         )
         return total_floating_point_operations
