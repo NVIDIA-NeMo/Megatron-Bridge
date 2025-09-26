@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.mamba import NVIDIAMambaProvider8B
+from megatron.bridge.models.mamba import NVIDIAMambaModelProvider8B
 from megatron.bridge.recipes.mamba.mamba2_8b import model_config, pretrain_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -34,7 +34,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, NVIDIAMambaProvider8B)
+        assert isinstance(config, NVIDIAMambaModelProvider8B)
         assert config.tensor_model_parallel_size == 8
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype is None
@@ -111,7 +111,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NVIDIAMambaProvider8B)
+        assert isinstance(config.model, NVIDIAMambaModelProvider8B)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251

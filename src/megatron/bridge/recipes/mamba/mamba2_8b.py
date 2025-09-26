@@ -17,7 +17,7 @@ from typing import Optional, Union
 
 import torch
 
-from megatron.bridge.models.mamba import NVIDIAMambaProvider8B
+from megatron.bridge.models.mamba import NVIDIAMambaModelProvider8B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -42,7 +42,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
-) -> NVIDIAMambaProvider8B:
+) -> NVIDIAMambaModelProvider8B:
     """
     Configure the Mamba 8B model.
 
@@ -55,9 +55,9 @@ def model_config(
         sequence_parallelism: Whether to use sequence parallelism.
 
     Returns:
-        NVIDIAMambaProvider8B: Configuration for the Mamba 8B model.
+        NVIDIAMambaModelProvider8B: Configuration for the Mamba 8B model.
     """
-    return NVIDIAMambaProvider8B(
+    return NVIDIAMambaModelProvider8B(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import warnings
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
@@ -21,6 +22,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import MLATransformerConfig
+from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 try:
@@ -38,7 +40,7 @@ if HAVE_TE:
 
 
 @dataclass
-class DeepSeekProvider(MLATransformerConfig, GPTModelProvider):
+class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     """
     Base config for DeepSeek V2 and V3 models.
     """
@@ -113,7 +115,7 @@ class DeepSeekProvider(MLATransformerConfig, GPTModelProvider):
 
 
 @dataclass
-class DeepSeekV2Provider(DeepSeekProvider):
+class DeepSeekV2ModelProvider(DeepSeekModelProvider):
     """
     DeepSeek-V2 Model: https://github.com/deepseek-ai/DeepSeek-V2
     """
@@ -136,7 +138,7 @@ class DeepSeekV2Provider(DeepSeekProvider):
 
 
 @dataclass
-class DeepSeekV2LiteProvider(DeepSeekV2Provider):
+class DeepSeekV2LiteModelProvider(DeepSeekV2ModelProvider):
     """
     DeepSeek-V2-Lite Model: https://github.com/deepseek-ai/DeepSeek-V2
     HuggingFace: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite
@@ -160,7 +162,7 @@ class DeepSeekV2LiteProvider(DeepSeekV2Provider):
 
 
 @dataclass
-class DeepSeekV3Provider(DeepSeekProvider):
+class DeepSeekV3ModelProvider(DeepSeekModelProvider):
     """
     DeepSeek-V3 Model: https://github.com/deepseek-ai/DeepSeek-V3
     """
@@ -188,7 +190,7 @@ class DeepSeekV3Provider(DeepSeekProvider):
 
 
 @dataclass
-class MoonlightProvider(DeepSeekProvider):
+class MoonlightModelProvider16B(DeepSeekModelProvider):
     """
     Moonlight-16B-A3B Model: https://github.com/moonshotai/Moonlight-16B-A3B
 
@@ -223,3 +225,87 @@ class MoonlightProvider(DeepSeekProvider):
     moe_router_bias_update_rate: float = 1e-3
     rotary_percent: float = 1.0
     vocab_size: int = 163840
+
+
+# -----------------------------------------------------------------------------
+# Deprecated aliases (to be removed in a future release)
+# -----------------------------------------------------------------------------
+
+
+def _warn_deprecated(old_cls: str, new_cls: str) -> None:
+    if get_rank_safe() == 0:
+        warnings.warn(
+            f"{old_cls} is deprecated and will be removed in a future release. Use {new_cls} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
+@dataclass
+class DeepSeekProvider(DeepSeekModelProvider):
+    """Deprecated alias for ``DeepSeekModelProvider``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``DeepSeekModelProvider`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("DeepSeekProvider", "DeepSeekModelProvider")
+        super().__post_init__()
+
+
+@dataclass
+class DeepSeekV2Provider(DeepSeekV2ModelProvider):
+    """Deprecated alias for ``DeepSeekV2ModelProvider``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``DeepSeekV2ModelProvider`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("DeepSeekV2Provider", "DeepSeekV2ModelProvider")
+        super().__post_init__()
+
+
+@dataclass
+class DeepSeekV2LiteProvider(DeepSeekV2LiteModelProvider):
+    """Deprecated alias for ``DeepSeekV2LiteModelProvider``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``DeepSeekV2LiteModelProvider`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("DeepSeekV2LiteProvider", "DeepSeekV2LiteModelProvider")
+        super().__post_init__()
+
+
+@dataclass
+class DeepSeekV3Provider(DeepSeekV3ModelProvider):
+    """Deprecated alias for ``DeepSeekV3ModelProvider``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``DeepSeekV3ModelProvider`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("DeepSeekV3Provider", "DeepSeekV3ModelProvider")
+        super().__post_init__()
+
+
+@dataclass
+class MoonlightProvider(MoonlightModelProvider16B):
+    """Deprecated alias for ``MoonlightModelProvider16B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MoonlightModelProvider16B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MoonlightProvider", "MoonlightModelProvider16B")
+        super().__post_init__()
