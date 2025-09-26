@@ -106,6 +106,10 @@ def _pretrain(
         store: Optional distributed Store used by in-process restart for coordination
         inprocess_call_wrapper: Optional wrapper injected by nvrx to expose restart iteration
     """
+    # Determine whether the training loop will initialize the process group
+    # If the trainer creates the process group, the trainer should destroy it before returning control back to the user
+    should_destroy_process_group = not dist.is_initialized()
+
     # Handle in-process restart store prefix
     if inprocess_call_wrapper is not None:
         restart_attempt = inprocess_call_wrapper.iteration
@@ -182,4 +186,4 @@ def _pretrain(
             write_to_tensorboard=not config.train.skip_train,
         )
 
-    _finish_train(state)
+    _finish_train(state, should_destroy_process_group=should_destroy_process_group)

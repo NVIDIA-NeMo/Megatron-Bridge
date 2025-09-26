@@ -1021,7 +1021,7 @@ def checkpoint_and_decide_exit(
     return False
 
 
-def _finish_train(global_state: GlobalState):
+def _finish_train(global_state: GlobalState, should_destroy_process_group: bool = False):
     ckpt_cfg = global_state.cfg.checkpoint
 
     # Shutdown NVRx straggler detection if enabled
@@ -1036,6 +1036,9 @@ def _finish_train(global_state: GlobalState):
         global_state.wandb_logger.finish()
 
     destroy_global_state()
+
+    if should_destroy_process_group and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 def _handle_mxfp8_param_buffer_copy(
