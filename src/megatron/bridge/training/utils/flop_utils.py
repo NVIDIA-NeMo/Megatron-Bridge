@@ -15,8 +15,6 @@
 import torch.nn.functional as F
 
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.decorators import experimental_fn
-from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 
