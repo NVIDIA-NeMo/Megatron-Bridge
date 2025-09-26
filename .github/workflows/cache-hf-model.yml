@@ -40,7 +40,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install transformers torch
+          pip install torch transformers "huggingface_hub[cli]"
+
+      - name: Log in to HuggingFace
+        env:
+          HF_ACCESS_TOKEN: ${{ secrets.HF_ACCESS_TOKEN }}
+        run: |
+            hf auth login --token ${HF_ACCESS_TOKEN}
 
       - name: Download model
         env:
