@@ -57,7 +57,8 @@ def model_config(
     recompute_num_layers: Optional[int] = None,
     enable_deepep: bool = False,
     apply_rope_fusion: bool = True,
-) -> DeepSeekV3Provider:
+    layout: Optional[List[List[str]]] = None,
+) -> DeepSeekV3ModelProvider:
     """
     Configure the DeepSeek-V3 (671B) model.
 
@@ -113,27 +114,33 @@ def model_config(
     if mtp_num_layers is None:
         mtp_num_layers = 0
     last_layer = ["mtp"] * mtp_num_layers + ["loss"]
-    map_pp_vp_to_layout = {
-        (1, 1): None,
-        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
-        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
-    if (pp_size, vp_size) not in map_pp_vp_to_layout:
-        raise ValueError(
-            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
-            f"for DeepSeek V3. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
-        )
+    if layout is None:
+        map_pp_vp_to_layout = {
+            (1, 1): None,
+            (4, 1): [
+                ["embedding"] + ["decoder"] * 16,
+                ["decoder"] * 16,
+                ["decoder"] * 16,
+                ["decoder"] * 13 + last_layer,
+            ],
+            (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+            (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+            (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+            (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+            (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        }
+        pp_size = pipeline_parallelism or 1
+        vp_size = virtual_pipeline_parallelism or 1
+        if (pp_size, vp_size) not in map_pp_vp_to_layout:
+            raise ValueError(
+                f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
+                f"for DeepSeek V3. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
+            )
 
-    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+        layout = map_pp_vp_to_layout[(pp_size, vp_size)]
 
-    if layout is not None:
-        layout = list([list(x) for x in layout])  # yield all the elements
+        if layout is not None:
+            layout = list([list(x) for x in layout])  # yield all the elements
     cfg.pipeline_model_parallel_layout = layout
 
     if enable_deepep:
@@ -184,6 +191,7 @@ def pretrain_config(
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
     apply_rope_fusion: bool = False,
+    layout: Optional[List[List[str]]] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model.
@@ -216,6 +224,7 @@ def pretrain_config(
         recompute_num_layers=recompute_num_layers,
         enable_deepep=enable_deepep,
         apply_rope_fusion=apply_rope_fusion,
+        layout=layout,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(

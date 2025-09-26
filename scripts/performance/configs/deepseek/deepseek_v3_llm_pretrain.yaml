@@ -45,9 +45,6 @@ ConfigContainer:
 
   mixed_precision:
     grad_reduce_in_fp32: false
-  
-  comm_overlap:
-    overlap_grad_reduce: false # TODO: enable when 1F1B_A2A is fixed in Megatron-LM
 
   profiling:
     # For optional fields in the config, specify the target to instantiate the object.
@@ -74,7 +71,7 @@ perf_matrix:
         vp: 4
         ep: 64
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
       fp8_cs:
       fp8_ss:
@@ -91,7 +88,7 @@ perf_matrix:
         vp: null
         ep: 8
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
         cuda_graphs: false
       fp8_cs:
@@ -111,8 +108,8 @@ perf_matrix:
         vp: 8
         ep: 64
         etp: 1
-        fsdp: false
-        cuda_graphs: true
+        use_megatron_fsdp: false
+        cuda_graphs: false
       bf16:
       fp8_cs:
       fp8_mx:
