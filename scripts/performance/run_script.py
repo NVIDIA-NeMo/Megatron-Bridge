@@ -157,6 +157,7 @@ def main():
     if recipe.ddp.use_megatron_fsdp:
         if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
             recipe.ddp.fsdp_double_buffer = True
+    recipe.model.apply_rope_fusion = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
