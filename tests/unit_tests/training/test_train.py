@@ -24,9 +24,7 @@ from megatron.bridge.training.train import (
     checkpoint_and_decide_exit,
     should_disable_forward_pre_hook,
 )
-from megatron.bridge.training.utils.train_utils import (
-    maybe_inject_state,
-)
+from megatron.bridge.training.utils.train_utils import maybe_inject_state
 
 
 class TestMxfp8ParamBufferCopy:
