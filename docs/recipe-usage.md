@@ -11,7 +11,7 @@ The benefit of providing the full recipe through a pythonic structure is that it
 The following sections detail a few different ways to override the configuration recipe. For a complete training script, please see [this example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b.py).
 
 
-### Pythonic
+### Python
 
 If you prefer to manage configuration in Python, you can directly modify attributes of the `ConfigContainer`:
 
