@@ -42,6 +42,7 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -52,9 +53,9 @@ from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.bridge.training.utils.train_utils import (
     calc_params_l2_norm,
-    check_forward_step_func_num_args,
     logical_and_across_model_parallel_group,
     maybe_inject_state,
+    needs_global_state_injection,
     reduce_max_stat_across_model_parallel_group,
     training_log,
 )
@@ -62,7 +63,7 @@ from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 def train(
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
@@ -101,8 +102,9 @@ def train(
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
 
-    # Check num args to forward_step_func
-    num_fw_args = check_forward_step_func_num_args(forward_step_func)
+    # Check if forward_step_func needs state injection (do this once upfront)
+    # This also validates the function signature
+    needs_injection = needs_global_state_injection(forward_step_func)
 
     # Turn on training mode which enables dropout.
     for model_module in model:
@@ -275,7 +277,7 @@ def train(
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            forward_step_func, num_fw_args, train_data_iterator, model, optimizer, scheduler, global_state
+            forward_step_func, needs_injection, train_data_iterator, model, optimizer, scheduler, global_state
         )
         fault_tolerance.on_training_step_end(global_state)
         if should_checkpoint:
@@ -464,8 +466,8 @@ def train(
 
 
 def train_step(
-    forward_step_func: Callable,
-    num_fw_args: int,
+    forward_step_func: ForwardStepCallable,
+    needs_injection: bool,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
@@ -476,7 +478,7 @@ def train_step(
 
     Args:
         forward_step_func: Function that performs a forward step
-        num_fw_args: Number of arguments expected by forward_step_func
+        needs_injection: Whether the forward_step_func needs GlobalState injection
         data_iterator: Iterator over training data
         model: list of model chunks
         optimizer: Optimizer for model parameters
@@ -506,8 +508,8 @@ def train_step(
             model_chunk.zero_grad_buffer()
         optimizer.zero_grad()
 
-        # Optionally inject state into forward step
-        wrapped_forward_step = maybe_inject_state(forward_step_func, global_state, num_fw_args=num_fw_args)
+        # Optionally inject state into forward step using precomputed value
+        wrapped_forward_step = maybe_inject_state(forward_step_func, global_state, needs_injection=needs_injection)
 
         _handle_mxfp8_param_buffer_copy(
             optimizer=optimizer,

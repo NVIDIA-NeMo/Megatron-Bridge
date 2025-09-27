@@ -16,7 +16,7 @@ import inspect
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -29,6 +29,7 @@ from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelpe
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
@@ -612,57 +613,72 @@ def report_memory(name: str) -> None:
         print("[Rank {}] {}".format(torch.distributed.get_rank(), string), flush=True)
 
 
-def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_args: Optional[int] = None) -> Callable:
-    """Optionally inject GlobalState into a 4-arg forward_step function.
+def needs_global_state_injection(forward_step_func: ForwardStepCallable) -> bool:
+    """Check if a forward step function needs GlobalState injection.
 
-    - If the function has 4 parameters (state, data_iterator, model, return_schedule_plan),
-      bind the provided state via functools.partial to produce a callable that accepts
-      (data_iterator, model, return_schedule_plan).
-    - If the function already has 3 parameters (data_iterator, model, return_schedule_plan)
-      or 2 parameters (data_iterator, model), return it unchanged.
+    This function does the signature inspection once to determine if state should be injected.
+    It's more efficient than repeated signature inspection in the training loop.
+
+    Detection logic:
+    1. First checks for GlobalState type annotation in any parameter
+    2. Falls back to checking if first parameter is named 'state' or 'global_state'
+
+    Args:
+        forward_step_func: The forward step function to inspect.
+
+    Returns:
+        True if GlobalState should be injected, False otherwise.
+    """
+    signature = inspect.signature(forward_step_func)
+    parameters = signature.parameters
+    param_names = list(parameters.keys())
+
+    # Check for GlobalState type annotation in any parameter
+    for param_name, param in parameters.items():
+        if param.annotation != inspect.Parameter.empty:
+            # Handle both direct GlobalState and string annotations
+            if (
+                param.annotation == GlobalState
+                or (isinstance(param.annotation, str) and "GlobalState" in param.annotation)
+                or (hasattr(param.annotation, "__name__") and param.annotation.__name__ == "GlobalState")
+            ):
+                # Found GlobalState annotation - needs injection
+                return True
+
+    # Fallback: Check if the first parameter is named 'state' or 'global_state'
+    return param_names and param_names[0] in ("state", "global_state")
+
+
+def maybe_inject_state(
+    forward_step_func: ForwardStepCallable, state: GlobalState, needs_injection: Optional[bool] = None
+) -> ForwardStepCallable:
+    """Optionally inject GlobalState into forward_step functions that expect it.
+
+    Determines whether to inject state by inspecting function signature:
+    1. First checks for GlobalState type annotation in any parameter
+    2. Falls back to checking if first parameter is named 'state'
+    3. Otherwise assumes the function doesn't expect state
+
+    Supported signatures:
+    - (data_iterator, model) → no injection
+    - (data_iterator, model, return_schedule_plan) → no injection
+    - (state: GlobalState, data_iterator, model) → inject state
+    - (state: GlobalState, data_iterator, model, return_schedule_plan) → inject state
+    - (state, data_iterator, model) → inject state (fallback to name-based detection)
 
     Args:
         forward_step_func: The original forward step function.
         state: The GlobalState object to potentially inject.
-        num_fw_args: The number of arguments the forward_step_func expects (optional,
-                     will be inspected if None).
+        needs_injection: Whether injection is needed (optional, will be inspected if None).
+                        Pass this to avoid repeated signature inspection in training loops.
 
     Returns:
         The original function or a partial function with GlobalState injected.
     """
-    if not num_fw_args:
-        num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    if num_fw_args == 4:  # megatron bridge gpt_step.py forward_step has 4 args
-        # inject global_state
+    if needs_injection is None:
+        needs_injection = needs_global_state_injection(forward_step_func)
+
+    if needs_injection:
         return partial(forward_step_func, state)
     else:
         return forward_step_func
-
-
-def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
-    """Check if the forward step function has a supported number of arguments.
-
-    Currently supports 2, 3, or 4 arguments:
-    - func(data_iterator, model)
-    - func(data_iterator, model, return_schedule_plan: bool = False)  # state pre-bound via partial
-    - func(state, data_iterator, model, return_schedule_plan: bool = False)
-
-    Args:
-        forward_step_func: The function to check.
-
-    Returns:
-        The number of arguments the function takes.
-
-    Raises:
-        AssertionError: If the function does not have 2 or 4 arguments.
-    """
-    num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    fail_msg = f"""
-    forward_step_func has {num_fw_args} arguments. Only the following signatures are supported:
-        2 args: forward_step_func(data_iterator: Iterable, model: GPTModel)
-        3 args: forward_step_func(data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
-        4 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
-    """
-    assert num_fw_args in (2, 3, 4), fail_msg
-
-    return num_fw_args
