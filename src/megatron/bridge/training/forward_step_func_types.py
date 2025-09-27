@@ -26,13 +26,20 @@ Key Types:
 
 Example Usage:
     >>> from functools import partial
+    >>> from megatron.bridge.training.state import GlobalState
     >>>
     >>> def my_forward_step(state: GlobalState, data_iterator, model, return_schedule_plan=False):
+    ...     # Access configuration, timers, and training state
+    ...     timers = state.timers
+    ...     config = state.cfg
+    ...
     ...     # Get batch data
     ...     batch = next(data_iterator)
     ...
-    ...     # Forward pass
+    ...     # Forward pass with timing
+    ...     timers("forward-step").start()
     ...     output_tensor = model(batch['input_ids'])
+    ...     timers("forward-step").stop()
     ...
     ...     # Create loss function
     ...     def loss_func(output_tensor):
@@ -43,8 +50,22 @@ Example Usage:
     ...
     ...     return output_tensor, partial(loss_func)
     ...
-    >>> # Use with pretrain
+    >>> # State injection is automatic - no manual binding needed!
     >>> pretrain(config, my_forward_step)
+    >>>
+    >>> # Functor example (for stateful forward steps)
+    >>> class StatefulForwardStep:
+    ...     def __init__(self, loss_scale: float = 1.0):
+    ...         self.loss_scale = loss_scale
+    ...         self.step_count = 0
+    ...
+    ...     def __call__(self, state: GlobalState, data_iterator, model, return_schedule_plan=False):
+    ...         self.step_count += 1
+    ...         # ... forward step logic with state tracking ...
+    ...         return output_tensor, partial(loss_func)
+    ...
+    >>> functor = StatefulForwardStep(loss_scale=2.0)
+    >>> pretrain(config, functor)
 """
 
 from functools import partial

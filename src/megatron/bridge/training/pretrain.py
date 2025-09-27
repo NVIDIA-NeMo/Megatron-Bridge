@@ -48,8 +48,13 @@ def pretrain(
                           metrics. Supports the following signatures:
                           - 2 args: (data_iterator, model)
                           - 3 args: (data_iterator, model, return_schedule_plan=False)
-                          - 4 args: (state, data_iterator, model, return_schedule_plan=False)
-                          Functors (classes with __call__) are fully supported.
+                                   OR (state: GlobalState, data_iterator, model)
+                          - 4 args: (state: GlobalState, data_iterator, model, return_schedule_plan=False)
+
+    Note:
+        Use the signature with GlobalState type hint for full access to configuration, timers, and training state.
+        State injection is automatic based on type hints or parameter names.
+        Functors (classes with __call__) are fully supported.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
