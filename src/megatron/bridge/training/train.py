@@ -37,13 +37,14 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
-from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+from megatron.core.utils import check_param_hashes_across_dp_replicas, get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.gpt_step import get_batch_on_this_tp_rank
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -275,18 +276,9 @@ def train(
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
-        # TODO: implement dummy train_step to fast forward train_data_iterator.
         # Completely skip iteration if needed.
-        # if global_state.train_state.step in config.checkpoint.iterations_to_skip:
-        #     # Dummy train_step to fast forward train_data_iterator.
-        #     dummy_train_step(train_data_iterator)
-        #     global_state.train_state.step += 1
-        #     batch_size = (
-        #         parallel_state.get_data_parallel_world_size() * args.micro_batch_size * get_num_microbatches()
-        #     )
-        #     global_state.train_state.consumed_train_samples += batch_size
-        #     global_state.train_state.skipped_train_samples += batch_size
-        #     continue
+        if _should_skip_and_handle_iteration(global_state, train_data_iterator):
+            continue
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
@@ -1036,6 +1028,59 @@ def _finish_train(global_state: GlobalState):
         global_state.wandb_logger.finish()
 
     destroy_global_state()
+
+
+def _should_skip_and_handle_iteration(
+    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+) -> bool:
+    """Check if the current iteration should be skipped and handle it if so.
+
+    This function checks if the current training step is in the iterations_to_skip list,
+    and if so, performs a dummy training step to consume data and update counters.
+
+    Args:
+        global_state: Global state containing training state and configuration
+        train_data_iterator: Iterator over training data
+
+    Returns:
+        bool: True if the iteration was skipped, False otherwise
+    """
+    cfg = global_state.cfg
+    if global_state.train_state.step not in cfg.checkpoint.iterations_to_skip:
+        return False
+
+    # Perform dummy train step to fast forward train_data_iterator
+    _dummy_train_step(global_state, train_data_iterator)
+
+    # Update step and sample counters
+    global_state.train_state.step += 1
+    batch_size = parallel_state.get_data_parallel_world_size() * cfg.train.micro_batch_size * get_num_microbatches()
+    global_state.train_state.consumed_train_samples += batch_size
+    global_state.train_state.skipped_train_samples += batch_size
+
+    return True
+
+
+def _dummy_train_step(
+    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+) -> None:
+    """Single dummy training step to fast forward train_data_iterator.
+
+    This function consumes data from the iterator without performing any actual computation,
+    effectively skipping the iteration while maintaining data iterator consistency.
+    Following the same pattern as Megatron-LM to ensure proper data distribution across ranks.
+
+    Args:
+        global_state: Global state containing configuration
+        train_data_iterator: Iterator over training data
+    """
+    num_microbatches = get_num_microbatches()
+    rerun_state_machine = get_rerun_state_machine()
+
+    while rerun_state_machine.should_run_forward_backward(train_data_iterator):
+        for _ in range(num_microbatches):
+            batch = get_batch_on_this_tp_rank(train_data_iterator, global_state.cfg)
+            batch = get_batch_on_this_cp_rank(batch)
 
 
 def _handle_mxfp8_param_buffer_copy(
