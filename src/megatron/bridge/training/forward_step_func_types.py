@@ -93,6 +93,29 @@ class TwoArgForwardStep(Protocol):
     ) -> tuple[torch.Tensor, LossFunction]: ...
 
 
+class ThreeArgStateForwardStep(Protocol):
+    """Protocol for forward step functions with 3 arguments including state.
+
+    This represents forward step functions that need access to GlobalState
+    but don't support schedule plan return mode.
+
+    Args:
+        state: Global training state containing configuration and runtime objects
+        data_iterator: Iterator providing training data batches
+        model: The GPT model to train
+
+    Returns:
+        Tuple of (output_tensor, loss_function)
+    """
+
+    def __call__(
+        self,
+        state: GlobalState,
+        data_iterator: Iterable,
+        model: GPTModel,
+    ) -> tuple[torch.Tensor, LossFunction]: ...
+
+
 class ThreeArgForwardStep(Protocol):
     """Protocol for forward step functions with 3 arguments.
 
@@ -196,6 +219,16 @@ class ForwardStepFunctor(Protocol):
         state: GlobalState,
         data_iterator: Iterable,
         model: GPTModel,
+    ) -> tuple[torch.Tensor, LossFunction]:
+        """3-argument signature with state: (state, data_iterator, model)."""
+        ...
+
+    @overload
+    def __call__(
+        self,
+        state: GlobalState,
+        data_iterator: Iterable,
+        model: GPTModel,
         return_schedule_plan: bool = False,
     ) -> tuple[torch.Tensor, LossFunction]:
         """4-argument signature: (state, data_iterator, model, return_schedule_plan)."""
@@ -212,7 +245,7 @@ class ForwardStepFunctor(Protocol):
 
 
 # Union type for all supported forward step function signatures
-ForwardStepFunc = TwoArgForwardStep | ThreeArgForwardStep | FourArgForwardStep
+ForwardStepFunc = TwoArgForwardStep | ThreeArgStateForwardStep | ThreeArgForwardStep | FourArgForwardStep
 
 # Type alias that includes both functions and functors
 ForwardStepCallable = ForwardStepFunc | ForwardStepFunctor

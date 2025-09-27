@@ -616,13 +616,19 @@ def report_memory(name: str) -> None:
 def maybe_inject_state(
     forward_step_func: ForwardStepCallable, state: GlobalState, num_fw_args: Optional[int] = None
 ) -> ForwardStepCallable:
-    """Optionally inject GlobalState into a 4-arg forward_step function.
+    """Optionally inject GlobalState into forward_step functions that expect it.
 
-    - If the function has 4 parameters (state, data_iterator, model, return_schedule_plan),
-      bind the provided state via functools.partial to produce a callable that accepts
-      (data_iterator, model, return_schedule_plan).
-    - If the function already has 3 parameters (data_iterator, model, return_schedule_plan)
-      or 2 parameters (data_iterator, model), return it unchanged.
+    Determines whether to inject state by inspecting function signature:
+    1. First checks for GlobalState type annotation in any parameter
+    2. Falls back to checking if first parameter is named 'state'
+    3. Otherwise assumes the function doesn't expect state
+
+    Supported signatures:
+    - (data_iterator, model) → no injection
+    - (data_iterator, model, return_schedule_plan) → no injection
+    - (state: GlobalState, data_iterator, model) → inject state
+    - (state: GlobalState, data_iterator, model, return_schedule_plan) → inject state
+    - (state, data_iterator, model) → inject state (fallback to name-based detection)
 
     Args:
         forward_step_func: The original forward step function.
@@ -633,9 +639,24 @@ def maybe_inject_state(
     Returns:
         The original function or a partial function with GlobalState injected.
     """
-    if not num_fw_args:
-        num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    if num_fw_args == 4:  # megatron bridge gpt_step.py forward_step has 4 args
+    signature = inspect.signature(forward_step_func)
+    parameters = signature.parameters
+    param_names = list(parameters.keys())
+
+    # Check for GlobalState type annotation in any parameter
+    for param_name, param in parameters.items():
+        if param.annotation != inspect.Parameter.empty:
+            # Handle both direct GlobalState and string annotations
+            if (
+                param.annotation == GlobalState
+                or (isinstance(param.annotation, str) and "GlobalState" in param.annotation)
+                or (hasattr(param.annotation, "__name__") and param.annotation.__name__ == "GlobalState")
+            ):
+                # Found GlobalState annotation - inject state
+                return partial(forward_step_func, state)
+
+    # Fallback: Check if the first parameter is named 'state'
+    if param_names and param_names[0] == "state":
         # inject global_state
         return partial(forward_step_func, state)
     else:
@@ -645,10 +666,10 @@ def maybe_inject_state(
 def check_forward_step_func_num_args(forward_step_func: ForwardStepCallable) -> int:
     """Check if the forward step function has a supported number of arguments.
 
-    Currently supports 2, 3, or 4 arguments:
-    - func(data_iterator, model)
-    - func(data_iterator, model, return_schedule_plan: bool = False)  # state pre-bound via partial
-    - func(state, data_iterator, model, return_schedule_plan: bool = False)
+    Currently supports 2, 3, or 4 arguments with specific patterns:
+    - 2 args: (data_iterator, model)
+    - 3 args: (data_iterator, model, return_schedule_plan) OR (state, data_iterator, model)
+    - 4 args: (state, data_iterator, model, return_schedule_plan)
 
     Args:
         forward_step_func: The function to check.
@@ -657,15 +678,20 @@ def check_forward_step_func_num_args(forward_step_func: ForwardStepCallable) -> 
         The number of arguments the function takes.
 
     Raises:
-        AssertionError: If the function does not have 2 or 4 arguments.
+        AssertionError: If the function does not have 2, 3, or 4 arguments.
     """
-    num_fw_args = len(inspect.signature(forward_step_func).parameters)
-    fail_msg = f"""
+    signature = inspect.signature(forward_step_func)
+    param_names = list(signature.parameters.keys())
+    num_fw_args = len(param_names)
+
+    # Validate supported signatures
+    if num_fw_args not in (2, 3, 4):
+        fail_msg = f"""
     forward_step_func has {num_fw_args} arguments. Only the following signatures are supported:
-        2 args: forward_step_func(data_iterator: Iterable, model: GPTModel)
-        3 args: forward_step_func(data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
-        4 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
+        2 args: (data_iterator, model)
+        3 args: (data_iterator, model, return_schedule_plan) OR (state, data_iterator, model)
+        4 args: (state, data_iterator, model, return_schedule_plan)
     """
-    assert num_fw_args in (2, 3, 4), fail_msg
+        assert False, fail_msg
 
     return num_fw_args
