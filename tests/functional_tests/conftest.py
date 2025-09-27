@@ -98,6 +98,23 @@ def reset_cuda():
         torch.cuda.synchronize()
 
 
+def pytest_runtest_teardown(item, nextitem):
+    """Custom teardown that only destroys process group between different test files."""
+    if nextitem is None or item.fspath != nextitem.fspath:
+        if torch.distributed.is_initialized():
+            try:
+                torch.distributed.barrier()
+            except Exception:
+                pass
+
+            torch.distributed.destroy_process_group()
+
+        # Force garbage collection
+        import gc
+
+        gc.collect()
+
+
 @pytest.fixture(autouse=True)
 def reset_env_vars():
     """Reset environment variables to prevent test leakage."""
