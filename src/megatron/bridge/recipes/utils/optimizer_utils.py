@@ -129,9 +129,9 @@ def distributed_fused_adam_with_cosine_annealing_samples(
         end_weight_decay=0.033,
         weight_decay_incr_style="constant",
         lr_decay_style="cosine",
-        lr_warmup_samples=lr_warmup_samples,  # Sample-based warmup
+        lr_warmup_samples=lr_warmup_samples,
         lr_warmup_init=0.0,
-        lr_decay_samples=lr_decay_samples,  # Sample-based decay
+        lr_decay_samples=lr_decay_samples,
         override_opt_param_scheduler=True,
     )
 

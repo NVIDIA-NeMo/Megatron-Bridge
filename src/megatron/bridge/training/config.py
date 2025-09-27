@@ -1221,15 +1221,13 @@ class ConfigContainer(Container):
 
     def _calculate_scheduler_steps(self) -> None:
         """Calculate scheduler steps for both iteration-based and sample-based training."""
-        # Determine original training mode (before train_iters was calculated from train_samples)
         is_sample_based = self.train.train_samples is not None
 
         if is_sample_based:
-            # Sample-based training
             if self.scheduler.lr_decay_samples is None:
                 self.scheduler.lr_decay_samples = self.train.train_samples
-            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_samples  # Direct sample count
-            self.scheduler.wd_incr_steps = self.train.train_samples  # Direct sample count
+            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_samples
+            self.scheduler.wd_incr_steps = self.train.train_samples
 
             if self.scheduler.lr_wsd_decay_samples is not None:
                 self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_samples
