@@ -141,7 +141,7 @@ Along with any other required flags. It is also recommended to use a NeMo Framew
 
 ### NeMo-Run
 
-Megatron Bridge also supports launching training with NeMo-Run. NeMo-Run is a Python package that enables configuring and executing experiments across several platforms.
+Megatron Bridge also supports launching training with [NeMo-Run](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/index.html). NeMo-Run is a Python package that enables configuring and executing experiments across several platforms.
 For multi-node training, NeMo-Run will generate a script with appropriate commands, similar to the `srun` command described above.
 
 The recommended method to launch a Megatron Bridge script with NeMo-Run is through the `run.Script` API.
