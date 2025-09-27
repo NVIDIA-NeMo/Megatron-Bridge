@@ -120,7 +120,7 @@ Megatron Bridge training scripts can be launched with the `torchrun` command tha
 Simply specify the number of GPUs to use with `--nproc-per-node` and the number of nodes with `--nnodes`. For example, on a single node:
 
 ```sh
-torchrun --nnodes 1 --nproc-per-node 8 /path/to/pretrain_script.py <args to pretrain script>
+torchrun --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
 ```
 
 For multi-node training, it is recommended to use a cluster orchestration system like SLURM.
@@ -133,7 +133,7 @@ For example, with Slurm, wrap the `torchrun` command inside of `srun`:
 srun --nodes 2 --gpus-per-node 8 \
     --container-image <image tag> --container-mounts <mounts> \
     bash -c "
-        torchrun --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/pretrain_script.py <args to pretrain script>
+        torchrun --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
     "
 ```
 
@@ -152,7 +152,7 @@ import nemo_run as run
 
 if __name__ == "__main__":
     # 1) Configure the `run.Script` object
-    train_script = run.Script(path="/path/to/pretrain/script.py", entrypoint="python")
+    train_script = run.Script(path="/path/to/train/script.py", entrypoint="python")
 
     # 2) Define an executor for the desired target platform
     executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
