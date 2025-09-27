@@ -179,6 +179,27 @@ if __name__ == "__main__":
 
 For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b_nemo_run_script.py).
 
+#### Plugins
+
+Megatron Bridge provides several NeMo-Run plugins to simplify the usage of certain features.
+These plugins can simply be added to the `run.run()` call:
+
+```python
+import nemo_run as run
+from megatron.bridge.recipes.run_plugins import NsysPlugin
+
+if __name__ == "__main__":
+    train_script = run.Script(path="/path/to/train/script.py", entrypoint="python")
+    executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
+
+    plugins = [] # plugins argument expects a list
+    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15, ...)
+    plugins.append(nsys)
+    run.run(train_script, plugins=plugins, executor=executor)
+```
+
+See the [API reference](#bridge.recipes.run_plugins) for a list of available NeMo-Run plugins.
+
 ### Avoiding Hangs
 
 When working with any scripts in Megatron Bridge, please make sure you wrap your code in an `if __name__ == "__main__":`
