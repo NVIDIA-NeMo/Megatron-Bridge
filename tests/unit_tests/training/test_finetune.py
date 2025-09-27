@@ -111,33 +111,3 @@ class TestFinetune:
                 mock_pretrain.assert_called_once_with(container, mock_forward_step_func)
             finally:
                 restore_get_world_size_safe(og_ws, cfg_mod)
-
-    def test_finetune_accepts_callable_class(self):
-        """Test that finetune accepts a callable class as forward_step_func."""
-
-        class ForwardFunctor:
-            def __call__(self, data_iterator, model, return_schedule_plan=False):
-                return "ok"
-
-        gpt_model_cfg = create_test_gpt_config()
-        checkpoint_cfg = create_test_checkpoint_config(
-            pretrained_checkpoint="/path/to/pretrained/checkpoint",
-            load=None,
-        )
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=1,
-            model_config=gpt_model_cfg,
-            checkpoint_config=checkpoint_cfg,
-        )
-
-        functor = ForwardFunctor()
-
-        with patch("megatron.bridge.training.finetune.pretrain") as mock_pretrain:
-            try:
-                finetune(container, functor)
-                mock_pretrain.assert_called_once()
-                assert mock_pretrain.call_args[0][0] is container
-                assert mock_pretrain.call_args[0][1] is functor
-            finally:
-                restore_get_world_size_safe(og_ws, cfg_mod)

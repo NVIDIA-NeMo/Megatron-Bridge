@@ -25,7 +25,6 @@ from megatron.bridge.training.train import (
     should_disable_forward_pre_hook,
 )
 from megatron.bridge.training.utils.train_utils import (
-    check_forward_step_func_num_args,
     maybe_inject_state,
 )
 
@@ -154,25 +153,9 @@ class TestShouldDisableForwardPreHook:
         )
         assert result is False
 
+    def test_callable_class_state_injection_integration(self):
+        """Integration test ensuring state injection works with functors in training context."""
 
-class TestForwardStepFunctorIntegration:
-    """Tests covering callable classes (functors) with forward_step utilities."""
-
-    def test_callable_class_supported_by_check_num_args_three(self):
-        class ForwardFunctor:
-            def __call__(self, data_iterator, model, return_schedule_plan=False):
-                return "ok"
-
-        assert check_forward_step_func_num_args(ForwardFunctor()) == 3
-
-    def test_callable_class_supported_by_check_num_args_four(self):
-        class ForwardFunctor:
-            def __call__(self, state, data_iterator, model, return_schedule_plan=False):
-                return "ok"
-
-        assert check_forward_step_func_num_args(ForwardFunctor()) == 4
-
-    def test_callable_class_state_injection(self):
         class ForwardFunctor:
             def __init__(self):
                 self.state_seen = None

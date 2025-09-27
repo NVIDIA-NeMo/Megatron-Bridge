@@ -25,6 +25,7 @@ from megatron.core.transformer import MegatronModule
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import check_forward_step_func_num_args, maybe_inject_state
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
@@ -32,7 +33,7 @@ from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print
 
 def evaluate(
     state: GlobalState,
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     model: list[MegatronModule],
     process_non_loss_data_func: Optional[Callable],
@@ -177,7 +178,7 @@ def evaluate(
 def evaluate_and_print_results(
     state: GlobalState,
     prefix: str,
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     model: list[MegatronModule],
     config: ConfigContainer,

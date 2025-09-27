@@ -16,7 +16,7 @@ import inspect
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -29,6 +29,7 @@ from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelpe
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
@@ -612,7 +613,9 @@ def report_memory(name: str) -> None:
         print("[Rank {}] {}".format(torch.distributed.get_rank(), string), flush=True)
 
 
-def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_args: Optional[int] = None) -> Callable:
+def maybe_inject_state(
+    forward_step_func: ForwardStepCallable, state: GlobalState, num_fw_args: Optional[int] = None
+) -> ForwardStepCallable:
     """Optionally inject GlobalState into a 4-arg forward_step function.
 
     - If the function has 4 parameters (state, data_iterator, model, return_schedule_plan),
@@ -639,7 +642,7 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
         return forward_step_func
 
 
-def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
+def check_forward_step_func_num_args(forward_step_func: ForwardStepCallable) -> int:
     """Check if the forward step function has a supported number of arguments.
 
     Currently supports 2, 3, or 4 arguments:

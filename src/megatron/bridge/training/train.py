@@ -42,6 +42,7 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -69,7 +70,7 @@ from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 def train(
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
@@ -466,7 +467,7 @@ def train(
 
 
 def train_step(
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     num_fw_args: int,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     model: list[MegatronModule],
