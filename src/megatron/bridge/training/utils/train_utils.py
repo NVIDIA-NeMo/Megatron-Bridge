@@ -309,6 +309,8 @@ def training_log(
     num_zeros_in_grad: Optional[int],
     config: ConfigContainer,
     global_state: GlobalState,
+    callbacks: Optional[list],
+    model,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -341,7 +343,6 @@ def training_log(
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
-
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"
     skipped_iters_key = "skipped iterations"
@@ -417,7 +418,20 @@ def training_log(
 
                 with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
-
+        if callbacks:
+            elapsed_time = timers("interval-time").elapsed()
+            time_per_iteration = elapsed_time / total_iterations
+            for callback in callbacks:
+                callback.track(
+                    iteration=iteration,
+                    writer=writer,
+                    wandb_writer=wandb_writer,
+                    start_time=global_state.start_time,
+                    train_config=train_config,
+                    seq_length=config.dataset.sequence_length,
+                    model=model,
+                    time_per_iteration=time_per_iteration,
+                )
         if wandb_writer:
             wandb_writer.log({"samples vs steps": global_state.train_state.consumed_train_samples}, iteration)
         writer.add_scalar("learning-rate", learning_rate, iteration)
