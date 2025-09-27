@@ -155,12 +155,14 @@ if __name__ == "__main__":
     train_script = run.Script(path="/path/to/pretrain/script.py", entrypoint="python")
 
     # 2) Define an executor for the desired target platform
-    # See NeMo-Run docs for other types of executors
     executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
 
     # 3) Execute
     run.run(train_script, executor=executor)
 ```
+
+NeMo-Run supports launching on several different platforms, including [SLURM clusters](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/guides/execution.html#slurmexecutor).
+For more details, please see the NeMo-Run [documentation](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/guides/execution.html#) for a list of supported platforms, their corresponding executors, and configuration instructions.
 
 You can also forward arguments from the NeMo-Run launch script to the target script:
 
