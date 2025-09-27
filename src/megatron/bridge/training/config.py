@@ -978,6 +978,8 @@ class ConfigContainer(Container):
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
 
         # Run validations
+        _validate_and_sync_distributed_optimizer_settings(self)
+
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
 
@@ -1094,10 +1096,6 @@ class ConfigContainer(Container):
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
 
-        assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
-            "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
-        )
-
         self._sync_and_validate_external_cuda_graph()
 
 
@@ -1134,3 +1132,28 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Validate configuration after all modifications
     cfg.validate()
+
+
+def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:
+    """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
+
+    This function ensures that distributed optimizer settings are consistent across
+    DDP and optimizer configurations. If either setting is enabled, both will be
+    enabled to maintain consistency.
+
+    Args:
+        config: The configuration container to validate and potentially modify.
+    """
+    ddp_setting = config.ddp.use_distributed_optimizer
+    optimizer_setting = config.optimizer.use_distributed_optimizer
+
+    if ddp_setting or optimizer_setting:
+        if ddp_setting != optimizer_setting:
+            print_rank_0(
+                f"Distributed optimizer settings were not in sync: "
+                f"ddp.use_distributed_optimizer={ddp_setting}, "
+                f"optimizer.use_distributed_optimizer={optimizer_setting}. "
+                f"Automatically enabling distributed optimizer for both settings."
+            )
+        config.ddp.use_distributed_optimizer = True
+        config.optimizer.use_distributed_optimizer = True

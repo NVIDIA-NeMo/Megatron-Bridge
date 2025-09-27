@@ -38,6 +38,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TokenizerConfig,
     TrainingConfig,
+    _validate_and_sync_distributed_optimizer_settings,
 )
 
 
@@ -1639,3 +1640,112 @@ class TestSyncAndValidateExternalCudaGraph:
 
         container._sync_and_validate_external_cuda_graph()
         assert container.model.use_te_rng_tracker is True
+
+
+class TestDistributedOptimizerValidation:
+    """Tests for the _validate_and_sync_distributed_optimizer_settings function."""
+
+    @pytest.mark.parametrize(
+        "ddp_setting, optimizer_setting, expected_final_state, should_print_message, expected_message_parts",
+        [
+            # Cases where sync is needed
+            (
+                True,
+                False,
+                True,
+                True,
+                ["ddp.use_distributed_optimizer=True", "optimizer.use_distributed_optimizer=False"],
+            ),
+            (
+                False,
+                True,
+                True,
+                True,
+                ["ddp.use_distributed_optimizer=False", "optimizer.use_distributed_optimizer=True"],
+            ),
+            # Cases where no sync is needed
+            (True, True, True, False, []),
+            (False, False, False, False, []),
+        ],
+    )
+    @patch("megatron.bridge.training.config.print_rank_0")
+    def test_distributed_optimizer_sync_scenarios(
+        self,
+        mock_print_rank_0,
+        ddp_setting,
+        optimizer_setting,
+        expected_final_state,
+        should_print_message,
+        expected_message_parts,
+    ):
+        """Test various distributed optimizer sync scenarios."""
+        gpt_model_cfg = create_test_gpt_config()
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=ddp_setting)
+        optimizer_cfg = create_test_optimizer_config(use_distributed_optimizer=optimizer_setting)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            # Before validation
+            assert container.ddp.use_distributed_optimizer is ddp_setting
+            assert container.optimizer.use_distributed_optimizer is optimizer_setting
+
+            # Call the validation function directly
+            _validate_and_sync_distributed_optimizer_settings(container)
+
+            # After validation - both should match expected final state
+            assert container.ddp.use_distributed_optimizer is expected_final_state
+            assert container.optimizer.use_distributed_optimizer is expected_final_state
+
+            # Check message printing behavior
+            if should_print_message:
+                mock_print_rank_0.assert_called_once()
+                call_args = mock_print_rank_0.call_args[0][0]
+                assert "Distributed optimizer settings were not in sync" in call_args
+                assert "Automatically enabling distributed optimizer for both settings" in call_args
+                for expected_part in expected_message_parts:
+                    assert expected_part in call_args
+            else:
+                mock_print_rank_0.assert_not_called()
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("megatron.bridge.training.config.print_rank_0")
+    def test_integration_with_config_container_validation(self, mock_print_rank_0):
+        """Test that the function is properly called during ConfigContainer.validate()."""
+        gpt_model_cfg = create_test_gpt_config()
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
+        optimizer_cfg = create_test_optimizer_config(use_distributed_optimizer=False)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            # Before validation
+            assert container.ddp.use_distributed_optimizer is True
+            assert container.optimizer.use_distributed_optimizer is False
+
+            # Call container.validate() which should trigger our function
+            container.validate()
+
+            # After validation - both should be True
+            assert container.ddp.use_distributed_optimizer is True
+            assert container.optimizer.use_distributed_optimizer is True
+
+            # Should have printed the sync message
+            mock_print_rank_0.assert_called()
+            call_args = mock_print_rank_0.call_args[0][0]
+            assert "Distributed optimizer settings were not in sync" in call_args
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
