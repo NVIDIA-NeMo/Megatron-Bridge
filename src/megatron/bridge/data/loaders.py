@@ -109,7 +109,7 @@ def cyclic_iter(iter: Iterable) -> Iterator:
 def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, int]:
     """Calculate the number of samples for train, validation, and test sets.
 
-    Determines sample counts based on training mode (iteration-based vs sample-based),
+    Determines sample counts based on training mode either specified iterations or samples,
     global batch size, and evaluation interval/iterations specified in the config.
 
     Args:
