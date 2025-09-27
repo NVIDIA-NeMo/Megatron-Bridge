@@ -535,6 +535,10 @@ def get_model(
     if model_config.fp16 or model_config.bf16:
         model = [Float16Module(model_config, model_module) for model_module in model]
 
+    # Materialize tensors on meta device (GPU allocation) if not using FSDP2 and not using Megatron FSDP.
+    if model_config.init_model_with_meta_device and not use_torch_fsdp2 and not use_megatron_fsdp:
+        model = [_to_empty_if_meta_device(model_module, device=torch.device("cuda")) for model_module in model]
+
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
 
@@ -687,3 +691,29 @@ def _print_num_params(model: list[MegatronModule]) -> None:
             ),
             flush=True,
         )
+
+
+def _to_empty_if_meta_device(module: torch.nn.Module, *, device: torch.device, recurse=True):
+    """Move tensors to device if not meta device; otherwise materialize with empty_like().
+
+    Officially, torch suggests to_empty() for meta device materialization. Under the hood,
+    torch.empty_like() is applied to all parameters or buffers (see _apply). This may
+    accidently overwrite buffers with precomputed values during construction. Given the
+    goal is to only materialize those tensors on meta device, this function checks the
+    device first and only move the tensor to the destination if it is not on meta device.
+
+    Args:
+        module: The target module to apply this transformation.
+        device: The desired device of the parameters
+            and buffers in this module.
+        recurse: Whether parameters and buffers of submodules should
+            be recursively moved to the specified device.
+    """
+
+    def _empty_like_if_meta(tensor: torch.Tensor, *, device: torch.device):
+        if tensor.device == torch.device("meta"):
+            return torch.empty_like(tensor, device=device)
+        else:
+            return tensor.to(device)
+
+    return module._apply(lambda t: _empty_like_if_meta(t, device=device), recurse=recurse)
