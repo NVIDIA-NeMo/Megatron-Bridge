@@ -173,6 +173,8 @@ def apply_args_to_config(config, args):
         config.checkpoint.save = args.save_dir
     if args.save_interval:
         config.checkpoint.save_interval = args.save_interval
+    if args.async_save:
+        config.checkpoint.async_save = args.async_save
 
     # Dataset configuration
     logging.info(f"Configuring dataset: type={args.data}")
@@ -333,6 +335,7 @@ def setup_argument_parser():
     parser.add_argument("--pretrained-checkpoint", type=str, help="Path to pretrained checkpoint")
     parser.add_argument("--save-dir", type=str, help="Directory to save checkpoints")
     parser.add_argument("--save-interval", type=int, help="Number of iterations between checkpoint saves")
+    parser.add_argument("--async-save", action="store_true", help="Enable async checkpoint saving", default=False)
 
     # Data
     parser.add_argument(
