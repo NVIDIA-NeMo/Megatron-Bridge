@@ -773,7 +773,7 @@ def compute_throughputs_and_append_to_progress_log(
         return
 
     # Compute job throughput.
-    # args.num_floating_point_operations_so_far keeps track of floating-point operations
+    # num_floating_point_operations_so_far keeps track of floating-point operations
     # completed at the start of job.
     job_throughput = (num_floating_point_operations_so_far - state.train_state.floating_point_operations_so_far) / (
         (time.time() - state.start_time) * 10**12 * get_world_size_safe()
