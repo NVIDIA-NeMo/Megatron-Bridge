@@ -367,15 +367,17 @@ def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
-def get_mixed_precision_config(name: str) -> MixedPrecisionConfig:
+def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisionConfig:
     """Return a :class:`MixedPrecisionConfig` for *name*.
 
     Args:
-        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES`.
+        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES` or a :class:`MixedPrecisionConfig` instance.
 
     Raises:
         ValueError: If *name* is not a known recipe.
     """
+    if isinstance(name, MixedPrecisionConfig):
+        return name
     try:
         return MIXED_PRECISION_RECIPES[name]()
     except KeyError as err:

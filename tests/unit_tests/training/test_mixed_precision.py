@@ -754,3 +754,11 @@ class TestRegisterAndGetMixedPrecisionConfig:
             get_mixed_precision_config("does_not_exist")
 
         assert "Unknown mixed-precision recipe" in str(exc_info.value)
+
+    def test_get_mixed_precision_config_passthrough(self):
+        """Ensure an existing MixedPrecisionConfig instance is passed through unchanged."""
+        config = MixedPrecisionConfig(fp16=True)
+        result = get_mixed_precision_config(config)
+
+        assert result is config
+        assert result.fp16 is True
