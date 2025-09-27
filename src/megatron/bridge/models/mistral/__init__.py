@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.mistral.mistral_bridge import MistralBridge  # noqa: F401
-from megatron.bridge.models.mistral.mistral_provider import (    
+from megatron.bridge.models.mistral.mistral_provider import (
     MistralModelProvider,
     MistralSmall3ModelProvider24B,
 )

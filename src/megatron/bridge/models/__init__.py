@@ -64,6 +64,10 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaHybridProvider8B,
     NVIDIAMambaProvider8B,
 )
+from megatron.bridge.models.mistral import (
+    MistralModelProvider,
+    MistralSmall3ModelProvider24B,
+)
 from megatron.bridge.models.nemotron import (
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
@@ -112,10 +116,7 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.mistral import (
-    MistralModelProvider,
-    MistralSmall3ModelProvider24B,
-)
+
 
 __all__ = [
     "AutoBridge",

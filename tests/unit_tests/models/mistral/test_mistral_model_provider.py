@@ -15,8 +15,8 @@
 import torch.nn.functional as F
 
 from megatron.bridge.models.mistral import (
-    MistralModelProvider,    
-    MistralSmall3ModelProvider24B,    
+    MistralModelProvider,
+    MistralSmall3ModelProvider24B,
 )
 
 
@@ -172,13 +172,14 @@ class TestMistralSmall3ModelProvider24B:
         assert provider.num_layers == 28
         assert provider.hidden_size == 5120
 
+
 class TestMistralProviderInheritance:
     """Test inheritance relationships between Mistral providers."""
 
     def test_mistral_models_inherit_from_base(self):
         """Test Mistral providers inherit from MistralModelProvider."""
         assert issubclass(MistralModelProvider, MistralModelProvider)
-        assert issubclass(MistralSmall3ModelProvider24B, MistralModelProvider)        
+        assert issubclass(MistralSmall3ModelProvider24B, MistralModelProvider)
 
     def test_provide_method_inherited(self):
         """Test that provide method works correctly in inherited classes."""

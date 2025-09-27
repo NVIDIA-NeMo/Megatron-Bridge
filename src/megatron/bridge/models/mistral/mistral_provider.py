@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import Callable, List
 
 import torch
 import torch.nn.functional as F
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MistralModelProvider(GPTModelProvider):
     """Base model provider for Mistral 7B Model."""
-
 
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu

@@ -147,7 +147,7 @@ def pretrain_config(
         sequence_parallelism=sequence_parallelism,
     )
     model_cfg.seq_length = seq_length
-    
+
     # Add recompute settings for memory optimization
     model_cfg.recompute_granularity = "full"
     model_cfg.recompute_method = "uniform"
@@ -203,7 +203,9 @@ def pretrain_config(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model="mistralai/Mistral-Small-24B-Instruct-2501"),
+        tokenizer=TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer", tokenizer_model="mistralai/Mistral-Small-24B-Instruct-2501"
+        ),
         checkpoint=CheckpointConfig(
             save_interval=500,
             save=checkpoint_dir,

@@ -15,9 +15,9 @@
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.mistral import (    
+from megatron.bridge.models.mistral import (
     MistralModelProvider,
-    MistralSmall3ModelProvider24B,    
+    MistralSmall3ModelProvider24B,
 )
 from tests.functional_tests.utils import compare_provider_configs
 
@@ -26,7 +26,7 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     # Mistral models
     "mistralai/Mistral-7B-Instruct-v0.3": MistralModelProvider,
     # Mistral Small3 24B models
-    "mistralai/Mistral-Small-24B-Instruct-2501": MistralSmall3ModelProvider24B,    
+    "mistralai/Mistral-Small-24B-Instruct-2501": MistralSmall3ModelProvider24B,
 }
 
 

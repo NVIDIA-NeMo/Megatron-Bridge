@@ -26,6 +26,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mistral.mistral_bridge import MistralBridge
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 
+
 class TestMegatronMistralBridge:
     """Test cases for MegatronMistralBridge class."""
 
@@ -450,4 +451,3 @@ class TestAutoBridgeIntegration:
         # Since we're testing in isolation, we'll skip this test
         # In a real environment, this would work if the bridges are registered
         pass  # Skip for now as it requires full dispatch setup
-

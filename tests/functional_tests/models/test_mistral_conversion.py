@@ -20,6 +20,7 @@ import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
+
 HF_MISTRAL_TOY_MODEL_CONFIG = {
     "architectures": ["MistralForCausalLM"],
     "attention_dropout": 0.0,
