@@ -196,9 +196,13 @@ class ForwardStepFunctor(Protocol):
     forward step logic that benefits from object-oriented design.
 
     The __call__ method must match one of the supported signatures:
-    - 2 args: (data_iterator, model)
-    - 3 args: (data_iterator, model, return_schedule_plan=False)
-    - 4 args: (state, data_iterator, model, return_schedule_plan=False)
+    - (data_iterator, model)
+    - (data_iterator, model, return_schedule_plan=False)
+             OR (state: GlobalState, data_iterator, model)
+    - (state: GlobalState, data_iterator, model, return_schedule_plan=False)
+
+    RECOMMENDED: Use GlobalState type hint for automatic state injection and full access
+    to configuration, timers, and training state.
 
     Examples:
         >>> class MyForwardFunctor:
@@ -206,13 +210,16 @@ class ForwardStepFunctor(Protocol):
         ...         self.loss_scale = loss_scale
         ...         self.call_count = 0
         ...
-        ...     def __call__(self, state, data_iterator, model, return_schedule_plan=False):
+        ...     def __call__(self, state: GlobalState, data_iterator, model, return_schedule_plan=False):
         ...         self.call_count += 1
+        ...         # Access training infrastructure
+        ...         timers = state.timers
+        ...         config = state.cfg
         ...         # ... forward step logic ...
         ...         return output_tensor, loss_function
         ...
         >>> functor = MyForwardFunctor(loss_scale=2.0)
-        >>> pretrain(config, functor)
+        >>> pretrain(config, functor)  # State injection is automatic!
     """
 
     @overload
