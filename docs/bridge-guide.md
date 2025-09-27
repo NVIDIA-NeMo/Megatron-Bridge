@@ -17,6 +17,27 @@ See the repository `README.md` for installation, supported models, and project h
 
 The easiest way to load a 🤗 Hugging Face model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge for conversion. You can then use `AutoBridge.to_megatron_model()` to initialize the Megatron model from the 🤗 Hugging Face configuration and load 🤗 Hugging Face weights at the same time.
 
+### Accessing Gated 🤗 Hugging Face Models
+
+Some models in Megatron Bridge require access to gated repositories on Hugging Face. These are models that require explicit permission from the model authors before you can download or use them.
+
+If you encounter an error like this when trying to use a model:
+
+```
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at <URL>
+```
+
+Follow these steps to resolve the issue:
+
+1. **Request access**: Visit the URL provided in the error message and request access to the gated model
+2. **Generate a token**: Create a Hugging Face access token by following [this tutorial](https://huggingface.co/docs/hub/en/security-tokens#how-to-manage-user-access-tokens)
+3. **Set the environment variable**: Export your token in your environment:
+
+```bash
+export HF_TOKEN=<your_access_token>
+```
+
 ### Basic Usage
 
 ```python
