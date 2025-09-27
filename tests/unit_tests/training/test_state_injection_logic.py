@@ -278,7 +278,7 @@ class TestEdgeCases:
     def test_wrong_parameter_name_no_injection(self):
         """Test that wrong parameter name with no type hints doesn't inject."""
 
-        def forward_step(global_state, data_iterator, model):  # Wrong name
+        def forward_step(wrong_name, data_iterator, model):  # Wrong name
             return "should not inject"
 
         mock_state = Mock()

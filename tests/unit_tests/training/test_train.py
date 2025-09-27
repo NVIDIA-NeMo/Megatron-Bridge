@@ -165,7 +165,7 @@ class TestShouldDisableForwardPreHook:
         mock_state = Mock()
         functor = ForwardFunctor()
 
-        wrapped = maybe_inject_state(functor, mock_state, num_fw_args=4)
+        wrapped = maybe_inject_state(functor, mock_state)
         assert callable(wrapped)
 
         data_iterator = Mock()
