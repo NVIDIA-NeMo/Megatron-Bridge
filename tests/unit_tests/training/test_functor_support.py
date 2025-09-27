@@ -19,15 +19,14 @@ from functools import partial
 from typing import Iterable, Optional
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 import torch
 from megatron.core.models.gpt import GPTModel
 
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
-    check_forward_step_func_num_args,
     maybe_inject_state,
+    needs_global_state_injection,
 )
 from tests.unit_tests.training.test_config import (
     create_test_checkpoint_config,
@@ -129,26 +128,26 @@ class StatefulForwardFunctor:
         return sum(self.loss_history) / len(self.loss_history)
 
 
-class TestFunctorArgumentInspection:
-    """Test that functors are correctly inspected for argument counts."""
+class TestFunctorStateInjectionDetection:
+    """Test that functors are correctly inspected for state injection needs."""
 
     def test_two_arg_functor_inspection(self):
-        """Test that 2-arg functor is correctly identified."""
+        """Test that 2-arg functor doesn't need state injection."""
         functor = TwoArgForwardFunctor()
-        num_args = check_forward_step_func_num_args(functor)
-        assert num_args == 2
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is False  # No state parameter
 
     def test_three_arg_functor_inspection(self):
-        """Test that 3-arg functor is correctly identified."""
+        """Test that 3-arg functor without state doesn't need injection."""
         functor = ThreeArgForwardFunctor()
-        num_args = check_forward_step_func_num_args(functor)
-        assert num_args == 3
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is False  # No state parameter
 
     def test_four_arg_functor_inspection(self):
-        """Test that 4-arg functor is correctly identified."""
+        """Test that 4-arg functor with state needs injection."""
         functor = FourArgForwardFunctor()
-        num_args = check_forward_step_func_num_args(functor)
-        assert num_args == 4
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is True  # Has 'state' parameter name
 
     def test_functor_signature_inspection_works(self):
         """Test that inspect.signature works correctly on functors."""
@@ -310,32 +309,30 @@ class TestFunctorWithPretrain:
         assert functor.initial_loss == 2.0
 
 
-class TestFunctorErrorHandling:
-    """Test error handling for invalid functors."""
+class TestFunctorStateDetectionEdgeCases:
+    """Test edge cases in functor state detection."""
 
-    def test_invalid_functor_arg_count_raises_error(self):
-        """Test that functors with invalid argument counts raise errors."""
+    def test_functor_with_typed_state_parameter(self):
+        """Test that functors with GlobalState type hints are detected correctly."""
 
-        class InvalidFunctor:
-            def __call__(self, single_arg):
-                return "invalid"
+        class TypedStateFunctor:
+            def __call__(self, state: GlobalState, data_iterator, model):
+                return "typed state"
 
-        functor = InvalidFunctor()
+        functor = TypedStateFunctor()
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is True  # Has GlobalState type hint
 
-        with pytest.raises(AssertionError, match="forward_step_func has 1 arguments"):
-            check_forward_step_func_num_args(functor)
+    def test_functor_with_mixed_parameters(self):
+        """Test functor with mixed typed and untyped parameters."""
 
-    def test_five_arg_functor_raises_error(self):
-        """Test that functors with too many arguments raise errors."""
+        class MixedFunctor:
+            def __call__(self, data_iterator, state: GlobalState, model):
+                return "mixed"
 
-        class TooManyArgsFunctor:
-            def __call__(self, a, b, c, d, e):
-                return "too many"
-
-        functor = TooManyArgsFunctor()
-
-        with pytest.raises(AssertionError, match="forward_step_func has 5 arguments"):
-            check_forward_step_func_num_args(functor)
+        functor = MixedFunctor()
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is True  # Has GlobalState type hint (not first param)
 
 
 class TestFunctorVsFunctionEquivalence:
@@ -361,18 +358,18 @@ class TestFunctorVsFunctionEquivalence:
         assert wrapped_function.args == (mock_state,)
         assert wrapped_functor.args == (mock_state,)
 
-    def test_functor_vs_function_arg_inspection(self):
-        """Test that functors and functions are inspected the same way."""
+    def test_functor_vs_function_state_detection(self):
+        """Test that functors and functions are inspected the same way for state injection."""
 
         def three_arg_function(data_iterator, model, return_schedule_plan=False):
             return torch.tensor([1.0]), partial(lambda x: x)
 
         functor = ThreeArgForwardFunctor()
 
-        func_args = check_forward_step_func_num_args(three_arg_function)
-        functor_args = check_forward_step_func_num_args(functor)
+        func_needs_injection = needs_global_state_injection(three_arg_function)
+        functor_needs_injection = needs_global_state_injection(functor)
 
-        assert func_args == functor_args == 3
+        assert func_needs_injection == functor_needs_injection == False  # Neither has state
 
 
 class TestComplexFunctorScenarios:
@@ -403,8 +400,8 @@ class TestComplexFunctorScenarios:
                 return torch.tensor([0.5]), partial(lambda x: x * 0.5)
 
         functor = DerivedFunctor()
-        num_args = check_forward_step_func_num_args(functor)
-        assert num_args == 4
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is True
 
         # Test that inheritance works
         mock_state = Mock()
@@ -441,8 +438,8 @@ class TestComplexFunctorScenarios:
                 return torch.tensor([1.0]), partial(lambda x: x)
 
         functor = DecoratedFunctor()
-        num_args = check_forward_step_func_num_args(functor)
-        assert num_args == 4
+        needs_injection = needs_global_state_injection(functor)
+        assert needs_injection is True
 
         # Test that decorator works
         mock_state = Mock()
