@@ -4,7 +4,20 @@ Thanks for your interest in contributing to Megatron-Bridge!
 
 ## 🛠️ Setting Up Your Environment
 
+You can either follow the steps below to set up the environment from scratch, or use the [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags), which provides a pre-built environment and makes these steps unnecessary.
+
 ### Local workstation
+
+#### Installing Cuda Toolkit
+
+Please see these [instructions](https://developer.nvidia.com/cudnn-downloads) for installing cuDNN for your target platform. You can check if CUDA toolkit and cuDNN are installed with:
+
+```bash
+dpkg -l | grep 'cuda-toolkit'
+dpkg -l | grep 'cudnn.*cuda'
+```
+
+#### Syncing the Python environment
 
 Megatron-Bridge uses [uv](https://docs.astral.sh/uv/) for package management.
 
@@ -13,12 +26,6 @@ You can configure uv with the following commands:
 ```bash
 uv sync --only-group build  # Installs build dependencies required by TransformerEngine
 uv sync
-```
-
-On a machine with CUDA, you can additionally sync TE:
-
-```bash
-uv sync --extra te
 ```
 
 ### Alternative: Development Container
@@ -163,3 +170,41 @@ Quality documentation is essential for both the usability of Megatron-Bridge and
       maintained indefinitely and may be redistributed consistent with
       this project or the open source license(s) involved.
   ```
+
+## 🚀 Running GitHub CI
+
+There are two ways to trigger CI tests on your pull request:
+
+### Automatic CI Triggering
+
+If your GitHub user is configured to use [signed commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification), CI tests will run automatically when you push commits to your pull request.
+
+> **Note**: Signed commits are different from signing-off on commits (which uses the `-s` flag mentioned in the [Signing Your Work](#signing-your-work) section).
+
+### Manual CI Triggering
+
+If you don't have signed commits set up, you can still trigger CI tests manually by commenting on your pull request:
+
+```
+/ok to test <commit-SHA>
+```
+
+For example:
+
+```
+/ok to test a1b2c3d4e5f6
+```
+
+**Important**: You'll need to add this comment for each new commit you push to ensure CI tests run on the latest changes.
+
+#### Finding Your Commit SHA
+
+You can find the commit SHA in several ways:
+
+- View your pull request's commit history on GitHub
+- Run `git log --oneline -1` in your local repository
+- Check the commit details in your Git client
+
+## Contributing Models
+
+Please see our [documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html) for a detailed guide on contributing new models.
