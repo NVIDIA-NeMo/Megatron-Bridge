@@ -2,6 +2,8 @@
 
 The {py:class}`bridge.training.config.CheckpointConfig` controls model checkpointing behavior, including saving and loading checkpoints, checkpoint formats, and various optimization features.
 
+> **Note**: This documentation covers **Megatron-format checkpoints** used during training. For converting between 🤗 Hugging Face and Megatron formats, see the {doc}`bridge-guide`.
+
 ## Overview
 
 Megatron Bridge uses Megatron Core's distributed checkpointing system, which is designed for large-scale training across multiple GPUs and nodes. The distributed checkpoint approach saves the state of a distributed training job by sharding checkpoint data across multiple files, reducing memory overhead and improving GPU utilization during save/load operations.
@@ -26,7 +28,7 @@ Megatron Bridge uses Megatron Core's distributed checkpointing system, which is 
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `save` | `Optional[str]` | `None` | Output directory to save checkpoints to |
+| `save` | `Optional[str]` | `None` | Output directory to save checkpoints to **in Megatron format** |
 | `save_interval` | `Optional[int]` | `None` | Number of iterations between persistent checkpoint saves |
 | `save_optim` | `bool` | `True` | Whether to save optimizer state |
 | `save_rng` | `bool` | `True` | Whether to save random number generator state |
@@ -43,7 +45,7 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `load` | `Optional[str]` | `None` | Directory containing a model checkpoint to load |
+| `load` | `Optional[str]` | `None` | Directory containing a model checkpoint to load **in Megatron format** |
 | `load_optim` | `bool` | `True` | Whether to load optimizer state from checkpoint |
 | `load_rng` | `bool` | `True` | Whether to load random number generator state from checkpoint |
 | `load_main_params_from_ckpt` | `bool` | `False` | Load main parameters from checkpoint (use with `load_optim=False`) |
@@ -68,7 +70,7 @@ When loading distributed checkpoints, there may be mismatches between the keys i
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `pretrained_checkpoint` | `Optional[str]` | `None` | Directory containing pretrained model checkpoint for fine-tuning |
+| `pretrained_checkpoint` | `Optional[str]` | `None` | Directory containing pretrained model checkpoint **in Megatron format** for fine-tuning |
 
 ## Checkpoint Format
 
