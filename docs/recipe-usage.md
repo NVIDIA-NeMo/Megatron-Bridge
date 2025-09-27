@@ -40,7 +40,7 @@ small_llama = Llama3ModelProvider(
     num_layers=2,
     hidden_size=768,
     ffn_hidden_size=2688,
-    num_attention_heads=16
+    num_attention_heads=16,
 )
 cfg.model = small_llama
 ```
