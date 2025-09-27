@@ -119,15 +119,13 @@ def get_train_valid_test_num_samples(cfg: ConfigContainer) -> tuple[int, int, in
         A tuple (train_samples, valid_samples, test_samples).
     """
 
-    # Number of train samples - support both training modes
+    # If train_samples is directly provided, use it
     if cfg.train.train_samples is not None:
-        # Sample-based training - use direct sample count
         train_samples = cfg.train.train_samples
     else:
-        # Iteration-based training - calculate from iterations
+        # Otherwise fallback to calculating samples based on iterations and global batch size
         train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
-    # Validation and test samples calculation (unchanged logic)
     eval_iters = (cfg.train.train_iters // cfg.train.eval_interval + 1) * cfg.train.eval_iters
     test_iters = cfg.train.eval_iters
 
@@ -156,15 +154,6 @@ def build_train_valid_test_datasets(
     print_rank_0("    train:      {}".format(train_valid_test_num_samples[0]))
     print_rank_0("    validation: {}".format(train_valid_test_num_samples[1]))
     print_rank_0("    test:       {}".format(train_valid_test_num_samples[2]))
-
-    # Show training mode information
-    if cfg.train.train_samples is not None:
-        print_rank_0(
-            f" > Training mode: sample-based ({cfg.train.train_samples} samples -> {cfg.train.train_iters} iterations)"
-        )
-    else:
-        print_rank_0(f" > Training mode: iteration-based ({cfg.train.train_iters} iterations)")
-
     return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset)
 
 
@@ -187,22 +176,6 @@ def build_train_valid_test_data_loaders(
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
-
-    # Backward compatibility for very old checkpoints that didn't track sample counts
-    if train_state.step > 0 and train_state.consumed_train_samples == 0:
-        # Only support iteration-based training for backward compatibility
-        assert cfg.train.train_samples is None, "Backward compatibility only supported for iteration-based training"
-        train_state.consumed_train_samples = train_state.step * cfg.train.global_batch_size
-        print_rank_0(f"Backward compatibility: Setting consumed_train_samples to {train_state.consumed_train_samples}")
-
-    if train_state.step > 0 and train_state.consumed_valid_samples == 0:
-        if cfg.train.train_samples is None:  # iteration-based only
-            train_state.consumed_valid_samples = (
-                (train_state.step // cfg.train.eval_interval) * cfg.train.eval_iters * cfg.train.global_batch_size
-            )
-            print_rank_0(
-                f"Backward compatibility: Setting consumed_valid_samples to {train_state.consumed_valid_samples}"
-            )
 
     # Construct the data pipeline
     # Build datasets.
