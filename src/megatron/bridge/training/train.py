@@ -1046,7 +1046,7 @@ def _should_skip_and_handle_iteration(
         bool: True if the iteration was skipped, False otherwise
     """
     cfg = global_state.cfg
-    if global_state.train_state.step not in cfg.checkpoint.iterations_to_skip:
+    if global_state.train_state.step not in cfg.train.iterations_to_skip:
         return False
 
     # Perform dummy train step to fast forward train_data_iterator

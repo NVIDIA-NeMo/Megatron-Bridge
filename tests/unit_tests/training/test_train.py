@@ -800,7 +800,7 @@ class TestIterationSkipping:
         mock_state.train_state.skipped_train_samples = 0
 
         # Mock configuration
-        mock_state.cfg.checkpoint.iterations_to_skip = iterations_to_skip or []
+        mock_state.cfg.train.iterations_to_skip = iterations_to_skip or []
         mock_state.cfg.train.micro_batch_size = micro_batch_size
 
         return mock_state

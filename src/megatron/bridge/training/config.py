@@ -526,6 +526,9 @@ class TrainingConfig:
     disable garbage collection at the start and the end of each evaluation run.
     """
 
+    iterations_to_skip: list[int] = field(default_factory=list)
+    """List of iterations to skip during training, empty by default."""
+
     # ---------------- Validation config. ----------------
 
     eval_iters: int = 100
@@ -683,9 +686,6 @@ class CheckpointConfig:
 
     replication_factor: int = 2
     """Number of machines storing the replica of a given rank's data."""
-
-    iterations_to_skip: list[int] = field(default_factory=list)
-    """List of iterations to skip during training, empty by default."""
 
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
