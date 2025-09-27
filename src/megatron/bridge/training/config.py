@@ -1149,7 +1149,7 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
 
     if ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
-            print_rank_0(
+            warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "
                 f"ddp.use_distributed_optimizer={ddp_setting}, "
                 f"optimizer.use_distributed_optimizer={optimizer_setting}. "
