@@ -11,16 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass
+from typing import Any, Optional, Tuple
+from unittest.mock import MagicMock
 
+import pytest
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 
 from megatron.bridge.data.utils import (
     finetuning_train_valid_test_datasets_provider,
+    get_dataset_provider,
     pretrain_train_valid_test_datasets_provider,
 )
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.training.config import (
+    DatasetBuildContext,
+    DatasetProvider,
+    FinetuningDatasetConfig,
+)
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 
 
 class TestDataUtils:
@@ -94,3 +103,82 @@ class TestDataUtils:
 
         assert (valid_ds, test_ds) != (None, None)
         assert train_ds.max_seq_length == 8192
+
+
+class TestProtocolAdapterBehavior:
+    """Test the behavior of the protocol adapter function."""
+
+    def test_adapter_preserves_legacy_signature(self):
+        """Test that the protocol adapter maintains the legacy function signature."""
+
+        @dataclass
+        class TestProvider(DatasetProvider):
+            seq_length: int = 512
+
+            def build_datasets(
+                self, context: DatasetBuildContext
+            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                # Return mock datasets with context information
+                train_ds = MagicMock()
+                train_ds.context_info = {"train_samples": context.train_samples, "tokenizer": context.tokenizer}
+                return train_ds, None, None
+
+        provider_config = TestProvider()
+        adapter_func = get_dataset_provider(provider_config)
+
+        # Test legacy call pattern: (samples_list, config, tokenizer=None)
+        tokenizer = MagicMock(spec=MegatronTokenizer)
+        samples = [1000, 100, 50]
+
+        # Call with positional args
+        result1 = adapter_func(samples, provider_config, tokenizer)
+
+        # Call with keyword args
+        result2 = adapter_func(samples, provider_config, tokenizer=tokenizer)
+
+        # Both should work and produce same results
+        assert result1[0].context_info["train_samples"] == 1000
+        assert result1[0].context_info["tokenizer"] is tokenizer
+        assert result2[0].context_info["train_samples"] == 1000
+        assert result2[0].context_info["tokenizer"] is tokenizer
+
+    def test_adapter_handles_missing_tokenizer(self):
+        """Test that adapter handles cases where tokenizer is not provided."""
+
+        @dataclass
+        class TestProvider(DatasetProvider):
+            seq_length: int = 512
+
+            def build_datasets(
+                self, context: DatasetBuildContext
+            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                train_ds = MagicMock()
+                train_ds.has_tokenizer = context.tokenizer is not None
+                return train_ds, None, None
+
+        provider_config = TestProvider()
+        adapter_func = get_dataset_provider(provider_config)
+
+        # Call without tokenizer
+        samples = [1000, 100, 50]
+        result = adapter_func(samples, provider_config)
+
+        assert result[0].has_tokenizer is False
+
+    def test_adapter_error_handling(self):
+        """Test that adapter properly propagates errors from build_datasets."""
+
+        @dataclass
+        class ErrorProvider(DatasetProvider):
+            seq_length: int = 512
+
+            def build_datasets(
+                self, context: DatasetBuildContext
+            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                raise ValueError("Custom dataset error")
+
+        provider_config = ErrorProvider()
+        adapter_func = get_dataset_provider(provider_config)
+
+        with pytest.raises(ValueError, match="Custom dataset error"):
+            adapter_func([1000, 100, 50], provider_config)
