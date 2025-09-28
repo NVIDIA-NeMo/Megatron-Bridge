@@ -58,6 +58,7 @@ def run_pretrain_recipe_test(
         config.train.train_iters = 10
         config.train.eval_interval = 5
         config.train.eval_iters = 2
+        config.scheduler.lr_warmup_iters = 2
         test_seq_length = 512
         config.model.seq_length = test_seq_length
         config.dataset.sequence_length = test_seq_length

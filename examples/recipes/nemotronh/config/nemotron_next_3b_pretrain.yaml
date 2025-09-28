@@ -27,7 +27,6 @@ train:
 
 model:
   pipeline_model_parallel_size: 2
-  tensor_model_parallel_size: 4
 
 scheduler:
   lr_warmup_iters: 32000 # 1024000 // 32
