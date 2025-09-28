@@ -16,58 +16,59 @@ import os
 from typing import List, Optional, Union
 
 import torch
+from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.qwen import Qwen3ModelProvider600M
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
-    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
 
-def model_config(
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
-) -> Qwen3ModelProvider600M:
-    """
-    Configure the Qwen3 600M model.
-
-    Args:
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-
-    Returns:
-        Qwen3ModelProvider600M: Configuration for the Qwen3 600M model.
-    """
-    return Qwen3ModelProvider600M(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-    )
+def qwen3_30b_a3b_pretrain(**user_kwargs):
+    recommended_kwargs = {
+        "hf_path": "Qwen/Qwen3-30B-A3B",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 2,
+        "pipeline_parallelism_dtype": torch.bfloat16,
+        "expert_parallelism": 4,
+        "sequence_parallelism": True,
+        "enable_recompute": True,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs = recommended_kwargs | user_kwargs
+    return _qwen3_moe_common(**combined_kwargs)
 
 
-def pretrain_config(
+def qwen3_235b_a22b_pretrain(**user_kwargs):
+    recommended_kwargs = {
+        "hf_path": "Qwen/Qwen3-235B-A22B",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 16,
+        "pipeline_parallelism_dtype": torch.bfloat16,
+        "context_parallelism": 2,
+        "expert_parallelism": 8,
+        "sequence_parallelism": True,
+        "micro_batch_size": 1,
+        "account_for_embedding_in_pipeline_split": True,
+        "account_for_loss_in_pipeline_split": True,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs = recommended_kwargs | user_kwargs
+    return _qwen3_moe_common(**combined_kwargs)
+
+
+def _qwen3_moe_common(
+    hf_path: str,
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -79,13 +80,18 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
+    tensor_parallelism: int = 4,
+    pipeline_parallelism: int = 2,
+    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    expert_parallelism: Optional[int] = 4,
+    expert_tensor_parallelism: int = 1,
+    sequence_parallelism: bool = True,
     use_megatron_fsdp: bool = False,
+    enable_recompute: bool = False,
+    account_for_embedding_in_pipeline_split: bool = False,
+    account_for_loss_in_pipeline_split: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
     global_batch_size: int = 32,
@@ -99,9 +105,10 @@ def pretrain_config(
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for Qwen3 600M model.
+    Create a pre-training configuration for Qwen3 MoE models using a given HuggingFace path.
 
     Args:
+        hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B").
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
@@ -116,8 +123,13 @@ def pretrain_config(
         pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
         virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism to be passed to model_config.
+        expert_parallelism (Optional[int]): Degree of expert parallelism for MoE.
+        expert_tensor_parallelism (int): Expert tensor parallelism for MoE.
         sequence_parallelism (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
+        enable_recompute (bool): Whether to enable recompute for memory optimization.
+        account_for_embedding_in_pipeline_split (bool): Whether to account for embedding in pipeline split.
+        account_for_loss_in_pipeline_split (bool): Whether to account for loss in pipeline split.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
@@ -126,6 +138,7 @@ def pretrain_config(
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
+        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -139,14 +152,28 @@ def pretrain_config(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
 
-    model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
-    )
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_parallelism
+    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
+    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    model_cfg.context_parallel_size = context_parallelism
+    model_cfg.expert_model_parallel_size = expert_parallelism
+    model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
+    model_cfg.sequence_parallel = sequence_parallelism
+    
+    # MoE-specific pipeline split configurations
+    if account_for_embedding_in_pipeline_split:
+        model_cfg.account_for_embedding_in_pipeline_split = True
+    if account_for_loss_in_pipeline_split:
+        model_cfg.account_for_loss_in_pipeline_split = True
+    
+    # Add recompute settings for memory optimization (used by some MoE models)
+    if enable_recompute:
+        model_cfg.recompute_granularity = "full"
+        model_cfg.recompute_method = "uniform"
+        model_cfg.recompute_num_layers = 1
     model_cfg.seq_length = seq_length
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -155,6 +182,11 @@ def pretrain_config(
         max_lr=lr,
         min_lr=min_lr,
     )
+
+    if precision_config is None:
+        precision_config = bf16_mixed()
+    if isinstance(precision_config, MixedPrecisionConfig):
+        precision_config.grad_reduce_in_fp32 = False
 
     # Config Container
     cfg = ConfigContainer(
@@ -201,7 +233,7 @@ def pretrain_config(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_path),
         checkpoint=CheckpointConfig(
             save_interval=500,
             save=checkpoint_dir,
