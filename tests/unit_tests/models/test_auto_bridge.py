@@ -888,7 +888,6 @@ class TestAutoBridge:
 
     def test_load_megatron_model_with_mp_overrides(self):
         """Test load_megatron_model with model-parallel overrides argument."""
-        from megatron.core.transformer.transformer_config import TransformerConfig
 
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_config = Mock(spec=PretrainedConfig)
