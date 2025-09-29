@@ -55,12 +55,12 @@ ConfigContainer:
 
 perf_matrix:
   h100:
-    num_gpus_1024:
+    num_gpus_512:
       common:
         num_gpus_per_node: 8
         seq_length: 8192
         mbs: 1
-        gbs: 512
+        gbs: 256
         cuda_graphs: false
         tp: 8
         pp: 8
