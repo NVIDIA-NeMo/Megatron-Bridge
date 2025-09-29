@@ -155,6 +155,10 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         # Create messages with image and text
         messages = [
             {
+                "role": "system",
+                "content": "/no_think",
+            },
+            {
                 "role": "user",
                 "content": [
                     {"type": "image", "image": image_path},
@@ -211,14 +215,14 @@ def process_inputs_megatron(image_path: Optional[str], prompt: str, hf_model_pat
     )
 
     # Basic system prompt – keep simple.
-    system_prompt = "You are a helpful assistant."
+    system_prompt = "/no_think"
 
     messages = []
     if image_path:
-        # messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": "<image>\n" + prompt})
+        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": "<image>" + prompt})
     else:
-        # messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
     # Tokenize conversation (wrapper expects list[dict])
