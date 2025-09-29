@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 
+import torch
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
@@ -172,6 +173,8 @@ def main():
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
     main()
