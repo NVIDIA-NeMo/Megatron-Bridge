@@ -492,7 +492,14 @@ def _load_megatron_model(args):
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(
-            args.megatron_model_path, override_provider=model_provider, wrap_with_ddp=False
+            args.megatron_model_path,
+            mp_overrides={
+                "tensor_model_parallel_size": tp,
+                "pipeline_model_parallel_size": pp,
+                "expert_model_parallel_size": ep,
+                "expert_tensor_parallel_size": etp,
+            },
+            wrap_with_ddp=False,
         )
     else:
         # Convert from HF to Megatron

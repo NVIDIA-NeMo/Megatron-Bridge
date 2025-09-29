@@ -429,6 +429,24 @@ class GetModelKwargs(TypedDict, total=False):
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
 
 
+class ModelParallelKwargs(TypedDict, total=False):
+    """Model-parallel override kwargs.
+
+    Attributes map to `TransformerConfig`/provider fields that control parallelism.
+    Only provided values are applied as overrides.
+    """
+
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    context_parallel_size: int
+    expert_model_parallel_size: int
+    expert_tensor_parallel_size: int
+    moe_extended_tp: bool
+    sequence_parallel: bool
+    virtual_pipeline_model_parallel_size: int | None
+    hierarchical_context_parallel_sizes: list[int] | None
+
+
 def get_model(
     model_provider: ModelProviderMixin,
     ddp_config: DistributedDataParallelConfig,

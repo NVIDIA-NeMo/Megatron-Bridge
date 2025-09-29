@@ -35,7 +35,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
@@ -477,7 +477,7 @@ class AutoBridge(Generic[MegatronModelT]):
         save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
 
     def load_megatron_model(
-        self, path: str | Path, override_provider: TransformerConfig = None, **kwargs: Unpack[GetModelKwargs]
+        self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
     ) -> list[MegatronModelT]:
         """
         Load a Megatron model from a native Megatron checkpoint.
@@ -488,8 +488,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: Directory path where the Megatron checkpoint is stored
-            override_provider: If provided, use this model config instead of loading from checkpoint.
-                                  Must be a TransformerConfig instance. Default: None.
+            mp_overrides: Optional model-parallel overrides to apply to the loaded config.
             **kwargs: Additional arguments passed to the model provider
 
         Returns:
@@ -539,7 +538,7 @@ class AutoBridge(Generic[MegatronModelT]):
             str(checkpoint_path),
             use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
             skip_temp_dist_context=skip_temp_dist_context,
-            override_provider=override_provider,
+            mp_overrides=mp_overrides,
         )
         return model if isinstance(model, list) else [model]
 
