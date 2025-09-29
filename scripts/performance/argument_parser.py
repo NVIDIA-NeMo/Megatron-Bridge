@@ -51,7 +51,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200"],
+        choices=["h100", "b200", "gb200", "gb300"],
         help="Target gpu type.",
         required=True,
     )
@@ -230,6 +230,13 @@ def parse_cli_args():
         type=bool_arg,
         required=False,
         default=None,
+    )
+
+    parser.add_argument(
+        "-pgm",
+        "--profiling_gpu_metrics",
+        help="Enable nsys gpu metrics. Disabled by default.",
+        action="store_true",
     )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
