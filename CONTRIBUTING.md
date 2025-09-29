@@ -204,3 +204,7 @@ You can find the commit SHA in several ways:
 - View your pull request's commit history on GitHub
 - Run `git log --oneline -1` in your local repository
 - Check the commit details in your Git client
+
+## Contributing Models
+
+Please see our [documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html) for a detailed guide on contributing new models.

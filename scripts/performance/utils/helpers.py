@@ -44,7 +44,7 @@ COMM_OVERLAP_CONFIG_MAP = {
         },
         "gb200": {
             "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
-            "fp8": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
         },
     },
     "llama31_405b": {
@@ -62,6 +62,31 @@ COMM_OVERLAP_CONFIG_MAP = {
         },
     },
 }
+
+
+def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
+    """Set the mcore fsdp overrides from the performance matrix."""
+    use_megatron_fsdp = perf_overrides.get("use_megatron_fsdp", False)
+    if use_megatron_fsdp:
+        recipe.ddp.use_megatron_fsdp = True
+        recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        recipe.ddp.keep_fp8_transpose_cache = False
+        # average_in_collective is not supported with Megatron FSDP
+        recipe.ddp.average_in_collective = False
+
+        recipe.model.init_model_with_meta_device = True
+        recipe.model.gradient_accumulation_fusion = True
+
+        if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
+            if recipe.comm_overlap.defer_embedding_wgrad_compute:
+                logger.warning(
+                    "Disabling deferring embedding wgrad compute because it cannot work with FSDP together."
+                )
+                recipe.comm_overlap.defer_embedding_wgrad_compute = False
+
+        if recipe.optimizer.use_precision_aware_optimizer:
+            recipe.optimizer.use_precision_aware_optimizer = False
+            logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
 
 def get_precision_config(compute_dtype: str, fp8_recipe: str):
@@ -99,15 +124,15 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the recompute num layers overrides from the performance matrix."""
     recompute_num_layers = perf_overrides.get("recompute_num_layers", None)
     if recompute_num_layers is not None:
-        recipe.model.config.recompute_granularity = "full"
-        recipe.model.config.recompute_method = "block"
-        recipe.model.config.recompute_num_layers = recompute_num_layers
+        recipe.model.recompute_granularity = "full"
+        recipe.model.recompute_method = "block"
+        recipe.model.recompute_num_layers = recompute_num_layers
 
     cpu_offloading_num_layers = perf_overrides.get("cpu_offloading_num_layers", 0)
     if cpu_offloading_num_layers > 0:
-        recipe.model.config.cpu_offloading = True
-        recipe.model.config.cpu_offloading_weights = False
-        recipe.model.config.cpu_offloading_num_layers = activation_offload_layers
+        recipe.model.cpu_offloading = True
+        recipe.model.cpu_offloading_weights = False
+        recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
@@ -137,7 +162,7 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     recipe.model.expert_model_parallel_size = perf_overrides.get("ep", 1)
     recipe.model.expert_tensor_parallel_size = perf_overrides.get("etp", None)
 
-    recipe.ddp.use_megatron_fsdp = perf_overrides.get("fsdp", False)
+    set_megatron_fsdp_overrides(recipe, perf_overrides)
     set_cuda_graph_overrides(recipe, perf_overrides)
     set_recompute_overrides(recipe, perf_overrides)
 

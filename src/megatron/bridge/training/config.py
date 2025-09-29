@@ -995,10 +995,6 @@ class ConfigContainer(Container):
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
 
-            if self.model.gradient_accumulation_fusion:
-                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-                self.model.gradient_accumulation_fusion = False
-
             if self.ddp.average_in_collective:
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
                 self.ddp.average_in_collective = False
@@ -1039,7 +1035,7 @@ class ConfigContainer(Container):
         if self.scheduler.lr_wsd_decay_iters is not None:
             self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
         if self.scheduler.lr_warmup_fraction is not None:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
+            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
         else:
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
