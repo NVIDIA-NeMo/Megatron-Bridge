@@ -2,7 +2,9 @@
 
 The {py:class}`bridge.training.config.CheckpointConfig` controls model checkpointing behavior, including saving and loading checkpoints, checkpoint formats, and various optimization features.
 
-> **Note**: This documentation covers **Megatron-format checkpoints** used during training. For converting between 🤗 Hugging Face and Megatron formats, see the {doc}`../bridge-guide`.
+```{Note}
+This documentation covers **Megatron-format checkpoints** used during training. For converting between 🤗 Hugging Face and Megatron formats, see the {doc}`../bridge-guide`.
+```
 
 ## Overview
 
