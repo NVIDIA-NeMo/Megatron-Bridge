@@ -84,6 +84,7 @@ class Qwen3NextBridge(MegatronModelBridge):
             gdn_v_head_dim=hf_config.linear_value_head_dim,
             gdn_num_qk_heads=hf_config.linear_num_key_heads,
             gdn_num_v_heads=hf_config.linear_num_value_heads,
+            mtp_num_layers=1,
         )
 
         return provider
@@ -94,28 +95,45 @@ class Qwen3NextBridge(MegatronModelBridge):
 
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
+        layer_mappings = {
+            # MoE
+            "mlp.router.weight": "mlp.gate.weight",
+            "pre_mlp_layernorm.weight": "post_attention_layernorm.weight",
+            # Shared expert gate
+            "mlp.shared_experts.gate_weight": "mlp.shared_expert_gate.weight",
+            # Standard attention
+            "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
+            "self_attention.q_layernorm.weight": "self_attn.q_norm.weight",
+            "self_attention.k_layernorm.weight": "self_attn.k_norm.weight",
+            "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
+            # Linear attention
+            "self_attention.in_proj.layer_norm_weight": "input_layernorm.weight",
+            "self_attention.out_proj.weight": "linear_attn.out_proj.weight",
+            "self_attention.conv1d.weight": "linear_attn.conv1d.weight",
+            "self_attention.A_log": "linear_attn.A_log",
+            "self_attention.dt_bias": "linear_attn.dt_bias",
+        }
+
+        # Main decoder params
         param_mappings = {
             # Embedding and output
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-            # MoE
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
-            # Shared expert gate
-            "decoder.layers.*.mlp.shared_experts.gate_weight": "model.layers.*.mlp.shared_expert_gate.weight",
-            # Standard attention
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # Linear attention
-            "decoder.layers.*.self_attention.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.out_proj.weight": "model.layers.*.linear_attn.out_proj.weight",
-            "decoder.layers.*.self_attention.conv1d.weight": "model.layers.*.linear_attn.conv1d.weight",
-            "decoder.layers.*.self_attention.A_log": "model.layers.*.linear_attn.A_log",
-            "decoder.layers.*.self_attention.dt_bias": "model.layers.*.linear_attn.dt_bias",
         }
+        for megatron_param, hf_param in layer_mappings.items():
+            param_mappings[f"decoder.layers.*.{megatron_param}"] = f"model.layers.*.{hf_param}"
+
+        # MTP params
+        param_mappings.update({
+            "mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
+            "mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
+            "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
+            "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
+        })
+        for megatron_param, hf_param in layer_mappings.items():
+            param_mappings[f"mtp.layers.*.transformer_layer.{megatron_param}"] = f"mtp.layers.*.{hf_param}"
+
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
@@ -136,6 +154,12 @@ class Qwen3NextBridge(MegatronModelBridge):
                     k="model.layers.*.self_attn.k_proj.weight",
                     v="model.layers.*.self_attn.v_proj.weight",
                 ),
+                QKVMapping(
+                    megatron_param="mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
+                    q="mtp.layers.*.self_attn.q_proj.weight",
+                    k="mtp.layers.*.self_attn.k_proj.weight",
+                    v="mtp.layers.*.self_attn.v_proj.weight",
+                ),
                 # GDNLinear: Combine separate QKVZ_proj and BA_proj into single in_proj for GDN
                 # Note: Qwen3-Next does NOT have bias in the input linear projections
                 GDNLinearMapping(
@@ -153,6 +177,15 @@ class Qwen3NextBridge(MegatronModelBridge):
                     megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
+                GatedMLPMapping(
+                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc1.weight*",
+                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc2.weight*",
+                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                ),
                 # Gated MLP of shared expert
                 GatedMLPMapping(
                     megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
@@ -162,6 +195,15 @@ class Qwen3NextBridge(MegatronModelBridge):
                 AutoMapping(
                     megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
                     hf_param="model.layers.*.mlp.shared_expert.down_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc1.weight",
+                    gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
+                    up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc2.weight",
+                    hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
                 ),
                 # Qwen3-Next implement the output norm as: a standard RMSNorm + initializing weight to ones,
                 # while other norms are regular zero-centered RMSNorms.
