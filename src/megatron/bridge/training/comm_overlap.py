@@ -394,7 +394,11 @@ class CommOverlapConfig:
     overlap_moe_expert_parallel_comm: Optional[bool] = None
     delay_wgrad_compute: Optional[bool] = None
 
-    def __post_init__(self):
+    def finalize(self):
+        # Don't recreate the user_comm_overlap_cfg if the post init is re-run
+        if hasattr(self, "user_comm_overlap_cfg") and self.user_comm_overlap_cfg is not None:
+            return
+
         self.user_comm_overlap_cfg = _CommOverlapConfig(
             tp_comm_overlap=self.tp_comm_overlap,
             tp_comm_overlap_cfg=self.tp_comm_overlap_cfg,

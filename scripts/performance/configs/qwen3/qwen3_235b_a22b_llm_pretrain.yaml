@@ -15,7 +15,11 @@
 ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
-    use_transformer_engine_op_fuser: false
+    bias_activation_fusion: true
+    recompute_granularity: null
+    recompute_method: null
+    recompute_num_layers: null
+    moe_router_fusion: true
 
   train:
     train_iters: 25
@@ -50,66 +54,55 @@ ConfigContainer:
 
 perf_matrix:
   h100:
-    num_gpus_8:
+    num_gpus_256:
       common:
         num_gpus_per_node: 8
-        seq_length: 8192
+        seq_length: 4096
         mbs: 1
-        gbs: 128
+        gbs: 2048
         cuda_graphs: false
-        tp: 1
-        pp: 1
-        vp: null
-        ep: 1
-        etp: null
+        tp: 2
+        pp: 8
+        cp: 1
+        vp: 4
+        ep: 32
+        etp: 1
+        fsdp: false
       bf16:
-        cp: 2
-        use_megatron_fsdp: false
-      fp8_ds:
-        cp: 1
-        use_megatron_fsdp: true
-        keep_fp8_transpose_cache_when_using_custom_fsdp: true
-        nccl_ub: true
       fp8_cs:
-        cp: 1
-        use_megatron_fsdp: true
-        keep_fp8_transpose_cache_when_using_custom_fsdp: true
-        nccl_ub: true
-  b200:
-    num_gpus_8:
-      common:
-        num_gpus_per_node: 8
-        seq_length: 8192
-        mbs: 2
-        gbs: 128
-        cuda_graphs: true
-        tp: 1
-        pp: 1
-        cp: 1
-        vp: null
-        ep: 1
-        etp: null
-        use_megatron_fsdp: false
-      bf16:
-      fp8_ds:
-      fp8_cs:
-      fp8_mx:
   gb200:
-    num_gpus_8:
+    num_gpus_64:
       common:
         num_gpus_per_node: 4
-        seq_length: 8192
-        mbs: 2
-        gbs: 128
+        seq_length: 4096
+        mbs: 1
+        gbs: 1024
         cuda_graphs: true
-        tp: 1
+        tp: 2
         pp: 1
         cp: 1
         vp: null
-        ep: 1
-        etp: null
-        use_megatron_fsdp: false
+        ep: 64
+        etp: 1
+        fsdp: false
       bf16:
-      fp8_ds:
+      fp8_cs:
+      fp8_mx:
+  b200:
+    num_gpus_64:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 4096
+        mbs: 1
+        gbs: 1024
+        cuda_graphs: false
+        tp: 1
+        pp: 8
+        cp: 1
+        vp: 12
+        ep: 8
+        etp: 1
+        fsdp: false
+      bf16:
       fp8_cs:
       fp8_mx:

@@ -17,8 +17,6 @@ from dataclasses import dataclass
 
 import pytest
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.hf_processors.squad import process_squad_example
@@ -27,8 +25,10 @@ from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
+    OptimizerConfig,
     RNGConfig,
     SchedulerConfig,
     TokenizerConfig,

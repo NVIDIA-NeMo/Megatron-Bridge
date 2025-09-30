@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# To override a parameter, ensure the structure matches the ConfigContainer
-# and its sub-configurations (e.g., model, train, etc.)
-# Top-level ConfigContainer fields are dataclasses themselves
-
 ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
-    enable_cuda_graph: false
-    use_te_rng_tracker: false
+    bias_activation_fusion: true
+    recompute_granularity: null
+    recompute_method: null
+    recompute_num_layers: null
+    moe_router_fusion: true
 
   train:
     train_iters: 25
@@ -39,8 +38,6 @@ ConfigContainer:
   ddp:
     check_for_nan_in_grad: false
     check_for_large_grads: false
-    use_megatron_fsdp: true
-    use_torch_fsdp2: false
 
   mixed_precision:
     grad_reduce_in_fp32: false
@@ -49,83 +46,64 @@ ConfigContainer:
     # For optional fields in the config, specify the target to instantiate the object.
     _target_: megatron.bridge.training.config.ProfilingConfig
     use_nsys_profiler: true
-    profile_step_start: 10
-    profile_step_end: 11
+    profile_step_start: 5
+    profile_step_end: 6
     profile_ranks: [0]
     record_shapes: false
     use_pytorch_profiler: false
 
 perf_matrix:
   h100:
-    num_gpus_1024:
+    num_gpus_16:
       common:
         num_gpus_per_node: 8
-        seq_length: 8192
-        mbs: 1
+        seq_length: 4096
         gbs: 512
         cuda_graphs: false
-        tp: 8
-        pp: 8
-        cp: 2
-        vp: 8
-        ep: 1
-        etp: null
+        tp: 1
+        pp: 2
+        cp: 1
+        vp: 24
+        ep: 8
+        etp: 1
         fsdp: false
       bf16:
-      fp8_ds:
-      fp8_cs:
-  b200:
-    num_gpus_128:
-      common:
-        num_gpus_per_node: 8
-        seq_length: 8192
         mbs: 1
-        gbs: 64
-        cuda_graphs: false
-        tp: 4
-        pp: 8
-        cp: 2
-        vp: 8
-        ep: 1
-        etp: null
-        fsdp: false
-      bf16:
-      fp8_ds:
       fp8_cs:
-      fp8_mx:
+        mbs: 2
   gb200:
-    num_gpus_128:
+    num_gpus_8:
       common:
         num_gpus_per_node: 4
-        seq_length: 8192
-        mbs: 1
-        gbs: 64
-        cuda_graphs: false
-        ep: 1
-        etp: null
+        seq_length: 4096
+        mbs: 4
+        gbs: 512
+        cuda_graphs: true
+        tp: 1
+        pp: 1
+        cp: 1
+        vp: null
+        ep: 8
+        etp: 1
+        fsdp: false
       bf16:
-        tp: 4
-        pp: 8
-        cp: 2
-        vp: 8
-        fsdp: false
-      fp8_ds:
-        tp: 2
-        pp: 1
-        cp: 1
-        vp: 1
-        fsdp: true
-        cpu_offloading_num_layers: 95
       fp8_cs:
-        tp: 2
-        pp: 1
-        cp: 1
-        vp: 1
-        fsdp: true
-        cpu_offloading_num_layers: 95
       fp8_mx:
-        tp: 4
+  b200:
+    num_gpus_8:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 4096
+        mbs: 1
+        gbs: 512
+        cuda_graphs: true
+        tp: 1
         pp: 8
-        cp: 2
-        vp: 8
+        cp: 1
+        vp: 12
+        ep: 8
+        etp: 1
         fsdp: false
+      bf16:
+      fp8_cs:
+      fp8_mx:

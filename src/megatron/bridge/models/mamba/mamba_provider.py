@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
 import torch
@@ -22,9 +22,9 @@ from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
-from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -70,9 +70,7 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
-    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = field(
-        default_factory=lambda: default_mamba_stack_spec
-    )
+    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = lambda: default_mamba_stack_spec
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
 

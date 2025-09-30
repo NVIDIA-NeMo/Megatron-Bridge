@@ -30,8 +30,9 @@ from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
-from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_last
+from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
 
 
 try:
@@ -517,8 +518,10 @@ def training_log(
         elapsed_time = timers("interval-time").elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
-        # throughput = num_floating_point_operations(args, batch_size) / (
-        #     elapsed_time_per_iteration * 10**12 * get_world_size_safe())  # TODO: implement
+        # Calculate GPU utilization
+        num_flops = num_floating_point_operations(config, batch_size)
+        per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
+        print_rank_0(f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}TFLOP/s/GPU")
 
         if logger_config.log_timers_to_tensorboard:
             if writer:
@@ -532,14 +535,13 @@ def training_log(
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(elapsed_time_per_iteration * 1000.0)
 
-        # TODO: enable after flops is implemented
-        # if logger_config.log_throughput:
-        #     log_string += f' throughput per GPU (TFLOP/s/GPU): {throughput:.1f} |'
-        #     if logger_config.log_timers_to_tensorboard:
-        #         if writer:
-        #             writer.add_scalar('throughput', throughput, iteration)
-        #         if wandb_writer:
-        #             wandb_writer.log({'throughput': throughput}, iteration)
+        if logger_config.log_throughput:
+            log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
+            if logger_config.log_timers_to_tensorboard:
+                if writer:
+                    writer.add_scalar("throughput", per_gpu_tf, iteration)
+                if wandb_writer:
+                    wandb_writer.log({"throughput": per_gpu_tf}, iteration)
 
         if energy_monitor is not None:
             energy = (energy_monitor.lap() / total_iterations) / get_world_size_safe()
@@ -611,11 +613,13 @@ def report_memory(name: str) -> None:
 
 
 def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_args: Optional[int] = None) -> Callable:
-    """Optionally inject the GlobalState object into the forward step function.
+    """Optionally inject GlobalState into a 4-arg forward_step function.
 
-    Checks the number of arguments of `forward_step_func`. If it expects 3 arguments,
-    it assumes the first argument is the GlobalState and returns a partial function
-    with the state injected.
+    - If the function has 4 parameters (state, data_iterator, model, return_schedule_plan),
+      bind the provided state via functools.partial to produce a callable that accepts
+      (data_iterator, model, return_schedule_plan).
+    - If the function already has 3 parameters (data_iterator, model, return_schedule_plan)
+      or 2 parameters (data_iterator, model), return it unchanged.
 
     Args:
         forward_step_func: The original forward step function.
@@ -638,8 +642,9 @@ def maybe_inject_state(forward_step_func: Callable, state: GlobalState, num_fw_a
 def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
     """Check if the forward step function has a supported number of arguments.
 
-    Currently supports 2 or 4 arguments:
+    Currently supports 2, 3, or 4 arguments:
     - func(data_iterator, model)
+    - func(data_iterator, model, return_schedule_plan: bool = False)  # state pre-bound via partial
     - func(state, data_iterator, model, return_schedule_plan: bool = False)
 
     Args:
@@ -655,8 +660,9 @@ def check_forward_step_func_num_args(forward_step_func: Callable) -> int:
     fail_msg = f"""
     forward_step_func has {num_fw_args} arguments. Only the following signatures are supported:
         2 args: forward_step_func(data_iterator: Iterable, model: GPTModel)
+        3 args: forward_step_func(data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
         4 args: forward_step_func(state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False)
     """
-    assert num_fw_args in (2, 4), fail_msg
+    assert num_fw_args in (2, 3, 4), fail_msg
 
     return num_fw_args

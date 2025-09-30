@@ -16,7 +16,6 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.qwen import Qwen3MoEModelProvider30B_A3B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -25,13 +24,14 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
 
 def model_config(
@@ -106,7 +106,7 @@ def pretrain_config(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
@@ -168,6 +168,11 @@ def pretrain_config(
         max_lr=lr,
         min_lr=min_lr,
     )
+
+    if precision_config is None:
+        precision_config = bf16_mixed()
+    if isinstance(precision_config, MixedPrecisionConfig):
+        precision_config.grad_reduce_in_fp32 = False
 
     # Config Container
     cfg = ConfigContainer(

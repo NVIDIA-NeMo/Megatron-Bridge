@@ -24,8 +24,12 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deep
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
 from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
 from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_30b_a3b import pretrain_config as qwen3_30b_a3b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_235b_a22b import pretrain_config as qwen3_235b_a22b_pretrain_config
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -49,15 +53,59 @@ def main():
     elif args.model_name == "llama31" and args.model_size == "405b":
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
+        enable_deepep = bool(args.gpu.lower() in ["h100"])
+        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
+        if use_tokendrop:
+            enable_deepep = False
+            logger.info("Using token drop, disabling DeepEP")
+        A2A_1F1B = bool(args.gpu.lower() in ["h100"])
+
+        pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
             # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
-            pipeline_parallelism=4,
-            virtual_pipeline_parallelism=1,
+            pipeline_parallelism=pp,
+            virtual_pipeline_parallelism=vp,
+            enable_deepep=enable_deepep,
+            layout="Et|(tt|)*30mL",
         )
-        from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
+        if enable_deepep:
+            recipe.model.moe_router_force_load_balancing = True
+        if use_tokendrop:
+            recipe.model = apply_moe_token_drop(recipe.model)
+
+        if A2A_1F1B:
+            recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+            recipe.comm_overlap.delay_wgrad_compute = True
+            recipe.model.moe_shared_expert_overlap = False
+        else:
+            recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
+            recipe.comm_overlap.delay_wgrad_compute = False
+            recipe.model.moe_shared_expert_overlap = True
+        if args.gpu.lower() in ["h100"]:
+            recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
+        elif args.gpu.lower() in ["gb200"]:
+            recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
+        if args.gpu.lower() in ["gb200", "b200"]:
+            recipe.comm_overlap.overlap_grad_reduce = True
+        elif args.gpu.lower() in ["h100"]:
+            recipe.comm_overlap.overlap_grad_reduce = False
+    elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
+        recipe = qwen3_30b_a3b_pretrain_config(
+            mock=True,
+            precision_config=precision_config,
+            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        )
+        recipe.model = apply_moe_token_drop(recipe.model)
+    elif args.model_name == "qwen3" and args.model_size == "235b_a22b":
+        recipe = qwen3_235b_a22b_pretrain_config(
+            mock=True,
+            precision_config=precision_config,
+            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        )
         recipe.model = apply_moe_token_drop(recipe.model)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
@@ -103,6 +151,17 @@ def main():
     # Apply GPU/precision-specific performance overrides from perf_matrix, if present
     if yaml_overrides_omega is not None:
         apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
+    recipe.model.gradient_accumulation_fusion = True
+
+    if recipe.model.use_transformer_engine_op_fuser:
+        if args.fp8_recipe == "mx" or recipe.ddp.use_megatron_fsdp:
+            logger.warning("Disabling model.use_transformer_engine_op_fuser as it cannot work with MXFP8 or FSDP.")
+            recipe.model.use_transformer_engine_op_fuser = False
+
+    if recipe.ddp.use_megatron_fsdp:
+        if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
+            recipe.ddp.fsdp_double_buffer = True
+    recipe.model.apply_rope_fusion = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
