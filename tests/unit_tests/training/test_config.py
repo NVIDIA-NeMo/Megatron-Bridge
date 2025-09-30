@@ -88,6 +88,7 @@ def create_test_training_config(**kwargs: Any) -> TrainingConfig:
     """Creates an instance of TrainingConfig with defaults for testing."""
     defaults = {
         "global_batch_size": 32,
+        "micro_batch_size": 4,
         "train_iters": 1000,
     }
     defaults.update(kwargs)
@@ -1639,3 +1640,130 @@ class TestSyncAndValidateExternalCudaGraph:
 
         container._sync_and_validate_external_cuda_graph()
         assert container.model.use_te_rng_tracker is True
+
+
+class TestValidationConfigResolution:
+    """Test validation configuration resolution with fallback to training config."""
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_resolution_with_fallbacks(self, mock_get_world_size):
+        """Test that validation config falls back to training config when not specified."""
+        mock_get_world_size.return_value = 4
+
+        # Create training config with only training values, no validation values
+        train_config = TrainingConfig(micro_batch_size=16, global_batch_size=64, train_iters=1000)
+
+        # Create dataset config with only training values
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+
+        # Create model config
+        model_config = create_test_gpt_config()
+
+        # Create config container using helper function
+        config, _, _ = create_test_config_container(
+            world_size_override=4,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        # Validate config - this should resolve validation configs with fallbacks
+        config.validate()
+
+        # Check that validation configs fall back to training configs
+        assert config.dataset.val_num_workers == 8
+        assert config.dataset.val_pin_memory == True
+        assert config.dataset.val_persistent_workers == True
+        assert config.train.val_micro_batch_size == 16
+        assert config.train.val_global_batch_size == 64  # 16 * 4
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_resolution_with_explicit_values(self, mock_get_world_size):
+        """Test that explicit validation config values are used when specified."""
+        mock_get_world_size.return_value = 2
+
+        # Create training config with both training and validation values
+        train_config = TrainingConfig(
+            micro_batch_size=16,
+            global_batch_size=64,
+            val_micro_batch_size=8,
+            val_global_batch_size=16,
+            train_iters=1000,
+        )
+
+        # Create dataset config with both training and validation values
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+        dataset_config.val_num_workers = 4
+        dataset_config.val_pin_memory = False
+        dataset_config.val_persistent_workers = False
+
+        # Create model config
+        model_config = create_test_gpt_config()
+
+        # Create config container using helper function
+        config, _, _ = create_test_config_container(
+            world_size_override=2,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        # Validate config
+        config.validate()
+
+        # Check that explicit validation values are used
+        assert config.dataset.val_num_workers == 4
+        assert config.dataset.val_pin_memory == False
+        assert config.dataset.val_persistent_workers == False
+        assert config.train.val_micro_batch_size == 8
+        assert config.train.val_global_batch_size == 16
+
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe")
+    def test_validation_config_mixed_fallbacks(self, mock_get_world_size):
+        """Test mixed scenario where some validation values are explicit, others fall back."""
+        mock_get_world_size.return_value = 2
+
+        # Create training config with some explicit validation values, others None
+        train_config = TrainingConfig(
+            micro_batch_size=16,
+            global_batch_size=64,
+            val_micro_batch_size=None,  # should fall back
+            val_global_batch_size=None,  # should be calculated
+            train_iters=1000,
+        )
+
+        # Create dataset config with some explicit validation values, others None
+        dataset_config = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_config.num_workers = 8
+        dataset_config.pin_memory = True
+        dataset_config.persistent_workers = True
+        dataset_config.val_num_workers = 4  # explicit
+        dataset_config.val_pin_memory = None  # should fall back
+        dataset_config.val_persistent_workers = None  # should fall back
+
+        # Create model config
+        model_config = create_test_gpt_config()
+
+        # Create config container using helper function
+        config, _, _ = create_test_config_container(
+            world_size_override=2,
+            model_config=model_config,
+            train_config=train_config,
+            dataset_config_override=dataset_config,
+        )
+
+        # Validate config
+        config.validate()
+
+        # Check mixed behavior
+        assert config.dataset.val_num_workers == 4  # explicit value
+        assert config.dataset.val_pin_memory == True  # fallback
+        assert config.dataset.val_persistent_workers == True  # fallback
+        assert config.train.val_micro_batch_size == 16  # fallback
+        assert config.train.val_global_batch_size == 32  # calculated: 16 * 2
