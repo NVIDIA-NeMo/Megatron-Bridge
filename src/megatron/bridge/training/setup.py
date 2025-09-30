@@ -178,6 +178,16 @@ def setup(
         cfg.model.register_pre_wrap_hook(peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
+    if cfg.model.restore_modelopt_state:
+        from megatron.bridge.training.post_training.checkpointing import load_modelopt_state
+
+        def modelopt_pre_wrap_hook(model):
+            checkpoint_path = cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load
+            load_modelopt_state(model, checkpoint_path)
+            return model
+
+        cfg.model.register_pre_wrap_hook(modelopt_pre_wrap_hook)
+
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
         use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
@@ -185,6 +195,7 @@ def setup(
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
     )
+
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
     no_weight_decay_cond = get_no_weight_decay_cond(
