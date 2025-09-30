@@ -45,23 +45,17 @@ class LlamaBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaModelProvider:
         hf_config = hf_pretrained.config
 
-        # Check if this is a Nemotron model by model name
-        model_name = getattr(hf_pretrained, "model_name_or_path", "")
-        is_nemotron = "nemotron" in model_name.lower() or "Nemotron" in model_name
-
         if (
             getattr(hf_config, "rope_scaling", None) is not None
             and hf_config.rope_scaling.get("rope_type") == "llama3"
         ):
-            # Apply Llama3.1 customize rope scaling
-            if is_nemotron:
-                # Use Nemotron-specific providers for homogeneous models
-                cls = self._get_nemotron_provider_class(hf_config)
-            else:
-                # Regular Llama 3.1 models
-                cls = partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
+            # Llama 3.1/3.2 models with RoPE scaling
+            cls = partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
         else:
             cls = LlamaModelProvider
+
+        # Extract kv_channels from head_dim if present (used by Nemotron models)
+        kv_channels = getattr(hf_config, "head_dim", None)
 
         provider = cls(
             num_layers=hf_config.num_hidden_layers,
@@ -73,6 +67,7 @@ class LlamaBridge(MegatronModelBridge):
             num_query_groups=hf_config.num_key_value_heads,
             seq_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
+            kv_channels=kv_channels,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
@@ -84,36 +79,6 @@ class LlamaBridge(MegatronModelBridge):
         )
 
         return provider
-
-    def _get_nemotron_provider_class(self, hf_config):
-        """Get the appropriate Nemotron provider class for homogeneous models."""
-        from functools import partial
-
-        # Import Nemotron providers
-        try:
-            from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
-                Llama31Nemotron70BProvider,
-                Llama31NemotronNano8BProvider,
-            )
-        except ImportError:
-            # Fallback to regular Llama provider if Nemotron providers not available
-            return partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-
-        num_layers = hf_config.num_hidden_layers
-        hidden_size = hf_config.hidden_size
-
-        # Detect homogeneous Nemotron models
-        if num_layers == 32 and hidden_size == 4096:
-            return partial(Llama31NemotronNano8BProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-        elif num_layers == 80 and hidden_size == 8192:
-            return partial(Llama31Nemotron70BProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
-
-        # For other Nemotron models, use regular Llama provider with kv_channels=128
-        return partial(
-            Llama31ModelProvider,
-            scale_factor=hf_config.rope_scaling.get("factor", 8.0),
-            kv_channels=getattr(hf_config, "head_dim", 128),
-        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

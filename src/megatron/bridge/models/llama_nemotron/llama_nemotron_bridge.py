@@ -29,21 +29,30 @@ from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider
 @MegatronModelBridge.register_bridge(source="DeciLMForCausalLM", target=GPTModel)
 class LlamaNemotronBridge(MegatronModelBridge):
     """
-    Megatron Bridge for Heterogeneous Llama-Nemotron models.
+    Megatron Bridge for Heterogeneous Llama-Nemotron models (Super/Ultra).
 
-    This bridge specifically handles heterogeneous Llama-Nemotron models (Super/Ultra)
-    that have block_configs and require special heterogeneous architecture handling.
+    This bridge handles heterogeneous Llama-Nemotron models that use the DeciLMForCausalLM
+    architecture with block_configs for heterogeneous layer specifications. These models
+    require special handling because:
 
-    Homogeneous Llama-Nemotron models (Nano/70B) are handled by the regular LlamaBridge
-    since they use standard Llama architecture with only kv_channels=128 difference.
+    1. They use custom modeling code (DeciLMForCausalLM) loaded via auto_map
+    2. They have heterogeneous block configurations (different layers have different specs)
+    3. They require trust_remote_code=True to load from HuggingFace
 
-    Note: This bridge is NOT registered with @register_bridge decorator because it's
-    used conditionally by the AutoBridge system when heterogeneous configs are detected.
+    Supported models:
+    - nvidia/Llama-3_3-Nemotron-Super-49B-v1 (80 layers, 8192 hidden)
+    - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1 (162 layers, 16384 hidden)
+
+    Homogeneous Llama-Nemotron models (Nano/70B) use standard LlamaForCausalLM
+    architecture and are handled by the regular LlamaBridge.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> # Heterogeneous models will use this bridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Llama-3_3-Nemotron-Super-49B-v1")
+        >>> # DeciLMForCausalLM models will automatically use this bridge
+        >>> bridge = AutoBridge.from_hf_pretrained(
+        ...     "nvidia/Llama-3_3-Nemotron-Super-49B-v1",
+        ...     trust_remote_code=True
+        ... )
         >>> provider = bridge.to_megatron_provider()
     """
 
@@ -53,6 +62,17 @@ class LlamaNemotronBridge(MegatronModelBridge):
         # Detect model variant based on configuration
         provider_class = self._detect_nemotron_variant(hf_config)
 
+        # Calculate num_query_groups for heterogeneous models
+        # For heterogeneous models, GQA is defined in each block config
+        # We assume block 0 has a non-no-op attention layer
+        num_query_groups = hf_config.num_key_value_heads
+        if hasattr(hf_config, "block_configs") and hf_config.block_configs:
+            # Extract from block_configs[0].attention.n_heads_in_group
+            block_0 = hf_config.block_configs[0]
+            if hasattr(block_0, "attention") and hasattr(block_0.attention, "n_heads_in_group"):
+                n_heads_in_group = block_0.attention.n_heads_in_group
+                num_query_groups = hf_config.num_attention_heads // n_heads_in_group
+
         # Prepare kwargs for provider creation
         provider_kwargs = dict(
             num_layers=hf_config.num_hidden_layers,
@@ -61,7 +81,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
             num_attention_heads=hf_config.num_attention_heads,
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            num_query_groups=hf_config.num_key_value_heads,
+            num_query_groups=num_query_groups,
             seq_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
             kv_channels=getattr(hf_config, "head_dim", None),
