@@ -219,7 +219,6 @@ __all__ = [
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
     # Llama-Nemotron Models
-    "LlamaNemotronBridge",
     "Llama31NemotronNano8BProvider",
     "Llama31Nemotron70BProvider",
     "Llama33NemotronSuper49BProvider",
