@@ -373,6 +373,75 @@ class TestLoadMegatronModel:
         assert result == mock_model
         mock_temp_dist.assert_not_called()
 
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_resets_defaults(self, mock_load_model_config, mock_build_and_load):
+        """Verify single-GPU default resets are applied before building the model."""
+        # Prepare a config object with non-default values that should be reset
+        cfg = Mock()
+        cfg.tensor_model_parallel_size = 8
+        cfg.pipeline_model_parallel_size = 4
+        cfg.context_parallel_size = 2
+        cfg.expert_model_parallel_size = 2
+        cfg.expert_tensor_parallel_size = 2
+        cfg.moe_extended_tp = True
+        cfg.sequence_parallel = True
+        cfg.virtual_pipeline_model_parallel_size = 2
+        cfg.hierarchical_context_parallel_sizes = [2, 2]
+
+        mock_load_model_config.return_value = (cfg, None)
+        sentinel = object()
+        mock_build_and_load.return_value = sentinel
+
+        result = load_megatron_model("/ckpt", model_type=None, return_state_dict=False, use_cpu_init=True)
+
+        # Ensure build_and_load_model was called and returned
+        assert result is sentinel
+
+        # After resets (no overrides), the following should hold
+        assert cfg.tensor_model_parallel_size == 1
+        assert cfg.pipeline_model_parallel_size == 1
+        assert cfg.context_parallel_size == 1
+        assert cfg.expert_model_parallel_size == 1
+        assert cfg.expert_tensor_parallel_size == 1
+        assert cfg.moe_extended_tp is False
+        assert cfg.sequence_parallel is False
+        assert cfg.virtual_pipeline_model_parallel_size is None
+        assert cfg.hierarchical_context_parallel_sizes is None
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_applies_overrides(self, mock_load_model_config, mock_build_and_load):
+        """Verify mp_overrides entries are applied to the config."""
+        cfg = Mock()
+        # Start with defaults to make verification straightforward
+        cfg.tensor_model_parallel_size = 1
+        cfg.pipeline_model_parallel_size = 1
+        cfg.context_parallel_size = 1
+        cfg.expert_model_parallel_size = 1
+        cfg.expert_tensor_parallel_size = 1
+        cfg.moe_extended_tp = False
+        cfg.sequence_parallel = False
+        cfg.virtual_pipeline_model_parallel_size = None
+        cfg.hierarchical_context_parallel_sizes = None
+
+        mock_load_model_config.return_value = (cfg, None)
+        mock_build_and_load.return_value = Mock()
+
+        overrides = {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 3,
+            "sequence_parallel": True,
+            "virtual_pipeline_model_parallel_size": 4,
+        }
+
+        _ = load_megatron_model("/ckpt", mp_overrides=overrides)
+
+        assert cfg.tensor_model_parallel_size == 2
+        assert cfg.pipeline_model_parallel_size == 3
+        assert cfg.sequence_parallel is True
+        assert cfg.virtual_pipeline_model_parallel_size == 4
+
 
 class TestSaveMegatronModel:
     """Test save_megatron_model function."""
