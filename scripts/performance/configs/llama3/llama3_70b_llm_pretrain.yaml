@@ -115,11 +115,11 @@ perf_matrix:
         use_megatron_fsdp: false
         cuda_graphs: false
   gb200:
-    num_gpus_64:
+    num_gpus_32:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
-        gbs: 128
+        gbs: 64
         cuda_graphs: false
         cp: 1
         ep: 1

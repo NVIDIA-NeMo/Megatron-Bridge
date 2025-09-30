@@ -95,12 +95,12 @@ perf_matrix:
       fp8_cs:
       fp8_mx:
   gb200:
-    num_gpus_8:
+    num_gpus_4:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
         mbs: 2
-        gbs: 128
+        gbs: 64
         cuda_graphs: true
         tp: 1
         pp: 1
