@@ -28,8 +28,7 @@ Example:
 """
 
 import argparse
-from typing import Optional
-
+from typing import Optional, List
 import requests
 import torch
 import torch.distributed as dist
@@ -152,6 +151,18 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         Tuple of (input_ids, pixel_values, image_grid_thw, messages)
     """
     if image_path:
+        if "," in image_path:
+            image_paths = image_path.split(",")
+            content = []
+            for i, path in enumerate(image_paths):
+                content.append({"type": "text", "text": f"{'\n' if i > 0 else ''}Image-{i+1}: "})
+                content.append({"type": "image", "image": path})
+            content.append({"type": "text", "text": '\n' + prompt})
+        else:
+            content = [
+                    {"type": "image", "image": image_path},
+                    {"type": "text", "text": prompt},
+                ]
         # Create messages with image and text
         messages = [
             {
@@ -160,10 +171,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "image", "image": image_path},
-                    {"type": "text", "text": prompt},
-                ],
+                "content": content,
             }
         ]
 
@@ -185,12 +193,68 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             image_grid_thw = inputs.image_grid_thw
         except AttributeError:
             image_grid_thw = None
-        return inputs.input_ids, inputs.pixel_values, image_grid_thw, messages
+        return inputs.input_ids, inputs.pixel_values, image_grid_thw, inputs.num_patches
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
         return inputs.input_ids, None, None, None
 
+def process_video_inputs(processor, video_path: Optional[str], prompt: str):
+    """Process video inputs for vision-language model.
+    """
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import maybe_path_or_url_to_data_urls, pil_image_from_base64
+
+    video_fps = 1
+    video_nframe = 8
+    video_nframe_max = -1
+
+    # Get frames and metadata
+    image_urls, metadata = maybe_path_or_url_to_data_urls(
+        video_path,
+        fps=max(0, int(video_fps)),
+        nframe=max(0, int(video_nframe)),
+        nframe_max=int(video_nframe_max),
+    )
+    frames = [pil_image_from_base64(image_url) for image_url in image_urls]
+
+    print(f"Video Metadata: {metadata}")
+
+    messages = [
+        {
+            "role": "system",
+            "content": "/no_think"
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "video",
+                    "video": f"file://{video_path}",
+                },
+                {
+                    "type": "text",
+                    "text": "\n" + prompt,
+                },
+            ],
+        }
+    ]
+    prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+    # Process with FPS metadata
+    if metadata:
+        inputs = processor(
+            text=[prompt],
+            videos=frames,
+            videos_kwargs={'video_metadata': metadata},
+            return_tensors="pt",
+        )
+    else:
+        inputs = processor(
+            text=[prompt],
+            videos=frames,
+            return_tensors="pt",
+        )
+    return inputs.input_ids, inputs.pixel_values_videos, None, inputs.num_patches
 
 def process_inputs_megatron(image_path: Optional[str], prompt: str, hf_model_path: str):
     """Pre-process using Megatron Energon TaskEncoder utilities.
@@ -266,34 +330,40 @@ def process_inputs_megatron(image_path: Optional[str], prompt: str, hf_model_pat
         # match exactly.  We replicate the IMAGE token here if needed.
         # ------------------------------------------------------------------
         num_tiles = images.shape[0]
-        img_token_id = tokenizer.convert_tokens_to_ids("<image>")
-        input_ids = _ensure_image_tokens(input_ids, num_tiles, img_token_id)
+        img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
+        img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
+        input_ids = _ensure_image_tokens(input_ids, num_tiles, img_start_token_id, img_end_token_id)
 
     return input_ids, images, messages, tokenizer._tokenizer
 
 
-def _ensure_image_tokens(input_ids: torch.Tensor, num_tiles: int, img_token_id) -> torch.Tensor:
+def _ensure_image_tokens(input_ids: torch.Tensor, num_tiles: int | List[int], img_start_token_id: int, img_end_token_id: int) -> torch.Tensor:
     """Ensures the input_ids tensor contains the correct number of <image> tokens.
     If the number of tiles is greater than the current count, it repeats the token.
     If the number of tiles is less, it removes the extra tokens
     """
-    existing = (input_ids[0] == img_token_id).sum().item()
+    if isinstance(num_tiles, int):
+        num_tiles = [num_tiles]
+    for i, num_tile in enumerate(num_tiles):
+        image_start_pos = (input_ids[0] == img_start_token_id).nonzero(as_tuple=True)[0][i].item()
+        image_end_pos = (input_ids[0] == img_end_token_id).nonzero(as_tuple=True)[0][i].item()
+        media_token_id = input_ids[0, image_start_pos + 1]  # this can be <image> or <video> token
+        existing = image_end_pos - image_start_pos + 1
 
-    if num_tiles > existing:
-        # Need to add tokens
-        repeat = num_tiles - existing
-        first_pos = (input_ids[0] == img_token_id).nonzero(as_tuple=True)[0][0].item()
-        repeat_tokens = torch.full((1, repeat), img_token_id, dtype=input_ids.dtype, device=input_ids.device)
-        input_ids = torch.cat([input_ids[:, : first_pos + 1], repeat_tokens, input_ids[:, first_pos + 1 :]], dim=1)
+        if num_tile > existing:
+            # Need to add tokens
+            repeat = num_tile + 2 - existing  # +2 for <img> and </img> tokens
+            repeat_tokens = torch.full((1, repeat), media_token_id, dtype=input_ids.dtype, device=input_ids.device)
+            input_ids = torch.cat([input_ids[:, : image_start_pos + 1], repeat_tokens, input_ids[:, image_start_pos + 1 :]], dim=1)
 
-    elif num_tiles < existing:
-        # Need to remove tokens (keep only the first `num_tiles` occurrences)
-        keep_tokens_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        positions = (input_ids[0] == img_token_id).nonzero(as_tuple=True)[0]
-        # positions to drop are after the first num_tiles occurrences
-        drop_positions = positions[num_tiles:]
-        keep_tokens_mask[0, drop_positions] = False
-        input_ids = input_ids[keep_tokens_mask].unsqueeze(0)
+        elif num_tile < existing:
+            # Need to remove tokens (keep only the first `num_tile` occurrences)
+            keep_tokens_mask = torch.ones_like(input_ids, dtype=torch.bool)
+            positions = (input_ids[0][image_start_pos:image_end_pos+1] == media_token_id).nonzero(as_tuple=True)[0] + image_start_pos
+            # positions to drop are after the first num_tile occurrences
+            drop_positions = positions[num_tile:].tolist()
+            keep_tokens_mask[0, drop_positions] = False
+            input_ids = input_ids[keep_tokens_mask].unsqueeze(0)
 
     return input_ids
 
@@ -361,16 +431,24 @@ def main(args) -> None:
     else:
         tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
         processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+        img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
+        img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
+
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        input_ids, pixel_values, image_grid_thw, _ = process_image_inputs(processor, args.image_path, args.prompt)
+        if args.video_path:
+            input_ids, pixel_values, image_grid_thw, num_patches = process_video_inputs(processor, args.video_path, args.prompt)
+        else:
+            input_ids, pixel_values, image_grid_thw, num_patches = process_image_inputs(processor, args.image_path, args.prompt)
+
         images = None
-        # todo: remove this
-        use_megatron_vision_encoder = True
-        if use_megatron_vision_encoder:
+        if args.use_llava_model:
             images = pixel_values.bfloat16()
-            img_token_id = tokenizer.convert_tokens_to_ids("<image>")
-            input_ids = _ensure_image_tokens(input_ids, images.shape[0], img_token_id)
+            input_ids = _ensure_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
+            if args.video_path:
+                video_token_id = tokenizer.convert_tokens_to_ids("<video>")
+                image_token_id = tokenizer.convert_tokens_to_ids("<image>")
+                input_ids = torch.where(input_ids == video_token_id, image_token_id, input_ids)
             pixel_values = None
 
 
@@ -499,7 +577,14 @@ if __name__ == "__main__":
         "--image_path",
         type=str,
         default=None,
-        help="Path or URL to the image for vision-language generation (optional).",
+        help="Path or URL to the image for vision-language generation (optional). Multiple images paths can be separated"
+             "with commas.",
+    )
+    parser.add_argument(
+        "--video_path",
+        type=str,
+        default=None,
+        help="Path or URL to the video for vision-language generation (optional).",
     )
     parser.add_argument(
         "--preprocess_mode",
@@ -508,6 +593,12 @@ if __name__ == "__main__":
         default="hf",
         help="Choose preprocessing pipeline: 'hf' (default) uses HuggingFace AutoProcessor/Tokenizer, 'megatron' uses "
         "MultimodalTokenizer and image utilities from Megatron Energon TaskEncoder.",
+    )
+    parser.add_argument(
+        "--use_llava_model",
+        action="store_true",
+        default=False,
+        help="Specify whether model uses Megatron vision model (i.e. LLaVAModel)",
     )
     args = parser.parse_args()
 
