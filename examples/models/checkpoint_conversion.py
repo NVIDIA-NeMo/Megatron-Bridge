@@ -262,6 +262,10 @@ def main():
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
 
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+
 
 if __name__ == "__main__":
     sys.exit(main())
