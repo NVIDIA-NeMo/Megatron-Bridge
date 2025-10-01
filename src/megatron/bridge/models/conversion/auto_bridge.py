@@ -120,7 +120,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Check if this bridge supports the given model configuration.
 
-        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration'.
+        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration' 
+        or 'NemotronH_Nano_VL_V2'.
 
         Args:
             config: HuggingFace model config object
@@ -131,8 +132,9 @@ class AutoBridge(Generic[MegatronModelT]):
         architectures = getattr(config, "architectures", [])
         if not architectures:
             return False
-
-        return any(arch.endswith(("ForCausalLM", "ForConditionalGeneration")) for arch in architectures)
+        return any(
+            arch.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL_V2")) for arch in architectures
+        )
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -807,10 +809,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Behavior:
         - If the model can be imported from transformers directly, return the actual transformers class object.
-        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g., "DeepseekV2ForCausalLM").
+        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g., 
+        "DeepseekV2ForCausalLM").
 
         Returns:
-            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a string for auto_map models.
+            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a 
+            string for auto_map models.
 
         Raises:
             ValueError: If no CausalLM architecture is found or cannot be resolved.
@@ -836,7 +840,7 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
+            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL_V2")):
                 causal_lm_arch = architecture_name
                 break
 
@@ -844,7 +848,8 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(
                 f"\n✗ No CausalLM architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
-                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration'.\n"
+                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration' or"
+                f"'NemotronH_Nano_VL_V2'.\n"
                 f"This bridge only supports causal language models.\n"
                 f"For other model types, use a different bridge class."
             )
@@ -876,7 +881,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"\n✗ Model architecture not supported by AutoBridge\n\n"
                 f"Model: {path}\n"
                 f"Architectures: {architectures}\n\n"
-                f"AutoBridge only supports models with architectures ending in 'ForCausalLM' or 'ForConditionalGeneration'.\n"
+                f"AutoBridge only supports models with architectures ending in 'ForCausalLM' or"
+                f"'ForConditionalGeneration' or 'NemotronH_Nano_VL_V2'.\n"
                 f"Found architectures that don't match this pattern.\n\n"
                 f"If this is a different model type (e.g., Vision, Sequence-to-Sequence),\n"
                 f"you may need to use a different bridge class."
@@ -885,7 +891,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
+            if arch_name.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL_V2")):
                 architecture = arch_name
                 break
 

@@ -954,7 +954,11 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Replicate weight to all TP ranks."""
-        target_device = megatron_module.weight.device
+        try:
+            target_device = megatron_module.weight.device
+        except AttributeError:
+            # the parameter may not be called "weight"
+            target_device = next(megatron_module.parameters()).device        
         hf_weights = hf_weights.to(device=target_device)
         if self.tp_size == 1:
             return hf_weights
@@ -1337,6 +1341,141 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             resolved_hf_param["k"],
             resolved_hf_param["v"],
         )
+
+
+class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """
+    Mapping for interleaved Query/Key/Value attention projection weights.
+
+    This mapping handles the conversion between Concatenated Q, K, V matrices used in
+    some transformers models and Megatron's optimized interleaved format. The
+    interleaving pattern groups queries with their corresponding key-value pairs
+    to maximize GEMM efficiency during attention computation.
+
+    **External format (HuggingFace)**
+    -   One tensor with concatenated query, key, value: `qkv`, with shape
+        `[hidden_size, head_dim * num_heads + 2 * head_dim * num_query_groups]`
+
+    **Megatron format**
+    -   Single interleaved tensor following grouped query attention (GQA) pattern
+    -   Interleaving order: `[q1...qn, k1, v1, q1...qn, k2, v2, ...]`
+    -   Where `n = num_attention_heads / num_query_groups`
+
+    **Key features**
+    1.  Format conversion: Handles merging/splitting with proper interleaving
+    2.  Grouped Query Attention: Supports different numbers of Q and KV heads
+    3.  Tensor parallelism: Delegates to AutoMapping for distribution
+
+    Example:
+        .. code-block:: python
+
+            # Create mapping for attention weights
+            mapping = QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                qkv="model.layers.*.self_attn.qkv.weight",
+            )
+
+            # Convert from HuggingFace to Megatron
+            megatron_qkv = mapping.hf_to_megatron(qkv_weights, megatron_module)
+
+            # Convert from Megatron to HuggingFace
+            hf_weights = mapping.megatron_to_hf(megatron_qkv, megatron_module)
+
+    Note:
+        This mapping automatically handles both regular multi-head attention
+        (same number of Q, K, V heads) and grouped query attention (fewer
+        KV heads than Q heads) based on the model configuration.
+    """
+
+    def __init__(self, megatron_param: str, hf_param: str):
+        """Initialize QKV mapping.
+
+        Args:
+            megatron_param (str): Megatron interleaved QKV parameter name pattern.
+            hf_param (str): HF concatenated QKV parameter name pattern.
+        """
+        super().__init__(megatron_param, hf_param)
+        # Delegate all tensor-parallel logic to the smart TP-aware mapping so we
+        # do not hard-code the assumption that QKV projections are column-parallel.
+        # This keeps the format-handling (merge/split) concerns separate from
+        # TP/PP distribution mechanics.
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: torch.Tensor,
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Merge Q, K, V into interleaved format and distribute."""
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            head_num = config.num_attention_heads
+            head_size = config.kv_channels
+            num_query_groups = config.num_query_groups
+            q, k, v = hf_weights.split(
+                [head_num * head_size, num_query_groups * head_size, num_query_groups * head_size],
+                dim=0
+            )
+            # Check if we're dealing with biases (1D tensors) or hf_weights (2D tensors)
+            if q.ndim == 1:
+                # For biases, use the bias-specific merge function
+                merged = merge_qkv_biases(config, q, k, v)
+            else:
+                # For hf_weights, use the standard merge function
+                merged = merge_qkv_weights(config, q, k, v)
+        else:
+            merged = None
+
+        # Delegate the actual sharding/broadcasting to the TP-aware mapping.
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> torch.Tensor:
+        """Gather QKV shards and split into Q, K, V."""
+        # Dequantize if needed
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        # ------------------------------------------------------------------
+        # Broadcast / retrieve the transformer configuration so that every PP
+        # rank (also the ones that will early-return) participates in the
+        # collective communication.
+        # ------------------------------------------------------------------
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
+        else:
+            config = self._get_config(megatron_module)
+            # create shallow copy and remove non-picklable objects with max depth=2
+            config = remove_non_pickleables(config, max_depth=2)
+            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+
+        # Delegate TP/PP gathering.
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+
+        if not packed_dict:
+            return {}
+
+        packed_qkv = next(iter(packed_dict.values()))
+
+        # Check if we're dealing with biases (1D) or weights (2D)
+        if packed_qkv.ndim == 1:
+            # Split biases
+            q, k, v = split_qkv_biases(config, packed_qkv)
+        else:
+            # Split weights
+            q, k, v = split_qkv_weights(config, packed_qkv)
+
+        return torch.cat((q, k, v), dim=0)
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        """Return a new *resolved* QKVMapping instance."""
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+
+        return type(self)(resolved_megatron_param, resolved_hf_param)
+
 
 
 class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):

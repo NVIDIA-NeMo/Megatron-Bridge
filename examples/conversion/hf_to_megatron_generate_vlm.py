@@ -28,8 +28,7 @@ Example:
 """
 
 import argparse
-from typing import Optional
-
+from typing import Optional, List
 import requests
 import torch
 import torch.distributed as dist
@@ -38,6 +37,15 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from PIL import Image
 from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
+
+# === NEW IMPORTS FOR MEGATRON PREPROCESSING ===
+try:
+    from megatron.training.tokenizer.multimodal_tokenizer import MultimodalTokenizer
+    from examples.multimodal.image_processing import ImageTransform, find_closest_area_weighted_aspect_ratio, process_images
+except Exception:
+    # Megatron might not be available in lightweight envs – fail gracefully when the user
+    # chooses the default HF preprocessing path.
+    MultimodalTokenizer = None  # type: ignore
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
@@ -52,7 +60,7 @@ class SingleBatchIterator:
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None):
+    def __init__(self, input_ids, position_ids, attention_mask, **kwargs):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
@@ -60,10 +68,12 @@ class SingleBatchIterator:
         )
 
         # Add vision inputs if provided
-        if pixel_values is not None:
-            self.batch["pixel_values"] = pixel_values
-        if image_grid_thw is not None:
-            self.batch["image_grid_thw"] = image_grid_thw
+        if kwargs.get("images", None) is not None:
+            self.batch["images"] = kwargs.get("images", None)
+        elif kwargs.get("pixel_values", None) is not None:
+            self.batch["pixel_values"] = kwargs.get("pixel_values", None)
+        if kwargs.get("image_grid_thw", None) is not None:
+            self.batch["image_grid_thw"] = kwargs.get("image_grid_thw", None)
 
         self._yielded = False
 
@@ -99,8 +109,9 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         "attention_mask": batch.get("attention_mask", None),
     }
 
-    # Add vision inputs if present
-    if "pixel_values" in batch:
+    if "images" in batch:
+        forward_args["images"] = batch["images"]
+    elif "pixel_values" in batch:
         forward_args["pixel_values"] = batch["pixel_values"]
     if "image_grid_thw" in batch:
         forward_args["image_grid_thw"] = batch["image_grid_thw"]
@@ -140,14 +151,27 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         Tuple of (input_ids, pixel_values, image_grid_thw, messages)
     """
     if image_path:
+        if "," in image_path:
+            image_paths = image_path.split(",")
+            content = []
+            for i, path in enumerate(image_paths):
+                content.append({"type": "text", "text": f"{'\n' if i > 0 else ''}Image-{i+1}: "})
+                content.append({"type": "image", "image": path})
+            content.append({"type": "text", "text": '\n' + prompt})
+        else:
+            content = [
+                    {"type": "image", "image": image_path},
+                    {"type": "text", "text": prompt},
+                ]
         # Create messages with image and text
         messages = [
             {
+                "role": "system",
+                "content": "/no_think",
+            },
+            {
                 "role": "user",
-                "content": [
-                    {"type": "image", "image": image_path},
-                    {"type": "text", "text": prompt},
-                ],
+                "content": content,
             }
         ]
 
@@ -162,15 +186,186 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             text=[text],
             images=image_inputs,
             videos=video_inputs,
-            padding=True,
+            padding=processor.tokenizer.pad_token is not None,
             return_tensors="pt",
         )
-
-        return inputs.input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        try: 
+            image_grid_thw = inputs.image_grid_thw
+        except AttributeError:
+            image_grid_thw = None
+        return inputs.input_ids, inputs.pixel_values, image_grid_thw, inputs.num_patches
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")
         return inputs.input_ids, None, None, None
+
+def process_video_inputs(processor, video_path: Optional[str], prompt: str):
+    """Process video inputs for vision-language model.
+    """
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import maybe_path_or_url_to_data_urls, pil_image_from_base64
+
+    video_fps = 1
+    video_nframe = 8
+    video_nframe_max = -1
+
+    # Get frames and metadata
+    image_urls, metadata = maybe_path_or_url_to_data_urls(
+        video_path,
+        fps=max(0, int(video_fps)),
+        nframe=max(0, int(video_nframe)),
+        nframe_max=int(video_nframe_max),
+    )
+    frames = [pil_image_from_base64(image_url) for image_url in image_urls]
+
+    print(f"Video Metadata: {metadata}")
+
+    messages = [
+        {
+            "role": "system",
+            "content": "/no_think"
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "video",
+                    "video": f"file://{video_path}",
+                },
+                {
+                    "type": "text",
+                    "text": "\n" + prompt,
+                },
+            ],
+        }
+    ]
+    prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+    # Process with FPS metadata
+    if metadata:
+        inputs = processor(
+            text=[prompt],
+            videos=frames,
+            videos_kwargs={'video_metadata': metadata},
+            return_tensors="pt",
+        )
+    else:
+        inputs = processor(
+            text=[prompt],
+            videos=frames,
+            return_tensors="pt",
+        )
+    return inputs.input_ids, inputs.pixel_values_videos, None, inputs.num_patches
+
+def process_inputs_megatron(image_path: Optional[str], prompt: str, hf_model_path: str):
+    """Pre-process using Megatron Energon TaskEncoder utilities.
+
+    Returns (input_ids, images, image_grid_thw, messages) matching the format
+    expected by `vlm_forward_step`.
+    """
+    if MultimodalTokenizer is None:
+        raise RuntimeError("Megatron libraries not available – cannot use preprocess_mode='megatron'.")
+
+    # Build an underlying HuggingFace tokenizer first, then wrap with MultimodalTokenizer.
+    base_tokenizer = AutoTokenizer.from_pretrained(hf_model_path, trust_remote_code=True)
+    if base_tokenizer.pad_token is None:
+        base_tokenizer.pad_token = base_tokenizer.eos_token
+
+    tokenizer = MultimodalTokenizer(
+        tokenizer=base_tokenizer,
+        prompt_format="nemotron-h-5p5-reasoning",  # adjust if needed
+        special_tokens=[],  # special tokens are already added
+        image_tag_type="internvl",
+        force_system_message=False,
+    )
+
+    # Basic system prompt – keep simple.
+    system_prompt = "/no_think"
+
+    messages = []
+    if image_path:
+        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": "<image>" + prompt})
+    else:
+        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+    # Tokenize conversation (wrapper expects list[dict])
+    input_ids = tokenizer.tokenize_conversation(messages, return_target=False, add_generation_prompt=True)
+    input_ids = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0)
+    images = None
+    if image_path:
+        pil_img = load_image(image_path).convert("RGB")
+        # Image preprocessing aligned with Megatron training (encode_llava_pretrain)
+        img_h = 512  # default tile size used during training; adjust via CLI if necessary
+        img_w = 512
+        vision_model_type = "radio"  # change if your model uses a different vision backbone
+        patch_dim = 16
+        transform_img = ImageTransform(
+            img_h,
+            vision_model_type,
+            dynamic_resolution=False,
+            res_step=patch_dim,
+            max_num_patches=img_h * img_w // (patch_dim * patch_dim),
+            pixel_shuffle=True,
+        )
+
+        img_tensors = transform_img(
+            pil_img,
+            img_h,
+            img_w,
+            use_tiling=True,
+            max_num_tiles=12,
+            use_thumbnail=True,
+            augment=False,
+            find_closest_aspect_ratio_fn=find_closest_area_weighted_aspect_ratio,
+        )
+
+        images, _, _, _ = process_images(img_tensors, patch_dim=patch_dim, dynamic_resolution=False, batch_mode=False)
+        images = images.bfloat16()  # [num_tiles, C, H, W]
+
+        # ------------------------------------------------------------------
+        # Ensure the text stream contains one <image> token per tile.
+        # Megatron's training pipeline can optionally work with a single token
+        # and expand it internally, but some checkpoints expect the count to
+        # match exactly.  We replicate the IMAGE token here if needed.
+        # ------------------------------------------------------------------
+        num_tiles = images.shape[0]
+        img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
+        img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
+        input_ids = _ensure_image_tokens(input_ids, num_tiles, img_start_token_id, img_end_token_id)
+
+    return input_ids, images, messages, tokenizer._tokenizer
+
+
+def _ensure_image_tokens(input_ids: torch.Tensor, num_tiles: int | List[int], img_start_token_id: int, img_end_token_id: int) -> torch.Tensor:
+    """Ensures the input_ids tensor contains the correct number of <image> tokens.
+    If the number of tiles is greater than the current count, it repeats the token.
+    If the number of tiles is less, it removes the extra tokens
+    """
+    if isinstance(num_tiles, int):
+        num_tiles = [num_tiles]
+    for i, num_tile in enumerate(num_tiles):
+        image_start_pos = (input_ids[0] == img_start_token_id).nonzero(as_tuple=True)[0][i].item()
+        image_end_pos = (input_ids[0] == img_end_token_id).nonzero(as_tuple=True)[0][i].item()
+        media_token_id = input_ids[0, image_start_pos + 1]  # this can be <image> or <video> token
+        existing = image_end_pos - image_start_pos + 1
+
+        if num_tile > existing:
+            # Need to add tokens
+            repeat = num_tile + 2 - existing  # +2 for <img> and </img> tokens
+            repeat_tokens = torch.full((1, repeat), media_token_id, dtype=input_ids.dtype, device=input_ids.device)
+            input_ids = torch.cat([input_ids[:, : image_start_pos + 1], repeat_tokens, input_ids[:, image_start_pos + 1 :]], dim=1)
+
+        elif num_tile < existing:
+            # Need to remove tokens (keep only the first `num_tile` occurrences)
+            keep_tokens_mask = torch.ones_like(input_ids, dtype=torch.bool)
+            positions = (input_ids[0][image_start_pos:image_end_pos+1] == media_token_id).nonzero(as_tuple=True)[0] + image_start_pos
+            # positions to drop are after the first num_tile occurrences
+            drop_positions = positions[num_tile:].tolist()
+            keep_tokens_mask[0, drop_positions] = False
+            input_ids = input_ids[keep_tokens_mask].unsqueeze(0)
+
+    return input_ids
 
 
 def main(args) -> None:
@@ -197,7 +392,7 @@ def main(args) -> None:
 
         # We still need HF config for tokenizer, but we'll load the model from Megatron checkpoint
         # Create bridge from HF config only (no weights)
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
 
         # Initialize model parallel before loading
         model_provider = bridge.to_megatron_provider(load_weights=False)
@@ -214,7 +409,7 @@ def main(args) -> None:
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -229,21 +424,40 @@ def main(args) -> None:
         m.eval()
 
     # Initialize tokenizer and processor
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    if args.preprocess_mode == "megatron":
+        input_ids, images, _, tokenizer = process_inputs_megatron(args.image_path, args.prompt, args.hf_model_path)
+        pixel_values = None
+        image_grid_thw = None
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+        img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
+        img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
 
-    # Process inputs (text and image if provided)
-    prompt = args.prompt
-    input_ids, pixel_values, image_grid_thw, messages = process_image_inputs(processor, args.image_path, prompt)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        if args.video_path:
+            input_ids, pixel_values, image_grid_thw, num_patches = process_video_inputs(processor, args.video_path, args.prompt)
+        else:
+            input_ids, pixel_values, image_grid_thw, num_patches = process_image_inputs(processor, args.image_path, args.prompt)
+
+        images = None
+        if args.use_llava_model:
+            images = pixel_values.bfloat16()
+            input_ids = _ensure_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
+            if args.video_path:
+                video_token_id = tokenizer.convert_tokens_to_ids("<video>")
+                image_token_id = tokenizer.convert_tokens_to_ids("<image>")
+                input_ids = torch.where(input_ids == video_token_id, image_token_id, input_ids)
+            pixel_values = None
+
 
     # Move to GPU
     input_ids = input_ids.cuda()
     if pixel_values is not None:
         pixel_values = pixel_values.cuda()
-    if image_grid_thw is not None:
-        image_grid_thw = image_grid_thw.cuda()
+    if images is not None:
+        images = images.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -262,7 +476,14 @@ def main(args) -> None:
             # Keep passing vision inputs for all steps to ensure image features are available
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
-            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
+            iterator = SingleBatchIterator(
+                input_ids, 
+                position_ids, 
+                attention_mask,
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
+                images=images,
+            )
 
             output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,
@@ -276,6 +497,9 @@ def main(args) -> None:
             )
             if isinstance(output, list) and len(output) > 0:
                 output = output[0]
+                if isinstance(output, tuple):
+                    # for LlavaModel
+                    output = output[0]
 
             if parallel_state.is_pipeline_last_stage():
                 world_size = parallel_state.get_tensor_model_parallel_world_size()
@@ -319,7 +543,7 @@ def main(args) -> None:
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
-    print_rank_0(f"Prompt: {prompt}")
+    print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
     print_rank_0("=======================================")
 
@@ -353,7 +577,28 @@ if __name__ == "__main__":
         "--image_path",
         type=str,
         default=None,
-        help="Path or URL to the image for vision-language generation (optional).",
+        help="Path or URL to the image for vision-language generation (optional). Multiple images paths can be separated"
+             "with commas.",
+    )
+    parser.add_argument(
+        "--video_path",
+        type=str,
+        default=None,
+        help="Path or URL to the video for vision-language generation (optional).",
+    )
+    parser.add_argument(
+        "--preprocess_mode",
+        type=str,
+        choices=["hf", "megatron"],
+        default="hf",
+        help="Choose preprocessing pipeline: 'hf' (default) uses HuggingFace AutoProcessor/Tokenizer, 'megatron' uses "
+        "MultimodalTokenizer and image utilities from Megatron Energon TaskEncoder.",
+    )
+    parser.add_argument(
+        "--use_llava_model",
+        action="store_true",
+        default=False,
+        help="Specify whether model uses Megatron vision model (i.e. LLaVAModel)",
     )
     args = parser.parse_args()
 
