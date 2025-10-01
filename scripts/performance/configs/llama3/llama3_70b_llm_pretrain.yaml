@@ -119,7 +119,11 @@ perf_matrix:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
+<<<<<<< HEAD
         gbs: 64
+=======
+        gbs: 128
+>>>>>>> upstream/llmb-r0.1.0
         cuda_graphs: false
         cp: 1
         ep: 1

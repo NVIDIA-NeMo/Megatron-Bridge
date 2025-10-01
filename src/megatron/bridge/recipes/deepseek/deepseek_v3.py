@@ -58,7 +58,11 @@ def model_config(
     enable_deepep: bool = False,
     apply_rope_fusion: bool = True,
     layout: Optional[List[List[str]]] = None,
+<<<<<<< HEAD
 ) -> DeepSeekV3ModelProvider:
+=======
+) -> DeepSeekV3Provider:
+>>>>>>> upstream/llmb-r0.1.0
     """
     Configure the DeepSeek-V3 (671B) model.
 

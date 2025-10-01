@@ -76,12 +76,12 @@ perf_matrix:
         keep_fp8_transpose_cache_when_using_custom_fsdp: true
         nccl_ub: true
   b200:
-    num_gpus_8:
+    num_gpus_4:
       common:
         num_gpus_per_node: 8
         seq_length: 8192
         mbs: 2
-        gbs: 128
+        gbs: 64
         cuda_graphs: true
         tp: 1
         pp: 1
