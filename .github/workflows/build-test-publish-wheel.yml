@@ -30,8 +30,12 @@ permissions:
   contents: read
 
 jobs:
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.0
+
   build-test-publish-wheel:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.48.0
+    needs: [pre-flight]
     with:
       dry-run: true
       python-package: megatron.bridge
