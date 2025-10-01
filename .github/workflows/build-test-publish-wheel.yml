@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@ko3n1g/fix/pre-flight-on-branch
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.1
 
   build-test-publish-wheel:
     needs: [pre-flight]
