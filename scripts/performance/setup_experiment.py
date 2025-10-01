@@ -45,9 +45,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     args, _ = parse_cli_args()
-    exp_name = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}"
     dtype = "bf16" if args.compute_dtype == "bf16" else f"{args.compute_dtype}_{args.fp8_recipe}"
-    exp_name += f"_{dtype}"
 
     if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b", "235b_a22b"]:
         assert args.hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
