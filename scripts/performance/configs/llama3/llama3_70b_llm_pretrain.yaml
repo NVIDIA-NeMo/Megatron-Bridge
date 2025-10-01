@@ -76,12 +76,12 @@ perf_matrix:
         pp: 8
         cp: 1
   b200:
-    num_gpus_64:
+    num_gpus_32:
       common:
         num_gpus_per_node: 8
         seq_length: 8192
         mbs: 1
-        gbs: 128
+        gbs: 64
         ep: 1
         etp: null
       bf16:
