@@ -154,6 +154,9 @@ def main():
         apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
     recipe.model.gradient_accumulation_fusion = True
 
+
+    recipe.model.cuda_graph_scope = "full_iteration"
+   
     if recipe.model.use_transformer_engine_op_fuser:
         if args.fp8_recipe == "mx" or recipe.ddp.use_megatron_fsdp:
             logger.warning("Disabling model.use_transformer_engine_op_fuser as it cannot work with MXFP8 or FSDP.")
