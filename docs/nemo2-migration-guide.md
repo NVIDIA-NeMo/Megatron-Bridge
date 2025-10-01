@@ -1786,11 +1786,9 @@ run.run(task, executor=executor)
 
 ### Plugin Migration Comparison
 
-| **Plugin** | **NeMo 2.0** | **Megatron Bridge** | **Key Differences** |
-|------------|-------------|-----------|-------------------|
-| **Nsys** | `nemo.lightning.run.plugins.NsysPlugin` | {py:class}`bridge.recipes.run_plugins.NsysPlugin` | Optimized for `run.Script` with automatic CLI overrides |
-| **Wandb** | `nemo.lightning.run.plugins.WandbPlugin` | {py:class}`bridge.recipes.run_plugins.WandbPlugin` | Simpler configuration, automatic CLI override generation |
-| **Preemption** | `nemo.lightning.run.plugins.PreemptionPlugin` | {py:class}`bridge.recipes.run_plugins.PreemptionPlugin` | Direct config setting, better dependency isolation |
-| **Fault Tolerance** | `nemo.lightning.run.plugins.FaultTolerancePlugin` | {py:class}`bridge.recipes.run_plugins.FaultTolerancePlugin` | Config-based approach with script mode benefits |
-
-**Recommendation**: Use `run.Script` mode with Megatron Bridge for better dependency management, environment isolation, and cleaner configuration override handling.
+| **Plugin** | **NeMo 2.0** | **Megatron Bridge** |
+|------------|-------------|-----------|
+| **Nsys** | `nemo.lightning.run.plugins.NsysPlugin` | {py:class}`bridge.recipes.run_plugins.NsysPlugin` |
+| **Wandb** | `nemo.lightning.run.plugins.WandbPlugin` | {py:class}`bridge.recipes.run_plugins.WandbPlugin` |
+| **Preemption** | `nemo.lightning.run.plugins.PreemptionPlugin` | {py:class}`bridge.recipes.run_plugins.PreemptionPlugin` |
+| **Fault Tolerance** | `nemo.lightning.run.plugins.FaultTolerancePlugin` | {py:class}`bridge.recipes.run_plugins.FaultTolerancePlugin` |
