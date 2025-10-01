@@ -127,3 +127,39 @@ perf_matrix:
         cp: 2
         vp: 8
         use_megatron_fsdp: false
+  gb300:
+    num_gpus_128:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 8192
+        mbs: 1
+        gbs: 64
+        cuda_graphs: false
+        ep: 1
+        etp: null
+      bf16:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        use_megatron_fsdp: false
+      fp8_ds:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: null
+        use_megatron_fsdp: true
+        cpu_offloading_num_layers: 95
+      fp8_cs:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: null
+        use_megatron_fsdp: true
+        cpu_offloading_num_layers: 95
+      fp8_mx:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        use_megatron_fsdp: false
