@@ -17,6 +17,7 @@
 from pathlib import Path
 from typing import Callable, Optional
 
+from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from tests.functional_tests.utils import (
@@ -54,10 +55,13 @@ def run_pretrain_recipe_test(
     shared_base_dir = broadcast_path(tmp_path)
 
     try:
-        config = config_func(dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", mock=True)
+        config: ConfigContainer = config_func(
+            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", mock=True
+        )
         config.train.train_iters = 10
         config.train.eval_interval = 5
         config.train.eval_iters = 2
+        config.scheduler.lr_warmup_iters = 2
         test_seq_length = 512
         config.model.seq_length = test_seq_length
         config.dataset.sequence_length = test_seq_length
@@ -87,3 +91,24 @@ def run_pretrain_recipe_test(
 
     finally:
         clear_directories(tmp_path)
+
+
+def run_pretrain_config_override_test(config_func: Callable):
+    """
+    Common test implementation for testing pretrain_config with CLI-style overrides *after* instantiation.
+    """
+    config: ConfigContainer = config_func()
+
+    # apply CLI-style overrides
+    config.train.train_iters = 50000
+    # FIXME:This should not be needed, but in some pretrain_config functions,
+    # the default seq_length does *not* match the model seq_length.
+    config.model.seq_length = 512
+    config.dataset.sequence_length = 512
+
+    assert config.scheduler.lr_decay_iters is None
+
+    runtime_config_update(config)
+
+    assert config.train.train_iters == 50000
+    assert config.scheduler.lr_decay_iters == config.train.train_iters

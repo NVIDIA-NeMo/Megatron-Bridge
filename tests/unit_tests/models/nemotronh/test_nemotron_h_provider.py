@@ -265,7 +265,7 @@ class TestNemotronHProviderInheritance:
         ]
 
         for provider in providers:
-            # The provide method should be inherited from MambaProvider
+            # The provide method should be inherited from MambaModelProvider
             assert hasattr(provider, "provide")
             assert callable(provider.provide)
 

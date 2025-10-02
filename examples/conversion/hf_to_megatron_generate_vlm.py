@@ -404,7 +404,16 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
-        model = bridge.load_megatron_model(args.megatron_model_path, wrap_with_ddp=False)
+        model = bridge.load_megatron_model(
+            args.megatron_model_path,
+            mp_overrides={
+                "tensor_model_parallel_size": tp,
+                "pipeline_model_parallel_size": pp,
+                "expert_model_parallel_size": ep,
+                "expert_tensor_parallel_size": etp,
+            },
+            wrap_with_ddp=False,
+        )
 
     else:
         # Load from HuggingFace and convert to Megatron
