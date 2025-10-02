@@ -7,6 +7,7 @@
 :hidden:
 
 parallelisms.md
+performance-summary.md
 performance-guide.md
 recipe-usage.md
 ```
