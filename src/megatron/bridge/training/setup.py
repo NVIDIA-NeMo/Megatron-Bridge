@@ -38,7 +38,7 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
-from megatron.bridge.training.post_training import create_modelopt_pre_wrap_hook
+from megatron.bridge.training.post_training.utils import create_modelopt_pre_wrap_hook
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging

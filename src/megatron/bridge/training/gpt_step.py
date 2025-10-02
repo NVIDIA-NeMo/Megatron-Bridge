@@ -24,7 +24,7 @@ from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unw
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.post_training import loss_func_kd
+from megatron.bridge.training.post_training.utils import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
