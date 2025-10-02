@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import modelopt.torch.distill as mtd
 import torch
@@ -27,18 +26,8 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.model_load_save import load_model_config
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 from megatron.bridge.utils.vocab_utils import validate_and_set_vocab_size
-
-
-@dataclass
-class ModelOptConfig:
-    """Configuration settings for Model Optimizer features."""
-
-    kd_teacher_path_or_id: Optional[str] = None
-    """Path to the teacher checkpoint or HF model ID."""
-
-    kd_config_path: Optional[str] = None
-    """Path to the KD config YAML file."""
 
 
 def create_modelopt_pre_wrap_hook(
@@ -67,7 +56,7 @@ def create_modelopt_pre_wrap_hook(
             if len(model) > 1:
                 raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
             student_model = model[0]
-            teacher_model = _load_teacher_model(cfg.modelopt.kd_teacher_path_or_id, cfg)
+            teacher_model = _load_teacher_model(cfg.modelopt.kd_teacher_path_or_id, cfg, state)
             kd_cfg = load_distillation_config(cfg.modelopt.kd_config_path, student_model.config, teacher_model.config)
             modelopt_cfg = {
                 "teacher_model": teacher_model,
@@ -78,6 +67,8 @@ def create_modelopt_pre_wrap_hook(
             adjust_distillation_model_for_mcore(student_model, kd_cfg)
 
         return model
+
+    return modelopt_pre_wrap_hook
 
 
 def _load_teacher_model(teacher_model_path_or_id: str, cfg: ConfigContainer, state: GlobalState) -> MegatronModule:
@@ -92,11 +83,11 @@ def _load_teacher_model(teacher_model_path_or_id: str, cfg: ConfigContainer, sta
         GPTModelProvider or MambaProvider: The teacher model provider.
     """
     # Obtain provider one way or another
-    try:
-        bridge = AutoBridge.from_hf_pretrained(teacher_model_path_or_id, trust_remote_code=True)
-    except ValueError:
+    is_megatron_ckpt = checkpoint_exists(teacher_model_path_or_id)
+    if is_megatron_ckpt:
         provider, _ = load_model_config(teacher_model_path_or_id)
     else:
+        bridge = AutoBridge.from_hf_pretrained(teacher_model_path_or_id, trust_remote_code=True)
         provider = bridge.to_megatron_provider(load_weights=True)
 
     # Additional setup adjustments
@@ -114,13 +105,14 @@ def _load_teacher_model(teacher_model_path_or_id: str, cfg: ConfigContainer, sta
 
     # Directly call load_checkpoint_from path in order to avoid
     # the load directory overriding the pretrained checkpoint path
-    _load_checkpoint_from_path(
-        load_dir=cfg.checkpoint.pretrained_checkpoint,
-        state=state,
-        model=model,
-        optimizer=None,
-        opt_param_scheduler=None,
-    )
+    if is_megatron_ckpt:
+        _load_checkpoint_from_path(
+            load_dir=teacher_model_path_or_id,
+            state=state,
+            model=model,
+            optimizer=None,
+            opt_param_scheduler=None,
+        )
 
     return model
 

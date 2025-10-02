@@ -21,13 +21,12 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, unwrap_model
 
 from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig
 from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.post_training import loss_func_kd
+from megatron.bridge.training.post_training.utils import loss_func_kd
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.utils.common_utils import unwrap_model
 
 
 logger = logging.getLogger(__name__)
