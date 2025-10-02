@@ -349,7 +349,7 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
         )
 
-    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
@@ -383,9 +383,9 @@ class AutoBridge(Generic[MegatronModelT]):
             # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path)
 
-        self.save_hf_weights(model, path, show_progress)
+        self.save_hf_weights(model, path, show_progress, strict)
 
-    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 
@@ -431,7 +431,7 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path)
+            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
@@ -593,6 +593,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_path: str | Path,
         hf_path: str | Path,
         show_progress: bool = True,
+        strict: bool = False
     ) -> None:
         """
         Export a Megatron checkpoint to HuggingFace format.
@@ -636,7 +637,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
             # Save in HuggingFace format
-            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
+            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress, strict=strict)
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
