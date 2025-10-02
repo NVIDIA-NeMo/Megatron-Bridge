@@ -125,21 +125,3 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     # Parallelism and shaping
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-
-
-# Dynamically parametrize tests after module import so we can enumerate __all__
-
-
-def pytest_generate_tests(metafunc):
-    if "recipe_func" in metafunc.fixturenames:
-        qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
-        exported: List[str] = getattr(qwen_module, "__all__", [])
-        funcs: List[Callable] = []
-        ids: List[str] = []
-        for name in exported:
-            obj = getattr(qwen_module, name, None)
-            if callable(obj):
-                funcs.append(obj)
-                ids.append(name)
-        if funcs:
-            metafunc.parametrize("recipe_func", funcs, ids=ids)

@@ -109,21 +109,3 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-
-
-# Dynamic parametrization from megatron.bridge.recipes.llama
-
-
-def pytest_generate_tests(metafunc):
-    if "recipe_func" in metafunc.fixturenames:
-        llama_module = importlib.import_module("megatron.bridge.recipes.llama")
-        exported: List[str] = getattr(llama_module, "__all__", [])
-        funcs: List[Callable] = []
-        ids: List[str] = []
-        for name in exported:
-            obj = getattr(llama_module, name, None)
-            if callable(obj):
-                funcs.append(obj)
-                ids.append(name)
-        if funcs:
-            metafunc.parametrize("recipe_func", funcs, ids=ids)
