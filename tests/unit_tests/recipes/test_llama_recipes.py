@@ -26,12 +26,18 @@ from typing import Callable
 import pytest
 
 
+_llama_module = importlib.import_module("megatron.bridge.recipes.llama")
+_LLAMA_RECIPE_FUNCS = [
+    getattr(_llama_module, name)
+    for name in getattr(_llama_module, "__all__", [])
+    if callable(getattr(_llama_module, name, None))
+]
+
 def _safe_overrides_for(name: str) -> dict:
-    # Minimal, dependency-light overrides for fast unit testing
     overrides = {
         "name": f"unit_{name}",
-        "dir": ".",  # keep paths local
-        "mock": True,  # use mock data paths
+        "dir": ".",
+        "mock": True,
         "train_iters": 10,
         "global_batch_size": 2,
         "micro_batch_size": 1,
@@ -39,21 +45,18 @@ def _safe_overrides_for(name: str) -> dict:
         "lr": 1e-4,
         "min_lr": 1e-5,
         "lr_warmup_iters": 2,
-        # Keep parallelism tiny so provider shaping is trivial
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
         "context_parallelism": 1,
-        # Prefer NullTokenizer in tests to avoid HF tokenizer I/O
         "use_null_tokenizer": True,
     }
 
-    # For MoE recipes, ensure expert settings are small/valid
+    # Large models/variants may set additional flags in recipes; keep harmless defaults
     lname = name.lower()
-    if "a3b" in lname or "a22b" in lname or "moe" in lname:
+    if "70b" in lname or "405b" in lname:
         overrides.update(
             {
-                "expert_parallelism": 2,
-                "expert_tensor_parallelism": 1,
+                "virtual_pipeline_parallelism": None,
                 "sequence_parallelism": True,
             }
         )
@@ -62,9 +65,7 @@ def _safe_overrides_for(name: str) -> dict:
 
 
 class _FakeModelCfg:
-    # Minimal provider to accept attribute assignments used in recipes
     def finalize(self):
-        # qwen3 recipe may call finalize(); make it a no-op
         return None
 
 
@@ -77,7 +78,6 @@ class _FakeBridge:
 
     @staticmethod
     def from_hf_pretrained(hf_path: str):
-        # Ignore hf_path; return a bridge that yields a fake provider
         return _FakeBridge()
 
 
@@ -85,7 +85,6 @@ def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 
     assert isinstance(cfg, ConfigContainer)
-    # Required top-level sections
     assert cfg.model is not None
     assert cfg.train is not None
     assert cfg.optimizer is not None
@@ -96,14 +95,13 @@ def _assert_basic_config(cfg):
     assert cfg.checkpoint is not None
     assert cfg.rng is not None
 
-    # A few critical fields
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
     assert cfg.dataset.sequence_length >= 1
 
 
-def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    # Monkeypatch AutoBridge in the specific module where the recipe function is defined
+@pytest.mark.parametrize("recipe_func", _LLAMA_RECIPE_FUNCS)
+def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
@@ -114,14 +112,8 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
 
     _assert_basic_config(cfg)
 
-    # Ensure tokenizer choice matches override
-    if overrides.get("use_null_tokenizer"):
+    if overrides.get("use_null_tokenizer") and hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
-        assert cfg.tokenizer.vocab_size is not None
-    else:
-        assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-        assert cfg.tokenizer.tokenizer_model is not None
 
-    # Parallelism and shaping
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
