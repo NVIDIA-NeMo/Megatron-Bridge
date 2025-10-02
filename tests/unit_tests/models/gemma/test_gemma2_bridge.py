@@ -560,7 +560,7 @@ class TestAutoBridgeIntegration:
             json.dump(tokenizer_data, f, indent=2)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
-    @patch("megatron.bridge.models.conversion.auto_bridge.AutoConfig.from_pretrained")
+    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig.from_pretrained")
     def test_from_pretrained_with_temp_dir(self, mock_autoconfig, mock_pretrained, gemma2_configs):
         """Test AutoBridge.from_hf_pretrained with temporary directory."""
         with tempfile.TemporaryDirectory() as temp_dir:

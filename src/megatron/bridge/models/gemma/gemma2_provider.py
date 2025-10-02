@@ -18,6 +18,7 @@ from typing import Callable, Optional, Union
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.activations import fast_gelu
 from megatron.core.extensions.transformer_engine import TELayerNormColumnParallelLinear, TENorm, TERowParallelLinear
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.fusions.fused_softmax import FusedScaleMaskSoftmax
@@ -38,7 +39,6 @@ from megatron.core.transformer.utils import attention_mask_func
 from megatron.core.utils import divide
 from torch import Tensor
 
-from megatron.bridge.models.activations import openai_gelu
 from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin, extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -337,7 +337,7 @@ class Gemma2ModelProvider(GPTModelProvider):
 
     # configs that are common across model sizes
     normalization: str = "RMSNorm"
-    activation_func: Callable = openai_gelu
+    activation_func: Callable = fast_gelu
     gated_linear_unit: bool = True
     position_embedding_type: str = "rope"
     add_bias_linear: bool = False
@@ -363,7 +363,7 @@ class Gemma2ModelProvider(GPTModelProvider):
     attn_logit_softcapping: float = 50.0
     final_logit_softcapping: float = 30.0
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None, tokenizer=None) -> "MCoreGPTModel":
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Gemma2 model.
         Extends the base configuration with Gemma2-specific embedding scaling and output layer modifications.
         Args:
@@ -374,9 +374,7 @@ class Gemma2ModelProvider(GPTModelProvider):
         Returns:
             MCoreGPTModel: Configured Megatron Core GPT model instance
         """
-        model = super().provide(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage, tokenizer=tokenizer
-        )
+        model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
         # Apply Embedding Scaling for Gemma2: sqrt(hidden_size)
         if parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage):

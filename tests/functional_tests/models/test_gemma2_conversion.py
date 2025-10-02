@@ -62,8 +62,10 @@ class TestGemma2Conversion:
     def gemma2_toy_model_path(self, tmp_path_factory):
         """
         Create and save a HuggingFace Gemma2 toy model from config to a temporary directory.
+
         Args:
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
+
         Returns:
             str: Path to the saved HuggingFace model directory
         """
@@ -86,24 +88,17 @@ class TestGemma2Conversion:
 
         # Download and save tokenizer from a reference Gemma model
         # We use the smallest available Gemma model for tokenizer artifacts
-        try:
+        # First try to load from pre-mounted test data, then fall back to HuggingFace download
+        pre_downloaded_path = "/home/TestData/megatron_bridge/tokenizers/google/gemma-2b"
+        # Try loading from pre-downloaded location first
+        if Path(pre_downloaded_path).exists():
+            print(f"Loading tokenizer from pre-downloaded path: {pre_downloaded_path}")
+            tokenizer = GemmaTokenizer.from_pretrained(pre_downloaded_path)
+        else:
+            # Fall back to downloading from HuggingFace
+            print("Pre-downloaded tokenizer not found, attempting to download from HuggingFace")
             tokenizer = GemmaTokenizer.from_pretrained("google/gemma-2b")
-            tokenizer.save_pretrained(model_dir)
-        except Exception as e:
-            print(f"Warning: Could not download tokenizer, creating minimal tokenizer files: {e}")
-            # Create minimal tokenizer files if download fails
-            # This is a fallback for offline environments
-            tokenizer_config = {
-                "tokenizer_class": "GemmaTokenizer",
-                "vocab_size": 256000,
-                "bos_token": "<bos>",
-                "eos_token": "<eos>",
-                "pad_token": "<pad>",
-                "unk_token": "<unk>",
-            }
-
-            with open(model_dir / "tokenizer_config.json", "w") as f:
-                json.dump(tokenizer_config, f, indent=2)
+        tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
@@ -119,6 +114,7 @@ class TestGemma2Conversion:
     def test_toy_model_creation(self, gemma2_toy_model_path):
         """
         Test that the toy model is created correctly and can be loaded.
+
         Args:
             gemma2_toy_model_path: Path to the toy Gemma2 model (from fixture)
         """
@@ -195,6 +191,7 @@ class TestGemma2Conversion:
     def test_gemma2_conversion_parallelism(self, gemma2_toy_model_path, tmp_path, tp, pp, test_name):
         """
         Test Gemma2 model conversion with different parallelism configurations.
+
         Args:
             gemma2_toy_model_path: Path to the toy Gemma2 model (from fixture)
             tmp_path: Pytest temporary path fixture
@@ -206,22 +203,21 @@ class TestGemma2Conversion:
         test_output_dir = tmp_path / f"gemma2_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        # Run multi_gpu_hf.py with specified parallelism configuration on our toy model
         cmd = [
             "python",
             "-m",
             "torch.distributed.run",
             "--nproc_per_node=2",
             "--nnodes=1",
-            "-m",
-            "coverage",
-            "run",
-            "--data-file=/workspace/.coverage",
-            "--source=/workspace/",
-            "--parallel-mode",
-            "examples/models/multi_gpu_hf.py",
+            # "-m",
+            # "coverage",
+            # "run",
+            # "--data-file=/workspace/.coverage",
+            # "--source=/workspace/",
+            # "--parallel-mode",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
-            gemma2_toy_model_path,  # Use our local toy model instead of downloading
+            gemma2_toy_model_path,
             "--output-dir",
             str(test_output_dir),
             "--tp",

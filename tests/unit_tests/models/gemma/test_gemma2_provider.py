@@ -14,7 +14,8 @@
 
 from unittest.mock import Mock, patch
 
-from megatron.bridge.models.activations import openai_gelu
+from megatron.core.activations import fast_gelu
+
 from megatron.bridge.models.gemma.gemma2_provider import (
     Gemma2ModelProvider,
     Gemma2ModelProvider2B,
@@ -41,7 +42,7 @@ class TestGemma2ModelProvider:
 
         # Check Gemma2-specific defaults
         assert provider.normalization == "RMSNorm"
-        assert provider.activation_func == openai_gelu
+        assert provider.activation_func == fast_gelu
         assert provider.gated_linear_unit is True
         assert provider.position_embedding_type == "rope"
         assert provider.add_bias_linear is False
@@ -182,7 +183,7 @@ class TestGemma2ModelProvider2B:
 
         # Test inherited Gemma2 defaults
         assert provider.normalization == "RMSNorm"
-        assert provider.activation_func == openai_gelu
+        assert provider.activation_func == fast_gelu
         assert provider.gated_linear_unit is True
         assert provider.window_size == (4096, 0)
         assert provider.attn_logit_softcapping == 50.0
@@ -211,7 +212,7 @@ class TestGemma2ModelProvider9B:
 
         # Test inherited Gemma2 defaults
         assert provider.normalization == "RMSNorm"
-        assert provider.activation_func == openai_gelu
+        assert provider.activation_func == fast_gelu
         assert provider.gated_linear_unit is True
 
     def test_gemma2_9b_inheritance(self):
