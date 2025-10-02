@@ -37,6 +37,7 @@ training/attention-optimizations.md
 training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
+training/packed-sequences.md
 ```
 
 ```{toctree}
