@@ -24,6 +24,8 @@ import importlib
 from typing import Callable
 
 import pytest
+
+
 _qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
 _QWEN_RECIPE_FUNCS = [
     getattr(_qwen_module, name)
