@@ -15,8 +15,7 @@
 import logging
 from dataclasses import dataclass
 
-import torch
-import torch.nn.functional as F
+from megatron.bridge.training.mlm_compat.activations import squared_relu
 
 from megatron.bridge.models.mamba.mamba_provider import MambaProvider
 
@@ -33,7 +32,7 @@ class NemotronHModelProvider(MambaProvider):
     mamba_head_dim: int = 64
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
-    activation_func: callable = lambda x: torch.pow(F.relu(x), 2)
+    activation_func: callable = squared_relu
     masked_softmax_fusion: bool = True
     apply_query_key_layer_scaling: bool = False
     persist_layer_norm: bool = True

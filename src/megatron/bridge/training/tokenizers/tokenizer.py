@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer as MegatronTokenizerCore
-
+try:
+    from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer as MegatronTokenizerCore
+except ImportError:
+    from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizerCore
 from megatron.bridge.training.tokenizers.bert_tokenization import FullTokenizer as FullBertTokenizer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.gpt2_tokenization import GPT2Tokenizer

@@ -1433,7 +1433,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-    ) -> torch.Tensor:
+    ) -> Dict[str, torch.Tensor]:
         """Gather QKV shards and split into Q, K, V."""
         # Dequantize if needed
         if megatron_weights is not None:
@@ -1468,7 +1468,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             # Split weights
             q, k, v = split_qkv_weights(config, packed_qkv)
 
-        return torch.cat((q, k, v), dim=0)
+        return {str(self.hf_param): torch.cat((q, k, v), dim=0)}
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* QKVMapping instance."""
