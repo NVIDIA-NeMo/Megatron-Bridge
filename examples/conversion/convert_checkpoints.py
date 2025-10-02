@@ -141,6 +141,7 @@ def export_megatron_to_hf(
     megatron_path: str,
     hf_path: str,
     show_progress: bool = True,
+    strict: bool = True,
 ) -> None:
     """
     Export a Megatron checkpoint to HuggingFace format.
@@ -175,7 +176,7 @@ def export_megatron_to_hf(
 
     # For demonstration, we'll create a bridge from a known config
     # This would typically be extracted from the checkpoint metadata
-    bridge = AutoBridge.from_hf_pretrained(hf_model)
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
@@ -183,6 +184,7 @@ def export_megatron_to_hf(
         megatron_path=megatron_path,
         hf_path=hf_path,
         show_progress=show_progress,
+        strict=strict,
     )
 
     print(f"✅ Successfully exported model to: {hf_path}")
@@ -232,6 +234,7 @@ def main():
         "--hf-path", required=True, help="Directory path where the HuggingFace model will be saved"
     )
     export_parser.add_argument("--no-progress", action="store_true", help="Disable progress bar during export")
+    export_parser.add_argument("--not-strict", action="store_true", help="Allow source and target checkpoint to have different keys")
 
     args = parser.parse_args()
 
@@ -254,6 +257,7 @@ def main():
             megatron_path=args.megatron_path,
             hf_path=args.hf_path,
             show_progress=not args.no_progress,
+            strict=not args.not_strict,
         )
     else:
         raise RuntimeError(f"Unknown command: {args.command}")

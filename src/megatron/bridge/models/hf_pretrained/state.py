@@ -760,15 +760,40 @@ class SafeTensorsStateSource(StateSource):
 
         # --- Final Reporting ---
         if files_to_save:
-            print(
-                "Warning: The following files could not be saved because the generator did not yield all of their tensors:"
-            )
+            if strict:
+                print(
+                    "Warning: The following files could not be saved because the generator did not yield all of their tensors:"
+                )
+            else:
+                print(
+                    "Warning: The following files are different from the source because the generator did not yield all "
+                    "of their tensors. However they are still saved because strict=False."
+                )
             for filename, keys_for_file in files_to_save.items():
                 missing_for_file = keys_for_file - all_yielded_keys
                 if missing_for_file:
                     print(f"  - {filename}: missing {len(missing_for_file)} tensors:")
                     for key in sorted(list(missing_for_file)):
                         print(f"    - {key}")
+            if not strict:
+                for filename in list(files_to_save.keys()):
+                    keys_for_file = files_to_save[filename]
+                    tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
+                    # missing_keys = set(keys_for_file) - tensors_to_save.keys()
+                    # if missing_keys:
+                    #     print(f"  - {filename}: missing {len(missing_keys)} tensors:")
+                    #     for key in sorted(list(missing_keys)):
+                    #         print(f"    - {key}")
+                    output_file_path = output_path / filename
+                    save_file(tensors_to_save, output_file_path)
+                    
+                    # Free memory by removing saved tensors from the buffer.
+                    for key in tensors_to_save.keys():
+                        del buffered_tensors[key]
+
+                    all_saved_keys.update(keys_for_file)
+                    del files_to_save[filename]
+
 
         if buffered_tensors:
             print(
