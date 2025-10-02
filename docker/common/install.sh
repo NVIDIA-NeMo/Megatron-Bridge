@@ -51,6 +51,17 @@ main() {
         chmod 600 ~/.netrc
     fi
 
+    # Remove unnecessary packages and files on Ubuntu
+    apt-get clean
+    rm -rf /usr/local/lib/android || true
+    rm -rf /opt/ghc || true
+    rm -rf /usr/local/.ghcup || true
+    rm -rf /usr/share/dotnet || true
+    rm -rf /opt/az || true
+    # Clear pip and npm caches
+    pip cache purge || true
+    npm cache clean --force || true
+
     # Install dependencies
     export DEBIAN_FRONTEND=noninteractive
 
