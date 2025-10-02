@@ -37,10 +37,13 @@ class TestDataSamplers:
     def test_build_pretraining_data_loader_single(self):
         # Setup dataloader params (mock AutoBridge to avoid HF downloads)
         from unittest import mock as _mock
+
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
                     from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+
                     return Llama3ModelProvider()
 
             mock_from.return_value = _DummyBridge()
@@ -77,10 +80,13 @@ class TestDataSamplers:
     def test_build_pretraining_data_loader_cyclic(self):
         # Setup dataloader params (mock AutoBridge to avoid HF downloads)
         from unittest import mock as _mock
+
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
                     from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+
                     return Llama3ModelProvider()
 
             mock_from.return_value = _DummyBridge()
@@ -126,10 +132,13 @@ class TestDataSamplers:
     def test_build_pretraining_data_loader_external(self):
         # Mock AutoBridge to avoid HF downloads
         from unittest import mock as _mock
+
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
                     from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+
                     return Llama3ModelProvider()
 
             mock_from.return_value = _DummyBridge()
