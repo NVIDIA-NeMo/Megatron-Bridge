@@ -1,10 +1,10 @@
-# NeMo 2.0 → Megatron Bridge Migration Guide
+# NeMo 2.0 to Megatron Bridge Migration Guide
 
-This guide helps you migrate from NeMo 2.0 training and recipes to Megatron Bridge. Megatron Bridge retains the Pythonic, code-first API that NeMo 2.0 developed while simplifying configuration into a single {py:class}`bridge.training.config.ConfigContainer` with typed sub-configs. Model parallelism and performance features from Megatron-Core remain first-class.
+This guide helps you migrate from NeMo 2.0 training and recipes to Megatron Bridge. Megatron Bridge retains the Pythonic, code-first API that NeMo 2.0 developed while simplifying configuration into a single {py:class}`bridge.training.config.ConfigContainer` with typed sub-configs. Model parallelism and performance features from Megatron Core remain first-class.
 
 ## What Stays the Same
 
-- **Megatron-Core Foundation**: Megatron Bridge uses the same Megatron-Core engine under the hood.
+- **Megatron Core Foundation**: Megatron Bridge uses the same Megatron Core engine under the hood.
 - **Model Parallelism**: Same TP/PP/CP/EP concepts with identical distributed training semantics.
 - **High-Performance Features**: Mixed Precision, communication overlap, and other performance features are supported natively.
 - **Pythonic API Retained**: Megatron Bridge preserves NeMo 2.0's philosophy of "configuration as code."
@@ -104,7 +104,7 @@ optim = llm.distributed_fused_adam_with_cosine_annealing(
 llm.pretrain(model, data, trainer, optim=optim)
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Megatron Bridge configuration pattern
 from megatron.bridge.training.config import (
@@ -221,7 +221,7 @@ llm.finetune(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
 from megatron.bridge.models import Llama3ModelProvider8B
@@ -369,7 +369,7 @@ if __name__ == "__main__":
     # Submitted via nemo-run or executed directly
 ```
 
-#### After: Megatron Bridge Recipe Structure
+#### Now: Megatron Bridge Recipe Structure
 
 ```python
 # my_recipes/llama3_8b.py
@@ -505,7 +505,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python  
 train_config = TrainingConfig(
     train_iters=1000,           # was max_steps
@@ -559,7 +559,7 @@ data = PreTrainingDataModule(
 )
 ```
 
-##### After: Megatron Bridge GPTDatasetConfig
+##### Now: Megatron Bridge GPTDatasetConfig
 
 ```python
 from megatron.bridge.training.config import GPTDatasetConfig, TrainingConfig
@@ -609,7 +609,7 @@ data = FineTuningDataModule(
 )
 ```
 
-##### After: Megatron Bridge FinetuningDatasetConfig
+##### Now: Megatron Bridge FinetuningDatasetConfig
 
 ```python
 from megatron.bridge.training.config import FinetuningDatasetConfig, TrainingConfig
@@ -662,7 +662,7 @@ tokenizer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Dedicated tokenizer configuration
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -752,7 +752,7 @@ strategy = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 model = GPTModelProvider(
     # Model architecture
@@ -799,7 +799,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Option 1: Use preset strings
 config = ConfigContainer(
@@ -895,7 +895,7 @@ logger.setup(trainer, resume.resume_if_exists)
 resume.setup(trainer)
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 checkpoint_config = CheckpointConfig(
     # Saving configuration
@@ -926,7 +926,7 @@ checkpoint_config = CheckpointConfig(
 - **Configuration location**: All checkpoint settings unified in one config (not split across callback, logger, and strategy)
 
 ```{Important}
-All checkpoint paths (`save`, `load`, `pretrained_checkpoint`) must point to **Megatron-format checkpoints**. HuggingFace checkpoints cannot be used directly—convert them first using {py:meth}`bridge.models.conversion.auto_bridge.AutoBridge.import_ckpt`. See {doc}`bridge-guide` for conversion details.
+All checkpoint paths (`save`, `load`, `pretrained_checkpoint`) must point to **Megatron-format checkpoints**. Hugging Face checkpoints cannot be used directly—convert them first using {py:meth}`bridge.models.conversion.auto_bridge.AutoBridge.import_ckpt`. See {doc}`bridge-guide` for conversion details.
 ```
 
 For comprehensive documentation on checkpoint formats, local checkpointing, fault tolerance, and advanced features, see {doc}`training/checkpointing`.
@@ -965,7 +965,7 @@ optim = MegatronOptimizerModule(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Megatron Bridge direct configuration
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -1018,7 +1018,7 @@ logger = NeMoLogger(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 
 ```python
 from megatron.bridge.training.config import LoggerConfig
@@ -1073,7 +1073,7 @@ trainer = run.Config(
 )
 ```
 
-##### After: Megatron Bridge
+##### Now: Megatron Bridge
 ```python
 # Megatron Bridge uses ProfilingConfig  
 profiling_config = ProfilingConfig(
@@ -1106,7 +1106,7 @@ trainer = run.Config(
 )
 ```
 
-##### After: Megatron Bridge
+##### Now: Megatron Bridge
 ```python
 # Megatron Bridge uses ProfilingConfig
 profiling_config = ProfilingConfig(
@@ -1146,7 +1146,7 @@ llm.finetune(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 
 ```python
 from megatron.bridge.peft import LoRA
@@ -1383,7 +1383,7 @@ config = ConfigContainer(
 finetune(config, forward_step_func=forward_step)
 ```
 
-**Converting HuggingFace checkpoints**: If you have a HuggingFace model, convert it to Megatron checkpoint format first:
+**Converting Hugging Face checkpoints**: If you have a Hugging Face model, convert it to Megatron checkpoint format first:
 
 ```python
 from megatron.bridge import AutoBridge
@@ -1559,7 +1559,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Built into TrainingConfig
 train_config = TrainingConfig(
@@ -1586,7 +1586,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Built into TrainingConfig
 train_config = TrainingConfig(
@@ -1615,7 +1615,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 
@@ -1643,7 +1643,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 # Built into TrainingConfig
 train_config = TrainingConfig(
@@ -1667,7 +1667,7 @@ trainer = run.Config(
 )
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 from megatron.bridge.training.config import DistributedInitConfig
 
@@ -1692,7 +1692,7 @@ callbacks = [
 ]
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
@@ -1722,7 +1722,7 @@ from nemo.lightning.pytorch.callbacks import DeepEPCallback
 callbacks = [DeepEPCallback()]  # Automatically applies if hardware supports it
 ```
 
-#### After: Megatron Bridge
+#### Now: Megatron Bridge
 ```python
 from megatron.bridge.training.deepep import apply_deepep
 
