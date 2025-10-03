@@ -27,7 +27,7 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.train_utils import maybe_inject_state, needs_global_state_injection
+from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 
 
@@ -59,10 +59,9 @@ def evaluate(
             - collected_non_loss_data: Data collected by non_loss_data_func.
             - timelimit_hit: Boolean indicating if the time limit was reached.
     """
-    # Check if forward_step_func needs state injection and wrap it once
-    # This prevents creating new partial objects every eval iteration
-    needs_injection = needs_global_state_injection(forward_step_func)
-    wrapped_forward_step = maybe_inject_state(forward_step_func, state, needs_injection=needs_injection)
+    # Prepare forward_step_func (check signature and inject state if needed)
+    # This is done once to prevent creating new partial objects every eval iteration
+    wrapped_forward_step = prepare_forward_step_func(forward_step_func, state)
 
     timers = state.timers
     timers("evaluate", log_level=0).start(barrier=True)

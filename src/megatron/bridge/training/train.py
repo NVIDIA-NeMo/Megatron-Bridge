@@ -61,8 +61,7 @@ from megatron.bridge.training.utils.log_utils import append_to_progress_log, bar
 from megatron.bridge.training.utils.train_utils import (
     calc_params_l2_norm,
     logical_and_across_model_parallel_group,
-    maybe_inject_state,
-    needs_global_state_injection,
+    prepare_forward_step_func,
     reduce_max_stat_across_model_parallel_group,
     training_log,
 )
@@ -109,10 +108,18 @@ def train(
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
 
-    # Check if forward_step_func needs state injection and wrap it ONCE
-    # This prevents creating new partial objects every iteration (memory leak fix)
-    needs_injection = needs_global_state_injection(forward_step_func)
-    wrapped_forward_step_func = maybe_inject_state(forward_step_func, global_state, needs_injection=needs_injection)
+    # Prepare forward_step_func (check signature and inject state if needed).
+    # This is done once to prevent creating new partial objects every iteration.
+    #
+    # Note on reference semantics:
+    # - functools.partial stores a reference to global_state, not a copy
+    # - When global_state.train_state.step changes, the partial sees the updated value
+    # - This is safe because GlobalState is a mutable object passed by reference
+    #
+    # For functors (classes with __call__ defined):
+    # - For functors: partial(functor_instance, state) still allows functor's internal state to work
+    # - inspect.signature() properly inspects the __call__ method of functors
+    wrapped_forward_step_func = prepare_forward_step_func(forward_step_func, global_state)
 
     # Turn on training mode which enables dropout.
     for model_module in model:

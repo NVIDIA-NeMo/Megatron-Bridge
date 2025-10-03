@@ -613,6 +613,35 @@ def report_memory(name: str) -> None:
         print("[Rank {}] {}".format(torch.distributed.get_rank(), string), flush=True)
 
 
+def prepare_forward_step_func(forward_step_func: ForwardStepCallable, state: GlobalState) -> ForwardStepCallable:
+    """Convenience function to check and inject GlobalState in one call.
+
+    This combines needs_global_state_injection() and maybe_inject_state() for cleaner code.
+    Call this once at the beginning of train() or evaluate() to prevent creating new
+    partial objects every iteration.
+
+    Wrapping once is safe since:
+    - functools.partial stores a reference to the state object, not a copy
+    - When state.train_state.step or other fields change, the partial sees those changes
+    - No staleness issues because GlobalState is mutable and passed by reference
+
+    Functor support:
+    - Works with both regular functions (def forward_step(...)) and callable classes
+    - For functors: inspect.signature() inspects the __call__ method
+    - For functors: partial(functor_instance, state) preserves functor's internal state
+    - Example: If functor has self.call_count, it still increments correctly
+
+    Args:
+        forward_step_func: The original forward step function or functor
+        state: The GlobalState object to inject if needed
+
+    Returns:
+        The wrapped function (if injection needed) or original function
+    """
+    needs_injection = needs_global_state_injection(forward_step_func)
+    return maybe_inject_state(forward_step_func, state, needs_injection=needs_injection)
+
+
 def needs_global_state_injection(forward_step_func: ForwardStepCallable) -> bool:
     """Check if a forward step function needs GlobalState injection.
 
