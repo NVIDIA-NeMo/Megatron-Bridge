@@ -63,7 +63,8 @@ def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronToke
                                             type, paths to vocab/model files, and other
                                             tokenizer-specific settings.
         **kwargs: Additional keyword arguments that might be specific to certain tokenizers
-                  (e.g., passed to HuggingFace AutoTokenizer).
+                  (e.g., passed to HuggingFace AutoTokenizer). These will override any
+                  kwargs specified in tokenizer_config.hf_tokenizer_kwargs.
 
     Returns:
         MegatronTokenizer: An instance of the initialized tokenizer.
@@ -99,7 +100,10 @@ def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronToke
         assert tokenizer_config.tokenizer_model is not None
         tokenizer = _GPTSentencePieceTokenizer(tokenizer_config.tokenizer_model)
     elif tokenizer_config.tokenizer_type == "HuggingFaceTokenizer":
-        tokenizer = _HuggingFaceTokenizer(tokenizer_config.tokenizer_model, **kwargs)
+        # Merge config-based kwargs with any passed kwargs (passed kwargs take precedence)
+        hf_kwargs = tokenizer_config.hf_tokenizer_kwargs or {}
+        hf_kwargs.update(kwargs)
+        tokenizer = _HuggingFaceTokenizer(tokenizer_config.tokenizer_model, **hf_kwargs)
     elif tokenizer_config.tokenizer_type == "Llama2Tokenizer":
         assert tokenizer_config.tokenizer_model is not None
         tokenizer = _Llama2Tokenizer(tokenizer_config.tokenizer_model)

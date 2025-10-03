@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-from typing import Literal, Optional
+from dataclasses import dataclass, field
+from typing import Any, Literal, Optional
 
 
 @dataclass
@@ -63,3 +63,19 @@ class TokenizerConfig:
     tokenizer_prompt_format: Optional[str] = None
     special_tokens: Optional[list[str]] = None
     image_tag_type: Optional[str] = None
+
+    hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
+    """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
+
+    Common options include:
+        - use_fast (bool): Whether to use fast tokenizer implementation
+        - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
+        - chat_template (str): Custom chat template string for conversation formatting
+
+    Example:
+        hf_tokenizer_kwargs = {
+            "use_fast": True,
+            "trust_remote_code": True,
+            "chat_template": "custom_template_string"
+        }
+    """
