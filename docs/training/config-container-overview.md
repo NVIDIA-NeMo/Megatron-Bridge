@@ -86,15 +86,19 @@ config.train.global_batch_size = 512  # Override after instantiation
 config.model.num_layers = 48          # Modify model architecture
 ```
 
-### Dataclasses of Dataclasses Architecture
+### Centralized Configuration
 
-The configuration system is built using nested dataclasses for several key benefits:
+Megatron provides extensive flexibility through a rich set of configuration options. The `ConfigContainer` brings all these settings together in a single, organized object. This centralization makes configuration discoverable and maintainable - you have one place to understand and control all aspects of your training run.
 
-- Type safety: Full static type checking with mypy/pyright
-- IDE support: Autocomplete and type hints in development environments  
-- Serialization: Easy conversion to/from YAML, JSON, or other formats
-- Validation: Built-in field validation
-- Modularity: Each config component can be developed and tested independently
+Unlike pure YAML-based configuration systems, `ConfigContainer` provides centralization with the full power of Python. You get the organizational benefits of a single configuration file combined with the programmatic flexibility of Python.
+
+The configuration system is built using nested dataclasses, providing:
+
+- **Modularity**: Each config component is independently defined and testable
+- **Type safety**: Full static type checking
+- **IDE support**: Autocomplete and type hints in development environments  
+- **Serialization**: Easy conversion to/from YAML, JSON, or other formats
+- **Validation**: Built-in field validation
 
 ```python
 @dataclass
@@ -149,6 +153,7 @@ model_provider = GPTModelProvider(
 )
 
 # This works independently of other configs
+model_provider.finalize()
 model = model_provider.provide()
 ```
 
