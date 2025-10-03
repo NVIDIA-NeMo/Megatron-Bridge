@@ -389,6 +389,7 @@ def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisi
     """
     if isinstance(name, MixedPrecisionConfig):
         return name
+    name = name.replace("-", "_")
     try:
         return MIXED_PRECISION_RECIPES[name]()
     except KeyError as err:
