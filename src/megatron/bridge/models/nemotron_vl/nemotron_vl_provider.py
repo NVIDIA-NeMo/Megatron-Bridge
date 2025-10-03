@@ -142,7 +142,7 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
             patch_dim=16,
             hybrid_attention_ratio=0.0,
             hybrid_mlp_ratio=0.0,
-            hybrid_override_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
+            hybrid_override_pattern=self.hybrid_override_pattern,
             image_token_index=131072,
             pixel_shuffle=True,
             max_num_tiles=12,

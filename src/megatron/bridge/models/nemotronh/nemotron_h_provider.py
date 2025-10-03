@@ -13,18 +13,20 @@
 # limitations under the License.
 
 import logging
+import warnings
 from dataclasses import dataclass
 
 from megatron.bridge.training.mlm_compat.activations import squared_relu
 
-from megatron.bridge.models.mamba.mamba_provider import MambaProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class NemotronHModelProvider(MambaProvider):
+class NemotronHModelProvider(MambaModelProvider):
     """Configuration for Nemotron-H models."""
 
     seq_length: int = 8192
@@ -42,7 +44,7 @@ class NemotronHModelProvider(MambaProvider):
 
 
 @dataclass
-class NemotronHModel4BProvider(NemotronHModelProvider):
+class NemotronHModelProvider4B(NemotronHModelProvider):
     """Configuration for a 4B parameter Nemotron-H model."""
 
     hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
@@ -57,7 +59,7 @@ class NemotronHModel4BProvider(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronHModel8BProvider(NemotronHModelProvider):
+class NemotronHModelProvider8B(NemotronHModelProvider):
     """Configuration for a 8B parameter Nemotron-H model."""
 
     hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-"
@@ -70,7 +72,7 @@ class NemotronHModel8BProvider(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronHModel47BProvider(NemotronHModelProvider):
+class NemotronHModelProvider47B(NemotronHModelProvider):
     """Configuration for a 47B parameter Nemotron-H model."""
 
     hybrid_override_pattern: str = (
@@ -85,7 +87,7 @@ class NemotronHModel47BProvider(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronHModel56BProvider(NemotronHModelProvider):
+class NemotronHModelProvider56B(NemotronHModelProvider):
     """Configuration for a 56B parameter Nemotron-H model."""
 
     hybrid_override_pattern: str = (
@@ -101,7 +103,7 @@ class NemotronHModel56BProvider(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronNano9Bv2Provider(NemotronHModelProvider):
+class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
     """Configuration for a 9B parameter Nemotron Nano v2 model."""
 
     hybrid_override_pattern: str = "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-"
@@ -116,8 +118,8 @@ class NemotronNano9Bv2Provider(NemotronHModelProvider):
 
 
 @dataclass
-class NemotronNano12Bv2Provider(NemotronHModelProvider):
-    """Configuration for a 12B parameter Nemotron Nano v2 model."""
+class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
+    """Configuration for the Nemotron Nano v2 12B model."""
 
     hybrid_override_pattern: str = "M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-"
     num_layers: int = 62
@@ -128,3 +130,101 @@ class NemotronNano12Bv2Provider(NemotronHModelProvider):
     num_attention_heads: int = 40
     mamba_head_dim: int = 80
     seq_length: int = 131072
+
+
+# -----------------------------------------------------------------------------
+# Deprecated aliases (to be removed in a future release)
+# -----------------------------------------------------------------------------
+
+
+def _warn_deprecated(old_cls: str, new_cls: str) -> None:
+    if get_rank_safe() == 0:
+        warnings.warn(
+            f"{old_cls} is deprecated and will be removed in a future release. Use {new_cls} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
+@dataclass
+class NemotronHModel4BProvider(NemotronHModelProvider4B):
+    """Deprecated alias for ``NemotronHModelProvider4B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NemotronHModelProvider4B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NemotronHModel4BProvider", "NemotronHModelProvider4B")
+        super().__post_init__()
+
+
+@dataclass
+class NemotronHModel8BProvider(NemotronHModelProvider8B):
+    """Deprecated alias for ``NemotronHModelProvider8B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NemotronHModelProvider8B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NemotronHModel8BProvider", "NemotronHModelProvider8B")
+        super().__post_init__()
+
+
+@dataclass
+class NemotronHModel47BProvider(NemotronHModelProvider47B):
+    """Deprecated alias for ``NemotronHModelProvider47B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NemotronHModelProvider47B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NemotronHModel47BProvider", "NemotronHModelProvider47B")
+        super().__post_init__()
+
+
+@dataclass
+class NemotronHModel56BProvider(NemotronHModelProvider56B):
+    """Deprecated alias for ``NemotronHModelProvider56B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NemotronHModelProvider56B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NemotronHModel56BProvider", "NemotronHModelProvider56B")
+        super().__post_init__()
+
+
+@dataclass
+class NemotronNano9Bv2Provider(NemotronNanoModelProvider9Bv2):
+    """Deprecated alias for ``NemotronNanoModelProvider9Bv2``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NemotronNanoModelProvider9Bv2`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NemotronNano9Bv2Provider", "NemotronNanoModelProvider9Bv2")
+        super().__post_init__()
+
+
+@dataclass
+class NemotronNano12Bv2Provider(NemotronNanoModelProvider12Bv2):
+    """Deprecated alias for ``NemotronNanoModelProvider12Bv2``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NemotronNanoModelProvider12Bv2`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NemotronNano12Bv2Provider", "NemotronNanoModelProvider12Bv2")
+        super().__post_init__()

@@ -885,3 +885,52 @@ class TestAutoBridge:
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
                 # Should use the latest iteration (iter_0000020)
+
+    def test_load_megatron_model_with_mp_overrides(self):
+        """Test load_megatron_model with model-parallel overrides argument."""
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        # Create model-parallel overrides
+        mp_overrides = {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 1,
+        }
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
+            with patch("torch.distributed.is_available", return_value=False):
+                with patch("torch.distributed.is_initialized", return_value=False):
+                    from pathlib import Path
+
+                    with patch.object(Path, "iterdir") as mock_iterdir:
+                        # Setup mocks
+                        mock_model = Mock()
+                        mock_load_megatron_model.return_value = mock_model
+
+                        # Mock iterdir to return empty list (no iter_ folders)
+                        mock_iterdir.return_value = []
+
+                        # Call load_megatron_model with model-parallel overrides
+                        result = bridge.load_megatron_model(
+                            "checkpoint_path", mp_overrides=mp_overrides, wrap_with_ddp=False
+                        )
+
+                        # Verify the result
+                        assert result == [mock_model]
+
+                        # Verify that load_megatron_model was called with mp_overrides
+                        mock_load_megatron_model.assert_called_once()
+                        call_args = mock_load_megatron_model.call_args
+
+                        # Check that mp_overrides was passed correctly
+                        assert call_args.kwargs["mp_overrides"] == mp_overrides
+
+                        # Check other expected arguments
+                        assert call_args.args[0] == "checkpoint_path"  # path argument
+                        assert "skip_temp_dist_context" in call_args.kwargs

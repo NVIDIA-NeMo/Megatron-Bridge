@@ -15,7 +15,7 @@
 ConfigContainer:
   model:
     cross_entropy_fusion_impl: "te"
-    use_transformer_engine_op_fuser: true
+    use_transformer_engine_op_fuser: false
 
   train:
     train_iters: 25
@@ -64,15 +64,15 @@ perf_matrix:
         etp: null
       bf16:
         cp: 2
-        fsdp: false
+        use_megatron_fsdp: false
       fp8_ds:
         cp: 1
-        fsdp: true
+        use_megatron_fsdp: true
         keep_fp8_transpose_cache_when_using_custom_fsdp: true
         nccl_ub: true
       fp8_cs:
         cp: 1
-        fsdp: true
+        use_megatron_fsdp: true
         keep_fp8_transpose_cache_when_using_custom_fsdp: true
         nccl_ub: true
   b200:
@@ -89,7 +89,7 @@ perf_matrix:
         vp: null
         ep: 1
         etp: null
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
       fp8_ds:
       fp8_cs:
@@ -108,7 +108,7 @@ perf_matrix:
         vp: null
         ep: 1
         etp: null
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
       fp8_ds:
       fp8_cs:

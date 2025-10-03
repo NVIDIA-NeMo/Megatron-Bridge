@@ -19,11 +19,11 @@ Unit tests for DeepSeek provider classes.
 import torch
 
 from megatron.bridge.models.deepseek.deepseek_provider import (
-    DeepSeekProvider,
-    DeepSeekV2LiteProvider,
-    DeepSeekV2Provider,
-    DeepSeekV3Provider,
-    MoonlightProvider,
+    DeepSeekModelProvider,
+    DeepSeekV2LiteModelProvider,
+    DeepSeekV2ModelProvider,
+    DeepSeekV3ModelProvider,
+    MoonlightModelProvider16B,
 )
 
 
@@ -32,7 +32,7 @@ class TestDeepSeekProviderDefaults:
 
     def test_deepseek_provider_base_defaults(self):
         # Provide minimal valid values to satisfy Megatron-Core post-init checks
-        provider = DeepSeekProvider(num_layers=1, hidden_size=1024, num_attention_heads=8)
+        provider = DeepSeekModelProvider(num_layers=1, hidden_size=1024, num_attention_heads=8)
 
         # Generic model defaults
         assert provider.normalization == "RMSNorm"
@@ -54,7 +54,7 @@ class TestDeepSeekProviderDefaults:
         assert provider.kv_lora_rank is not None
 
     def test_deepseek_v2_defaults(self):
-        provider = DeepSeekV2Provider()
+        provider = DeepSeekV2ModelProvider()
 
         assert provider.num_layers == 60
         assert provider.hidden_size == 5120
@@ -65,7 +65,7 @@ class TestDeepSeekProviderDefaults:
         assert provider.mscale_all_dim == 0.707
 
     def test_deepseek_v2_lite_defaults(self):
-        provider = DeepSeekV2LiteProvider()
+        provider = DeepSeekV2LiteModelProvider()
 
         assert provider.num_layers == 27
         assert provider.hidden_size == 2048
@@ -76,7 +76,7 @@ class TestDeepSeekProviderDefaults:
         assert provider.mscale_all_dim == 0.707
 
     def test_deepseek_v3_defaults(self):
-        provider = DeepSeekV3Provider()
+        provider = DeepSeekV3ModelProvider()
 
         assert provider.num_layers == 61
         assert provider.hidden_size == 7168
@@ -90,7 +90,7 @@ class TestDeepSeekProviderDefaults:
         assert provider.mscale_all_dim == 1.0
 
     def test_moonlight_defaults(self):
-        provider = MoonlightProvider()
+        provider = MoonlightModelProvider16B()
 
         assert provider.num_layers == 27
         assert provider.hidden_size == 2048

@@ -38,6 +38,8 @@ from PIL import Image
 from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
 
+from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
+
 # === NEW IMPORTS FOR MEGATRON PREPROCESSING ===
 try:
     from megatron.training.tokenizer.multimodal_tokenizer import MultimodalTokenizer
@@ -332,40 +334,9 @@ def process_inputs_megatron(image_path: Optional[str], prompt: str, hf_model_pat
         num_tiles = images.shape[0]
         img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
         img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
-        input_ids = _ensure_image_tokens(input_ids, num_tiles, img_start_token_id, img_end_token_id)
+        input_ids = adjust_image_tokens(input_ids, num_tiles, img_start_token_id, img_end_token_id)
 
     return input_ids, images, messages, tokenizer._tokenizer
-
-
-def _ensure_image_tokens(input_ids: torch.Tensor, num_tiles: int | List[int], img_start_token_id: int, img_end_token_id: int) -> torch.Tensor:
-    """Ensures the input_ids tensor contains the correct number of <image> tokens.
-    If the number of tiles is greater than the current count, it repeats the token.
-    If the number of tiles is less, it removes the extra tokens
-    """
-    if isinstance(num_tiles, int):
-        num_tiles = [num_tiles]
-    for i, num_tile in enumerate(num_tiles):
-        image_start_pos = (input_ids[0] == img_start_token_id).nonzero(as_tuple=True)[0][i].item()
-        image_end_pos = (input_ids[0] == img_end_token_id).nonzero(as_tuple=True)[0][i].item()
-        media_token_id = input_ids[0, image_start_pos + 1]  # this can be <image> or <video> token
-        existing = image_end_pos - image_start_pos + 1
-
-        if num_tile > existing:
-            # Need to add tokens
-            repeat = num_tile + 2 - existing  # +2 for <img> and </img> tokens
-            repeat_tokens = torch.full((1, repeat), media_token_id, dtype=input_ids.dtype, device=input_ids.device)
-            input_ids = torch.cat([input_ids[:, : image_start_pos + 1], repeat_tokens, input_ids[:, image_start_pos + 1 :]], dim=1)
-
-        elif num_tile < existing:
-            # Need to remove tokens (keep only the first `num_tile` occurrences)
-            keep_tokens_mask = torch.ones_like(input_ids, dtype=torch.bool)
-            positions = (input_ids[0][image_start_pos:image_end_pos+1] == media_token_id).nonzero(as_tuple=True)[0] + image_start_pos
-            # positions to drop are after the first num_tile occurrences
-            drop_positions = positions[num_tile:].tolist()
-            keep_tokens_mask[0, drop_positions] = False
-            input_ids = input_ids[keep_tokens_mask].unsqueeze(0)
-
-    return input_ids
 
 
 def main(args) -> None:
@@ -404,7 +375,16 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
-        model = bridge.load_megatron_model(args.megatron_model_path, wrap_with_ddp=False)
+        model = bridge.load_megatron_model(
+            args.megatron_model_path,
+            mp_overrides={
+                "tensor_model_parallel_size": tp,
+                "pipeline_model_parallel_size": pp,
+                "expert_model_parallel_size": ep,
+                "expert_tensor_parallel_size": etp,
+            },
+            wrap_with_ddp=False,
+        )
 
     else:
         # Load from HuggingFace and convert to Megatron
@@ -444,7 +424,8 @@ def main(args) -> None:
         images = None
         if args.use_llava_model:
             images = pixel_values.bfloat16()
-            input_ids = _ensure_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
+            input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id,
+                                             img_end_token_id)
             if args.video_path:
                 video_token_id = tokenizer.convert_tokens_to_ids("<video>")
                 image_token_id = tokenizer.convert_tokens_to_ids("<image>")

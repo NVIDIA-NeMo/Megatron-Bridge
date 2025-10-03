@@ -17,7 +17,7 @@ from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
-import torch.distributed
+import torch.distributed as dist
 import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
@@ -35,7 +35,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
@@ -375,9 +375,9 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
-            if torch.distributed.get_rank() == 0:
+            if dist.get_rank() == 0:
                 self.hf_pretrained.save_artifacts(path)
         else:
             # No distributed training, save artifacts
@@ -418,8 +418,8 @@ class AutoBridge(Generic[MegatronModelT]):
             - Automatically handles model sharding for large models
             - The saved weights can be loaded with HuggingFace's from_pretrained
         """
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.barrier()
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
@@ -435,8 +435,8 @@ class AutoBridge(Generic[MegatronModelT]):
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.barrier()
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
 
     def save_megatron_model(
         self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
@@ -478,7 +478,9 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ImportError("megatron.bridge.training is not available.")
         save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
 
-    def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
+    def load_megatron_model(
+        self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
+    ) -> list[MegatronModelT]:
         """
         Load a Megatron model from a native Megatron checkpoint.
 
@@ -488,6 +490,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: Directory path where the Megatron checkpoint is stored
+            mp_overrides: Optional model-parallel overrides to apply to the loaded config.
             **kwargs: Additional arguments passed to the model provider
 
         Returns:
@@ -531,10 +534,13 @@ class AutoBridge(Generic[MegatronModelT]):
             checkpoint_path = checkpoint_path / latest_iter.name
         # else: checkpoint_path remains as the input path (no iter folders found)
 
+        skip_temp_dist_context = dist.is_available() and dist.is_initialized()
         # Load the state dict
         model = load_megatron_model(
             str(checkpoint_path),
-            use_cpu_init=True,
+            use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
+            skip_temp_dist_context=skip_temp_dist_context,
+            mp_overrides=mp_overrides,
         )
         return model if isinstance(model, list) else [model]
 

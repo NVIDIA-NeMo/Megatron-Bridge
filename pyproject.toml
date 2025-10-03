@@ -66,7 +66,6 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "accelerate>=1.6.0",
     "datasets",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",

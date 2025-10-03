@@ -15,10 +15,10 @@
 """
 Example:
   # Load from HuggingFace model:
-  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
 """
 
 import argparse
@@ -127,7 +127,16 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
-        model = bridge.load_megatron_model(args.megatron_model_path, wrap_with_ddp=False)
+        model = bridge.load_megatron_model(
+            args.megatron_model_path,
+            mp_overrides={
+                "tensor_model_parallel_size": tp,
+                "pipeline_model_parallel_size": pp,
+                "expert_model_parallel_size": ep,
+                "expert_tensor_parallel_size": etp,
+            },
+            wrap_with_ddp=False,
+        )
 
     else:
         # Load from HuggingFace and convert to Megatron

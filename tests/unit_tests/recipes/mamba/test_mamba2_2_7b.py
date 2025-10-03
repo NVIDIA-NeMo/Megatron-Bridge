@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
-from megatron.bridge.models.mamba import MambaProvider2_7B
+from megatron.bridge.models.mamba import MambaModelProvider2P7B
 from megatron.bridge.recipes.mamba.mamba2_2_7b import model_config, pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -33,7 +33,7 @@ class TestModelConfig:
         """Test model_config with default parameters."""
         config = model_config()
 
-        assert isinstance(config, MambaProvider2_7B)
+        assert isinstance(config, MambaModelProvider2P7B)
         assert config.tensor_model_parallel_size == 1
         assert config.pipeline_model_parallel_size == 1
         assert config.pipeline_dtype is None
@@ -96,7 +96,7 @@ class TestPretrainConfig:
         config = pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaProvider2_7B)
+        assert isinstance(config.model, MambaModelProvider2P7B)
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251
@@ -138,7 +138,7 @@ class TestPretrainConfig:
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
         assert config.scheduler.lr_warmup_iters == 1000  # Note: fixed in scheduler config
-        assert config.scheduler.lr_decay_iters == 10000  # Should match train_iters
+        assert config.scheduler.lr_decay_iters is None  # Will be set to train_iters during validation
 
     def test_pretrain_config_custom_model_parameters(self):
         """Test pretrain_config with custom model parameters."""
@@ -276,7 +276,7 @@ class TestPretrainConfig:
         assert config.scheduler.lr_decay_style == "cosine"
         assert config.scheduler.lr_warmup_iters == 2000
         assert config.scheduler.lr_warmup_init == 0.0
-        assert config.scheduler.lr_decay_iters == 50000  # Should match train_iters
+        assert config.scheduler.lr_decay_iters is None  # Will be set to train_iters during validation
         assert config.scheduler.override_opt_param_scheduler is True
 
     def test_pretrain_config_tokenizer_configuration(self):
