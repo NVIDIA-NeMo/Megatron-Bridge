@@ -86,7 +86,7 @@ def main():
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
             recipe.comm_overlap.delay_wgrad_compute = False
             recipe.model.moe_shared_expert_overlap = True
-        if args.gpu.lower() in ["h100"]:
+        if args.gpu.lower() in ["h100", "b200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         elif args.gpu.lower() in ["gb200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
@@ -160,9 +160,18 @@ def main():
             recipe.model.use_transformer_engine_op_fuser = False
 
     if recipe.ddp.use_megatron_fsdp:
-        if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
-            recipe.ddp.fsdp_double_buffer = True
+        if args.model_name in ["llama3", "llama31"] :
+            if args.model_size in ["70b", "405b"]:
+                recipe.ddp.fsdp_double_buffer = True
+            if args.model_size in ["8b"] and args.gpu.lower() in ["h100"]:
+                recipe.ddp.nccl_ub = True
+            if args.model_size in ["8b", "70b"]:
+               recipe.model.gradient_accumulation_fusion = False
     recipe.model.apply_rope_fusion = True
+
+    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
+        recipe.dataset.num_workers = 0
+        recipe.dataset.pin_memory = False
 
     pretrain(config=recipe, forward_step_func=forward_step)
 

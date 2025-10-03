@@ -22,7 +22,7 @@ ConfigContainer:
     moe_router_fusion: true
 
   train:
-    train_iters: 25
+    train_iters: 100
     eval_iters: 0
 
   rerun_state_machine:
@@ -89,12 +89,12 @@ perf_matrix:
       fp8_cs:
       fp8_mx:
   b200:
-    num_gpus_64:
+    num_gpus_256:
       common:
         num_gpus_per_node: 4
         seq_length: 4096
         mbs: 1
-        gbs: 1024
+        gbs: 2048
         cuda_graphs: false
         tp: 1
         pp: 8
