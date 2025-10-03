@@ -49,7 +49,7 @@ class NemotronVLBridge(MegatronModelBridge):
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            generation_config=hf_pretrained.generation_config,
+            # generation_config=hf_pretrained.generation_config,
         )
         provider.finalize()
         return provider

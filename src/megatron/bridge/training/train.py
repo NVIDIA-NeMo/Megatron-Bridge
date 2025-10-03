@@ -35,7 +35,6 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 
 from megatron.bridge.training import fault_tolerance
@@ -212,6 +211,8 @@ def train(
 
     # Capture CUDA Graphs.
     if model_config.external_cuda_graph:
+        from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
+
         cuda_graph_helper = TECudaGraphHelper(
             model=model,
             config=model_config,

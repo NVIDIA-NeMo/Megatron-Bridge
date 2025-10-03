@@ -144,8 +144,9 @@ def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
         return False
 
     train_state_filename = os.path.join(checkpoints_path, f"{TRACKER_PREFIX}_{TRAIN_STATE_FILE}")
+    train_state_filename2 = os.path.join(checkpoints_path, TRAIN_STATE_FILE)
 
-    if file_exists(train_state_filename):
+    if file_exists(train_state_filename) or file_exists(train_state_filename2):
         return True
 
     # Fallback to the Megatron-LM tracker file
