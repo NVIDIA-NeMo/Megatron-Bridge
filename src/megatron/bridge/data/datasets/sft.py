@@ -18,7 +18,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import Mapping
 
 import datasets
 import numpy as np
@@ -28,6 +28,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.datasets.utils import (
+    _chat_preprocess,
     _get_samples_mapping,
     _JSONLMemMapDataset,
     _OnlineSampleMapping,
@@ -87,7 +88,7 @@ def create_sft_dataset(
     answer_only_loss: bool = True,
     truncation_field: str = "input",
     pad_to_max_length: bool = False,
-    index_mapping_dir: Optional[str] = None,
+    index_mapping_dir: str | None = None,
     prompt_template: str = "{input} {output}",
     truncation_method: str = "right",
     memmap_workers: int = 2,
@@ -97,6 +98,8 @@ def create_sft_dataset(
     pack_metadata_file_path: Path = None,
     pad_cu_seqlens: bool = False,
     chat: bool = False,
+    use_hf_tokenizer_chat_template: bool = False,
+    tool_schemas: str | dict | None = None,
     **kwargs,
 ) -> "GPTSFTDataset":
     """
@@ -119,7 +122,7 @@ def create_sft_dataset(
         truncation_field (str, optional): Field(s) to truncate if the combined length exceeds `seq_length`.
             Comma-separated if multiple. Defaults to "input".
         pad_to_max_length (bool, optional): Whether to pad all samples to `max_seq_length`. Defaults to False.
-        index_mapping_dir (Optional[str], optional): Directory to store/load index mapping files. Defaults to None.
+        index_mapping_dir (str | None, optional): Directory to store/load index mapping files. Defaults to None.
         prompt_template (str, optional): F-string template for combining input fields.
             Example: "{input} {output}". Defaults to "{input} {output}".
         truncation_method (str, optional): Method for truncation ('left' or 'right'). Defaults to "right".
@@ -135,6 +138,11 @@ def create_sft_dataset(
         pad_cu_seqlens (bool, optional): Whether to pad `cu_seqlens` for packed datasets,
             required for cudagraphs. Defaults to False.
         chat (bool, optional): If True, creates a `GPTSFTChatDataset`. Defaults to False.
+        use_hf_tokenizer_chat_template (bool, optional): If True, uses HuggingFace tokenizer's chat template
+            via `apply_chat_template` method. Only applies when `chat=True`. Defaults to False.
+        tool_schemas (str | dict | None, optional): Tool schemas for function calling support.
+            Can be a JSON string or a dict. Only applies when `chat=True` and
+            `use_hf_tokenizer_chat_template=True`. Defaults to None.
         **kwargs: Additional keyword arguments passed to the specific dataset class constructor.
 
     Returns:
@@ -162,16 +170,18 @@ def create_sft_dataset(
         "get_attention_mask_from_fusion": get_attention_mask_from_fusion,
     }
 
-    if chat:
-        return GPTSFTChatDataset(
-            **gpt_sft_dataset_kwargs,
-            **kwargs,
-        )
-    elif path.suffix == ".npy":
+    if path.suffix == ".npy":
         return GPTSFTPackedDataset(
             pack_metadata_file_path=pack_metadata_file_path,
             pad_cu_seqlens=pad_cu_seqlens,
             **gpt_sft_dataset_kwargs,
+            **kwargs,
+        )
+    elif chat:
+        return GPTSFTChatDataset(
+            **gpt_sft_dataset_kwargs,
+            use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
+            tool_schemas=tool_schemas,
             **kwargs,
         )
     else:
@@ -205,11 +215,11 @@ class GPTSFTDataset(Dataset):
         prompt_template: str = None,
         virtual_tokens: int = 0,
         tokens_to_generate: int = 0,
-        memmap_workers: Optional[int] = None,
+        memmap_workers: int | None = None,
         hf_dataset: bool = False,
         global_sample_mapping: bool = False,
         truncation_method: str = "right",
-        special_tokens: Optional[Mapping[str, str]] = None,  # special tokens, a dictory of {token_type: token}
+        special_tokens: Mapping[str, str] | None = None,  # special tokens, a dictory of {token_type: token}
         is_test: bool = False,
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
@@ -393,7 +403,7 @@ class GPTSFTDataset(Dataset):
         if self.samples_mapping is not None:
             assert idx < len(self.samples_mapping)
             idx, _, _ = self.samples_mapping[idx]
-            if isinstance(idx, np.uint32):
+            if isinstance(idx, (np.uint32, np.int64)):
                 idx = idx.item()
 
         assert idx < len(self.indexed_dataset)
@@ -412,18 +422,18 @@ class GPTSFTDataset(Dataset):
             raise e
         return self._process_example(example)
 
-    def _separate_template(self, prompt_template_values: List[str]):
+    def _separate_template(self, prompt_template_values: list[str]):
         """
         Combine contexts and label based on prompt_template into a list of strings and a list of keys.
 
         Args:
-            prompt_template_values (List[str]): the list of context and label strings
+            prompt_template_values (list[str]): the list of context and label strings
                 extrated from jsonl file with prompt_template_keys.
 
         Returns:
-            template_strings (List[str]): separated prompt_template with contexts/label
+            template_strings (list[str]): separated prompt_template with contexts/label
                 placeholder filled with corresponding strings
-            template_strings_keys (List[str]): strings point to placeholder keys or <template>
+            template_strings_keys (list[str]): strings point to placeholder keys or <template>
 
         Examples:
             prompt_template = 'Context:  {context} Question: {question} Answer: {label}'
@@ -475,18 +485,18 @@ class GPTSFTDataset(Dataset):
 
         return template_strings, template_strings_keys
 
-    def _multiple_truncation(self, template_ids: List[List[int]], template_ids_keys: List[str]):
+    def _multiple_truncation(self, template_ids: list[list[int]], template_ids_keys: list[str]):
         """
         Calculate total tokens and truncate multiple contexts in truncation_fields.
 
         Args:
-            template_ids (List[List[int]]): the list of separate prompt_template ids.
-            template_ids_keys (List[str]): the list of placeholder keys or <template>
+            template_ids (list[list[int]]): the list of separate prompt_template ids.
+            template_ids_keys (list[str]): the list of placeholder keys or <template>
                 (used to check key in truncation_fields).
 
         Returns:
-            context_ids (List[int]): all context ids.
-            label_ids (List[int]): all label ids.
+            context_ids (list[int]): all context ids.
+            label_ids (list[int]): all label ids.
         """
         context_ids = template_ids[:-1]
         label_ids = template_ids[-1]
@@ -734,7 +744,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         tokenizer: MegatronTokenizer,
         return_cu_seqlen: bool = True,
         pad_cu_seqlens: bool = False,
-        pack_metadata_file_path: Optional[str] = None,
+        pack_metadata_file_path: str | None = None,
         **kwargs,
     ):
         """
@@ -879,9 +889,9 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, self.pad_seq_length_to_mult))
         assert max_length <= self.max_seq_length
 
-        position_ids: List[List[int]] = []
-        cu_seqlens: List[List[int]] = []
-        cu_seqlens_unpadded: List[List[int]] = []
+        position_ids: list[list[int]] = []
+        cu_seqlens: list[list[int]] = []
+        cu_seqlens_unpadded: list[list[int]] = []
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
@@ -909,7 +919,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
                 # The second eos_id index marks the length of the original unpadded sequence if the sequence is
                 # prepadded for cp_size > 1. Otherwise, there is no extra padding.
-                seqlen_unpadded = eos_idx[0][0] + 1 if eos_idx[0].any() else len(current_seq)
+                seqlen_unpadded = eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1 else len(current_seq)
                 cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
 
             # if extra paddings are added in the packed sequence, they can't be counted as
@@ -960,8 +970,13 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 # If padding, use the global max seqlen, so that 'pad_cu_seqlens' is the same
                 # across all batches. This is maintly used compatiblity with megatron's implementation
                 # of cudagraphs, which uses the same cudagraphs over all batches.
-                max_seqlen = [max(p["dataset_max_seqlen"] for p in self.pack_metadata)]
-                max_seqlen = torch.IntTensor(max_seqlen * len(cu_seqlens))
+                dataset_max_seqlen = max(p["dataset_max_seqlen"] for p in self.pack_metadata)
+                min_pack_seq_len = min(p["min_packed_seqlen"] for p in self.pack_metadata)
+                padding_gap = max_length - min_pack_seq_len
+
+                # Use the larger of the two values to avoid NaN issues with attention kernel
+                safe_max_seqlen = max(dataset_max_seqlen, padding_gap)
+                max_seqlen = torch.IntTensor([safe_max_seqlen] * len(cu_seqlens))
             else:
                 seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
                 max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
@@ -989,27 +1004,87 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
 
 class GPTSFTChatDataset(GPTSFTDataset):
-    """ """
+    """Dataset class for chat-based fine-tuning with optional HuggingFace chat template support.
+
+    Supports both legacy special token-based formatting and modern HuggingFace chat templates.
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        tokenizer: MegatronTokenizer,
+        use_hf_tokenizer_chat_template: bool = False,
+        tool_schemas: str | dict | None = None,
+        **kwargs,
+    ):
+        """
+        Initialize GPTSFTChatDataset with optional HuggingFace chat template support.
+
+        Accepts conversational data in ShareGPT format. If use_hf_tokenizer_chat_template is True, the dataset will
+        accept both ShareGPT and HuggingFace chat template format. In the case of ShareGPT format, it will try to convert
+        to HuggingFace format.
+
+        ShareGPT format:
+        {"conversations": [{"value": "...", "from": "User"}, {"value": "...", "from": "Assistant"}]}
+
+        HuggingFace chat template format:
+        {
+            "messages": [
+                {"role": "system", "content": "..."}, {"role": "user", "content": "..."},
+                {"role": "assistant", "content": "..."}
+            ]
+        }
+
+        Args:
+            file_path: Path to the dataset file
+            tokenizer: Tokenizer instance
+            use_hf_tokenizer_chat_template: If True, use HuggingFace tokenizer's apply_chat_template
+            tool_schemas: Tool schemas for function calling (JSON string or dict)
+            **kwargs: Additional arguments passed to parent GPTSFTDataset
+        """
+        self.use_hf_tokenizer_chat_template = use_hf_tokenizer_chat_template
+        self.tool_schemas = tool_schemas
+
+        # Parse tool_schemas if it's a JSON string
+        if isinstance(self.tool_schemas, str):
+            self.tool_schemas = json.loads(self.tool_schemas)
+
+        # Initialize parent class
+        super().__init__(file_path, tokenizer, **kwargs)
+
+        # Validate tokenizer if using HF chat template
+        if self.use_hf_tokenizer_chat_template:
+            if not hasattr(self.tokenizer, "_tokenizer") or not hasattr(
+                self.tokenizer._tokenizer, "apply_chat_template"
+            ):
+                raise ValueError(
+                    "Dataset configured to use HF tokenizer chat template, but tokenizer does not have "
+                    "apply_chat_template method. Please ensure you're using a HuggingFace tokenizer with "
+                    "a chat template defined."
+                )
 
     def _maybe_validate_prompt_template(self):
         pass
 
     def _build_samples_mapping(self):
         super()._build_samples_mapping()
-        LABEL_START = self.special_tokens["label_start"]
-        END_NAME_SIGNAL = self.special_tokens["end_of_name"]
 
-        id1 = self.tokenizer.text_to_ids(PREFIX_STR)
-        id2 = self.tokenizer.text_to_ids(PREFIX_STR + LABEL_START)
-        self.label_start_tokens = id2[len(id1) :]
+        # Only build special token IDs if not using HF chat template
+        if not self.use_hf_tokenizer_chat_template:
+            LABEL_START = self.special_tokens["label_start"]
+            END_NAME_SIGNAL = self.special_tokens["end_of_name"]
 
-        id1 = self.tokenizer.text_to_ids(PREFIX_STR + END_NAME_SIGNAL)
-        id2 = self.tokenizer.text_to_ids(PREFIX_STR)
-        self.name_end_token_ids = id1[len(id2) :]
+            id1 = self.tokenizer.text_to_ids(PREFIX_STR)
+            id2 = self.tokenizer.text_to_ids(PREFIX_STR + LABEL_START)
+            self.label_start_tokens = id2[len(id1) :]
 
-        id1 = self.tokenizer.text_to_ids(PREFIX_STR + self.special_tokens["turn_start"])
-        id2 = self.tokenizer.text_to_ids(PREFIX_STR)
-        self.num_turn_start_tokens = len(id1) - len(id2)
+            id1 = self.tokenizer.text_to_ids(PREFIX_STR + END_NAME_SIGNAL)
+            id2 = self.tokenizer.text_to_ids(PREFIX_STR)
+            self.name_end_token_ids = id1[len(id2) :]
+
+            id1 = self.tokenizer.text_to_ids(PREFIX_STR + self.special_tokens["turn_start"])
+            id2 = self.tokenizer.text_to_ids(PREFIX_STR)
+            self.num_turn_start_tokens = len(id1) - len(id2)
 
     def _process_example(self, example):
         """
@@ -1017,20 +1092,28 @@ class GPTSFTChatDataset(GPTSFTDataset):
         Truncation is carried out when needed, but it is performed only on the prompt side.
         BOS, EOS, and SEP, are added if specified.
         """
-        result = _preprocess(
-            example,
-            self.tokenizer,
-            self.name_end_token_ids,
-            self.label_start_tokens,
-            self.special_tokens,
-            self.num_turn_start_tokens,
-        )
+        if not self.use_hf_tokenizer_chat_template:
+            # Use legacy special token-based preprocessing
+            result = _preprocess(
+                example,
+                self.tokenizer,
+                self.name_end_token_ids,
+                self.label_start_tokens,
+                self.special_tokens,
+                self.num_turn_start_tokens,
+            )
+        else:
+            # Use HuggingFace chat template preprocessing
+            result = _chat_preprocess(example, self.tokenizer, self.tool_schemas)
 
         # store metadata in dataset, in case user may have keys required in the prediction json files
-        metadata = {k: v for k, v in example.items() if k not in ["conversations"]}
+        metadata = {k: v for k, v in example.items() if k not in ["conversations", "messages"]}
         result["metadata"] = metadata
         if self.output_original_text:
-            result["metadata"]["conversations"] = example["conversations"]
+            # Store original conversation/messages for both formats
+            for key in ["conversations", "messages"]:
+                if key in example:
+                    result["metadata"][key] = example[key]
 
         return result
 
@@ -1052,19 +1135,51 @@ class GPTSFTChatDataset(GPTSFTDataset):
             dict: A dictionary of batched tensors ready for model input. Key tensors include
                   'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
         """
+        # Removes the last token from each input sequence to ensure the model
+        # never sees the token it is supposed to predict. This enforces an
+        # autoregressive training setup where the model learns to generate
+        # the next token step-by-step.
         input_ids = [item["input_ids"][:-1].tolist() for item in batch]
+        # Removes the first token from each input sequence to create labels
+        # that align with the model's prediction target. This ensures that
+        # at time step `t`, the model's output is evaluated against the token
+        # that originally followed the input at `t` in the dataset.
         labels = [item["input_ids"][1:].tolist() for item in batch]
+        # Context tokens remain unchanged, representing the initial portion of
+        # the sequence that serves as input to the model. This allows the model
+        # to condition its predictions on prior information.
         contexts = [item["context_ids"].tolist() for item in batch]
+        # Extracts the assistant's response portion of the sequence, which
+        # represents the part the model is trained to generate. This helps
+        # distinguish between the input prompt and the expected model output.
         answers = [item["answer_ids"].tolist() for item in batch]
-        loss_mask = [item["mask"][1:].tolist() for item in batch]
+        # Removes the first element from the mask to align with the shifted labels,
+        # ensuring that loss is only computed for valid, predictable tokens. This
+        # prevents the model from incurring loss on tokens that were never meant to
+        # be predicted, such as user-provided context or padding.
+        loss_mask = [item["loss_mask"][1:].tolist() for item in batch]
+        # Metadata remains unchanged, carrying any additional non-token-related
+        # information that might be useful for evaluation, debugging, or tracking
+        # purposes.
         metadata = [item["metadata"] for item in batch]
-
         max_length = max(max([len(x) for x in input_ids]), max([len(x) for x in contexts]) + self.tokens_to_generate)
+
         if max_length > self.max_seq_length:
             # truncate the sequences if it is longer than max_seq_length
             input_ids = [x[: self.max_seq_length] for x in input_ids]
             labels = [x[: self.max_seq_length] for x in labels]
             loss_mask = [x[: self.max_seq_length] for x in loss_mask]
+
+            # Safety check: warn if truncation removed all trainable tokens
+            for i, x in enumerate(loss_mask):
+                x_tensor = torch.tensor(x)
+                if x_tensor.sum().item() == 0:
+                    logger.warning(
+                        "Due to truncation to max_seq_length, no assistant tokens are found in sample. "
+                        "Setting loss_mask to all ones."
+                    )
+                    loss_mask[i] = [1] * self.max_seq_length
+
             contexts = [x[: self.max_seq_length] for x in contexts]
             answers = [x[: self.max_seq_length] for x in answers]
 
@@ -1075,11 +1190,6 @@ class GPTSFTChatDataset(GPTSFTDataset):
             max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 16))
         assert max_length <= self.max_seq_length
 
-        if not self.get_attention_mask_from_fusion:
-            attention_mask = [self._create_attention_mask(max_length) for _ in batch]
-            attention_mask = torch.stack(attention_mask)
-        else:
-            attention_mask = None
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
@@ -1100,7 +1210,11 @@ class GPTSFTChatDataset(GPTSFTDataset):
             "context_lengths": context_lengths,
             "answers": answers,
             "metadata": metadata,
-            "attention_mask": attention_mask,
         }
+
+        if not self.get_attention_mask_from_fusion:
+            attention_mask = [self._create_attention_mask(max_length) for _ in batch]
+            attention_mask = torch.stack(attention_mask)
+            processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
