@@ -16,6 +16,7 @@ import gc
 import os
 import sys
 import time
+from collections import deque
 from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
@@ -221,6 +222,7 @@ def train(
         cuda_graph_helper.create_cudagraphs()
 
     # Run training iterations till done.
+    history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -279,6 +281,7 @@ def train(
             forward_step_func, num_fw_args, train_data_iterator, model, optimizer, scheduler, global_state
         )
         fault_tolerance.on_training_step_end(global_state)
+        history_wct.append(time.time() - global_state.start_time)
         if should_checkpoint:
             save_checkpoint_and_time(
                 global_state,
@@ -361,6 +364,8 @@ def train(
             num_zeros_in_grad,
             config,
             global_state,
+            history_wct,
+            model,
         )
 
         if (

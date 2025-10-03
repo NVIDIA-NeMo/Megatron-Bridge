@@ -654,6 +654,15 @@ class LoggerConfig:
     log_throughput: bool = False
     """If set, calculate and log throughput per GPU."""
 
+    log_throughput_to_tensorboard: bool = False
+    """Enable throughput logging to tensorboard."""
+
+    log_throughput_to_wandb: bool = False
+    """Enable throughput logging to wandb."""
+
+    throughput_window_size: int = 100
+    """Number of batches to use for a rolling average of throughput."""
+
     log_progress: bool = False
     """If set, log progress (in terms of number of processed tokens and number of floating-point operations)
     to progress.txt file in checkpoint directory.
@@ -697,6 +706,27 @@ class LoggerConfig:
 
     log_memory_to_tensorboard: bool = False
     """Enable memory logging to tensorboard."""
+
+    log_memory_to_wandb: bool = False
+    """Enable memory logging to wandb."""
+
+    memory_keys: dict[str, str] = None
+    """Names of memory statistics to log from `torch.cuda.memory_stats()`"""
+
+    log_l2_norm_grad_to_tensorboard: bool = False
+    """Enable gradients logging to tensorboard."""
+
+    log_l2_norm_grad_to_wandb: bool = False
+    """Enable gradients logging to wandb."""
+
+    log_runtime_to_tensorboard: bool = False
+    """Enable runtime metrics logging to tensorboard."""
+
+    log_runtime_to_wandb: bool = False
+    """Enable runtime metrics logging to wandb."""
+
+    runtime_time_unit: str = "hours"
+    """ Time unit to use for time logging. """
 
     log_world_size_to_tensorboard: bool = False
     """Enable world size logging to tensorboard."""
