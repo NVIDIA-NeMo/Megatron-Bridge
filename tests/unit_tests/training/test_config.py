@@ -659,6 +659,34 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "profile_step_start, profile_step_end, expect_assertion_error, expected_error_match",
+        [
+            (10, 20, False, None),  # Valid: end > start
+            (10, 10, False, None),  # Valid: end == start (single step)
+            (0, 5, False, None),  # Valid: start at 0
+            (20, 10, True, "profile_step_end .* must be >= profile_step_start"),  # Invalid: end < start
+            (-1, 10, True, "profile_step_start must be >= 0"),  # Invalid: start < 0
+            (10, -1, True, "profile_step_end must be >= 0"),  # Invalid: end < 0
+            (-5, -1, True, "profile_step_start must be >= 0"),  # Invalid: both < 0
+        ],
+    )
+    def test_profiling_config_step_range_validation(
+        self, profile_step_start, profile_step_end, expect_assertion_error, expected_error_match
+    ):
+        """Test ProfilingConfig validation for profile step ranges."""
+        prof_cfg = create_test_profiling_config(
+            use_pytorch_profiler=True,
+            profile_step_start=profile_step_start,
+            profile_step_end=profile_step_end,
+        )
+
+        if expect_assertion_error:
+            with pytest.raises(AssertionError, match=expected_error_match):
+                prof_cfg.finalize()
+        else:
+            prof_cfg.finalize()  # Should pass without error
+
     def test_packed_sequence_micro_batch_size_validation_error(self, monkeypatch):
         """Test validation error when micro_batch_size > 1 with packed sequences."""
         from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs

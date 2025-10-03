@@ -22,6 +22,10 @@ import torch.profiler
 from megatron.bridge.training.config import ProfilingConfig
 
 
+# Type alias for NVTX context manager
+TNvtxContext = torch.autograd.profiler.emit_nvtx
+
+
 def should_profile_rank(config: Optional[ProfilingConfig], rank: int) -> bool:
     """Check if current rank should be profiled.
 
@@ -35,6 +39,65 @@ def should_profile_rank(config: Optional[ProfilingConfig], rank: int) -> bool:
     if config is None:
         return False
     return rank in config.profile_ranks
+
+
+def handle_profiling_step(
+    config: Optional[ProfilingConfig],
+    iteration: int,
+    rank: int,
+    pytorch_prof: Optional[torch.profiler.profile],
+) -> Optional[TNvtxContext]:
+    """Handle profiling logic for a single training step.
+
+    Args:
+        config: Profiling configuration
+        iteration: Current training iteration
+        rank: Current process rank
+        pytorch_prof: PyTorch profiler instance (if using PyTorch profiler)
+
+    Returns:
+        NVTX context if nsys profiling was started at this step, None otherwise
+    """
+    if not should_profile_rank(config, rank):
+        return None
+
+    if config.use_pytorch_profiler and pytorch_prof is not None:
+        pytorch_prof.step()
+
+    if config.use_nsys_profiler:
+        if iteration == config.profile_step_start:
+            return start_nsys_profiler(config)
+
+    return None
+
+
+def handle_profiling_stop(
+    config: Optional[ProfilingConfig],
+    iteration: int,
+    rank: int,
+    pytorch_prof: Optional[torch.profiler.profile],
+    nsys_nvtx_context: Optional[TNvtxContext] = None,
+) -> None:
+    """Handle profiling cleanup at designated stop iteration.
+
+    Args:
+        config: Profiling configuration
+        iteration: Current training iteration
+        rank: Current process rank
+        pytorch_prof: PyTorch profiler instance (if using PyTorch profiler)
+        nsys_nvtx_context: NVTX context from handle_profiling_step (if using nsys profiler)
+    """
+    if not should_profile_rank(config, rank):
+        return
+
+    if iteration != config.profile_step_end:
+        return
+
+    if config.use_pytorch_profiler and pytorch_prof is not None:
+        pytorch_prof.stop()
+
+    if config.use_nsys_profiler:
+        stop_nsys_profiler(nsys_nvtx_context)
 
 
 def initialize_pytorch_profiler(
@@ -64,72 +127,30 @@ def initialize_pytorch_profiler(
     return prof
 
 
-def start_nsys_profiler(config: ProfilingConfig) -> None:
+def start_nsys_profiler(config: ProfilingConfig) -> TNvtxContext:
     """Start CUDA profiler for nsys profiling.
 
     Args:
         config: Profiling configuration
+
+    Returns:
+        NVTX context manager that must be passed to stop_nsys_profiler
     """
     torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStart())
     if config.record_shapes:
-        torch.autograd.profiler.emit_nvtx(record_shapes=True).__enter__()
+        nvtx_context = torch.autograd.profiler.emit_nvtx(record_shapes=True)
     else:
-        torch.autograd.profiler.emit_nvtx().__enter__()
+        nvtx_context = torch.autograd.profiler.emit_nvtx()
+    nvtx_context.__enter__()
+    return nvtx_context
 
 
-def stop_nsys_profiler() -> None:
-    """Stop CUDA profiler for nsys profiling."""
+def stop_nsys_profiler(nvtx_context: Optional[TNvtxContext]) -> None:
+    """Stop CUDA profiler for nsys profiling.
+
+    Args:
+        nvtx_context: NVTX context manager returned from start_nsys_profiler
+    """
     torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStop())
-    torch.autograd.profiler.emit_nvtx().__exit__(None, None, None)
-
-
-def handle_profiling_step(
-    config: Optional[ProfilingConfig],
-    iteration: int,
-    rank: int,
-    pytorch_prof: Optional[torch.profiler.profile],
-) -> None:
-    """Handle profiling logic for a single training step.
-
-    Args:
-        config: Profiling configuration
-        iteration: Current training iteration
-        rank: Current process rank
-        pytorch_prof: PyTorch profiler instance (if using PyTorch profiler)
-    """
-    if not should_profile_rank(config, rank):
-        return
-
-    if config.use_pytorch_profiler and pytorch_prof is not None:
-        pytorch_prof.step()
-
-    if config.use_nsys_profiler:
-        if iteration == config.profile_step_start:
-            start_nsys_profiler(config)
-
-
-def handle_profiling_stop(
-    config: Optional[ProfilingConfig],
-    iteration: int,
-    rank: int,
-    pytorch_prof: Optional[torch.profiler.profile],
-) -> None:
-    """Handle profiling cleanup at designated stop iteration.
-
-    Args:
-        config: Profiling configuration
-        iteration: Current training iteration
-        rank: Current process rank
-        pytorch_prof: PyTorch profiler instance (if using PyTorch profiler)
-    """
-    if not should_profile_rank(config, rank):
-        return
-
-    if iteration != config.profile_step_end:
-        return
-
-    if config.use_pytorch_profiler and pytorch_prof is not None:
-        pytorch_prof.stop()
-
-    if config.use_nsys_profiler:
-        stop_nsys_profiler()
+    if nvtx_context is not None:
+        nvtx_context.__exit__(None, None, None)

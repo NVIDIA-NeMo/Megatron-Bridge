@@ -180,7 +180,7 @@ class TestStartNsysProfiler:
             record_shapes=False,
         )
 
-        start_nsys_profiler(config)
+        result = start_nsys_profiler(config)
 
         # Verify CUDA profiler was started
         mock_cudart_instance.cudaProfilerStart.assert_called_once()
@@ -189,6 +189,9 @@ class TestStartNsysProfiler:
         # Verify NVTX was called without record_shapes
         mock_nvtx.assert_called_once_with()
         mock_nvtx_context.__enter__.assert_called_once()
+
+        # Verify context is returned
+        assert result == mock_nvtx_context
 
     @patch("torch.cuda.cudart")
     @patch("torch.autograd.profiler.emit_nvtx")
@@ -207,36 +210,51 @@ class TestStartNsysProfiler:
             record_shapes=True,
         )
 
-        start_nsys_profiler(config)
+        result = start_nsys_profiler(config)
 
         # Verify NVTX was called WITH record_shapes
         mock_nvtx.assert_called_once_with(record_shapes=True)
         mock_nvtx_context.__enter__.assert_called_once()
+
+        # Verify context is returned
+        assert result == mock_nvtx_context
 
 
 class TestStopNsysProfiler:
     """Tests for stop_nsys_profiler function."""
 
     @patch("torch.cuda.cudart")
-    @patch("torch.autograd.profiler.emit_nvtx")
     @patch("torch.cuda.check_error")
-    def test_stop_nsys_profiler(self, mock_check_error, mock_nvtx, mock_cudart):
+    def test_stop_nsys_profiler(self, mock_check_error, mock_cudart):
         """Test nsys profiler stop."""
         mock_cudart_instance = Mock()
         mock_cudart_instance.cudaProfilerStop.return_value = (0,)
         mock_cudart.return_value = mock_cudart_instance
 
         mock_nvtx_context = MagicMock()
-        mock_nvtx.return_value = mock_nvtx_context
 
-        stop_nsys_profiler()
+        stop_nsys_profiler(mock_nvtx_context)
 
         # Verify CUDA profiler was stopped
         mock_cudart_instance.cudaProfilerStop.assert_called_once()
         mock_check_error.assert_called_once_with((0,))
 
         # Verify NVTX context was exited
-        mock_nvtx.return_value.__exit__.assert_called_once_with(None, None, None)
+        mock_nvtx_context.__exit__.assert_called_once_with(None, None, None)
+
+    @patch("torch.cuda.cudart")
+    @patch("torch.cuda.check_error")
+    def test_stop_nsys_profiler_with_none_context(self, mock_check_error, mock_cudart):
+        """Test nsys profiler stop handles None context gracefully."""
+        mock_cudart_instance = Mock()
+        mock_cudart_instance.cudaProfilerStop.return_value = (0,)
+        mock_cudart.return_value = mock_cudart_instance
+
+        # Should not raise exception
+        stop_nsys_profiler(None)
+
+        # Verify CUDA profiler was still stopped
+        mock_cudart_instance.cudaProfilerStop.assert_called_once()
 
 
 class TestHandleProfilingStep:
@@ -305,6 +323,9 @@ class TestHandleProfilingStep:
     @patch("megatron.bridge.training.profiling.start_nsys_profiler")
     def test_handle_profiling_step_nsys_at_start_iteration(self, mock_start_nsys):
         """Test nsys profiler starts at profile_step_start."""
+        mock_nvtx_context = Mock()
+        mock_start_nsys.return_value = mock_nvtx_context
+
         config = ProfilingConfig(
             use_nsys_profiler=True,
             profile_step_start=10,
@@ -312,9 +333,10 @@ class TestHandleProfilingStep:
             profile_ranks=[0],
         )
 
-        # At start iteration - should start
-        handle_profiling_step(config, iteration=10, rank=0, pytorch_prof=None)
+        # At start iteration - should start and return context
+        result = handle_profiling_step(config, iteration=10, rank=0, pytorch_prof=None)
         mock_start_nsys.assert_called_once_with(config)
+        assert result == mock_nvtx_context
 
     @patch("megatron.bridge.training.profiling.start_nsys_profiler")
     def test_handle_profiling_step_nsys_after_start(self, mock_start_nsys):
@@ -421,16 +443,18 @@ class TestHandleProfilingStop:
     @patch("megatron.bridge.training.profiling.stop_nsys_profiler")
     def test_handle_profiling_stop_nsys_at_end_iteration(self, mock_stop_nsys):
         """Test nsys profiler stops at profile_step_end."""
+        mock_nvtx_context = Mock()
+
         config = ProfilingConfig(
             use_nsys_profiler=True,
             profile_step_end=10,
             profile_ranks=[0],
         )
 
-        handle_profiling_stop(config, iteration=10, rank=0, pytorch_prof=None)
+        handle_profiling_stop(config, iteration=10, rank=0, pytorch_prof=None, nsys_nvtx_context=mock_nvtx_context)
 
-        # Nsys stop should be called
-        mock_stop_nsys.assert_called_once()
+        # Nsys stop should be called with the context
+        mock_stop_nsys.assert_called_once_with(mock_nvtx_context)
 
     @patch("megatron.bridge.training.profiling.stop_nsys_profiler")
     def test_handle_profiling_stop_nsys_wrong_iteration(self, mock_stop_nsys):
@@ -448,6 +472,8 @@ class TestHandleProfilingStop:
     @patch("megatron.bridge.training.profiling.stop_nsys_profiler")
     def test_handle_profiling_stop_nsys_rank_filtering(self, mock_stop_nsys):
         """Test nsys profiler stop respects rank filtering."""
+        mock_nvtx_context = Mock()
+
         config = ProfilingConfig(
             use_nsys_profiler=True,
             profile_step_end=10,
@@ -455,12 +481,12 @@ class TestHandleProfilingStop:
         )
 
         # Rank 1 should not stop profiler
-        handle_profiling_stop(config, iteration=10, rank=1, pytorch_prof=None)
+        handle_profiling_stop(config, iteration=10, rank=1, pytorch_prof=None, nsys_nvtx_context=mock_nvtx_context)
         mock_stop_nsys.assert_not_called()
 
         # Rank 0 should stop profiler
-        handle_profiling_stop(config, iteration=10, rank=0, pytorch_prof=None)
-        mock_stop_nsys.assert_called_once()
+        handle_profiling_stop(config, iteration=10, rank=0, pytorch_prof=None, nsys_nvtx_context=mock_nvtx_context)
+        mock_stop_nsys.assert_called_once_with(mock_nvtx_context)
 
 
 class TestProfilingEdgeCases:
