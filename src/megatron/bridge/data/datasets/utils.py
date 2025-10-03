@@ -948,14 +948,14 @@ def _preprocess(
         label_start_ids,
         num_turn_start_tokens,
     )
-    mask = (target != IGNORE_INDEX).bool()
-    assert mask.sum().item() != 0, "mask is empty"
+    loss_mask = (target != IGNORE_INDEX).bool()
+    assert loss_mask.sum().item() != 0, "loss_mask is empty"
     # Choose the last conversation as answer other history are context
     last_ignore_index_pos = torch.nonzero(target == IGNORE_INDEX)[-1].item() + 1
     context_ids = input_ids[:last_ignore_index_pos]
     answer_ids = input_ids[last_ignore_index_pos:]
 
-    return dict(input_ids=input_ids, mask=mask, context_ids=context_ids, answer_ids=answer_ids)
+    return dict(input_ids=input_ids, loss_mask=loss_mask, context_ids=context_ids, answer_ids=answer_ids)
 
 
 def _mask_targets(

@@ -169,7 +169,7 @@ def create_packing_strategy(
         all_seq_lens.extend([i] * count)
 
     packing_fn = globals()[packing_algorithm]
-    assignments: List[List[int]] = packing_fn(all_seq_lens, pack_size)
+    assignments: list[list[int]] = packing_fn(all_seq_lens, pack_size)
     packed_seq_lens = [sum(x) for x in assignments]
     packing_factor = len(all_seq_lens) / len(packed_seq_lens)
 
@@ -236,7 +236,7 @@ def fill_packing_strategy(
                             [
                                 # (x['answer_start_idx'] - 1) because we want to train on the output
                                 # after the last context token
-                                idx >= (x["answer_start_idx"] - 1) and x["input_ids"][idx] != pad_id
+                                idx >= (x["answer_start_idx"] - 1)
                                 for idx in range(len(x["input_ids"]))
                             ]
                             for x in per_seq_data

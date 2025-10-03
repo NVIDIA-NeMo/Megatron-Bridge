@@ -201,14 +201,17 @@ class TestDataPackingUtils:
         assert len(second_pack["seq_start_id"]) == 2
         assert second_pack["seq_start_id"] == [0, 2]
 
-    def test_fill_packing_strategy_with_padding_in_answer_start_idx(self):
-        """Test answer_start_idx logic correctly handles padding tokens."""
+    def test_fill_packing_strategy_loss_mask_ignores_pad_id(self):
+        """Test that loss_mask doesn't check pad_id (consistent with unpacked datasets).
+
+        The loss calculation should be consistent between packed and unpacked sequences.
+        """
         assignments = [[1]]
 
         sequences = {
             0: [],
             1: [
-                {"input_ids": [100, 999, 200], "answer_start_idx": 1},  # seq_len = 2, pad_id in sequence
+                {"input_ids": [100, 999, 200], "answer_start_idx": 1},  # seq_len = 2
             ],
             2: [],
             3: [],
@@ -221,11 +224,12 @@ class TestDataPackingUtils:
         np.random.seed(42)
         output_data = fill_packing_strategy(assignments, sequences, pack_size, pad_id)
 
-        # Loss mask: for idx >= (answer_start_idx - 1) = 0, and token != pad_id
-        # [100, 999, 200]: idx 0 >= 0 and 100 != 999 -> True
-        #                   idx 1 >= 0 but 999 == 999 -> False
-        #                   idx 2 >= 0 and 200 != 999 -> True
-        expected_loss_mask = [True, False, True]
+        # Loss mask: for idx >= (answer_start_idx - 1) = 0
+        # Note: We don't exclude pad_id tokens to match unpacked dataset behavior
+        # [100, 999, 200]: idx 0 >= 0 -> True
+        #                  idx 1 >= 0 -> True (even though it's pad_id)
+        #                  idx 2 >= 0 -> True
+        expected_loss_mask = [True, True, True]
         assert output_data[0]["loss_mask"] == expected_loss_mask
 
     def test_fill_packing_strategy_missing_keys_error(self):

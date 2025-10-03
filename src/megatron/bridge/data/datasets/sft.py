@@ -403,7 +403,7 @@ class GPTSFTDataset(Dataset):
         if self.samples_mapping is not None:
             assert idx < len(self.samples_mapping)
             idx, _, _ = self.samples_mapping[idx]
-            if isinstance(idx, np.uint32):
+            if isinstance(idx, (np.uint32, np.int64)):
                 idx = idx.item()
 
         assert idx < len(self.indexed_dataset)
@@ -919,7 +919,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
                 # The second eos_id index marks the length of the original unpadded sequence if the sequence is
                 # prepadded for cp_size > 1. Otherwise, there is no extra padding.
-                seqlen_unpadded = eos_idx[0][0] + 1 if eos_idx[0].any() else len(current_seq)
+                seqlen_unpadded = eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1 else len(current_seq)
                 cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
 
             # if extra paddings are added in the packed sequence, they can't be counted as
@@ -1124,13 +1124,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
         labels = [item["input_ids"][1:].tolist() for item in batch]
         contexts = [item["context_ids"].tolist() for item in batch]
         answers = [item["answer_ids"].tolist() for item in batch]
-
-        # Handle loss_mask - check if it exists directly or as "mask" key
-        if "loss_mask" in batch[0]:
-            loss_mask = [item["loss_mask"][1:].tolist() for item in batch]
-        else:
-            loss_mask = [item["mask"][1:].tolist() for item in batch]
-
+        loss_mask = [item["loss_mask"][1:].tolist() for item in batch]
         metadata = [item["metadata"] for item in batch]
 
         max_length = max(max([len(x) for x in input_ids]), max([len(x) for x in contexts]) + self.tokens_to_generate)

@@ -15,6 +15,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 
@@ -924,3 +925,348 @@ class TestContextAnswerSplit:
         # When all is masked as answer, context_ids should be everything
         assert len(result["context_ids"]) == len(result["input_ids"])
         assert result["answer_ids"].tolist() == []
+
+
+class TestLegacyPreprocessReturnsLossMask:
+    """Test that legacy _preprocess returns loss_mask not mask."""
+
+    def test_legacy_preprocess_returns_loss_mask_key(self):
+        """Test that _preprocess signature returns dict with loss_mask key."""
+        # This is a simple check that the return signature changed from 'mask' to 'loss_mask'
+        # Full _preprocess testing requires complex mocking, so we just verify the key name
+
+        # We can verify this by checking the code directly or with a simpler test
+        # The key change is in utils.py line 958: return dict(..., loss_mask=..., ...)
+
+        # Simple assertion: the function signature should include loss_mask
+        import inspect
+
+        from megatron.bridge.data.datasets.utils import _preprocess
+
+        # Get the source code
+        source = inspect.getsource(_preprocess)
+
+        # Verify it returns loss_mask, not mask
+        assert "return dict(" in source
+        assert "loss_mask=loss_mask" in source or "loss_mask=" in source
+        # Verify it doesn't return 'mask=mask'
+        assert "mask=mask" not in source or "loss_mask" in source
+
+
+class TestEOSIndexFixInPackedDataset:
+    """Test EOS index fix for cu_seqlens_unpadded calculation."""
+
+    def test_eos_index_logic_uses_shape_check(self):
+        """Test that EOS index logic uses shape[0] > 1 check (not .any())."""
+        # Verify the code uses the correct logic from NeMo PR #14437
+        import inspect
+
+        from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+
+        # Get the collate_fn source code
+        source = inspect.getsource(GPTSFTPackedDataset.collate_fn)
+
+        # Verify it uses eos_idx[0][1] (second EOS) and shape[0] > 1
+        assert "eos_idx[0][1]" in source
+        assert "shape[0] > 1" in source
+        # Should NOT use eos_idx[0][0] or .any()
+        assert "eos_idx[0][0]" not in source
+
+
+class TestPackedChatDatasetIntegration:
+    """Integration tests for packed chat datasets."""
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_chat_dataset_with_loss_mask_field(self, mock_dataset_class):
+        """Test that chat dataset with HF template produces loss_mask field."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{% generation %}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 1, 1, 1],
+        }
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        example = {"conversations": [{"from": "User", "value": "Test"}]}
+        result = dataset._process_example(example)
+
+        # Should have loss_mask, not mask
+        assert "loss_mask" in result
+        assert "mask" not in result
+
+    def test_legacy_chat_dataset_backward_compatibility(self):
+        """Test that legacy chat dataset still has loss_mask in output."""
+        # Simplified test - just verify the code path
+        import inspect
+
+        from megatron.bridge.data.datasets.utils import _preprocess
+
+        # Verify _preprocess returns a dict with loss_mask
+        source_code = inspect.getsource(_preprocess)
+
+        # The return statement should include loss_mask
+        assert "loss_mask" in source_code
+        assert "return dict(" in source_code
+
+
+class TestPackedSequenceWithChatEndToEnd:
+    """End-to-end tests for packed sequences with chat templates."""
+
+    def test_tokenize_dataset_produces_loss_mask(self):
+        """Test that tokenize_dataset with chat produces items with loss_mask."""
+        from pathlib import Path
+        from unittest.mock import MagicMock, patch
+
+        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        # Mock dataset that returns items with loss_mask
+        mock_dataset = MagicMock()
+        mock_item = {
+            "input_ids": [1, 2, 3, 2],
+            "loss_mask": [0, 1, 1, 1],
+            "context_ids": [1],
+            "answer_ids": [2, 3, 2],
+        }
+        mock_dataset.__getitem__ = MagicMock(return_value=mock_item)
+        mock_dataset.__len__ = MagicMock(return_value=1)
+
+        dataset_kwargs = {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+        }
+
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+            mock_create.return_value = mock_dataset
+
+            result = tokenize_dataset(
+                path=Path("test.jsonl"),
+                tokenizer=mock_tokenizer,
+                max_seq_length=512,
+                seed=1234,
+                dataset_kwargs=dataset_kwargs,
+            )
+
+            # Verify result is array of items with loss_mask
+            assert isinstance(result, np.ndarray)
+            assert len(result) == 1
+            assert "loss_mask" in result[0]
+
+    def test_packed_dataset_preserves_chat_loss_mask(self):
+        """Test that packed dataset preserves loss_mask from chat preprocessing."""
+        from megatron.bridge.data.datasets.packing_utils import fill_packing_strategy
+
+        # Simulate chat dataset items with loss_mask
+        assignments = [[2]]
+        sequences = {
+            0: [],
+            1: [],
+            2: [
+                {
+                    "input_ids": [1, 10, 20, 2],
+                    "loss_mask": [False, False, True, True],  # Chat: only train on assistant
+                }
+            ],
+            3: [],
+            4: [],  # Need all keys up to pack_size
+            5: [],
+        }
+
+        pack_size = 5
+        pad_id = 2
+
+        output_data = fill_packing_strategy(assignments, sequences, pack_size, pad_id)
+
+        # Verify loss_mask was preserved and rolled correctly
+        assert len(output_data) == 1
+        assert "loss_mask" in output_data[0]
+        # Original: [False, False, True, True] -> Rolled: [False, True, True, False]
+        expected_loss_mask = [False, True, True, False]
+        assert output_data[0]["loss_mask"] == expected_loss_mask
+
+
+class TestCuSeqlensUnpaddedCalculation:
+    """Test cu_seqlens_unpadded calculation with EOS fix."""
+
+    def test_cu_seqlens_unpadded_calculation_uses_correct_eos(self):
+        """Test that cu_seqlens_unpadded calculation uses correct EOS logic."""
+        # Code inspection test to verify the fix from NeMo PR #14437
+        import inspect
+
+        from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+
+        # Get the collate_fn source
+        source = inspect.getsource(GPTSFTPackedDataset.collate_fn)
+
+        # Should calculate seqlen_unpadded using second EOS
+        assert "seqlen_unpadded" in source
+        assert "eos_idx[0][1]" in source  # Uses second EOS
+        # The calculation should be: eos_idx[0][1] + 1 if eos_idx[0].shape[0] > 1
+        assert ".shape[0] > 1" in source
+
+
+class TestBackwardCompatibilityLossMask:
+    """Test backward compatibility for loss_mask field naming."""
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_legacy_chat_dataset_uses_loss_mask(self, mock_dataset_class):
+        """Test that legacy chat dataset (non-HF template) uses loss_mask."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+        mock_tokenizer.text_to_ids = MagicMock(return_value=[1, 2, 3])
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            use_hf_tokenizer_chat_template=False,  # Legacy mode
+        )
+
+        # Mock _preprocess to return loss_mask
+        with patch("megatron.bridge.data.datasets.sft._preprocess") as mock_preprocess:
+            mock_preprocess.return_value = {
+                "input_ids": torch.tensor([1, 2, 3, 4]),
+                "loss_mask": torch.tensor([0, 1, 1, 1]),
+                "context_ids": torch.tensor([1]),
+                "answer_ids": torch.tensor([2, 3, 4]),
+            }
+
+            example = {"conversations": [{"from": "User", "value": "Test"}]}
+            result = dataset._process_example(example)
+
+            # Should have loss_mask
+            assert "loss_mask" in result
+
+
+class TestSpaceSensitiveComputation:
+    """Test space_sensitive attribute computation in tokenizers."""
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
+    def test_hf_tokenizer_computes_space_sensitive_correctly(self, mock_get_rank):
+        """Test that HF tokenizer correctly computes space_sensitive."""
+        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+
+        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
+            mock_hf_tok = MagicMock()
+            mock_hf_tok.get_vocab.return_value = {"x": 1, "y": 2}
+
+            # Mock tokenization to simulate space-sensitive tokenizer
+            def mock_call(text, **kwargs):
+                mock_result = MagicMock()
+                if text == "x y":
+                    mock_result.input_ids = [1, 2, 3]  # Different
+                elif text == "x":
+                    mock_result.input_ids = [1]
+                elif text == "y":
+                    mock_result.input_ids = [2]
+                else:
+                    mock_result.input_ids = []
+                return mock_result
+
+            mock_hf_tok.__call__ = mock_call
+            mock_from_pretrained.return_value = mock_hf_tok
+
+            tokenizer = _HuggingFaceTokenizer("gpt2")
+
+            # Should compute space_sensitive as True
+            assert hasattr(tokenizer, "space_sensitive")
+            assert tokenizer.space_sensitive is True
+
+    def test_sentencepiece_tokenizer_space_sensitive_fallback(self):
+        """Test that SentencePiece defaults to True if computation fails."""
+        from megatron.bridge.training.tokenizers.tokenizer import _SentencePieceTokenizer
+
+        with patch("sentencepiece.SentencePieceProcessor") as mock_sp:
+            mock_sp_instance = MagicMock()
+            mock_sp_instance.bos_id.return_value = 1
+            mock_sp_instance.eos_id.return_value = 2
+            mock_sp_instance.pad_id.return_value = 0
+            mock_sp_instance.get_piece_size.return_value = 1000
+            mock_sp_instance.id_to_piece = MagicMock(side_effect=lambda i: f"<{i}>")
+
+            # Make tokenize fail to test fallback
+            mock_sp_instance.encode_as_ids.side_effect = Exception("Test error")
+            mock_sp.return_value = mock_sp_instance
+
+            tokenizer = _SentencePieceTokenizer("test.model")
+
+            # Should fallback to True
+            assert tokenizer.space_sensitive is True
+
+
+class TestPackedDatasetWithChatTemplateEdgeCases:
+    """Edge case tests for packed datasets with chat templates."""
+
+    def test_create_packed_dataset_ignores_chat_flag(self):
+        """Test that .npy files ignore chat flag (packed has priority)."""
+        from pathlib import Path
+
+        from megatron.bridge.data.datasets.sft import create_sft_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+
+        with patch("numpy.load") as mock_load:
+            mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
+
+            # Even with chat=True, should create GPTSFTPackedDataset for .npy
+            dataset = create_sft_dataset(
+                path=Path("test.npy"),
+                tokenizer=mock_tokenizer,
+                chat=True,
+                use_hf_tokenizer_chat_template=True,
+                prompt_template="{input} {output}",  # Avoid validation error
+            )
+
+            # Verify it's a packed dataset
+            from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+
+            assert isinstance(dataset, GPTSFTPackedDataset)
+
+    def test_dataset_kwargs_flow_through_create_sft(self):
+        """Test that dataset_kwargs flow through create_sft_dataset to chat dataset."""
+        from pathlib import Path
+
+        from megatron.bridge.data.datasets.sft import create_sft_dataset
+
+        with patch("megatron.bridge.data.datasets.sft.GPTSFTChatDataset") as mock_chat:
+            mock_tokenizer = MagicMock()
+
+            tool_schemas = [{"type": "function"}]
+
+            create_sft_dataset(
+                path=Path("test.jsonl"),
+                tokenizer=mock_tokenizer,
+                chat=True,
+                use_hf_tokenizer_chat_template=True,
+                tool_schemas=tool_schemas,
+                custom_kwarg="custom_value",  # Extra kwargs
+            )
+
+            # Verify all kwargs passed through
+            call_kwargs = mock_chat.call_args[1]
+            assert call_kwargs["use_hf_tokenizer_chat_template"] is True
+            assert call_kwargs["tool_schemas"] == tool_schemas
+            assert call_kwargs["custom_kwarg"] == "custom_value"
