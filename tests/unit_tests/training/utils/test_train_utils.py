@@ -18,9 +18,11 @@ from functools import partial
 import pytest
 import torch
 
+from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     maybe_inject_state,
     needs_global_state_injection,
+    prepare_forward_step_func,
     training_log,
 )
 
@@ -865,7 +867,6 @@ class TestNeedsGlobalStateInjection:
 
     def test_function_with_string_globalstate_annotation_needs_injection(self):
         """Test function with string GlobalState annotation needs injection."""
-        from megatron.bridge.training.state import GlobalState
 
         def forward_step_func(state: "GlobalState", data_iterator, model):
             return None
@@ -1093,3 +1094,113 @@ class TestMaybeInjectState:
 
         assert result_func is functor
         assert not isinstance(result_func, partial)
+
+
+class TestPrepareForwardStepFunc:
+    """Tests for prepare_forward_step_func convenience function."""
+
+    def test_prepare_with_state_parameter_injects(self):
+        """Test prepare_forward_step_func with function that needs state injection."""
+
+        def forward_with_state(state: GlobalState, data_iterator, model):
+            return state.train_state.step
+
+        mock_state = mock.MagicMock()
+        mock_state.train_state.step = 42
+
+        result = prepare_forward_step_func(forward_with_state, mock_state)
+
+        # Should be wrapped
+        assert isinstance(result, partial)
+        # Should work correctly
+        assert result(None, None) == 42
+
+    def test_prepare_without_state_parameter_returns_original(self):
+        """Test prepare_forward_step_func with function that doesn't need state injection."""
+
+        def forward_no_state(data_iterator, model):
+            return "no state needed"
+
+        mock_state = mock.MagicMock()
+
+        result = prepare_forward_step_func(forward_no_state, mock_state)
+
+        # Should return original function
+        assert result is forward_no_state
+        assert not isinstance(result, partial)
+
+    def test_prepare_with_functor_needing_state(self):
+        """Test prepare_forward_step_func with functor that needs state injection."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.call_count = 0
+
+            def __call__(self, state: GlobalState, data_iterator, model):
+                self.call_count += 1
+                return state.train_state.step + self.call_count
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+        mock_state.train_state.step = 10
+
+        result = prepare_forward_step_func(functor, mock_state)
+
+        # Should be wrapped
+        assert isinstance(result, partial)
+
+        # Call multiple times - verify functor's internal state still works
+        assert result(None, None) == 11  # step=10 + call_count=1
+        assert result(None, None) == 12  # step=10 + call_count=2
+        assert functor.call_count == 2
+
+    def test_prepare_with_functor_not_needing_state(self):
+        """Test prepare_forward_step_func with functor that doesn't need state."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.call_count = 0
+
+            def __call__(self, data_iterator, model):
+                self.call_count += 1
+                return self.call_count
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+
+        result = prepare_forward_step_func(functor, mock_state)
+
+        # Should return original functor
+        assert result is functor
+        assert not isinstance(result, partial)
+
+        # Functor should still work
+        assert result(None, None) == 1
+        assert result(None, None) == 2
+
+    def test_prepare_sees_state_mutations(self):
+        """Test that prepared function sees mutations to GlobalState."""
+
+        def forward_with_state(state: GlobalState, data_iterator, model):
+            return state.train_state.step
+
+        mock_state = mock.MagicMock()
+        mock_state.train_state.step = 10
+
+        # Prepare once
+        wrapped = prepare_forward_step_func(forward_with_state, mock_state)
+
+        # Call with initial state
+        assert wrapped(None, None) == 10
+
+        # Mutate state (simulates training loop incrementing step)
+        mock_state.train_state.step = 20
+
+        # Call again - should see mutated value
+        assert wrapped(None, None) == 20
+
+        # Further mutation
+        mock_state.train_state.step = 100
+
+        # Still sees current value
+        assert wrapped(None, None) == 100
