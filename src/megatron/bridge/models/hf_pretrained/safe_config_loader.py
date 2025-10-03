@@ -26,16 +26,9 @@ import time
 from pathlib import Path
 from typing import Union
 
+import filelock
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
-
-
-try:
-    import filelock
-
-    HAS_FILELOCK = True
-except ImportError:
-    HAS_FILELOCK = False
 
 
 def safe_load_config_with_retry(
@@ -88,25 +81,21 @@ def safe_load_config_with_retry(
 
     for attempt in range(max_retries + 1):
         try:
-            if HAS_FILELOCK:
-                # Use file locking for process-safe access
-                # Create a lock file based on the path hash to avoid conflicts
-                path_hash = hashlib.md5(str(path).encode()).hexdigest()
+            # Use file locking for process-safe access
+            # Create a lock file based on the path hash to avoid conflicts
+            path_hash = hashlib.md5(str(path).encode()).hexdigest()
 
-                # Allow override of lock directory via environment variable
-                # This is useful for multi-node setups where a shared lock directory is needed
-                lock_dir = os.getenv("MEGATRON_CONFIG_LOCK_DIR")
-                if lock_dir:
-                    lock_file = Path(lock_dir) / f".megatron_config_lock_{path_hash}"
-                else:
-                    lock_file = Path.home() / ".cache" / "huggingface" / f".megatron_config_lock_{path_hash}"
-
-                lock_file.parent.mkdir(parents=True, exist_ok=True)
-
-                with filelock.FileLock(str(lock_file) + ".lock", timeout=60):
-                    return AutoConfig.from_pretrained(path, trust_remote_code=trust_remote_code, **kwargs)
+            # Allow override of lock directory via environment variable
+            # This is useful for multi-node setups where a shared lock directory is needed
+            lock_dir = os.getenv("MEGATRON_CONFIG_LOCK_DIR")
+            if lock_dir:
+                lock_file = Path(lock_dir) / f".megatron_config_lock_{path_hash}"
             else:
-                # Fallback without file locking (with retry)
+                lock_file = Path.home() / ".cache" / "huggingface" / f".megatron_config_lock_{path_hash}"
+
+            lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+            with filelock.FileLock(str(lock_file) + ".lock", timeout=60):
                 return AutoConfig.from_pretrained(path, trust_remote_code=trust_remote_code, **kwargs)
 
         except Exception as e:

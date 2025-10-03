@@ -27,7 +27,7 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
@@ -244,6 +244,8 @@ def build_and_load_model(
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if isinstance(model_cfg, ModelProviderMixin):
+            if hasattr(model_cfg, "finalize"):
+                model_cfg.finalize()
             return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
         else:
             assert model_type in ("gpt", "mamba"), f"model type {model_type} not supported."
@@ -305,6 +307,7 @@ def load_megatron_model(
     return_state_dict: bool = False,
     use_cpu_init: bool = False,
     skip_temp_dist_context: Optional[bool] = None,
+    mp_overrides: Optional[ModelParallelKwargs] = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
 
@@ -321,19 +324,42 @@ def load_megatron_model(
         skip_temp_dist_context: If True, skip temporary distributed context setup.
                                If None, automatically skip if distributed is already initialized.
                                Default: None.
+        mp_overrides: Optional model-parallel overrides to apply to the loaded config.
+                      Only provided fields are overridden.
 
     Returns:
         The model instance with loaded weights if return_state_dict is False,
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
-
     model_cfg, mlm_args = load_model_config(checkpoint_path)
+    # If in single GPU environment, reset additional parallel settings
+    model_cfg.tensor_model_parallel_size = 1
+    model_cfg.pipeline_model_parallel_size = 1
+    model_cfg.context_parallel_size = 1
+    model_cfg.expert_model_parallel_size = 1
+    model_cfg.expert_tensor_parallel_size = 1
+    model_cfg.moe_extended_tp = False
+    model_cfg.sequence_parallel = False
+    model_cfg.virtual_pipeline_model_parallel_size = None
+    model_cfg.hierarchical_context_parallel_sizes = None
+
+    # Apply model-parallel overrides if provided
+    if mp_overrides:
+        for key, value in mp_overrides.items():
+            if hasattr(model_cfg, key) and value is not None:
+                setattr(model_cfg, key, value)
+
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
     )
 
 
-def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckpt_format: str = "torch_dist") -> None:
+def save_megatron_model(
+    model: list[MegatronModule],
+    path: Union[str, Path],
+    ckpt_format: str = "torch_dist",
+    hf_tokenizer_path: Optional[Union[str, Path]] = None,
+) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
     This method saves the model in Megatron's native checkpoint format, which
@@ -345,16 +371,35 @@ def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckp
         model: Megatron model instance or list of instances.
         path: Directory path where the checkpoint will be saved.
         ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
+        hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
+            If provided, the tokenizer metadata will be included in the checkpoint.
 
     Example:
         >>> # Save model checkpoint
         >>> save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+        >>> # Save model checkpoint with tokenizer metadata
+        >>> save_megatron_model(
+        ...     megatron_model,
+        ...     "./megatron_checkpoint",
+        ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+        ... )
 
     Note:
         - This method is collective and must be called by all ranks
         - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
         - The checkpoint format follows Megatron's standard structure for compatibility
     """
+    # Create tokenizer config if tokenizer path is provided
+    tokenizer_config = None
+    if hf_tokenizer_path is not None:
+        from megatron.bridge.training.tokenizers.config import TokenizerConfig
+
+        tokenizer_config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=str(hf_tokenizer_path),
+        )
+
     # Get model config from the first model instance
     model_config = get_model_config(model[0])
 
@@ -377,7 +422,7 @@ def save_megatron_model(model: list[MegatronModule], path: Union[str, Path], ckp
         scheduler=None,
         dataset=None,
         logger=LoggerConfig(),
-        tokenizer=None,
+        tokenizer=tokenizer_config,
         checkpoint=CheckpointConfig(
             async_save=False,
             save=str(path),

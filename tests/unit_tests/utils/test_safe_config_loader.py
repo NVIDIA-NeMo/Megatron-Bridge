@@ -40,7 +40,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_basic_successful_load(self):
         """Test basic successful configuration loading."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = self.mock_config
 
             result = safe_load_config_with_retry(self.test_path)
@@ -50,7 +50,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_with_trust_remote_code(self):
         """Test configuration loading with trust_remote_code=True."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = self.mock_config
 
             result = safe_load_config_with_retry(self.test_path, trust_remote_code=True)
@@ -60,7 +60,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_with_additional_kwargs(self):
         """Test configuration loading with additional kwargs."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = self.mock_config
 
             result = safe_load_config_with_retry(
@@ -72,17 +72,16 @@ class TestSafeLoadConfigWithRetry:
                 self.test_path, trust_remote_code=True, cache_dir="/custom/cache", local_files_only=True
             )
 
-    @patch("megatron.bridge.utils.safe_config_loader.HAS_FILELOCK", True)
     def test_with_file_locking(self):
         """Test configuration loading with file locking enabled."""
         mock_lock = MagicMock()
 
-        with patch("megatron.bridge.utils.safe_config_loader.filelock.FileLock") as mock_filelock:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
             mock_filelock.return_value = mock_lock
             mock_lock.__enter__ = Mock(return_value=mock_lock)
             mock_lock.__exit__ = Mock(return_value=None)
 
-            with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
                 mock_auto_config.from_pretrained.return_value = self.mock_config
 
                 result = safe_load_config_with_retry(self.test_path)
@@ -100,20 +99,9 @@ class TestSafeLoadConfigWithRetry:
 
                 assert result == self.mock_config
 
-    @patch("megatron.bridge.utils.safe_config_loader.HAS_FILELOCK", False)
-    def test_without_file_locking(self):
-        """Test configuration loading without file locking (fallback mode)."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
-            mock_auto_config.from_pretrained.return_value = self.mock_config
-
-            result = safe_load_config_with_retry(self.test_path)
-
-            assert result == self.mock_config
-            mock_auto_config.from_pretrained.assert_called_once_with(self.test_path, trust_remote_code=False)
-
     def test_retry_on_transient_failure(self):
         """Test retry mechanism on transient network failures."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             # First two calls fail, third succeeds
             mock_auto_config.from_pretrained.side_effect = [
                 Exception("Connection timeout"),
@@ -121,7 +109,7 @@ class TestSafeLoadConfigWithRetry:
                 self.mock_config,
             ]
 
-            with patch("megatron.bridge.utils.safe_config_loader.time.sleep") as mock_sleep:
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep") as mock_sleep:
                 result = safe_load_config_with_retry(self.test_path, max_retries=3, base_delay=0.1)
 
                 assert result == self.mock_config
@@ -136,7 +124,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_no_retry_on_permanent_failure_config_not_found(self):
         """Test no retry on permanent failures (config.json not found)."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = Exception(
                 "does not appear to have a file named config.json"
             )
@@ -149,7 +137,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_no_retry_on_permanent_failure_repo_not_found(self):
         """Test no retry on permanent failures (repository not found)."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = Exception("Repository not found")
 
             with pytest.raises(ValueError, match="Failed to load configuration"):
@@ -160,7 +148,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_no_retry_on_access_denied(self):
         """Test no retry on access denied errors."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = Exception("401 client error")
 
             with pytest.raises(ValueError, match="Failed to load configuration"):
@@ -171,10 +159,10 @@ class TestSafeLoadConfigWithRetry:
 
     def test_max_retries_exhausted(self):
         """Test behavior when all retries are exhausted."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = Exception("Persistent network error")
 
-            with patch("megatron.bridge.utils.safe_config_loader.time.sleep"):
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep"):
                 with pytest.raises(ValueError, match="Failed to load configuration.*after 3 attempts"):
                     safe_load_config_with_retry(self.test_path, max_retries=2)
 
@@ -185,7 +173,7 @@ class TestSafeLoadConfigWithRetry:
         """Test configuration loading with pathlib.Path input."""
         path_obj = Path(self.test_path)
 
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = self.mock_config
 
             result = safe_load_config_with_retry(path_obj)
@@ -209,7 +197,7 @@ class TestSafeLoadConfigWithRetry:
             time.sleep(0.02)
             return self.mock_config
 
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained = mock_from_pretrained
 
             # Test with multiple threads
@@ -233,16 +221,16 @@ class TestSafeLoadConfigWithRetry:
 
     def test_exponential_backoff_with_jitter(self):
         """Test that exponential backoff includes jitter."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = [
                 Exception("Network error"),
                 Exception("Network error"),
                 self.mock_config,
             ]
 
-            with patch("megatron.bridge.utils.safe_config_loader.time.sleep") as mock_sleep:
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep") as mock_sleep:
                 # Mock time.time() to control jitter
-                with patch("megatron.bridge.utils.safe_config_loader.time.time", return_value=0.5):
+                with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.time", return_value=0.5):
                     safe_load_config_with_retry(self.test_path, max_retries=2, base_delay=1.0)
 
                     # Verify sleep was called with exponential backoff + jitter
@@ -257,10 +245,10 @@ class TestSafeLoadConfigWithRetry:
 
     def test_custom_retry_parameters(self):
         """Test configuration loading with custom retry parameters."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = [Exception("Network error"), self.mock_config]
 
-            with patch("megatron.bridge.utils.safe_config_loader.time.sleep") as mock_sleep:
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep") as mock_sleep:
                 result = safe_load_config_with_retry(self.test_path, max_retries=5, base_delay=0.5)
 
                 assert result == self.mock_config
@@ -272,17 +260,16 @@ class TestSafeLoadConfigWithRetry:
                 delay = sleep_calls[0][0][0]
                 assert 0.5 <= delay <= 1.0  # base_delay + jitter
 
-    @patch("megatron.bridge.utils.safe_config_loader.HAS_FILELOCK", True)
     def test_lock_file_creation(self):
         """Test that lock files are created in the correct location."""
         mock_lock = MagicMock()
 
-        with patch("megatron.bridge.utils.safe_config_loader.filelock.FileLock") as mock_filelock:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.filelock.FileLock") as mock_filelock:
             mock_filelock.return_value = mock_lock
             mock_lock.__enter__ = Mock(return_value=mock_lock)
             mock_lock.__exit__ = Mock(return_value=None)
 
-            with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
                 mock_auto_config.from_pretrained.return_value = self.mock_config
 
                 # Test with different paths to ensure unique lock files
@@ -307,11 +294,11 @@ class TestSafeLoadConfigWithRetry:
 
     def test_error_message_includes_details(self):
         """Test that error messages include helpful details."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             original_error = Exception("Original network error")
             mock_auto_config.from_pretrained.side_effect = original_error
 
-            with patch("megatron.bridge.utils.safe_config_loader.time.sleep"):
+            with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.time.sleep"):
                 with pytest.raises(ValueError) as exc_info:
                     safe_load_config_with_retry(self.test_path, max_retries=1)
 
@@ -323,7 +310,7 @@ class TestSafeLoadConfigWithRetry:
 
     def test_zero_retries(self):
         """Test behavior with zero retries configured."""
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.side_effect = Exception("Network error")
 
             with pytest.raises(ValueError, match="after 1 attempts"):
@@ -341,7 +328,7 @@ class TestSafeLoadConfigWithRetry:
             "org/model-name",
         ]
 
-        with patch("megatron.bridge.utils.safe_config_loader.AutoConfig") as mock_auto_config:
+        with patch("megatron.bridge.models.hf_pretrained.safe_config_loader.AutoConfig") as mock_auto_config:
             mock_auto_config.from_pretrained.return_value = self.mock_config
 
             for path in test_cases:
@@ -352,7 +339,6 @@ class TestSafeLoadConfigWithRetry:
                 mock_auto_config.from_pretrained.assert_called_with(path, trust_remote_code=False)
                 mock_auto_config.reset_mock()
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_custom_lock_directory_env_var(self):
         """Test that MEGATRON_CONFIG_LOCK_DIR environment variable overrides default lock directory."""
         mock_lock = MagicMock()
@@ -376,7 +362,6 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_default_lock_directory_when_env_var_not_set(self):
         """Test that default lock directory is used when MEGATRON_CONFIG_LOCK_DIR is not set."""
         mock_lock = MagicMock()
@@ -402,7 +387,6 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_custom_lock_directory_with_pathlib_path(self):
         """Test that custom lock directory works with pathlib.Path inputs."""
         mock_lock = MagicMock()
@@ -427,7 +411,6 @@ class TestSafeLoadConfigWithRetry:
 
                     assert result == self.mock_config
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_lock_directory_creation_with_env_var(self):
         """Test that custom lock directory is created if it doesn't exist."""
         custom_lock_dir = "/tmp/test_megatron_locks"
@@ -454,7 +437,6 @@ class TestSafeLoadConfigWithRetry:
                         # Verify directory creation was attempted
                         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
-    @patch("megatron.bridge.models.hf_pretrained.safe_config_loader.HAS_FILELOCK", True)
     def test_different_paths_different_locks_with_custom_dir(self):
         """Test that different model paths create different lock files in custom directory."""
         mock_lock = MagicMock()

@@ -18,14 +18,14 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV2Provider
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV2ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @MegatronModelBridge.register_bridge(source="DeepseekV2ForCausalLM", target=GPTModel)
 class DeepSeekV2Bridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for DeepSeek-V2.
+    Megatron Bridge for DeepSeek-V2.
 
     As a user you would not use this bridge directly, but through `AutoBridge`.
 
@@ -35,7 +35,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV2Provider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV2ModelProvider:
         hf_config = hf_pretrained.config
         configs = get_common_configs(hf_pretrained)
 
@@ -46,7 +46,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         configs["make_vocab_size_divisible_by"] = 3200
         configs["moe_aux_loss_coeff"] = hf_config.aux_loss_alpha
 
-        provider = DeepSeekV2Provider(**configs)
+        provider = DeepSeekV2ModelProvider(**configs)
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:

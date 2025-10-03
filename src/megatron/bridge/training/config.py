@@ -15,24 +15,80 @@
 import logging
 import os
 import signal
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Tuple, Union
 
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
-from megatron.core.distributed import DistributedDataParallelConfig
-from megatron.core.optimizer import OptimizerConfig
+from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
+from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.mamba.mamba_provider import MambaProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
-from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    get_world_size_safe,
+    print_rank_0,
+    warn_rank_0,
+)
+
+
+@dataclass
+class DistributedDataParallelConfig(MCoreDistributedDataParallelConfig):
+    """Megatron Core DistributedDataParallelConfig with deferred post-init.
+
+    This class inherits from Megatron Core's DistributedDataParallelConfig but defers the
+    execution of post_init() until finalize() is explicitly called. This allows
+    for field modifications after construction but before computed fields are calculated.
+    """
+
+    def __post_init__(self) -> None:
+        """Skip MCore post_init during initial construction.
+
+        The original post_init logic is deferred until finalize() is called.
+        """
+        pass
+
+    def finalize(self) -> None:
+        """Execute the deferred MCore post-init logic.
+
+        This method calls the original Megatron Core DistributedDataParallelConfig.__post_init__()
+        to compute derived fields based on the current field values.
+        """
+        super().__post_init__()
+
+
+@dataclass
+class OptimizerConfig(MCoreOptimizerConfig):
+    """Megatron Core OptimizerConfig with deferred post-init.
+
+    This class inherits from Megatron Core's OptimizerConfig but defers the
+    execution of post_init() until finalize() is explicitly called. This allows
+    for field modifications after construction but before computed fields are calculated.
+    """
+
+    def __post_init__(self) -> None:
+        """Skip MCore post_init during initial construction.
+
+        The original post_init logic is deferred until finalize() is called.
+        """
+        pass
+
+    def finalize(self) -> None:
+        """Execute the deferred MCore post-init logic.
+
+        This method calls the original Megatron Core OptimizerConfig.__post_init__()
+        to compute derived fields based on the current field values.
+        """
+        super().__post_init__()
 
 
 @dataclass(kw_only=True)
@@ -170,16 +226,100 @@ class DataloaderConfig:
     """Whether to keep data loading workers persistent across epochs."""
 
 
+@dataclass(frozen=True)
+class DatasetBuildContext:
+    """Interface that encapsulates framework internals.
+
+    This context provides metadata needed to build datasets
+    while hiding implementation details of the framework.
+
+    Attributes:
+        train_samples: Number of samples for training dataset
+        valid_samples: Number of samples for validation dataset
+        test_samples: Number of samples for test dataset
+        tokenizer: Optional tokenizer instance for text processing
+    """
+
+    train_samples: int
+    valid_samples: int
+    test_samples: int
+    tokenizer: Optional[MegatronTokenizer] = None
+
+
+@dataclass
+class DatasetProvider(DataloaderConfig, ABC):
+    """Abstract base class for custom dataset configurations.
+
+    Provides an interface for users to implement their own dataset builders
+    while automatically inheriting all DataloaderConfig functionality.
+
+    Users must:
+    1. Inherit from this class
+    2. Implement the build_datasets() method
+
+    Example:
+        @dataclass
+        class S3DatasetConfig(DatasetProvider):
+            bucket_name: str
+            data_prefix: str
+            seq_length: int
+
+            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                # Custom implementation to load data from S3
+                train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
+                valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
+                test_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/test", context.tokenizer)
+                return train_ds, valid_ds, test_ds
+    """
+
+    @abstractmethod
+    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+        """Build train, validation, and test datasets.
+
+        This method is called by the framework during dataset initialization.
+        Implementations should use the provided context to create appropriate
+        datasets for each split.
+
+        Args:
+            context: Build context with sample counts and tokenizer
+
+        Returns:
+            Tuple of (train_dataset, valid_dataset, test_dataset)
+            Any element can be None if that split shouldn't be created.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        pass
+
+
 @dataclass
 class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
-    """Configuration specific to GPT datasets, inheriting from MCore and base DataloaderConfig."""
+    """Megatron Core GPTDatasetConfig with deferred post-init.
+
+    This class inherits from MCore's GPTDatasetConfig and DataloaderConfig but defers the
+    execution of post_init() until finalize() is explicitly called. This allows
+    for field modifications after construction but before computed fields are calculated.
+    """
 
     skip_getting_attention_mask_from_dataset: bool = True
     """If set, the dataset will pass a None attention mask and the attention
     mask is autogenerated from the attn backend"""
 
     def __post_init__(self) -> None:
-        """Post-initialization checks for GPT dataset config."""
+        """Skip MCore post_init during initial construction.
+
+        The original post_init logic is deferred until finalize() is called.
+        """
+        pass
+
+    def finalize(self) -> None:
+        """Execute the deferred MCore post-init logic and Bridge-specific checks.
+
+        This method calls the original Megatron Core GPTDatasetConfig.__post_init__()
+        and then performs Bridge-specific validation.
+        """
+        # Call MCore's post_init
         super(MCoreGPTDatasetConfig, self).__post_init__()
 
         assert self.reset_position_ids is not None, "reset_position_ids must be defined."
@@ -262,7 +402,7 @@ class SchedulerConfig:
     wd_incr_steps: Optional[int] = field(init=False, default=None)
     wsd_decay_steps: Optional[int] = field(init=False, default=None)
 
-    def __post_init__(self):
+    def finalize(self):
         """Post-initialization checks for scheduler config."""
         if self.start_weight_decay is not None:
             assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
@@ -489,7 +629,7 @@ class CheckpointConfig:
     replication_factor: int = 2
     """Number of machines storing the replica of a given rank's data."""
 
-    def __post_init__(self) -> None:
+    def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
@@ -623,7 +763,7 @@ class ProfilingConfig:
     record_shapes: bool = False
     """Record shapes of tensors."""
 
-    def __post_init__(self) -> None:
+    def finalize(self) -> None:
         """Validate profiling configuration."""
         assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
             "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
@@ -710,10 +850,10 @@ class NVRxStragglerDetectionConfig:
     profiling_interval: int = 1
     """Profiling interval passed to straggler.Detector.initialize."""
 
-    logger_name: str = "megatron_hub.NVRxStragglerDetection"
+    logger_name: str = "megatron.bridge.NVRxStragglerDetection"
     """Logger name for straggler detection messages."""
 
-    def __post_init__(self) -> None:
+    def finalize(self) -> None:
         """Validate NVRx straggler detection configuration."""
         if self.enabled:
             if not (self.calc_relative_gpu_perf or self.calc_individual_gpu_perf):
@@ -729,6 +869,67 @@ class NVRxStragglerDetectionConfig:
                 raise ValueError("gpu_individual_perf_threshold must be between 0.0 and 1.0.")
 
 
+@dataclass
+class InProcessRestartConfig:
+    """Configuration settings for NVIDIA Resiliency Extension in-process restart functionality."""
+
+    enabled: bool = False
+    """Enable in-process restart mechanism from nvidia-resiliency-ext."""
+
+    max_iterations: Optional[int] = None
+    """Maximum number of in-process restart iterations."""
+
+    monitor_thread_interval: float = 1.0
+    """Monitoring interval (in seconds) for the monitoring thread."""
+
+    monitor_process_interval: float = 1.0
+    """Monitoring interval (in seconds) for the monitoring process."""
+
+    progress_watchdog_interval: float = 1.0
+    """Interval (in seconds) for automatic progress watchdog timestamp updates."""
+
+    heartbeat_interval: float = 30.0
+    """Monitoring interval (in seconds) for detecting unresponsive ranks."""
+
+    soft_timeout: float = 60.0
+    """Soft progress timeout (in seconds)."""
+
+    hard_timeout: float = 90.0
+    """Hard progress timeout (in seconds)."""
+
+    heartbeat_timeout: float = 60.0
+    """Timeout (in seconds) for a missing rank detection heartbeat."""
+
+    barrier_timeout: float = 120.0
+    """Timeout (in seconds) for internal distributed barrier."""
+
+    completion_timeout: float = 120.0
+    """Timeout (in seconds) for barrier on completion on all ranks."""
+
+    last_call_wait: float = 1.0
+    """Time interval (in seconds) for other ranks to report concurrent terminal failures."""
+
+    termination_grace_time: float = 1.0
+    """Interval (in seconds) between SIGTERM and SIGKILL issued on hard timeout."""
+
+    granularity: Literal["node", "rank"] = "node"
+    """Granularity for in-process restart."""
+
+    active_world_size: Optional[int] = None
+    """The number of ranks initially executing the workload.
+    The remaining ranks from the allocation are set aside as warm reserve.
+    If None, defaults to WORLD_SIZE environment variable."""
+
+    empty_cuda_cache: bool = True
+    """Empty CUDA cache during restart finalization."""
+
+    max_rank_faults: Optional[int] = None
+    """Maximum number of rank faults allowed before terminating the job."""
+
+    monitor_process_logdir: Optional[str] = None
+    """Directory for monitor process log files. If None, monitor process logging is disabled."""
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -737,11 +938,11 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaProvider
+    model: GPTModelProvider | T5ModelProvider | MambaModelProvider
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | FinetuningDatasetConfig
+    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -753,6 +954,7 @@ class ConfigContainer(Container):
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    inprocess_restart: Optional[InProcessRestartConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -767,26 +969,88 @@ class ConfigContainer(Container):
         """
         return world_size // total_model_size
 
+    def set_data_parallel_size(self) -> None:
+        """Calculate and set data_parallel_size for this config and comm_overlap config.
+
+        This method calculates the data parallel size needed by setup methods, without
+        triggering full validation or finalization of Megatron Core configs.
+        """
+        # Calculate data parallel size (needed for comm overlap setup)
+        world_size = get_world_size_safe()
+        self.data_parallel_size = self.get_data_parallel_size(world_size)
+
+        # Set data_parallel_size on comm_overlap config if present
+        if self.comm_overlap is not None:
+            self.comm_overlap.data_parallel_size = self.data_parallel_size
+
+    def _sync_and_validate_external_cuda_graph(self) -> None:
+        """Sync necessary configs for external CUDA Graphs and and validates it."""
+
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
+
+        # Validate external_cg
+        if self.model.enable_cuda_graph or self.model.external_cuda_graph:
+            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
+                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
+            )
+            if self.model.transformer_impl == "transformer_engine" and not (
+                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
+            ):
+                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
+                warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+        if self.model.external_cuda_graph:
+            assert "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", ""), (
+                "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
+                "The training may crash with illegal memory access."
+            )
+            assert self.model.recompute_granularity != "full", (
+                "recompute_granularity must not be full when CUDA Graphs are enabled."
+            )
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+
+        if isinstance(self.dataset, GPTDatasetConfig):
+            self.dataset.finalize()
+        if hasattr(self.ddp, "finalize"):
+            self.ddp.finalize()
+        if hasattr(self.optimizer, "finalize"):
+            self.optimizer.finalize()
+        if hasattr(self.model, "finalize"):
+            self.model.finalize()
+        self.scheduler.finalize()
+        self.checkpoint.finalize()
+        if self.profiling is not None:
+            self.profiling.finalize()
+        if self.nvrx_straggler is not None:
+            self.nvrx_straggler.finalize()
+
         # Re-run post-inits of sub-configs
         for f in fields(self):
             sub_cfg = getattr(self, f.name)
-            if hasattr(sub_cfg, "__post_init__"):
+            if hasattr(sub_cfg, "__post_init__") and not hasattr(sub_cfg, "finalize"):
                 sub_cfg.__post_init__()
 
+        # Distributed - ensure data_parallel_size is calculated (might already be set by set_data_parallel_size)
+        if not hasattr(self, "data_parallel_size") or self.data_parallel_size is None:
+            world_size = get_world_size_safe()
+            self.data_parallel_size = self.get_data_parallel_size(world_size)
+            # Set data_parallel_size on comm_overlap config if present
+            if self.comm_overlap is not None:
+                self.comm_overlap.data_parallel_size = self.data_parallel_size
+
         # Run validations
+        _validate_and_sync_distributed_optimizer_settings(self)
 
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
-
-        # Distributed
-        world_size = get_world_size_safe()
-        self.data_parallel_size = self.get_data_parallel_size(world_size)
 
         # Megatron FSDP Config checks
         if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
@@ -794,15 +1058,13 @@ class ConfigContainer(Container):
             self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
 
+            assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
+
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading
                 assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
-
-            if self.model.gradient_accumulation_fusion:
-                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-                self.model.gradient_accumulation_fusion = False
 
             if self.ddp.average_in_collective:
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
@@ -825,10 +1087,6 @@ class ConfigContainer(Container):
                 "async_save is only supported with ckpt_format='torch_dist'"
             )
 
-        # Set data_parallel_size on comm_overlap config if present
-        if self.comm_overlap is not None:
-            self.comm_overlap.data_parallel_size = self.data_parallel_size
-
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 
         # Make sure all functionality that requires Gloo process groups is disabled.
@@ -848,7 +1106,7 @@ class ConfigContainer(Container):
         if self.scheduler.lr_wsd_decay_iters is not None:
             self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
         if self.scheduler.lr_warmup_fraction is not None:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
+            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
         else:
             self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
@@ -907,6 +1165,64 @@ class ConfigContainer(Container):
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
 
-        assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
-            "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
-        )
+        self._sync_and_validate_external_cuda_graph()
+
+
+def runtime_config_update(cfg: ConfigContainer) -> None:
+    """Apply runtime configuration updates prior to initialization.
+
+    This function handles all configuration modifications that need to happen
+    after initial config creation but before final validation and model setup.
+
+    Steps:
+    1. Resolve mixed precision configuration from string if needed
+    2. Apply mixed precision settings to model, optimizer, and DDP configs
+    3. Calculate data parallel size (needed for comm overlap)
+    4. Apply communication overlap configuration
+    5. Validate configuration after all modifications
+
+    Args:
+        cfg: Configuration container to update
+    """
+    # Apply mixed precision configuration if provided
+    if cfg.mixed_precision is not None:
+        if isinstance(cfg.mixed_precision, str):
+            cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+        cfg.mixed_precision.finalize()
+        cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    # Calculate data parallel size (needed for comm overlap methods)
+    cfg.set_data_parallel_size()
+
+    # Apply communication overlap configuration if provided
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.finalize()
+        cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
+
+    # Validate configuration after all modifications
+    cfg.validate()
+
+
+def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:
+    """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
+
+    This function ensures that distributed optimizer settings are consistent across
+    DDP and optimizer configurations. If either setting is enabled, both will be
+    enabled to maintain consistency.
+
+    Args:
+        config: The configuration container to validate and potentially modify.
+    """
+    ddp_setting = config.ddp.use_distributed_optimizer
+    optimizer_setting = config.optimizer.use_distributed_optimizer
+
+    if ddp_setting or optimizer_setting:
+        if ddp_setting != optimizer_setting:
+            warn_rank_0(
+                f"Distributed optimizer settings were not in sync: "
+                f"ddp.use_distributed_optimizer={ddp_setting}, "
+                f"optimizer.use_distributed_optimizer={optimizer_setting}. "
+                f"Automatically enabling distributed optimizer for both settings."
+            )
+        config.ddp.use_distributed_optimizer = True
+        config.optimizer.use_distributed_optimizer = True

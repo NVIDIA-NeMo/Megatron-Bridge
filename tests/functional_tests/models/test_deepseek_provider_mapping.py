@@ -15,22 +15,22 @@
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.deepseek.deepseek_provider import (
-    DeepSeekV2LiteProvider,
-    DeepSeekV2Provider,
-    DeepSeekV3Provider,
-    MoonlightProvider,
+from megatron.bridge.models.deepseek import (
+    DeepSeekV2LiteModelProvider,
+    DeepSeekV2ModelProvider,
+    DeepSeekV3ModelProvider,
+    MoonlightModelProvider16B,
 )
 from tests.functional_tests.utils import compare_provider_configs
 
 
 HF_MODEL_ID_TO_PROVIDER = {
-    "deepseek-ai/DeepSeek-V2": DeepSeekV2Provider,
-    "deepseek-ai/DeepSeek-V2-Chat": DeepSeekV2Provider,
-    "deepseek-ai/DeepSeek-V2-Lite": DeepSeekV2LiteProvider,
-    "deepseek-ai/DeepSeek-V3": DeepSeekV3Provider,
-    "deepseek-ai/DeepSeek-V3-Base": DeepSeekV3Provider,
-    "moonshotai/Moonlight-16B-A3B": MoonlightProvider,
+    "deepseek-ai/DeepSeek-V2": DeepSeekV2ModelProvider,
+    "deepseek-ai/DeepSeek-V2-Chat": DeepSeekV2ModelProvider,
+    "deepseek-ai/DeepSeek-V2-Lite": DeepSeekV2LiteModelProvider,
+    "deepseek-ai/DeepSeek-V3": DeepSeekV3ModelProvider,
+    "deepseek-ai/DeepSeek-V3-Base": DeepSeekV3ModelProvider,
+    "moonshotai/Moonlight-16B-A3B": MoonlightModelProvider16B,
 }
 
 
@@ -42,5 +42,11 @@ class TestDeepSeekProviderMapping:
         bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
         converted_provider = bridge.to_megatron_provider(load_weights=False)
 
+        # Finalize the converted provider to ensure computed fields are set
+        converted_provider.finalize()
+
         predefined_provider = provider_class()
+        # Also finalize the predefined provider for fair comparison
+        predefined_provider.finalize()
+
         compare_provider_configs(converted_provider, predefined_provider, hf_model_id)

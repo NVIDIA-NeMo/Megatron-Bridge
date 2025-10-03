@@ -59,7 +59,7 @@ ModelT = TypeVar("ModelT", bound=MegatronModule)
 
 
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
-    """A mixin that implements the ModelProvider pattern for Megatron-Hub.
+    """A mixin that implements the ModelProvider pattern for Megatron Bridge.
 
     The ModelProvider pattern solves ecosystem fragmentation by providing a standardized
     way to instantiate models. This mixin provides a consistent `provide_distributed_model()` method
@@ -429,6 +429,24 @@ class GetModelKwargs(TypedDict, total=False):
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
 
 
+class ModelParallelKwargs(TypedDict, total=False):
+    """Model-parallel override kwargs.
+
+    Attributes map to `TransformerConfig`/provider fields that control parallelism.
+    Only provided values are applied as overrides.
+    """
+
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    context_parallel_size: int
+    expert_model_parallel_size: int
+    expert_tensor_parallel_size: int
+    moe_extended_tp: bool
+    sequence_parallel: bool
+    virtual_pipeline_model_parallel_size: int | None
+    hierarchical_context_parallel_sizes: list[int] | None
+
+
 def get_model(
     model_provider: ModelProviderMixin,
     ddp_config: DistributedDataParallelConfig,
@@ -509,7 +527,11 @@ def get_model(
     # GPU allocation.
     # For FSDP2, we don't allocate GPU memory here. We allocate GPU memory
     # in the fully_shard function of FSDP2 instead.
-    if not (use_torch_fsdp2 and model_config.use_cpu_initialization) and not model_config.init_model_with_meta_device:
+    if (
+        not use_torch_fsdp2
+        and not model_config.use_cpu_initialization
+        and not model_config.init_model_with_meta_device
+    ):
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 

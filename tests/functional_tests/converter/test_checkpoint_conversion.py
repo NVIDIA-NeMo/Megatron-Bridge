@@ -34,7 +34,7 @@ class TestCheckpointConversion:
         # Create temporary output directory for Megatron checkpoint
         megatron_output_dir = tmp_path / "megatron_checkpoint"
         megatron_output_dir.mkdir(exist_ok=True)
-        # Run checkpoint_conversion.py import command
+        # Run convert_checkpoints.py import command
         cmd = [
             "python",
             "-m",
@@ -43,7 +43,7 @@ class TestCheckpointConversion:
             "--data-file=/workspace/.coverage",
             "--source=/workspace/",
             "--parallel-mode",
-            "examples/models/checkpoint_conversion.py",
+            "examples/conversion/convert_checkpoints.py",
             "import",
             "--hf-model",
             "meta-llama/Llama-3.2-1B",
@@ -110,7 +110,7 @@ class TestCheckpointConversion:
                 "--data-file=/workspace/.coverage",
                 "--source=/workspace/",
                 "--parallel-mode",
-                "examples/models/checkpoint_conversion.py",
+                "examples/conversion/convert_checkpoints.py",
                 "import",
                 "--hf-model",
                 "meta-llama/Llama-3.2-1B",
@@ -138,7 +138,7 @@ class TestCheckpointConversion:
                 "--data-file=/workspace/.coverage",
                 "--source=/workspace/",
                 "--parallel-mode",
-                "examples/models/checkpoint_conversion.py",
+                "examples/conversion/convert_checkpoints.py",
                 "export",
                 "--hf-model",
                 "meta-llama/Llama-3.2-1B",
@@ -218,7 +218,7 @@ class TestCheckpointConversion:
                 "--data-file=/workspace/.coverage",
                 "--source=/workspace/",
                 "--parallel-mode",
-                "examples/models/checkpoint_conversion.py",
+                "examples/conversion/convert_checkpoints.py",
                 "import",
                 "--hf-model",
                 "meta-llama/Llama-3.2-1B",

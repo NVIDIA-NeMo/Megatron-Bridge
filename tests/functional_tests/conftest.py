@@ -96,3 +96,17 @@ def reset_cuda():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+@pytest.fixture(autouse=True)
+def reset_env_vars():
+    """Reset environment variables to prevent test leakage."""
+    # Store the original environment variables before the test
+    original_env = dict(os.environ)
+
+    # Run the test
+    yield
+
+    # After the test, restore the original environment
+    os.environ.clear()
+    os.environ.update(original_env)

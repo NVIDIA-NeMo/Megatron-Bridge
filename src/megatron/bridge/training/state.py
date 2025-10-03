@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-import yaml
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
 from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.timers import Timers
@@ -32,7 +31,6 @@ from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManage
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
-from megatron.bridge.utils.yaml_utils import dump_dataclass_to_yaml
 
 
 @dataclass
@@ -197,7 +195,7 @@ class GlobalState:
                     "dir": save_dir,
                     "name": self.cfg.logger.wandb_exp_name,
                     "project": self.cfg.logger.wandb_project,
-                    "config": yaml.safe_load(dump_dataclass_to_yaml(self.cfg)),
+                    "config": self.cfg.to_dict(),
                     "entity": self.cfg.logger.wandb_entity,
                 }
                 wandb.init(**wandb_kwargs)
@@ -261,16 +259,19 @@ class GlobalState:
             self._straggler_timer = StragglerDetector()
         return self._straggler_timer
 
+    def initialize_async_checkpoint_worker(self) -> None:
+        """Initializes the async checkpoint worker."""
+        if (
+            self._async_calls_queue is None
+            and self.cfg
+            and self.cfg.checkpoint.save is not None
+            and self.cfg.checkpoint.async_save
+        ):
+            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+
     @property
     def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
-        """The AsyncCallsQueue instance for handling asynchronous checkpoint saves.
-
-        Creates a persistent AsyncCallsQueue when async_save is enabled in the checkpoint config.
-        Returns None if async_save is disabled.
-        """
-        if self._async_calls_queue is None and self.cfg and self.cfg.checkpoint.async_save:
-            # Create persistent queue by default when async_save is enabled
-            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+        """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
     @property
@@ -303,6 +304,23 @@ class GlobalState:
         """Initializes the distributed signal handler based on the configuration."""
         if self.cfg.train is not None:
             self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal)
+
+    def reset_for_restart(self) -> None:
+        """Reset GlobalState components for in-process restart.
+
+        This cleans up all stateful components that need to be reinitialized between restart iterations.
+        The async calls queue for checkpointing is handled separately in aborting in order to clean up persistent workers.
+        """
+        self._timers = None
+        self._train_state = None
+        self._tensorboard_logger = None
+        self._wandb_logger = None
+        self._energy_monitor = None
+        self._energy_monitor_created = False
+        self._signal_handler = None
+        self._straggler_timer = None
+        self._nvrx_straggler_manager = None
+        self._nvrx_straggler_created = False
 
 
 def _timers_write_to_wandb(

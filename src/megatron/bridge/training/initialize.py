@@ -41,6 +41,7 @@ def initialize_megatron(
     skip_mpu_initialization: bool = False,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
+    restart_store: Optional[torch.distributed.Store] = None,
 ) -> Optional[Callable[[], None]]:
     """Initialize Megatron core components and distributed setup.
 
@@ -53,6 +54,7 @@ def initialize_megatron(
         skip_mpu_initialization: If True, skips MPU initialization (for external managers).
         get_embedding_ranks: Optional function to determine embedding layer ranks.
         get_position_embedding_ranks: Optional function to determine position embedding ranks.
+        restart_store: Optional store for in-process restart.
 
     Returns:
         An optional callable to finish MPU initialization if lazy_mpu_init is True,
@@ -68,6 +70,7 @@ def initialize_megatron(
     rng_config = cfg.rng
     rerun_state_machine_config = cfg.rerun_state_machine
     train_config = cfg.train
+    use_inprocess_restart = cfg.inprocess_restart is not None and cfg.inprocess_restart.enabled
 
     # Prep for checkpoint conversion.
     # if args.ckpt_convert_format is not None:
@@ -102,6 +105,8 @@ def initialize_megatron(
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         skip_mpu_initialization=skip_mpu_initialization,
+        restart_store=restart_store,
+        use_inprocess_restart=use_inprocess_restart,
     )
 
 
@@ -114,6 +119,8 @@ def torch_dist_init(
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     skip_mpu_initialization: bool,
+    restart_store: Optional[torch.distributed.Store] = None,
+    use_inprocess_restart: bool = False,
 ) -> Optional[Callable[[], None]]:
     """Initialize torch.distributed and dependent components.
 
@@ -144,6 +151,8 @@ def torch_dist_init(
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
             get_position_embedding_ranks=get_position_embedding_ranks,
+            restart_store=restart_store,
+            use_inprocess_restart=use_inprocess_restart,
         )
 
         # Random seeds for reproducibility.
@@ -154,6 +163,7 @@ def torch_dist_init(
             rng_config.data_parallel_random_init,
             rng_config.te_rng_tracker,
             rng_config.inference_rng_tracker,
+            use_cudagraphable_rng=model_config.enable_cuda_graph or model_config.external_cuda_graph,
         )
 
         if model_config.num_moe_experts is not None:
@@ -317,6 +327,8 @@ def _initialize_distributed(
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
+    restart_store: Optional[torch.distributed.Store] = None,
+    use_inprocess_restart: bool = False,
 ) -> None:
     """Initialize torch.distributed and core model parallel."""
 
@@ -339,15 +351,25 @@ def _initialize_distributed(
             else:
                 torch.cuda.set_device(get_local_rank_preinit())
 
+        # Set to non-default stream for cudagraph capturing.
+        if model_config.external_cuda_graph:
+            torch.cuda.set_stream(torch.cuda.Stream())
+
         # Call the init process
         init_process_group_kwargs = {
             "backend": dist_config.distributed_backend,
             "world_size": get_world_size_safe(),
             "rank": get_rank_safe(),
+            "store": restart_store,
             "timeout": datetime.timedelta(minutes=dist_config.distributed_timeout_minutes),
         }
 
         torch.distributed.init_process_group(**init_process_group_kwargs)
+
+        # Force NCCL backend initialization if using in-process restart
+        if use_inprocess_restart:
+            force_nccl_backend_init(torch.cuda.current_device())
+
         if dist_config.external_gpu_device_mapping:
             torch.distributed.barrier(device_ids=[0])
         else:
@@ -395,6 +417,7 @@ def _set_random_seed(
     data_parallel_random_init: bool = False,
     te_rng_tracker: bool = False,
     inference_rng_tracker: bool = False,
+    use_cudagraphable_rng: bool = False,
 ) -> None:
     """Set random seed for reproducability."""
     assert seed_ is not None and seed_ > 0, f"Seed ({seed_}) should be a positive integer."
@@ -412,7 +435,9 @@ def _set_random_seed(
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.device_count() > 0:
-        tensor_parallel.model_parallel_cuda_manual_seed(seed, te_rng_tracker, inference_rng_tracker)
+        tensor_parallel.model_parallel_cuda_manual_seed(
+            seed, te_rng_tracker, inference_rng_tracker, use_cudagraphable_rng
+        )
 
 
 def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro_batch_size: int) -> None:
@@ -484,3 +509,21 @@ def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro
             output = bias_dropout_add_fused_train([input, bias], residual, dropout_rate)
     del bias, input, residual, output
     torch.cuda.empty_cache()
+
+
+def force_nccl_backend_init(device_id: torch.device) -> None:
+    """Force NCCL backend initialization for in-process restart compatibility.
+
+    The nvidia-resiliency-ext in-process restart uses destroy_process_group to
+    terminate the NCCL backend, which does not terminate NCCL kernels if the NCCL
+    backend wasn't fully initialized before additional distributed subgroups are created.
+
+    This function forces full initialization of the NCCL backend by performing
+    a simple all_reduce operation.
+
+    Args:
+        device_id: CUDA device ID to use for the dummy tensor operation
+    """
+    tensor = torch.ones(128, device=device_id)
+    torch.distributed.all_reduce(tensor)
+    torch.cuda.synchronize()

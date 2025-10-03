@@ -186,7 +186,7 @@ class TestPretrainConfig:
         assert config.scheduler.lr_decay_style == "cosine"
         assert config.scheduler.lr_warmup_iters == 2000
         assert config.scheduler.lr_warmup_init == 0.0
-        assert config.scheduler.lr_decay_iters == 100000  # Should match train_iters
+        assert config.scheduler.lr_decay_iters is None  # Will be set to train_iters during validation
         assert config.scheduler.override_opt_param_scheduler is True
 
     def test_pretrain_config_tokenizer_configuration(self):

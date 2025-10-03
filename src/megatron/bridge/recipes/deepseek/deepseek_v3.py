@@ -17,9 +17,8 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.models.deepseek import DeepSeekV3Provider
+from megatron.bridge.models.deepseek import DeepSeekV3ModelProvider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -27,6 +26,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
@@ -48,14 +48,17 @@ def model_config(
     expert_parallelism: int = 64,
     sequence_parallelism: bool = True,
     # MTP support
-    use_mtp: bool = True,
     mtp_num_layers: Optional[int] = 1,
     mtp_loss_scaling_factor: Optional[float] = 0.1,
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
     enable_deepep: bool = False,
-) -> DeepSeekV3Provider:
+    apply_rope_fusion: bool = True,
+    layout: Optional[List[List[str]]] = None,
+) -> DeepSeekV3ModelProvider:
     """
     Configure the DeepSeek-V3 (671B) model.
 
@@ -67,47 +70,36 @@ def model_config(
         context_parallelism: Degree of context parallelism.
         expert_parallelism: Degree of expert model parallelism.
         sequence_parallelism: Whether to use sequence parallelism.
-        use_mtp: Enable multi-token prediction (MTP).
-        mtp_num_layers: Number of MTP layers (used when use_mtp=True).
-        mtp_loss_scaling_factor: Loss scaling factor for MTP (used when use_mtp=True).
+        mtp_num_layers: Number of MTP layers.
+        mtp_loss_scaling_factor: Loss scaling factor for MTP.
         recompute_granularity: Recomputation granularity. For V3 we recommend "selective".
         recompute_modules: Modules to selectively recompute when granularity is "selective".
-
+        recompute_method: Method for activation recomputation.
+        recompute_num_layers: Number of layers to recompute.
+        apply_rope_fusion: Whether to apply MLA Yarn fusion.
     Returns:
-        DeepSeekV3Provider: Configuration for the DeepSeek-V3 model.
+        DeepSeekV3ModelProvider: Configuration for the DeepSeek-V3 model.
     """
-    cfg = DeepSeekV3Provider(
+    cfg = DeepSeekV3ModelProvider(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,
         virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
         context_parallel_size=context_parallelism,
         expert_model_parallel_size=expert_parallelism,
+        expert_tensor_parallel_size=1,
         sequence_parallel=sequence_parallelism,
         # MTP
-        mtp_num_layers=mtp_num_layers if use_mtp else None,
-        mtp_loss_scaling_factor=mtp_loss_scaling_factor if use_mtp else None,
+        mtp_num_layers=mtp_num_layers,
+        mtp_loss_scaling_factor=mtp_loss_scaling_factor,
         # Recomputation
         recompute_granularity=recompute_granularity,
+        recompute_modules=recompute_modules,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
     )
 
-    # Set attribute defensively in case downstream supports selective recomputation lists
-    try:
-        cfg.recompute_granularity = "selective"
-        cfg.recompute_modules = recompute_modules
-    except Exception:
-        pass
-        logger.warning(f"Failed to set recompute_modules: {recompute_modules}")
-
-    # Some deployments expect a list of modules for selective recomputation
-    if recompute_modules is None:
-        # recompute_modules = ["mla_up_proj", "layernorm"]
-        cfg.recompute_granularity = None
-        cfg.recompute_method = None
-        cfg.recompute_num_layers = None
-        cfg.recompute_modules = None
-
-    # Pipeline split for asymmetric stages as used in NeMo recipe
+    # Pipeline split for asymmetric stages are specified with map_pp_vp_to_layout below
     cfg.account_for_embedding_in_pipeline_split = False
     cfg.account_for_loss_in_pipeline_split = False
     cfg.num_layers_in_first_pipeline_stage = None
@@ -115,30 +107,40 @@ def model_config(
 
     # Performance optimization knobs
     cfg.moe_permute_fusion = True
-    cfg.apply_rope_fusion = True
+    if apply_rope_fusion:
+        cfg.apply_rope_fusion = True
 
     # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
-    map_pp_vp_to_layout = {
-        (1, 1): None,
-        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + ["loss"]],
-        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
-        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
-        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
-        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
-        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
-    }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
-    if (pp_size, vp_size) not in map_pp_vp_to_layout:
-        raise ValueError(
-            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
-            f"for DeepSeek V3. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
-        )
+    if mtp_num_layers is None:
+        mtp_num_layers = 0
+    last_layer = ["mtp"] * mtp_num_layers + ["loss"]
+    if layout is None:
+        map_pp_vp_to_layout = {
+            (1, 1): None,
+            (4, 1): [
+                ["embedding"] + ["decoder"] * 16,
+                ["decoder"] * 16,
+                ["decoder"] * 16,
+                ["decoder"] * 13 + last_layer,
+            ],
+            (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+            (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+            (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+            (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+            (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        }
+        pp_size = pipeline_parallelism or 1
+        vp_size = virtual_pipeline_parallelism or 1
+        if (pp_size, vp_size) not in map_pp_vp_to_layout:
+            raise ValueError(
+                f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
+                f"for DeepSeek V3. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
+            )
 
-    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+        layout = map_pp_vp_to_layout[(pp_size, vp_size)]
 
-    if layout is not None:
-        layout = list([list(x) for x in layout])  # yield all the elements
+        if layout is not None:
+            layout = list([list(x) for x in layout])  # yield all the elements
     cfg.pipeline_model_parallel_layout = layout
 
     if enable_deepep:
@@ -169,7 +171,6 @@ def pretrain_config(
     expert_parallelism: int = 64,
     sequence_parallelism: bool = True,
     use_megatron_fsdp: bool = False,
-    use_mtp: bool = True,
     mtp_num_layers: Optional[int] = 1,
     mtp_loss_scaling_factor: Optional[float] = 0.1,
     # Training hyperparameters
@@ -180,10 +181,18 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    lr_decay_iters: Optional[int] = None,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     enable_deepep: bool = False,
+    # Recomputation
+    recompute_granularity: str = "selective",
+    recompute_modules: Optional[List[str]] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
+    apply_rope_fusion: bool = False,
+    layout: Optional[List[List[str]]] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model.
@@ -208,15 +217,20 @@ def pretrain_config(
         context_parallelism=context_parallelism,
         expert_parallelism=expert_parallelism,
         sequence_parallelism=sequence_parallelism,
-        use_mtp=use_mtp,
         mtp_num_layers=mtp_num_layers,
         mtp_loss_scaling_factor=mtp_loss_scaling_factor,
+        recompute_granularity=recompute_granularity,
+        recompute_modules=recompute_modules,
+        recompute_method=recompute_method,
+        recompute_num_layers=recompute_num_layers,
         enable_deepep=enable_deepep,
+        apply_rope_fusion=apply_rope_fusion,
+        layout=layout,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
+        lr_decay_iters=lr_decay_iters,
         adam_beta1=0.9,
         adam_beta2=0.95,
         adam_eps=1e-5,
@@ -295,6 +309,8 @@ def pretrain_config(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
+    if apply_rope_fusion:
+        cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(
@@ -302,3 +318,20 @@ def pretrain_config(
         )
 
     return cfg
+
+
+def pretrain_config_32nodes(**kwargs):
+    """
+    Create a pre-training configuration for DeepSeek-V3 (671B) model with minimal number of nodes (32).
+
+    Returns:
+        ConfigContainer: Configuration for pre-training.
+    """
+    return pretrain_config(
+        pipeline_parallelism=8,
+        expert_parallelism=32,
+        recompute_granularity="full",
+        recompute_method="uniform",
+        recompute_num_layers=1,
+        **kwargs,
+    )

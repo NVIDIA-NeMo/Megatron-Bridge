@@ -123,7 +123,7 @@ class TestNVRxStragglerDetectionConfig:
         assert config.stop_if_detected is False
         assert config.enable_logging is True
         assert config.profiling_interval == 1
-        assert config.logger_name == "megatron_hub.NVRxStragglerDetection"
+        assert config.logger_name == "megatron.bridge.NVRxStragglerDetection"
 
     def test_custom_config(self):
         """Test custom configuration values."""

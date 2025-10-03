@@ -17,23 +17,23 @@ from unittest.mock import Mock, patch
 import torch
 
 from megatron.bridge.models.mamba.mamba_provider import (
-    MambaProvider,
-    MambaProvider1_3B,
-    MambaProvider2_7B,
-    MambaProvider130M,
-    MambaProvider370M,
-    MambaProvider780M,
-    NVIDIAMambaHybridProvider8B,
-    NVIDIAMambaProvider8B,
+    MambaModelProvider,
+    MambaModelProvider1P3B,
+    MambaModelProvider2P7B,
+    MambaModelProvider130M,
+    MambaModelProvider370M,
+    MambaModelProvider780M,
+    NVIDIAMambaHybridModelProvider8B,
+    NVIDIAMambaModelProvider8B,
 )
 
 
-class TestMambaProvider:
-    """Test cases for MambaProvider class."""
+class TestMambaModelProvider:
+    """Test cases for MambaModelProvider class."""
 
     def test_mamba_provider_initialization(self):
-        """Test MambaProvider can be initialized with default values."""
-        provider = MambaProvider(
+        """Test MambaModelProvider can be initialized with default values."""
+        provider = MambaModelProvider(
             num_layers=12,
             hidden_size=768,
             num_attention_heads=1,
@@ -74,8 +74,8 @@ class TestMambaProvider:
         assert provider.vocab_size is None
 
     def test_mamba_provider_with_hybrid_configuration(self):
-        """Test MambaProvider with hybrid attention/MLP configuration."""
-        provider = MambaProvider(
+        """Test MambaModelProvider with hybrid attention/MLP configuration."""
+        provider = MambaModelProvider(
             num_layers=12,
             hidden_size=768,
             num_attention_heads=8,
@@ -90,7 +90,7 @@ class TestMambaProvider:
 
     def test_provide_method_basic(self):
         """Test the provide method creates a Mamba model."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -115,7 +115,7 @@ class TestMambaProvider:
 
     def test_provide_method_with_vocab_padding(self):
         """Test provide method calculates padded vocab size when padding is enabled."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=8,
@@ -145,7 +145,7 @@ class TestMambaProvider:
 
     def test_provide_method_no_vocab_padding(self):
         """Test provide method uses original vocab size when padding is disabled."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=8,
@@ -173,7 +173,7 @@ class TestMambaProvider:
 
     def test_provide_method_pipeline_stages(self):
         """Test provide method respects pipeline stage arguments."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -200,7 +200,7 @@ class TestMambaProvider:
 
     def test_provide_method_with_preset_vocab_size(self):
         """Test provide method with preset vocab_size calculates padding correctly."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -228,7 +228,7 @@ class TestMambaProvider:
 
     def test_provide_method_virtual_pipeline_error(self):
         """Test provide method raises error for virtual pipeline."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -253,7 +253,7 @@ class TestMambaProvider:
             spec.info = "custom spec"
             return spec
 
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -279,8 +279,8 @@ class TestMambaProvider:
 
     def test_minimal_configuration(self):
         """Test that minimal configuration works."""
-        # MambaProvider should work with minimal required fields
-        provider = MambaProvider(
+        # MambaModelProvider should work with minimal required fields
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -291,7 +291,7 @@ class TestMambaProvider:
 
     def test_mamba_specific_configuration(self):
         """Test Mamba-specific configuration parameters."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -308,7 +308,7 @@ class TestMambaProvider:
 
     def test_dropout_configuration(self):
         """Test dropout configuration."""
-        provider = MambaProvider(
+        provider = MambaModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
@@ -322,12 +322,12 @@ class TestMambaProvider:
         assert provider.layernorm_epsilon == 1e-6
 
 
-class TestMambaProvider130M:
-    """Test cases for MambaProvider130M class."""
+class TestMambaModelProvider130M:
+    """Test cases for MambaModelProvider130M class."""
 
     def test_mamba_130m_default_configuration(self):
         """Test Mamba 130M model has correct default configuration."""
-        provider = MambaProvider130M()
+        provider = MambaModelProvider130M()
 
         # Check Mamba 130M specific configuration
         assert provider.num_layers == 24
@@ -341,7 +341,7 @@ class TestMambaProvider130M:
 
     def test_mamba_130m_override_configuration(self):
         """Test Mamba 130M model with overridden configuration."""
-        provider = MambaProvider130M(
+        provider = MambaModelProvider130M(
             seq_length=4096,
             hidden_dropout=0.1,
         )
@@ -356,12 +356,12 @@ class TestMambaProvider130M:
         assert provider.mamba_num_groups == 1
 
 
-class TestMambaProvider370M:
-    """Test cases for MambaProvider370M class."""
+class TestMambaModelProvider370M:
+    """Test cases for MambaModelProvider370M class."""
 
     def test_mamba_370m_default_configuration(self):
         """Test Mamba 370M model has correct default configuration."""
-        provider = MambaProvider370M()
+        provider = MambaModelProvider370M()
 
         # Check Mamba 370M specific configuration
         assert provider.num_layers == 48
@@ -374,12 +374,12 @@ class TestMambaProvider370M:
         assert provider.hybrid_override_pattern == "M" * 48
 
 
-class TestMambaProvider780M:
-    """Test cases for MambaProvider780M class."""
+class TestMambaModelProvider780M:
+    """Test cases for MambaModelProvider780M class."""
 
     def test_mamba_780m_default_configuration(self):
         """Test Mamba 780M model has correct default configuration."""
-        provider = MambaProvider780M()
+        provider = MambaModelProvider780M()
 
         # Check Mamba 780M specific configuration
         assert provider.num_layers == 48
@@ -392,12 +392,12 @@ class TestMambaProvider780M:
         assert provider.hybrid_override_pattern == "M" * 48
 
 
-class TestMambaProvider1_3B:
-    """Test cases for MambaProvider1_3B class."""
+class TestMambaModelProvider1P3B:
+    """Test cases for MambaModelProvider1P3B class."""
 
     def test_mamba_1_3b_default_configuration(self):
         """Test Mamba 1.3B model has correct default configuration."""
-        provider = MambaProvider1_3B()
+        provider = MambaModelProvider1P3B()
 
         # Check Mamba 1.3B specific configuration
         assert provider.num_layers == 48
@@ -410,12 +410,12 @@ class TestMambaProvider1_3B:
         assert provider.hybrid_override_pattern == "M" * 48
 
 
-class TestMambaProvider2_7B:
-    """Test cases for MambaProvider2_7B class."""
+class TestMambaModelProvider2P7B:
+    """Test cases for MambaModelProvider2P7B class."""
 
     def test_mamba_2_7b_default_configuration(self):
         """Test Mamba 2.7B model has correct default configuration."""
-        provider = MambaProvider2_7B()
+        provider = MambaModelProvider2P7B()
 
         # Check Mamba 2.7B specific configuration
         assert provider.num_layers == 64
@@ -428,12 +428,12 @@ class TestMambaProvider2_7B:
         assert provider.hybrid_override_pattern == "M" * 64
 
 
-class TestNVIDIAMambaProvider8B:
-    """Test cases for NVIDIAMambaProvider8B class."""
+class TestNVIDIAMambaModelProvider8B:
+    """Test cases for NVIDIAMambaModelProvider8B class."""
 
     def test_nvidia_mamba_8b_default_configuration(self):
         """Test NVIDIA Mamba 8B model has correct default configuration."""
-        provider = NVIDIAMambaProvider8B()
+        provider = NVIDIAMambaModelProvider8B()
 
         # Check NVIDIA Mamba 8B specific configuration
         assert provider.num_layers == 56
@@ -446,12 +446,12 @@ class TestNVIDIAMambaProvider8B:
         assert provider.hybrid_override_pattern == "M" * 56
 
 
-class TestNVIDIAMambaHybridProvider8B:
-    """Test cases for NVIDIAMambaHybridProvider8B class."""
+class TestNVIDIAMambaHybridModelProvider8B:
+    """Test cases for NVIDIAMambaHybridModelProvider8B class."""
 
     def test_nvidia_mamba_hybrid_8b_default_configuration(self):
         """Test NVIDIA Mamba Hybrid 8B model has correct default configuration."""
-        provider = NVIDIAMambaHybridProvider8B()
+        provider = NVIDIAMambaHybridModelProvider8B()
 
         # Check NVIDIA Mamba Hybrid 8B specific configuration
         assert provider.num_layers == 56
@@ -466,7 +466,7 @@ class TestNVIDIAMambaHybridProvider8B:
 
     def test_nvidia_mamba_hybrid_8b_hybrid_pattern(self):
         """Test NVIDIA Mamba Hybrid 8B hybrid pattern configuration."""
-        provider = NVIDIAMambaHybridProvider8B()
+        provider = NVIDIAMambaHybridModelProvider8B()
 
         # Check that the hybrid pattern contains both Mamba and Attention layers
         pattern = provider.hybrid_override_pattern
@@ -475,30 +475,30 @@ class TestNVIDIAMambaHybridProvider8B:
         assert len(pattern) > 0
 
 
-class TestMambaProviderInheritance:
+class TestMambaModelProviderInheritance:
     """Test inheritance relationships between Mamba providers."""
 
     def test_all_providers_inherit_from_base(self):
-        """Test all Mamba providers inherit from MambaProvider."""
+        """Test all Mamba model providers inherit from MambaModelProvider."""
         providers = [
-            MambaProvider130M,
-            MambaProvider370M,
-            MambaProvider780M,
-            MambaProvider1_3B,
-            MambaProvider2_7B,
-            NVIDIAMambaProvider8B,
-            NVIDIAMambaHybridProvider8B,
+            MambaModelProvider130M,
+            MambaModelProvider370M,
+            MambaModelProvider780M,
+            MambaModelProvider1P3B,
+            MambaModelProvider2P7B,
+            NVIDIAMambaModelProvider8B,
+            NVIDIAMambaHybridModelProvider8B,
         ]
 
         for provider_class in providers:
-            assert issubclass(provider_class, MambaProvider)
+            assert issubclass(provider_class, MambaModelProvider)
 
     def test_provide_method_inherited(self):
         """Test that provide method works correctly in inherited classes."""
         # Test with Mamba 130M
-        provider = MambaProvider130M()
+        provider = MambaModelProvider130M()
 
-        # The provide method should be inherited from MambaProvider
+        # The provide method should be inherited from MambaModelProvider
         assert hasattr(provider, "provide")
         assert callable(provider.provide)
 
@@ -506,12 +506,12 @@ class TestMambaProviderInheritance:
         """Test that hybrid patterns are consistent across providers."""
         # Pure Mamba models should have only "M" in their pattern
         pure_mamba_providers = [
-            MambaProvider130M(),
-            MambaProvider370M(),
-            MambaProvider780M(),
-            MambaProvider1_3B(),
-            MambaProvider2_7B(),
-            NVIDIAMambaProvider8B(),
+            MambaModelProvider130M(),
+            MambaModelProvider370M(),
+            MambaModelProvider780M(),
+            MambaModelProvider1P3B(),
+            MambaModelProvider2P7B(),
+            NVIDIAMambaModelProvider8B(),
         ]
 
         for provider in pure_mamba_providers:
@@ -520,7 +520,7 @@ class TestMambaProviderInheritance:
             assert "*" not in pattern  # No attention layers
 
         # Hybrid models should have both "M" and "*" in their pattern
-        hybrid_provider = NVIDIAMambaHybridProvider8B()
+        hybrid_provider = NVIDIAMambaHybridModelProvider8B()
         pattern = hybrid_provider.hybrid_override_pattern
         assert "M" in pattern  # Mamba layers
         assert "*" in pattern  # Attention layers
