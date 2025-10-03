@@ -160,7 +160,6 @@ def main(
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
         sys.exit(1)
 
-    os.environ["MEGATRON_USE_TE"] = "false"
     bridge = AutoBridge.from_hf_pretrained(hf_model_id)
 
     model_provider = bridge.to_megatron_provider(load_weights=True)

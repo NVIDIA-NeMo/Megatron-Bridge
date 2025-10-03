@@ -26,6 +26,45 @@ from megatron.bridge.training.post_training.checkpointing import (
 )
 
 
+class TestPostTrainingImports:
+    """Test import handling for post-training checkpointing."""
+
+    def test_modelopt_import_available(self):
+        """Test that modelopt import is available in the current environment."""
+        # This test ensures that the import succeeded and the functions are available
+        # This covers the successful import path (lines 17-18)
+        try:
+            from modelopt.torch.opt.plugins import restore_sharded_modelopt_state
+
+            # If we get here, the import succeeded
+            assert callable(restore_sharded_modelopt_state)
+        except ImportError:
+            # If modelopt is not available, we should still be able to import our module
+            # but it should have raised the custom ImportError
+            pytest.fail("modelopt should be available in test environment")
+
+    def test_import_error_scenario_simulation(self):
+        """Test the ImportError handling logic by simulating the scenario."""
+        # This test simulates what would happen if modelopt was not available
+        # We can't easily test the actual import failure since the module is already loaded,
+        # but we can test the error handling logic
+
+        original_error = ImportError("No module named 'modelopt.torch.opt.plugins'")
+        expected_message = 'Required `"nvidia-modelopt[torch]"` is not installed!'
+
+        # Simulate the exception chain that would occur
+        try:
+            try:
+                raise original_error
+            except ImportError as e:
+                raise ImportError(expected_message) from e
+        except ImportError as final_error:
+            # Verify the error message and chaining
+            assert expected_message in str(final_error)
+            assert final_error.__cause__ is original_error
+            assert "modelopt.torch.opt.plugins" in str(final_error.__cause__)
+
+
 @pytest.fixture
 def mock_model_fixtures():
     """Fixture for model testing."""

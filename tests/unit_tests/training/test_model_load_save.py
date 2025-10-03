@@ -373,6 +373,145 @@ class TestLoadMegatronModel:
         assert result == mock_model
         mock_temp_dist.assert_not_called()
 
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
+    @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
+    @patch("megatron.bridge.training.model_load_save.dist")
+    def test_load_mbridge_saved_model_with_modelopt_state(
+        self,
+        mock_dist,
+        mock_cpu_context,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_instantiate,
+        mock_load_weights,
+        mock_has_modelopt_state,
+        mock_load_modelopt_state,
+        mock_temp_dist,
+    ):
+        """Test loading model when modelopt state exists and model supports it."""
+        # Setup mocks
+        mock_dist.is_available.return_value = False
+        mock_dist.is_initialized.return_value = False
+
+        mock_run_cfg_dict = {"model": {"tensor_model_parallel_size": 1}}
+        mock_run_config.return_value = mock_run_cfg_dict
+
+        mock_model = Mock()
+        mock_model_cfg = Mock(spec=ModelProviderMixin)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.provide_distributed_model.return_value = [mock_model]
+        mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.restore_modelopt_state = False  # Initially False
+
+        mock_instantiate.return_value = mock_model_cfg
+        expected_result = {"layer.weight": torch.randn(2, 2)}
+        mock_load_weights.return_value = expected_result
+
+        # Mock modelopt state exists
+        mock_has_modelopt_state.return_value = True
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
+
+        # Verify modelopt state was detected and set
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
+        assert mock_model_cfg.restore_modelopt_state is True
+
+        # Verify modelopt state was loaded
+        mock_load_modelopt_state.assert_called_once_with([mock_model], ckpt_path)
+
+        assert isinstance(result, dict)
+        assert result == expected_result
+
+    @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
+    @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
+    @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.mlm_compat.model._get_model")
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.training.mlm_compat.arguments._transformer_config_from_args")
+    @patch("megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.file_exists")
+    @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
+    @patch("megatron.bridge.training.model_load_save.dist")
+    def test_load_mlm_saved_model_without_modelopt_support(
+        self,
+        mock_dist,
+        mock_cpu_context,
+        mock_file_exists,
+        mock_load_args,
+        mock_transformer_config,
+        mock_build_tokenizer,
+        mock_get_model,
+        mock_load_weights,
+        mock_has_modelopt_state,
+        mock_load_modelopt_state,
+        mock_temp_dist,
+    ):
+        """Test loading MLM model when modelopt state exists but TransformerConfig doesn't support it."""
+        # Setup mocks
+        mock_dist.is_available.return_value = False
+        mock_dist.is_initialized.return_value = False
+
+        # Mock file_exists to return False for run_config (MLM checkpoint)
+        mock_file_exists.return_value = False
+
+        # Mock MLM args loading
+        mock_args = Mock()
+        mock_args.make_vocab_size_divisible_by = 128
+        mock_load_args.return_value = mock_args
+
+        # Create a TransformerConfig mock (doesn't have restore_modelopt_state)
+        from megatron.bridge.models.transformer_config import TransformerConfig
+
+        mock_model_cfg = Mock(spec=TransformerConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = True
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.tensor_model_parallel_size = 1
+
+        mock_transformer_config.return_value = mock_model_cfg
+
+        # Mock tokenizer creation
+        mock_tokenizer = Mock()
+        mock_tokenizer.vocab_size = 50000  # Set a realistic vocab size
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        # Mock model creation
+        mock_model = Mock()
+        mock_get_model.return_value = [mock_model]
+
+        expected_result = {"layer.weight": torch.randn(2, 2)}
+        mock_load_weights.return_value = expected_result
+
+        # Mock modelopt state exists
+        mock_has_modelopt_state.return_value = True
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            result = load_megatron_model(ckpt_path, model_type="gpt", return_state_dict=True, use_cpu_init=True)
+
+        # Verify modelopt state was detected but not set (no attribute on TransformerConfig)
+        mock_has_modelopt_state.assert_called_once_with(ckpt_path)
+        # TransformerConfig doesn't have restore_modelopt_state, so hasattr returns False
+        assert not hasattr(mock_model_cfg, "restore_modelopt_state")
+
+        # Verify modelopt state was NOT loaded (getattr returns False for missing attribute)
+        mock_load_modelopt_state.assert_not_called()
+
+        assert isinstance(result, dict)
+        assert result == expected_result
+
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_load_megatron_model_resets_defaults(self, mock_load_model_config, mock_build_and_load):
