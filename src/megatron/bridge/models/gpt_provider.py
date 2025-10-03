@@ -91,7 +91,7 @@ def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
         local_core_attention=False,
         remap_te_layernorm=True,
         real_quant_cfg="None",
-        use_arbitrary_attention_mask=True,
+        use_arbitrary_attention_mask=False,  # conflict with context parallel
     )
 
 
