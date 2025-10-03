@@ -165,8 +165,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             padding=True,
             return_tensors="pt",
         )
-
-        return inputs.input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        return inputs.input_ids, inputs.pixel_values, getattr(inputs, "image_grid_thw", None), messages
     else:
         # Text-only processing
         inputs = processor(text=[prompt], return_tensors="pt")

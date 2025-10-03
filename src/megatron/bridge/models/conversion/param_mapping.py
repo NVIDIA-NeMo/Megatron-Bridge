@@ -1652,3 +1652,67 @@ def split_qkv_weights(
         v = v.reshape(-1, hidden_size)
 
     return q, k, v
+
+
+class TransposeMapping(MegatronParamMapping[torch.Tensor]):
+    """
+    Mapping for weights that require dimension permutation.
+
+    This mapping handles the conversion between standard weight matrices and
+    weights that need to be transposed
+    """
+
+    def __init__(self, megatron_param: str, hf_param: str, dims: Tuple[int, int], force_contiguous: bool = False):
+        """Initialize vision projector mapping.
+
+        Args:
+            megatron_param (str): Megatron parameter name pattern.
+            hf_param (str): HuggingFace parameter name pattern.
+        """
+        super().__init__(megatron_param, hf_param)
+        # Delegate tensor-parallel logic to AutoMapping
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+        self.dims = dims
+        self.force_contiguous = force_contiguous
+
+    def hf_to_megatron(
+        self,
+        hf_weights: torch.Tensor,
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        """Apply permutation and distribute to TP ranks."""
+        if self.tp_rank == 0:
+            permuted_weights = torch.permute(hf_weights, self.dims)
+            if self.force_contiguous:
+                permuted_weights = permuted_weights.contiguous()
+        else:
+            permuted_weights = None
+
+        # Delegate TP distribution to AutoMapping
+        return self._tp_mapping.hf_to_megatron(permuted_weights, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        """Gather from TP ranks and apply reverse permutation."""
+        # Delegate TP gathering to AutoMapping
+        gathered_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+
+        if not gathered_dict:
+            return {}
+
+        # Get the gathered tensor (AutoMapping returns dict with megatron_param as key)
+        gathered_tensor = next(iter(gathered_dict.values()))
+
+        # Apply reverse permutation
+        permuted_back = torch.permute(gathered_tensor, self.dims)
+        if self.force_contiguous:
+            permuted_back = permuted_back.contiguous()
+
+        return {str(self.hf_param): permuted_back}
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(resolved_megatron_param, resolved_hf_param, self.dims)
