@@ -831,11 +831,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
                 if local_module is not None and not hasattr(local_module, "config"):
-                    # If module is not a MegatronModule (e.g. torch.nn.Conv1d) we need 
-                    # to get the config from the parent module
-                    parent_name = local_name.rsplit(".", 2)[0]
-                    parent_module, _ = get_module_and_param_from_name(megatron_model, parent_name, vp_stage)
-                    setattr(local_module, "config", parent_module.config)
+                    # If module is not a MegatronModule (e.g. torch.nn.Conv1d or a module list) we need 
+                    # to get the config from the model
+                    setattr(local_module, "config", megatron_model.config)
 
                 tasks[global_name_idx] = WeightConversionTask(
                     pp_rank=pp_rank,
