@@ -18,7 +18,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import List, Mapping
 
 import datasets
 import numpy as np
@@ -28,6 +28,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.datasets.utils import (
+    _chat_preprocess,
     _get_samples_mapping,
     _JSONLMemMapDataset,
     _OnlineSampleMapping,
@@ -87,7 +88,7 @@ def create_sft_dataset(
     answer_only_loss: bool = True,
     truncation_field: str = "input",
     pad_to_max_length: bool = False,
-    index_mapping_dir: Optional[str] = None,
+    index_mapping_dir: str | None = None,
     prompt_template: str = "{input} {output}",
     truncation_method: str = "right",
     memmap_workers: int = 2,
@@ -97,6 +98,8 @@ def create_sft_dataset(
     pack_metadata_file_path: Path = None,
     pad_cu_seqlens: bool = False,
     chat: bool = False,
+    use_hf_tokenizer_chat_template: bool = False,
+    tool_schemas: str | dict | None = None,
     **kwargs,
 ) -> "GPTSFTDataset":
     """
@@ -119,7 +122,7 @@ def create_sft_dataset(
         truncation_field (str, optional): Field(s) to truncate if the combined length exceeds `seq_length`.
             Comma-separated if multiple. Defaults to "input".
         pad_to_max_length (bool, optional): Whether to pad all samples to `max_seq_length`. Defaults to False.
-        index_mapping_dir (Optional[str], optional): Directory to store/load index mapping files. Defaults to None.
+        index_mapping_dir (str | None, optional): Directory to store/load index mapping files. Defaults to None.
         prompt_template (str, optional): F-string template for combining input fields.
             Example: "{input} {output}". Defaults to "{input} {output}".
         truncation_method (str, optional): Method for truncation ('left' or 'right'). Defaults to "right".
@@ -135,6 +138,11 @@ def create_sft_dataset(
         pad_cu_seqlens (bool, optional): Whether to pad `cu_seqlens` for packed datasets,
             required for cudagraphs. Defaults to False.
         chat (bool, optional): If True, creates a `GPTSFTChatDataset`. Defaults to False.
+        use_hf_tokenizer_chat_template (bool, optional): If True, uses HuggingFace tokenizer's chat template
+            via `apply_chat_template` method. Only applies when `chat=True`. Defaults to False.
+        tool_schemas (str | dict | None, optional): Tool schemas for function calling support.
+            Can be a JSON string or a dict. Only applies when `chat=True` and
+            `use_hf_tokenizer_chat_template=True`. Defaults to None.
         **kwargs: Additional keyword arguments passed to the specific dataset class constructor.
 
     Returns:
@@ -162,16 +170,18 @@ def create_sft_dataset(
         "get_attention_mask_from_fusion": get_attention_mask_from_fusion,
     }
 
-    if chat:
-        return GPTSFTChatDataset(
-            **gpt_sft_dataset_kwargs,
-            **kwargs,
-        )
-    elif path.suffix == ".npy":
+    if path.suffix == ".npy":
         return GPTSFTPackedDataset(
             pack_metadata_file_path=pack_metadata_file_path,
             pad_cu_seqlens=pad_cu_seqlens,
             **gpt_sft_dataset_kwargs,
+            **kwargs,
+        )
+    elif chat:
+        return GPTSFTChatDataset(
+            **gpt_sft_dataset_kwargs,
+            use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
+            tool_schemas=tool_schemas,
             **kwargs,
         )
     else:
@@ -205,11 +215,11 @@ class GPTSFTDataset(Dataset):
         prompt_template: str = None,
         virtual_tokens: int = 0,
         tokens_to_generate: int = 0,
-        memmap_workers: Optional[int] = None,
+        memmap_workers: int | None = None,
         hf_dataset: bool = False,
         global_sample_mapping: bool = False,
         truncation_method: str = "right",
-        special_tokens: Optional[Mapping[str, str]] = None,  # special tokens, a dictory of {token_type: token}
+        special_tokens: Mapping[str, str] | None = None,  # special tokens, a dictory of {token_type: token}
         is_test: bool = False,
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
@@ -734,7 +744,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         tokenizer: MegatronTokenizer,
         return_cu_seqlen: bool = True,
         pad_cu_seqlens: bool = False,
-        pack_metadata_file_path: Optional[str] = None,
+        pack_metadata_file_path: str | None = None,
         **kwargs,
     ):
         """
@@ -989,27 +999,72 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
 
 class GPTSFTChatDataset(GPTSFTDataset):
-    """ """
+    """Dataset class for chat-based fine-tuning with optional HuggingFace chat template support.
+
+    Supports both legacy special token-based formatting and modern HuggingFace chat templates.
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        tokenizer: MegatronTokenizer,
+        use_hf_tokenizer_chat_template: bool = False,
+        tool_schemas: str | dict | None = None,
+        **kwargs,
+    ):
+        """
+        Initialize GPTSFTChatDataset with optional HuggingFace chat template support.
+
+        Args:
+            file_path: Path to the dataset file
+            tokenizer: Tokenizer instance
+            use_hf_tokenizer_chat_template: If True, use HuggingFace tokenizer's apply_chat_template
+            tool_schemas: Tool schemas for function calling (JSON string or dict)
+            **kwargs: Additional arguments passed to parent GPTSFTDataset
+        """
+        self.use_hf_tokenizer_chat_template = use_hf_tokenizer_chat_template
+        self.tool_schemas = tool_schemas
+
+        # Parse tool_schemas if it's a JSON string
+        if isinstance(self.tool_schemas, str):
+            self.tool_schemas = json.loads(self.tool_schemas)
+
+        # Initialize parent class
+        super().__init__(file_path, tokenizer, **kwargs)
+
+        # Validate tokenizer if using HF chat template
+        if self.use_hf_tokenizer_chat_template:
+            if not hasattr(self.tokenizer, "_tokenizer") or not hasattr(
+                self.tokenizer._tokenizer, "apply_chat_template"
+            ):
+                raise ValueError(
+                    "Dataset configured to use HF tokenizer chat template, but tokenizer does not have "
+                    "apply_chat_template method. Please ensure you're using a HuggingFace tokenizer with "
+                    "a chat template defined."
+                )
 
     def _maybe_validate_prompt_template(self):
         pass
 
     def _build_samples_mapping(self):
         super()._build_samples_mapping()
-        LABEL_START = self.special_tokens["label_start"]
-        END_NAME_SIGNAL = self.special_tokens["end_of_name"]
 
-        id1 = self.tokenizer.text_to_ids(PREFIX_STR)
-        id2 = self.tokenizer.text_to_ids(PREFIX_STR + LABEL_START)
-        self.label_start_tokens = id2[len(id1) :]
+        # Only build special token IDs if not using HF chat template
+        if not self.use_hf_tokenizer_chat_template:
+            LABEL_START = self.special_tokens["label_start"]
+            END_NAME_SIGNAL = self.special_tokens["end_of_name"]
 
-        id1 = self.tokenizer.text_to_ids(PREFIX_STR + END_NAME_SIGNAL)
-        id2 = self.tokenizer.text_to_ids(PREFIX_STR)
-        self.name_end_token_ids = id1[len(id2) :]
+            id1 = self.tokenizer.text_to_ids(PREFIX_STR)
+            id2 = self.tokenizer.text_to_ids(PREFIX_STR + LABEL_START)
+            self.label_start_tokens = id2[len(id1) :]
 
-        id1 = self.tokenizer.text_to_ids(PREFIX_STR + self.special_tokens["turn_start"])
-        id2 = self.tokenizer.text_to_ids(PREFIX_STR)
-        self.num_turn_start_tokens = len(id1) - len(id2)
+            id1 = self.tokenizer.text_to_ids(PREFIX_STR + END_NAME_SIGNAL)
+            id2 = self.tokenizer.text_to_ids(PREFIX_STR)
+            self.name_end_token_ids = id1[len(id2) :]
+
+            id1 = self.tokenizer.text_to_ids(PREFIX_STR + self.special_tokens["turn_start"])
+            id2 = self.tokenizer.text_to_ids(PREFIX_STR)
+            self.num_turn_start_tokens = len(id1) - len(id2)
 
     def _process_example(self, example):
         """
@@ -1017,20 +1072,28 @@ class GPTSFTChatDataset(GPTSFTDataset):
         Truncation is carried out when needed, but it is performed only on the prompt side.
         BOS, EOS, and SEP, are added if specified.
         """
-        result = _preprocess(
-            example,
-            self.tokenizer,
-            self.name_end_token_ids,
-            self.label_start_tokens,
-            self.special_tokens,
-            self.num_turn_start_tokens,
-        )
+        if not self.use_hf_tokenizer_chat_template:
+            # Use legacy special token-based preprocessing
+            result = _preprocess(
+                example,
+                self.tokenizer,
+                self.name_end_token_ids,
+                self.label_start_tokens,
+                self.special_tokens,
+                self.num_turn_start_tokens,
+            )
+        else:
+            # Use HuggingFace chat template preprocessing
+            result = _chat_preprocess(example, self.tokenizer, self.tool_schemas)
 
         # store metadata in dataset, in case user may have keys required in the prediction json files
-        metadata = {k: v for k, v in example.items() if k not in ["conversations"]}
+        metadata = {k: v for k, v in example.items() if k not in ["conversations", "messages"]}
         result["metadata"] = metadata
         if self.output_original_text:
-            result["metadata"]["conversations"] = example["conversations"]
+            # Store original conversation/messages for both formats
+            for key in ["conversations", "messages"]:
+                if key in example:
+                    result["metadata"][key] = example[key]
 
         return result
 
@@ -1056,7 +1119,13 @@ class GPTSFTChatDataset(GPTSFTDataset):
         labels = [item["input_ids"][1:].tolist() for item in batch]
         contexts = [item["context_ids"].tolist() for item in batch]
         answers = [item["answer_ids"].tolist() for item in batch]
-        loss_mask = [item["mask"][1:].tolist() for item in batch]
+
+        # Handle loss_mask - check if it exists directly or as "mask" key
+        if "loss_mask" in batch[0]:
+            loss_mask = [item["loss_mask"][1:].tolist() for item in batch]
+        else:
+            loss_mask = [item["mask"][1:].tolist() for item in batch]
+
         metadata = [item["metadata"] for item in batch]
 
         max_length = max(max([len(x) for x in input_ids]), max([len(x) for x in contexts]) + self.tokens_to_generate)
