@@ -22,7 +22,7 @@ import pickle
 import re
 import time
 from functools import lru_cache, partial
-from typing import Any, Callable, List, Optional, Type
+from typing import Any, Callable, Optional, Pattern, Type
 
 import numpy as np
 import torch
@@ -33,24 +33,24 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
-PREFIX_STR = (
+PREFIX_STR: str = (
     "\x00"  # the prefix string used in the tokenizer to deal with the added empty token for some of the tokenizers
 )
 
-IGNORE_INDEX = -100
-SYSTEM_TOKEN = "System"
+IGNORE_INDEX: int = -100
+SYSTEM_TOKEN: str = "System"
 
-TYPE_INSTRUCTION = {
+TYPE_INSTRUCTION: dict[str, str] = {
     "TEXT_TO_VALUE": "",
     "VALUE_TO_TEXT": "",
 }
 
-GENERATION_REGEX = re.compile(r"\{%-?\s+generation\s+-?%\}")
+GENERATION_REGEX: Pattern[str] = re.compile(r"\{%-?\s+generation\s+-?%\}")
 
-__idx_version__ = "0.2"  # index file version
-__idx_suffix__ = "idx"  # index file suffix
+__idx_version__: str = "0.2"  # index file version
+__idx_suffix__: str = "idx"  # index file suffix
 
 
 def build_index_from_memdata(fn, newline_int):
@@ -94,14 +94,14 @@ class _TextMemMapDataset(Dataset):
 
     def __init__(
         self,
-        dataset_paths: List[str],
-        newline_int: Optional[int] = 10,
-        header_lines: Optional[int] = 0,
-        workers: Optional[int] = None,
-        tokenizer: Optional[Type["MegatronTokenizer"]] = None,
-        build_index_fn: Optional[Callable[[str, Optional[int]], bool]] = build_index_from_memdata,
-        sort_dataset_paths: Optional[bool] = True,
-        index_mapping_dir: Optional[str] = None,
+        dataset_paths: list[str],
+        newline_int: int | None = 10,
+        header_lines: int | None = 0,
+        workers: int | None = None,
+        tokenizer: Type["MegatronTokenizer"] | None = None,
+        build_index_fn: Callable[[str, int | None], bool] | None = build_index_from_memdata,
+        sort_dataset_paths: bool | None = True,
+        index_mapping_dir: str | None = None,
     ):
         """
         Args:
@@ -333,13 +333,13 @@ class _JSONLMemMapDataset(_TextMemMapDataset):
 
     def __init__(
         self,
-        dataset_paths: List[str],
-        newline_int: Optional[int] = 10,
-        header_lines: Optional[int] = 0,
-        workers: Optional[int] = None,
-        tokenizer: Optional[Type["MegatronTokenizer"]] = None,
-        sort_dataset_paths: Optional[bool] = True,
-        index_mapping_dir: Optional[str] = None,
+        dataset_paths: list[str],
+        newline_int: int | None = 10,
+        header_lines: int | None = 0,
+        workers: int | None = None,
+        tokenizer: Type["MegatronTokenizer"] | None = None,
+        sort_dataset_paths: bool | None = True,
+        index_mapping_dir: str | None = None,
     ):
         """
         Args:
@@ -977,10 +977,10 @@ def _mask_targets(
 
     Args:
         target (Tensor): input ids
-        tokenized_lens (List[int]): array of lengths of each turns
-        speakers (List[str]): array of speakers of each turns
+        tokenized_lens (list[int]): array of lengths of each turns
+        speakers (list[str]): array of speakers of each turns
         header_len (int): the system prompt length
-        s_ids (List[Tensor]): array of tokenized ids of each turns
+        s_ids (list[Tensor]): array of tokenized ids of each turns
         tokenizer (MegatronTokenizer): tokenizer object
         mask_role (str): the speaker id to be masked from loss computation.
         gtype (str): either 'TEXT_TO_VALUE' or 'VALUE_TO_TEXT'

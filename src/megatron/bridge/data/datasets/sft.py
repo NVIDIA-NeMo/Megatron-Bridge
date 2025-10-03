@@ -18,7 +18,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import List, Mapping
+from typing import Mapping
 
 import datasets
 import numpy as np
@@ -422,18 +422,18 @@ class GPTSFTDataset(Dataset):
             raise e
         return self._process_example(example)
 
-    def _separate_template(self, prompt_template_values: List[str]):
+    def _separate_template(self, prompt_template_values: list[str]):
         """
         Combine contexts and label based on prompt_template into a list of strings and a list of keys.
 
         Args:
-            prompt_template_values (List[str]): the list of context and label strings
+            prompt_template_values (list[str]): the list of context and label strings
                 extrated from jsonl file with prompt_template_keys.
 
         Returns:
-            template_strings (List[str]): separated prompt_template with contexts/label
+            template_strings (list[str]): separated prompt_template with contexts/label
                 placeholder filled with corresponding strings
-            template_strings_keys (List[str]): strings point to placeholder keys or <template>
+            template_strings_keys (list[str]): strings point to placeholder keys or <template>
 
         Examples:
             prompt_template = 'Context:  {context} Question: {question} Answer: {label}'
@@ -485,18 +485,18 @@ class GPTSFTDataset(Dataset):
 
         return template_strings, template_strings_keys
 
-    def _multiple_truncation(self, template_ids: List[List[int]], template_ids_keys: List[str]):
+    def _multiple_truncation(self, template_ids: list[list[int]], template_ids_keys: list[str]):
         """
         Calculate total tokens and truncate multiple contexts in truncation_fields.
 
         Args:
-            template_ids (List[List[int]]): the list of separate prompt_template ids.
-            template_ids_keys (List[str]): the list of placeholder keys or <template>
+            template_ids (list[list[int]]): the list of separate prompt_template ids.
+            template_ids_keys (list[str]): the list of placeholder keys or <template>
                 (used to check key in truncation_fields).
 
         Returns:
-            context_ids (List[int]): all context ids.
-            label_ids (List[int]): all label ids.
+            context_ids (list[int]): all context ids.
+            label_ids (list[int]): all label ids.
         """
         context_ids = template_ids[:-1]
         label_ids = template_ids[-1]
@@ -889,9 +889,9 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, self.pad_seq_length_to_mult))
         assert max_length <= self.max_seq_length
 
-        position_ids: List[List[int]] = []
-        cu_seqlens: List[List[int]] = []
-        cu_seqlens_unpadded: List[List[int]] = []
+        position_ids: list[list[int]] = []
+        cu_seqlens: list[list[int]] = []
+        cu_seqlens_unpadded: list[list[int]] = []
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
@@ -970,8 +970,13 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 # If padding, use the global max seqlen, so that 'pad_cu_seqlens' is the same
                 # across all batches. This is maintly used compatiblity with megatron's implementation
                 # of cudagraphs, which uses the same cudagraphs over all batches.
-                max_seqlen = [max(p["dataset_max_seqlen"] for p in self.pack_metadata)]
-                max_seqlen = torch.IntTensor(max_seqlen * len(cu_seqlens))
+                dataset_max_seqlen = max(p["dataset_max_seqlen"] for p in self.pack_metadata)
+                min_pack_seq_len = min(p["min_packed_seqlen"] for p in self.pack_metadata)
+                padding_gap = max_length - min_pack_seq_len
+
+                # Use the larger of the two values to avoid NaN issues with attention kernel
+                safe_max_seqlen = max(dataset_max_seqlen, padding_gap)
+                max_seqlen = torch.IntTensor([safe_max_seqlen] * len(cu_seqlens))
             else:
                 seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
                 max_seqlen, _ = seqlens.max(dim=1, keepdim=True)

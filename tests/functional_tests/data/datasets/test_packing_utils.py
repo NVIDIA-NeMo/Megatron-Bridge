@@ -85,7 +85,13 @@ class TestDataPackingUtils:
 
         assignments, packing_metadata = create_packing_strategy(hist, pack_size)
 
-        assert packing_metadata == {"dataset_max_seqlen": 1, "max_samples_per_bin": 2}
+        # Verify it has the basic required fields (updated for NeMo2 parity)
+        assert packing_metadata["dataset_max_seqlen"] == 1
+        assert packing_metadata["max_samples_per_bin"] == 2
+        assert "packing_factor" in packing_metadata
+        assert "packing_efficiency" in packing_metadata
+        assert "min_packed_seqlen" in packing_metadata
+        assert "pack_size" in packing_metadata
 
         sequences = {
             0: [{"input_ids": [19, 0, 21413, 1873], "answer_start_idx": 0} for i in range(128)],
@@ -384,3 +390,79 @@ class TestDataPackingUtils:
 
         assert output_data_1[0]["input_ids"] == output_data_2[0]["input_ids"]
         assert output_data_1[0]["loss_mask"] == output_data_2[0]["loss_mask"]
+
+
+class TestPackingMetadata:
+    """Test cases for enhanced packing metadata computation (NeMo2 parity)."""
+
+    def test_packing_metadata_includes_all_fields(self):
+        """Test that create_packing_strategy returns all required metadata fields."""
+        # Create a simple histogram
+        histogram = [0, 5, 10, 8, 3]  # Sequences of length 1,2,3,4
+        pack_size = 10
+
+        assignments, metadata = create_packing_strategy(histogram, pack_size, "first_fit_shuffle")
+
+        # Verify all required fields are present
+        assert "dataset_max_seqlen" in metadata
+        assert "max_samples_per_bin" in metadata
+        assert "packing_factor" in metadata
+        assert "packing_efficiency" in metadata
+        assert "pack_size" in metadata
+        assert "min_packed_seqlen" in metadata
+
+        # Verify types
+        assert isinstance(metadata["dataset_max_seqlen"], int)
+        assert isinstance(metadata["max_samples_per_bin"], int)
+        assert isinstance(metadata["packing_factor"], float)
+        assert isinstance(metadata["packing_efficiency"], float)
+        assert isinstance(metadata["pack_size"], int)
+        assert isinstance(metadata["min_packed_seqlen"], int)
+
+        # Verify values make sense
+        assert metadata["pack_size"] == pack_size
+        assert metadata["dataset_max_seqlen"] == 4  # Max in histogram
+        assert 0 <= metadata["packing_efficiency"] <= 100
+        assert metadata["packing_factor"] > 0
+
+    def test_min_packed_seqlen_computed_correctly(self):
+        """Test that min_packed_seqlen is the minimum of packed sequence lengths."""
+        histogram = [0, 2, 3, 2]  # Sequences of length 1,2,3
+        pack_size = 5
+
+        assignments, metadata = create_packing_strategy(histogram, pack_size, "first_fit_decreasing")
+
+        # Calculate expected min
+        packed_lens = [sum(assignment) for assignment in assignments]
+        expected_min = min(packed_lens)
+
+        assert metadata["min_packed_seqlen"] == expected_min
+
+    def test_packing_factor_calculation(self):
+        """Test that packing_factor is calculated correctly."""
+        histogram = [0, 0, 4, 0, 0]  # 4 sequences of length 2
+        pack_size = 4
+
+        assignments, metadata = create_packing_strategy(histogram, pack_size, "first_fit_decreasing")
+
+        # With 4 sequences of length 2, packing into size 4 bins:
+        # Should create 2 bins with 2 sequences each
+        total_sequences = 4
+        num_bins = len(assignments)
+        expected_packing_factor = total_sequences / num_bins
+
+        assert metadata["packing_factor"] == round(expected_packing_factor, 2)
+
+    def test_packing_efficiency_calculation(self):
+        """Test that packing_efficiency is calculated correctly."""
+        histogram = [0, 0, 3, 0, 0]  # 3 sequences of length 2
+        pack_size = 4
+
+        assignments, metadata = create_packing_strategy(histogram, pack_size, "first_fit_decreasing")
+
+        # Efficiency = sum of packed lens / (num packs * pack_size) * 100
+        packed_lens = [sum(assignment) for assignment in assignments]
+        expected_efficiency = sum(packed_lens) / len(packed_lens) / pack_size * 100
+
+        assert metadata["packing_efficiency"] == round(expected_efficiency, 2)
+        assert 0 <= metadata["packing_efficiency"] <= 100

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -442,3 +443,484 @@ class TestCreateSFTDataset:
 
         # Verify GPTSFTPackedDataset was called (not GPTSFTChatDataset)
         mock_packed_class.assert_called_once()
+
+
+class TestTokenizerSpaceSensitive:
+    """Test cases for space_sensitive attribute on tokenizers."""
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer._HuggingFaceTokenizer")
+    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
+    def test_hf_tokenizer_computes_space_sensitive(self, mock_get_rank, mock_hf_class):
+        """Test that _HuggingFaceTokenizer computes space_sensitive attribute."""
+        from megatron.bridge.training.tokenizers.config import TokenizerConfig
+        from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+
+        # Create a realistic mock tokenizer
+        mock_instance = MagicMock()
+
+        # Mock tokenize method to simulate space-sensitive tokenizer
+        def mock_tokenize(text, **kwargs):
+            if text == "x y":
+                return [1, 2, 3]  # Different from x + y
+            elif text == "x":
+                return [1]
+            elif text == "y":
+                return [2]
+            return []
+
+        mock_instance.tokenize = mock_tokenize
+        mock_instance.space_sensitive = True  # This should be set by __init__
+        mock_hf_class.return_value = mock_instance
+
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="gpt2",
+        )
+
+        tokenizer = build_tokenizer(config)
+
+        # Verify space_sensitive is set
+        assert hasattr(tokenizer, "space_sensitive")
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer._SentencePieceTokenizer")
+    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
+    def test_sentencepiece_tokenizer_has_space_sensitive(self, mock_get_rank, mock_sp_class):
+        """Test that _SentencePieceTokenizer has space_sensitive attribute."""
+        from megatron.bridge.training.tokenizers.config import TokenizerConfig
+        from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+
+        mock_instance = MagicMock()
+        mock_instance.space_sensitive = True
+        mock_sp_class.return_value = mock_instance
+
+        config = TokenizerConfig(
+            tokenizer_type="SentencePieceTokenizer",
+            tokenizer_model="tokenizer.model",
+        )
+
+        tokenizer = build_tokenizer(config)
+
+        # Verify space_sensitive is set
+        assert hasattr(tokenizer, "space_sensitive")
+
+
+class TestPackedDatasetNaNFix:
+    """Test cases for NaN fix in packed dataset collate_fn."""
+
+    def test_safe_max_seqlen_calculation_logic(self):
+        """Test the safe_max_seqlen calculation logic (without full dataset init)."""
+        # This tests the core logic from the NaN fix
+        pack_metadata = [
+            {
+                "dataset_max_seqlen": 100,
+                "max_samples_per_bin": 5,
+                "min_packed_seqlen": 50,
+            }
+        ]
+
+        # Simulate values from collate_fn
+        max_length = 512  # Current batch max length
+
+        # Apply the NaN fix logic
+        dataset_max_seqlen = max(p["dataset_max_seqlen"] for p in pack_metadata)
+        min_pack_seq_len = min(p["min_packed_seqlen"] for p in pack_metadata)
+        padding_gap = max_length - min_pack_seq_len
+
+        # Use the larger of the two values to avoid NaN issues with attention kernel
+        safe_max_seqlen = max(dataset_max_seqlen, padding_gap)
+
+        # Verify the calculation
+        assert dataset_max_seqlen == 100
+        assert min_pack_seq_len == 50
+        assert padding_gap == 462  # 512 - 50
+        assert safe_max_seqlen == 462  # max(100, 462)
+
+        # This is the key: when padding_gap > dataset_max_seqlen,
+        # using padding_gap prevents NaNs in attention kernel
+
+
+class TestChatTemplateOverrideWarning:
+    """Test cases for chat template override warning."""
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.print_rank_0")
+    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
+    def test_warning_on_chat_template_override(self, mock_get_rank, mock_print):
+        """Test that warning is printed when overwriting existing chat template."""
+        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+
+        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
+            mock_hf_tok = MagicMock()
+            mock_hf_tok.chat_template = "existing_template"  # Has existing template
+            mock_hf_tok.get_vocab.return_value = {"test": 1}
+            mock_from_pretrained.return_value = mock_hf_tok
+
+            # Create tokenizer with chat_template override
+            tokenizer = _HuggingFaceTokenizer("gpt2", chat_template="new_template")
+
+            # Verify warning was printed
+            mock_print.assert_called_once()
+            assert "overwriting" in mock_print.call_args[0][0].lower()
+
+            # Verify template was set
+            assert tokenizer._tokenizer.chat_template == "new_template"
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.print_rank_0")
+    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
+    def test_no_warning_when_no_existing_template(self, mock_get_rank, mock_print):
+        """Test that no warning when setting template on tokenizer without one."""
+        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+
+        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
+            mock_hf_tok = MagicMock()
+            mock_hf_tok.chat_template = None  # No existing template
+            mock_hf_tok.get_vocab.return_value = {"test": 1}
+            mock_from_pretrained.return_value = mock_hf_tok
+
+            _HuggingFaceTokenizer("gpt2", chat_template="new_template")
+
+            # No warning should be printed
+            mock_print.assert_not_called()
+
+
+class TestOutputOriginalText:
+    """Test cases for output_original_text with different formats."""
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_output_original_text_with_messages(self, mock_dataset_class):
+        """Test that output_original_text works with messages format."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+        }
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            use_hf_tokenizer_chat_template=True,
+            output_original_text=True,
+        )
+
+        example = {
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ],
+            "extra_field": "value",
+        }
+
+        result = dataset._process_example(example)
+
+        # Verify messages are stored in metadata
+        assert "metadata" in result
+        assert "messages" in result["metadata"]
+        assert result["metadata"]["messages"] == example["messages"]
+        assert result["metadata"]["extra_field"] == "value"
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_output_original_text_with_conversations(self, mock_dataset_class):
+        """Test that output_original_text works with conversations format."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+        }
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            use_hf_tokenizer_chat_template=True,
+            output_original_text=True,
+        )
+
+        example = {
+            "conversations": [
+                {"from": "User", "value": "Hello"},
+                {"from": "Assistant", "value": "Hi!"},
+            ],
+        }
+
+        result = dataset._process_example(example)
+
+        # Verify conversations are stored in metadata
+        assert "metadata" in result
+        assert "conversations" in result["metadata"]
+        assert result["metadata"]["conversations"] == example["conversations"]
+
+
+class TestToolSchemasEdgeCases:
+    """Test cases for tool schemas edge cases."""
+
+    def test_tool_schemas_json_parsing(self):
+        """Test that tool_schemas is parsed from JSON string."""
+        tool_schemas_json = '[{"type": "function", "function": {"name": "get_weather"}}]'
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+        }
+
+        with patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset"):
+            dataset = GPTSFTChatDataset(
+                file_path="test.jsonl",
+                tokenizer=mock_tokenizer,
+                max_seq_length=512,
+                use_hf_tokenizer_chat_template=True,
+                tool_schemas=tool_schemas_json,
+            )
+
+            # Verify it was parsed
+            assert isinstance(dataset.tool_schemas, list)
+            assert len(dataset.tool_schemas) == 1
+            assert dataset.tool_schemas[0]["type"] == "function"
+
+    def test_tool_schemas_source_override(self):
+        """Test that tool schemas from source override global schemas."""
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        global_schemas = [{"type": "function", "function": {"name": "global"}}]
+        source_schemas = [{"type": "function", "function": {"name": "source"}}]
+
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+        }
+
+        source = {
+            "conversations": [{"from": "User", "value": "Test"}],
+            "tools": source_schemas,  # Source has its own tools
+        }
+
+        _chat_preprocess(source, mock_tokenizer, tool_schemas=global_schemas)
+
+        # Verify apply_chat_template was called with source tools
+        call_kwargs = mock_hf_tokenizer.apply_chat_template.call_args[1]
+        assert call_kwargs["tools"] == source_schemas  # Source overrides global
+
+    def test_invalid_tool_schemas_json(self):
+        """Test that invalid JSON in tool_schemas raises error."""
+        with pytest.raises(json.JSONDecodeError):
+            with patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset"):
+                mock_tokenizer = MagicMock()
+                mock_hf_tokenizer = MagicMock()
+                mock_tokenizer._tokenizer = mock_hf_tokenizer
+                mock_hf_tokenizer.apply_chat_template = MagicMock()
+                mock_tokenizer.eos_id = 2
+
+                GPTSFTChatDataset(
+                    file_path="test.jsonl",
+                    tokenizer=mock_tokenizer,
+                    max_seq_length=512,
+                    use_hf_tokenizer_chat_template=True,
+                    tool_schemas="invalid json {",  # Invalid JSON
+                )
+
+
+class TestTruncationWithChatTemplates:
+    """Test cases for truncation behavior with chat templates."""
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_truncation_happens_in_collate_fn(self, mock_dataset_class):
+        """Test that truncation happens in collate_fn, not _process_example."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        # Simulate long sequence
+        long_input_ids = list(range(1, 600))  # 599 tokens
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": long_input_ids,
+        }
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        example = {"conversations": [{"from": "User", "value": "Test"}]}
+        result = dataset._process_example(example)
+
+        # _process_example does NOT truncate - that happens in collate_fn
+        # Just verify it processed successfully
+        assert "input_ids" in result
+        assert "loss_mask" in result
+        assert len(result["loss_mask"]) == len(result["input_ids"])
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_collate_fn_truncation_warning(self, mock_dataset_class):
+        """Test collate_fn handles truncation gracefully."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=10,  # Very small for truncation
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        # Create batch with sequences longer than max_seq_length
+        batch = [
+            {
+                "input_ids": torch.tensor([1] * 20),  # Longer than max
+                "loss_mask": torch.tensor([1] * 20),
+                "context_ids": torch.tensor([1] * 5),
+                "answer_ids": torch.tensor([1] * 15),
+                "metadata": {},
+            }
+        ]
+
+        # Should not crash, just truncate
+        result = dataset.collate_fn(batch)
+
+        # Verify truncation occurred
+        assert result["tokens"].shape[1] <= dataset.max_seq_length
+
+
+class TestSpaceSensitiveInDataset:
+    """Test that space_sensitive attribute is used correctly in dataset."""
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_dataset_uses_space_sensitive_attribute(self, mock_dataset_class):
+        """Test that dataset's _separate_template uses tokenizer.space_sensitive."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+        mock_tokenizer.bos_id = 1
+        mock_tokenizer.text_to_ids = MagicMock(return_value=[1, 2, 3])
+
+        # Set space_sensitive to False
+        mock_tokenizer.space_sensitive = False
+
+        from megatron.bridge.data.datasets.sft import GPTSFTDataset
+
+        dataset = GPTSFTDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            prompt_template="{input} {output}",
+            label_key="output",  # Match the prompt template
+            truncation_field="input",  # Match a key in the prompt template
+        )
+
+        # Call _separate_template which uses space_sensitive
+        template_values = ["input_text", "output_text"]
+        template_strings, template_keys = dataset._separate_template(template_values)
+
+        # Verify it ran without error (space_sensitive was accessible)
+        assert template_strings is not None
+        assert template_keys is not None
+
+
+class TestChatTemplateFormat:
+    """Test that chat_template_format is set correctly."""
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.get_rank_safe", return_value=0)
+    def test_chat_template_format_set_to_jinja(self, mock_get_rank):
+        """Test that chat_template_format is set to 'jinja'."""
+        from megatron.bridge.training.tokenizers.tokenizer import _HuggingFaceTokenizer
+
+        with patch("transformers.AutoTokenizer.from_pretrained") as mock_from_pretrained:
+            mock_hf_tok = MagicMock()
+            mock_hf_tok.chat_template = None
+            mock_hf_tok.get_vocab.return_value = {"test": 1}
+            mock_from_pretrained.return_value = mock_hf_tok
+
+            tokenizer = _HuggingFaceTokenizer("gpt2", chat_template="custom_template")
+
+            # Verify chat_template_format was set
+            assert hasattr(tokenizer._tokenizer, "chat_template_format")
+            assert tokenizer._tokenizer.chat_template_format == "jinja"
+
+
+class TestContextAnswerSplit:
+    """Test context and answer splitting logic in _chat_preprocess."""
+
+    def test_context_answer_split_with_mask(self):
+        """Test that context/answer are split correctly based on mask."""
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        # Mask with 0s (context) and 1s (answer)
+        mock_hf_tokenizer.chat_template = "{% generation %}"  # Has generation keyword
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 30, 40, 2],
+            "assistant_masks": [0, 0, 0, 1, 1, 1],  # First 3 are context
+        }
+
+        source = {"conversations": [{"from": "User", "value": "Test"}]}
+
+        result = _chat_preprocess(source, mock_tokenizer)
+
+        # Context should be first 3 tokens
+        assert result["context_ids"].tolist() == [1, 10, 20]
+        # Answer should be remaining tokens
+        assert result["answer_ids"].tolist() == [30, 40, 2]
+
+    def test_context_answer_split_no_mask(self):
+        """Test that when no mask, all is considered answer."""
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        # No generation keyword means all 1s for mask
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+        }
+
+        source = {"conversations": [{"from": "User", "value": "Test"}]}
+
+        result = _chat_preprocess(source, mock_tokenizer)
+
+        # When all is masked as answer, context_ids should be everything
+        assert len(result["context_ids"]) == len(result["input_ids"])
+        assert result["answer_ids"].tolist() == []

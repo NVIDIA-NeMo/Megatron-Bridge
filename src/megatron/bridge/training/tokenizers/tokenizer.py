@@ -60,7 +60,7 @@ def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronToke
     """Initialize tokenizer based on the provided configuration.
 
     This function serves as a factory to instantiate various tokenizer types
-    supported by NeMo, such as BERT, GPT2, SentencePiece, HuggingFace, etc.
+    supported by NeMo Framework, such as BERT, GPT2, SentencePiece, HuggingFace, etc.
     It also handles padding the vocabulary size to be GPU-friendly.
 
     Args:
@@ -160,13 +160,30 @@ class _HuggingFaceTokenizer(MegatronTokenizer):
         except ImportError:
             raise EnvironmentError("The transformers library must be installed to use huggingface_tokenizer_provider")
 
+        # Extract chat_template if provided, to set it explicitly after loading
+        chat_template = kwargs.pop("chat_template", None)
+
         # TODO(bnorick): download tokenizer once to lustre
         # and use force offline to make sure all tasks read it from there
         self._tokenizer = transformers.AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path=pretrained_model_name_or_path, **kwargs
         )
+
+        # Explicitly set chat_template if provided
+        if chat_template is not None:
+            if getattr(self._tokenizer, "chat_template", None) is not None:
+                print_rank_0("You are overwriting tokenizer's chat template, confirm this is intended.")
+            self._tokenizer.chat_template = chat_template
+            self._tokenizer.chat_template_format = "jinja"
+
         self._vocab = self._tokenizer.get_vocab()
         self._inv_vocab = {token_id: token for token, token_id in self._vocab.items()}
+
+        # Compute space_sensitive attribute for template handling in datasets
+        # Tests if tokenizing "x y" produces different results than tokenizing "x" + "y"
+        test_tokens_with_space = self.tokenize("x y")
+        test_tokens_concat = self.tokenize("x") + self.tokenize("y")
+        self.space_sensitive = test_tokens_with_space != test_tokens_concat
 
     @property
     def vocab_size(self):
@@ -518,6 +535,17 @@ class _SentencePieceTokenizer(MegatronTokenizer):
             t = "<extra_id_{}>".format(i)
             _add_special_token(t)
             self._t5_tokens += [t]
+
+        # Compute space_sensitive attribute for template handling in datasets
+        # SentencePiece tokenizers are typically space-sensitive
+        # Tests if tokenizing "x y" produces different results than tokenizing "x" + "y"
+        try:
+            test_tokens_with_space = self.tokenize("x y")
+            test_tokens_concat = self.tokenize("x") + self.tokenize("y")
+            self.space_sensitive = test_tokens_with_space != test_tokens_concat
+        except Exception:
+            # If tokenization fails for any reason, default to True for SentencePiece
+            self.space_sensitive = True
 
     @property
     def vocab_size(self):
