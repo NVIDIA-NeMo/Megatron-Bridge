@@ -48,6 +48,12 @@ from megatron.bridge.models.gemma import (
     GemmaModelProvider2B,
     GemmaModelProvider7B,
 )
+from megatron.bridge.models.gpt_oss import (
+    GPTOSSProvider,
+    GPTOSSProvider20B,
+    GPTOSSProvider120B,
+    GPTOSSBridge,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
     CodeLlamaModelProvider7B,
@@ -166,6 +172,10 @@ __all__ = [
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
     "GPTModelProvider",
+    "GPTOSSBridge",
+    "GPTOSSProvider",
+    "GPTOSSProvider20B",
+    "GPTOSSProvider120B",
     "T5ModelProvider",
     "LlamaModelProvider",
     "Llama2ModelProvider7B",
