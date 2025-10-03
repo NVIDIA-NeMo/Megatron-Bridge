@@ -12,26 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Callable
 
 import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer import MegatronModule
-from modelopt.torch.distill.plugins.megatron import adjust_distillation_model_for_mcore, load_distillation_config
+from modelopt.torch.distill.plugins.megatron import (
+    DistillationConfig,
+    adjust_distillation_model_for_mcore,
+    setup_distillation_config,
+)
 
 from megatron.bridge.models.conversion import AutoBridge
-from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
-from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.model_load_save import load_model_config
-from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
-from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
 from megatron.bridge.utils.vocab_utils import validate_and_set_vocab_size
 
 
+if TYPE_CHECKING:
+    from megatron.bridge.training.config import ConfigContainer
+    from megatron.bridge.training.state import GlobalState
+
+
+@dataclass
+class ModelOptDistillConfig:
+    """Configuration settings for Model Optimizer distillation."""
+
+    teacher_path_or_id: str
+    """Path to the teacher checkpoint or HF model ID."""
+
+    logit_layers: tuple[str, str] = ("output_layer", "output_layer")
+    """Layer names to use for logit distillation."""
+
+    intermediate_layer_pairs: list[tuple[str, ...]] = field(default_factory=list)
+    """Layer names to use for intermediate distillation."""
+
+    skip_lm_loss: bool = True
+    """Whether to skip the original LM loss computation."""
+
+    kd_loss_scale: float = 1.0
+    """Scale for weighing the KD loss, if original LM loss is not skipped."""
+
+    logit_kl_temperature: float = 1.0
+    """Temperature for the logit KL divergence."""
+
+
 def create_modelopt_pre_wrap_hook(
-    cfg: ConfigContainer, state: GlobalState
+    cfg: "ConfigContainer", state: "GlobalState"
 ) -> Callable[[list[MegatronModule]], list[MegatronModule]]:
     """Create a pre-wrap hook that handles ModelOpt logic.
 
@@ -52,12 +79,20 @@ def create_modelopt_pre_wrap_hook(
             return model
 
         # Knowledge Distillation case
-        if cfg.modelopt.kd_teacher_path_or_id is not None:
+        if cfg.modelopt.kd is not None:
             if len(model) > 1:
                 raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
             student_model = model[0]
-            teacher_model = _load_teacher_model(cfg.modelopt.kd_teacher_path_or_id, cfg, state)
-            kd_cfg = load_distillation_config(cfg.modelopt.kd_config_path, student_model.config, teacher_model.config)
+            teacher_model = _load_teacher_model(cfg.modelopt.kd.teacher_path_or_id, cfg, state)
+
+            kd_cfg = DistillationConfig(
+                logit_layers=cfg.modelopt.kd.logit_layers,
+                intermediate_layer_pairs=cfg.modelopt.kd.intermediate_layer_pairs,
+                skip_lm_loss=cfg.modelopt.kd.skip_lm_loss,
+                kd_loss_scale=cfg.modelopt.kd.kd_loss_scale,
+                logit_kl_temperature=cfg.modelopt.kd.logit_kl_temperature,
+            )
+            kd_cfg = setup_distillation_config(kd_cfg, student_model.config, teacher_model.config)
             modelopt_cfg = {
                 "teacher_model": teacher_model,
                 "criterion": kd_cfg.criterion,
@@ -71,7 +106,7 @@ def create_modelopt_pre_wrap_hook(
     return modelopt_pre_wrap_hook
 
 
-def _load_teacher_model(teacher_model_path_or_id: str, cfg: ConfigContainer, state: GlobalState) -> MegatronModule:
+def _load_teacher_model(teacher_model_path_or_id: str, cfg: "ConfigContainer", state: "GlobalState") -> MegatronModule:
     """Load the teacher model from a Megatron Bridge checkpoint path or HF model ID.
 
     Args:
@@ -82,6 +117,11 @@ def _load_teacher_model(teacher_model_path_or_id: str, cfg: ConfigContainer, sta
     Returns:
         GPTModelProvider or MambaProvider: The teacher model provider.
     """
+    from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
+    from megatron.bridge.training.model_load_save import load_model_config
+    from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+    from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
+
     # Obtain provider one way or another
     is_megatron_ckpt = checkpoint_exists(teacher_model_path_or_id)
     if is_megatron_ckpt:
@@ -98,6 +138,7 @@ def _load_teacher_model(teacher_model_path_or_id: str, cfg: ConfigContainer, sta
     )
 
     # Instantiate model from provider
+    provider.finalize()
     model = provider.provide(
         pre_process=parallel_state.is_pipeline_first_stage(),
         post_process=parallel_state.is_pipeline_last_stage(),

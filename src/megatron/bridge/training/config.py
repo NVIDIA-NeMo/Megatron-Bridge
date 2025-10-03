@@ -33,6 +33,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
+from megatron.bridge.training.post_training.utils import ModelOptDistillConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -1037,11 +1038,7 @@ class InProcessRestartConfig:
 class ModelOptConfig:
     """Configuration settings for Model Optimizer features."""
 
-    kd_teacher_path_or_id: Optional[str] = None
-    """Path to the teacher checkpoint or HF model ID."""
-
-    kd_config_path: Optional[str] = None
-    """Path to the KD config YAML file."""
+    kd: Optional[ModelOptDistillConfig] = None
 
 
 # ---------------- Container config (standalone top-level config) ----------------
