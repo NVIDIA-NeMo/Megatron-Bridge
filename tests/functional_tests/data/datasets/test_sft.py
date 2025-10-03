@@ -278,7 +278,7 @@ class TestDataGPTSFTChatDataset:
                 "answer_ids": np.array([104, 105]),
                 "metadata": {"id": "ex1"},
                 "seq_boundaries": (0, 3),
-                "mask": np.array([0, 0, 0, 1, 1]),
+                "loss_mask": np.array([0, 0, 0, 1, 1]),  # Changed from "mask" to "loss_mask"
                 "metadata": {},
                 "token_count": 5,
             },
@@ -290,7 +290,7 @@ class TestDataGPTSFTChatDataset:
                 "answer_ids": np.array([203, 204]),
                 "metadata": {"id": "ex2"},
                 "seq_boundaries": (0, 2),
-                "mask": np.array([0, 0, 1, 1]),
+                "loss_mask": np.array([0, 0, 1, 1]),  # Changed from "mask" to "loss_mask"
                 "metadata": {},
                 "token_count": 4,
             },
