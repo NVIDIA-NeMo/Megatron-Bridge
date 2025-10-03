@@ -60,8 +60,9 @@ def tokenize_dataset(
     # Handle chat_template - set it on tokenizer if provided
     chat_template = dataset_kwargs.pop("chat_template", None)
     if chat_template:
-        # Needs to be called after the setup has started and populated the tokenizer
-        # But it can't be in prepare_data because it is only called in Rank 0
+        # This is called during packing preparation (rank 0 only).
+        # The chat template is only needed to create the packed .npy files.
+        # Once created, all ranks load the pre-tokenized .npy files.
         if hasattr(tokenizer, "_tokenizer"):
             tokenizer._tokenizer.chat_template = chat_template
 

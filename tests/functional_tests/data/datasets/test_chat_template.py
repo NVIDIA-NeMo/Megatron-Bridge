@@ -819,6 +819,52 @@ class TestTruncationWithChatTemplates:
         # Verify truncation occurred
         assert result["tokens"].shape[1] <= dataset.max_seq_length
 
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_truncation_warns_when_loss_mask_empty(self, mock_dataset_class):
+        """Test that truncation warns and fixes when all assistant tokens are removed."""
+
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{{ messages }}"
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=10,
+            use_hf_tokenizer_chat_template=True,
+        )
+
+        # Create batch where truncation removes all assistant tokens
+        # Context is first 15 tokens, answer is at end - will be truncated away
+        batch = [
+            {
+                "input_ids": torch.tensor([1] * 20),
+                "loss_mask": torch.tensor([0] * 15 + [1] * 5),  # Assistant tokens at end
+                "context_ids": torch.tensor([1] * 15),
+                "answer_ids": torch.tensor([1] * 5),
+                "metadata": {},
+            }
+        ]
+
+        # Capture log warnings
+        with patch("megatron.bridge.data.datasets.sft.logger") as mock_logger:
+            result = dataset.collate_fn(batch)
+
+            # Should have logged warning
+            mock_logger.warning.assert_called()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert "no assistant tokens" in warning_msg.lower()
+
+            # Loss mask should be set to all ones as fallback
+            assert result["loss_mask"].sum().item() > 0
+
 
 class TestSpaceSensitiveInDataset:
     """Test that space_sensitive attribute is used correctly in dataset."""

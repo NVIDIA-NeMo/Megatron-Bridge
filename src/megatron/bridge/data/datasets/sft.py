@@ -1020,6 +1020,21 @@ class GPTSFTChatDataset(GPTSFTDataset):
         """
         Initialize GPTSFTChatDataset with optional HuggingFace chat template support.
 
+        Accepts conversational data in ShareGPT format. If use_hf_tokenizer_chat_template is True, the dataset will
+        accept both ShareGPT and HuggingFace chat template format. In the case of ShareGPT format, it will try to convert
+        to HuggingFace format.
+
+        ShareGPT format:
+        {"conversations": [{"value": "...", "from": "User"}, {"value": "...", "from": "Assistant"}]}
+
+        HuggingFace chat template format:
+        {
+            "messages": [
+                {"role": "system", "content": "..."}, {"role": "user", "content": "..."},
+                {"role": "assistant", "content": "..."}
+            ]
+        }
+
         Args:
             file_path: Path to the dataset file
             tokenizer: Tokenizer instance
@@ -1120,19 +1135,51 @@ class GPTSFTChatDataset(GPTSFTDataset):
             dict: A dictionary of batched tensors ready for model input. Key tensors include
                   'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
         """
+        # Removes the last token from each input sequence to ensure the model
+        # never sees the token it is supposed to predict. This enforces an
+        # autoregressive training setup where the model learns to generate
+        # the next token step-by-step.
         input_ids = [item["input_ids"][:-1].tolist() for item in batch]
+        # Removes the first token from each input sequence to create labels
+        # that align with the model's prediction target. This ensures that
+        # at time step `t`, the model's output is evaluated against the token
+        # that originally followed the input at `t` in the dataset.
         labels = [item["input_ids"][1:].tolist() for item in batch]
+        # Context tokens remain unchanged, representing the initial portion of
+        # the sequence that serves as input to the model. This allows the model
+        # to condition its predictions on prior information.
         contexts = [item["context_ids"].tolist() for item in batch]
+        # Extracts the assistant's response portion of the sequence, which
+        # represents the part the model is trained to generate. This helps
+        # distinguish between the input prompt and the expected model output.
         answers = [item["answer_ids"].tolist() for item in batch]
+        # Removes the first element from the mask to align with the shifted labels,
+        # ensuring that loss is only computed for valid, predictable tokens. This
+        # prevents the model from incurring loss on tokens that were never meant to
+        # be predicted, such as user-provided context or padding.
         loss_mask = [item["loss_mask"][1:].tolist() for item in batch]
+        # Metadata remains unchanged, carrying any additional non-token-related
+        # information that might be useful for evaluation, debugging, or tracking
+        # purposes.
         metadata = [item["metadata"] for item in batch]
-
         max_length = max(max([len(x) for x in input_ids]), max([len(x) for x in contexts]) + self.tokens_to_generate)
+
         if max_length > self.max_seq_length:
             # truncate the sequences if it is longer than max_seq_length
             input_ids = [x[: self.max_seq_length] for x in input_ids]
             labels = [x[: self.max_seq_length] for x in labels]
             loss_mask = [x[: self.max_seq_length] for x in loss_mask]
+
+            # Safety check: warn if truncation removed all trainable tokens
+            for i, x in enumerate(loss_mask):
+                x_tensor = torch.tensor(x)
+                if x_tensor.sum().item() == 0:
+                    logger.warning(
+                        "Due to truncation to max_seq_length, no assistant tokens are found in sample. "
+                        "Setting loss_mask to all ones."
+                    )
+                    loss_mask[i] = [1] * self.max_seq_length
+
             contexts = [x[: self.max_seq_length] for x in contexts]
             answers = [x[: self.max_seq_length] for x in answers]
 
@@ -1143,11 +1190,6 @@ class GPTSFTChatDataset(GPTSFTDataset):
             max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 16))
         assert max_length <= self.max_seq_length
 
-        if not self.get_attention_mask_from_fusion:
-            attention_mask = [self._create_attention_mask(max_length) for _ in batch]
-            attention_mask = torch.stack(attention_mask)
-        else:
-            attention_mask = None
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
@@ -1168,7 +1210,11 @@ class GPTSFTChatDataset(GPTSFTDataset):
             "context_lengths": context_lengths,
             "answers": answers,
             "metadata": metadata,
-            "attention_mask": attention_mask,
         }
+
+        if not self.get_attention_mask_from_fusion:
+            attention_mask = [self._create_attention_mask(max_length) for _ in batch]
+            attention_mask = torch.stack(attention_mask)
+            processed_batch["attention_mask"] = attention_mask
 
         return processed_batch
