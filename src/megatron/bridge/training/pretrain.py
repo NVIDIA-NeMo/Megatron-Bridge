@@ -186,4 +186,7 @@ def _pretrain(
             write_to_tensorboard=not config.train.skip_train,
         )
 
-    _finish_train(state, should_destroy_process_group=should_destroy_process_group)
+    _finish_train(state)
+    if should_destroy_process_group and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
