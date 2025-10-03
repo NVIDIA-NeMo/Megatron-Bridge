@@ -59,8 +59,10 @@ def evaluate(
             - collected_non_loss_data: Data collected by non_loss_data_func.
             - timelimit_hit: Boolean indicating if the time limit was reached.
     """
-    # Check if forward_step_func needs state injection
+    # Check if forward_step_func needs state injection and wrap it once
+    # This prevents creating new partial objects every eval iteration
     needs_injection = needs_global_state_injection(forward_step_func)
+    wrapped_forward_step = maybe_inject_state(forward_step_func, state, needs_injection=needs_injection)
 
     timers = state.timers
     timers("evaluate", log_level=0).start(barrier=True)
@@ -89,7 +91,6 @@ def evaluate(
             if verbose:
                 print_rank_0(f"Evaluating iter {iteration}/{state.cfg.train.eval_iters}")
 
-            wrapped_forward_step = maybe_inject_state(forward_step_func, state, needs_injection=needs_injection)
             forward_backward_func = get_forward_backward_func()
             # Don't care about timing during evaluation
             config.timers = None

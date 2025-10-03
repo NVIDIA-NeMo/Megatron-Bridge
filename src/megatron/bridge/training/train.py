@@ -109,9 +109,10 @@ def train(
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
 
-    # Check if forward_step_func needs state injection (do this once upfront)
-    # This also validates the function signature
+    # Check if forward_step_func needs state injection and wrap it ONCE
+    # This prevents creating new partial objects every iteration (memory leak fix)
     needs_injection = needs_global_state_injection(forward_step_func)
+    wrapped_forward_step_func = maybe_inject_state(forward_step_func, global_state, needs_injection=needs_injection)
 
     # Turn on training mode which enables dropout.
     for model_module in model:
@@ -278,7 +279,7 @@ def train(
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            forward_step_func, needs_injection, train_data_iterator, model, optimizer, scheduler, global_state
+            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
         )
         fault_tolerance.on_training_step_end(global_state)
         if should_checkpoint:
@@ -469,7 +470,6 @@ def train(
 
 def train_step(
     forward_step_func: ForwardStepCallable,
-    needs_injection: bool,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
@@ -479,8 +479,7 @@ def train_step(
     """Single training step.
 
     Args:
-        forward_step_func: Function that performs a forward step
-        needs_injection: Whether the forward_step_func needs GlobalState injection
+        forward_step_func: Function that performs a forward step (already wrapped if needed)
         data_iterator: Iterator over training data
         model: list of model chunks
         optimizer: Optimizer for model parameters
@@ -510,9 +509,6 @@ def train_step(
             model_chunk.zero_grad_buffer()
         optimizer.zero_grad()
 
-        # Optionally inject state into forward step using precomputed value
-        wrapped_forward_step = maybe_inject_state(forward_step_func, global_state, needs_injection=needs_injection)
-
         _handle_mxfp8_param_buffer_copy(
             optimizer=optimizer,
             reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
@@ -522,7 +518,7 @@ def train_step(
         # Forward pass.
         forward_backward_func = get_forward_backward_func()
         losses_reduced = forward_backward_func(
-            forward_step_func=wrapped_forward_step,
+            forward_step_func=forward_step_func,
             data_iterator=data_iterator,
             model=model,
             num_microbatches=get_num_microbatches(),
