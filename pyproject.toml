@@ -69,6 +69,8 @@ dependencies = [
     "datasets",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
+    "torch",
+    "transformers>=4.55.0",
     "typing-extensions",
     "rich",
     "wandb>=0.19.10",
@@ -96,7 +98,7 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 
-# uv.sources allows us to override dependencies with VCS commits. 
+# uv.sources allows us to override dependencies with VCS commits.
 # Lets use this only for debugging purposes, but not for production (main).
 [tool.uv.sources]
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "0289e76380088358a584d809faf69effab1a7cda" } # on `release_v2.7
