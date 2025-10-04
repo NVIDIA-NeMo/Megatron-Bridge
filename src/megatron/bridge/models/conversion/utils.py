@@ -249,11 +249,12 @@ def extract_sort_key(param_name: str):
 def get_causal_lm_class_via_auto_map(
     model_name_or_path: str,
     config: PretrainedConfig,
-) -> type | None:
+) -> type | str | None:
     """Return CausalLM class via config.auto_map if available; otherwise None.
 
-    If auto_map["AutoModelForCausalLM"] is present in the config, returns the dynamically loaded class.
-    Returns None when auto_map is absent or loading fails. Does not download weights.
+    If auto_map["AutoModelForCausalLM"] is present in the config, tries to return the dynamically loaded class.
+    If dynamic loading fails (e.g., due to version incompatibilities), returns the class name as a string.
+    Returns None when auto_map is absent.
     """
     auto_map = getattr(config, "auto_map", None)
     if auto_map and "AutoModelForCausalLM" in auto_map:
@@ -277,7 +278,10 @@ def get_causal_lm_class_via_auto_map(
                 repo_id=repo_id,
             )
         except Exception:
-            return None
+            # If dynamic loading fails (e.g., version incompatibilities),
+            # return the class name as string for string-based bridge registration
+            class_name = auto_map_class.split(".")[-1]  # Extract class name from module.ClassName
+            return class_name
 
     return None
 
