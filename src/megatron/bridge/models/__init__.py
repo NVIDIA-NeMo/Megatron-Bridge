@@ -89,6 +89,10 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaModelProvider8B,
     NVIDIAMambaProvider8B,
 )
+from megatron.bridge.models.mistral import (
+    MistralModelProvider,
+    MistralSmall3ModelProvider24B,
+)
 from megatron.bridge.models.nemotron import (
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
@@ -248,6 +252,8 @@ __all__ = [
     "MambaProvider780M",
     "NVIDIAMambaHybridProvider8B",
     "NVIDIAMambaProvider8B",
+    "MistralModelProvider",
+    "MistralSmall3ModelProvider24B",
     # Nemotron Models
     "NemotronBridge",
     "NemotronModelProvider",
