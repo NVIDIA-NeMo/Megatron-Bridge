@@ -545,7 +545,7 @@ class TestAutoMappingWithPermute:
         with patch.object(mapping, "_mapping") as mock_delegate:
             mock_delegate.hf_to_megatron.return_value = torch.randn(8, 4)
             with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
-                result = mapping.hf_to_megatron(hf_weight, megatron_module)
+                mapping.hf_to_megatron(hf_weight, megatron_module)
 
             # Verify the tensor was transposed and made contiguous
             mock_delegate.hf_to_megatron.assert_called_once()
@@ -606,7 +606,7 @@ class TestAutoMappingWithPermute:
         with patch.object(mapping, "_mapping") as mock_delegate:
             mock_delegate.hf_to_megatron.return_value = torch.randn(4, 4)
             with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
-                result = mapping.hf_to_megatron(hf_weight, megatron_module)
+                mapping.hf_to_megatron(hf_weight, megatron_module)
 
             # Verify transpose happened before TP distribution
             mock_delegate.hf_to_megatron.assert_called_once()

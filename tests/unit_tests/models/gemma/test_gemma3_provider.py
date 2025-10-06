@@ -182,7 +182,7 @@ class TestGemma3ModelProvider:
                 patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3LanguageModelEmbedding") as mock_embedding,
                 patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3RotaryEmbedding"),
             ):
-                result = provider.provide()
+                provider.provide()
 
                 # Verify that custom embedding was NOT created
                 mock_embedding.assert_not_called()
@@ -437,7 +437,7 @@ class TestGemma3CustomComponents:
         with patch("megatron.bridge.models.gemma.gemma3_provider.RotaryEmbedding") as mock_rotary_embedding:
             mock_rotary_embedding.return_value = Mock()
 
-            embedding = Gemma3RotaryEmbedding(
+            Gemma3RotaryEmbedding(
                 rope_scaling=False,
                 rope_scaling_factor=8.0,
                 rotary_base=1_000_000,

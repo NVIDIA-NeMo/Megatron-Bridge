@@ -31,6 +31,10 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 @MegatronModelBridge.register_bridge(source=Gemma3ForCausalLM, target=GPTModel)
 class Gemma3ModelBridge(MegatronModelBridge):
+    """
+    Megatron Bridge for Gemma3.
+    """
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma3ModelProvider:
         hf_config = hf_pretrained.config
         # Precision config is stored in the VL Config
