@@ -13,14 +13,12 @@
 # limitations under the License.
 
 import copy
+import math
 from dataclasses import dataclass, field
 from functools import lru_cache
-import math
 from typing import Callable, Optional, Tuple, Union
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils import fusions
-from megatron.bridge.utils.import_utils import safe_import_from
+import torch
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.language_model_embedding import (
@@ -38,8 +36,11 @@ from megatron.core.transformer import (
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-import torch
 from torch import Tensor
+
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.utils import fusions
+from megatron.bridge.utils.import_utils import safe_import_from
 
 
 TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
@@ -50,10 +51,10 @@ TERowParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_
 TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
 
 
-
 @dataclass
 class Gemma3ModelProvider(GPTModelProvider):
     """Configuration and provider for Megatron Core Gemma3 models."""
+
     seq_length: int = 131_072
 
     # embedding
@@ -85,7 +86,9 @@ class Gemma3ModelProvider(GPTModelProvider):
     is_vision_language: bool = False
     flash_decode: bool = False
     gradient_accumulation_fusion: bool = False
-    transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(default_factory=lambda: gemma3_layer_spec)
+    transformer_layer_spec: Union[ModuleSpec, Callable[["Gemma3ModelProvider"], ModuleSpec]] = field(
+        default_factory=lambda: gemma3_layer_spec
+    )
     scatter_embedding_sequence_parallel: bool = True
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
     masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
@@ -115,7 +118,7 @@ class Gemma3ModelProvider(GPTModelProvider):
         model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
         self.rotary_base = (rotary_base_local, rotary_base_global)
         # Replace model's embedding and rope with customized ones
-        if hasattr(model, 'embedding'):
+        if hasattr(model, "embedding"):
             model.embedding = Gemma3LanguageModelEmbedding(
                 config=self,
                 vocab_size=self.vocab_size,
@@ -134,9 +137,10 @@ class Gemma3ModelProvider(GPTModelProvider):
             use_cpu_initialization=self.use_cpu_initialization,
             rotary_base_local=rotary_base_local,
         )
-        if hasattr(model, 'embedding') or hasattr(model, 'output_layer'):
+        if hasattr(model, "embedding") or hasattr(model, "output_layer"):
             model.setup_embeddings_and_output_layer()
         return model
+
 
 @dataclass
 class Gemma3ModelProvider1B(Gemma3ModelProvider):
@@ -171,6 +175,7 @@ class Gemma3ModelProvider4B(Gemma3ModelProvider):
     rope_scaling_factor: float = 8.0
     vocab_size: int = 262_208
 
+
 @dataclass
 class Gemma3ModelProvider12B(Gemma3ModelProvider):
     """Gemma3 12B config"""
@@ -203,6 +208,7 @@ class Gemma3ModelProvider27B(Gemma3ModelProvider):
     rope_scaling_factor: float = 8.0
     vocab_size: int = 262_208
 
+
 @torch.jit.script
 def gelu_impl(x):
     """OpenAI's gelu implementation."""
@@ -211,6 +217,7 @@ def gelu_impl(x):
 
 def openai_gelu(x):
     return gelu_impl(x)
+
 
 def gemma3_layer_spec(config) -> ModuleSpec:
     """Gemma3 custom layer spec."""
@@ -239,6 +246,7 @@ def gemma3_layer_spec(config) -> ModuleSpec:
             mlp_bda=get_bias_dropout_add,  # residual link
         ),
     )
+
 
 class Gemma3SelfAttention(SelfAttention):
     """Gemma3 self attention.
@@ -323,6 +331,7 @@ class Gemma3TEDotProductAttention(TEDotProductAttention):
             **kwargs,
         )
 
+
 class Gemma3LanguageModelEmbedding(LanguageModelEmbedding):
     """Gemma3 language token embedding.
 
@@ -383,6 +392,7 @@ def _is_local_attn_layer(
 ) -> bool:
     pattern_size = sum(layer_pattern)
     return layer_number % pattern_size != 0
+
 
 class TERowParallelLinearLayerNorm(TERowParallelLinear):
     """Modified From TERowParallelLinear with an additional Post-LN."""

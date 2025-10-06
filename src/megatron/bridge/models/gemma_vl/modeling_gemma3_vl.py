@@ -12,23 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import types
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from megatron.core.tensor_parallel.layers import ColumnParallelLinear
+from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.module import MegatronModule
+from torch import Tensor
 from transformers import AutoModel, Gemma3Model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
-from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.tensor_parallel.layers import ColumnParallelLinear
-from megatron.core.transformer import TransformerConfig
-from megatron.core.transformer.module import MegatronModule
-import torch
-from torch import Tensor
-import torch.nn as nn
-import torch.nn.functional as F
+
 
 TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
 
@@ -82,7 +81,7 @@ class Gemma3VLModel(MegatronModule):
                 )  # [decoder_seq_len, b, h_language]
 
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [b, decoder_seq_len, h_language]
-            
+
             if pixel_values is not None:
                 image_features = self.get_image_features(pixel_values)
 
@@ -100,21 +99,21 @@ class Gemma3VLModel(MegatronModule):
                     )
                 image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
                 inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
-            inputs_embeds = inputs_embeds.transpose(1, 0).contiguous() # (B, T, D) -> (T, B, D)
-        
+            inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
+
         attention_mask = self._compute_attention_mask(input_ids)
 
         outputs = self.language_model.forward(
             input_ids=None,
             position_ids=position_ids,
-            attention_mask=attention_mask, # (B, 1, T, T)
-            decoder_input=inputs_embeds, # (T, B, D)
-            labels=labels, # (B, T)
+            attention_mask=attention_mask,  # (B, 1, T, T)
+            decoder_input=inputs_embeds,  # (T, B, D)
+            labels=labels,  # (B, T)
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
         )
         return outputs
-    
+
     def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):
         """Freeze model modules.
 
@@ -134,14 +133,18 @@ class Gemma3VLModel(MegatronModule):
             # Vision model consists of patch_embed and blocks
             modules.append(self.vision_tower)
 
-        if freeze_vision_projection and hasattr(self, "multi_modal_projector") and self.multi_modal_projector is not None:
+        if (
+            freeze_vision_projection
+            and hasattr(self, "multi_modal_projector")
+            and self.multi_modal_projector is not None
+        ):
             # Vision projection is the merger module
             modules.append(self.multi_modal_projector)
 
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
-    
+
     def _compute_attention_mask(
         self,
         input_ids: torch.Tensor,
@@ -150,7 +153,7 @@ class Gemma3VLModel(MegatronModule):
             return None
         batch_size, seq_len = input_ids.shape
         causal_mask = torch.tril(torch.ones((batch_size, 1, seq_len, seq_len))).to(input_ids.device)
-        
+
         image_mask = input_ids == self.config.image_token_id
         padded_mask = F.pad(image_mask, (1, 0), value=0)
         boundary = padded_mask[:, 1:] > padded_mask[:, :-1]
@@ -188,6 +191,7 @@ class Gemma3VLMultimodalProjectorConfig(TransformerConfig):
     def configure_model(self) -> "Gemma3VLMultimodalProjector":
         """Get module"""
         return Gemma3VLMultimodalProjector(self)
+
 
 class Gemma3VLMultimodalProjector(MegatronModule):
     """Gemma3 VL multimodal projector"""

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import torch
 from transformers import Gemma3ForConditionalGeneration
 
@@ -23,10 +25,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
-import math
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
 @MegatronModelBridge.register_bridge(source=Gemma3ForConditionalGeneration, target=Gemma3VLModel)
@@ -55,7 +56,7 @@ class Gemma3VLBridge(MegatronModelBridge):
             layernorm_epsilon=text_config.rms_norm_eps,
             vocab_size=text_config.vocab_size,
             softmax_scale=1.0 / math.sqrt(text_config.query_pre_attn_scalar),
-            rope_scaling_factor=text_config.rope_scaling['factor'] if text_config.rope_scaling else 1.0,
+            rope_scaling_factor=text_config.rope_scaling["factor"] if text_config.rope_scaling else 1.0,
             # Vision configuration
             vision_config=vision_config,
             mm_tokens_per_image=hf_config.mm_tokens_per_image,
@@ -65,18 +66,17 @@ class Gemma3VLBridge(MegatronModelBridge):
             vision_start_token_id=getattr(hf_config, "vision_start_token_id", 255999),
             vision_end_token_id=getattr(hf_config, "vision_end_token_id", 256000),
             image_token_id=getattr(hf_config, "image_token_id", 151655),
-
             # Precision configuration
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
         )
-        
+
         provider.vision_projector_config.input_size = vision_config.hidden_size
         provider.vision_projector_config.hidden_size = text_config.hidden_size
 
         return provider
-    
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability

@@ -12,16 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.gemma import (
     Gemma3ModelProvider1B,
-    Gemma3ModelProvider4B,
-    Gemma3ModelProvider12B,
-    Gemma3ModelProvider27B,
 )
 from tests.functional_tests.utils import compare_provider_configs
 
@@ -33,8 +29,7 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
 ROOT_PATH: str = "/home/TestData/megatron_bridge/hf_home"
 
 HF_MODEL_ID_PATH_TO_MODEL_PROVIDER = {
-    hf_model_id: provider_class
-    for hf_model_id, provider_class in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()
+    hf_model_id: provider_class for hf_model_id, provider_class in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()
 }
 
 

@@ -12,18 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, patch
 import math
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import GenerationConfig
-from transformers import SiglipVisionConfig
+from transformers import GenerationConfig, SiglipVisionConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
 @pytest.fixture
@@ -68,14 +67,14 @@ def mock_hf_config(mock_text_config, mock_vision_config):
     config.text_config = mock_text_config
     config.vision_config = mock_vision_config
     config.mm_tokens_per_image = 256
-    
+
     # VL-specific token IDs
     config.bos_token_id = 2
     config.eos_token_id = 1
     config.vision_start_token_id = 255999
     config.vision_end_token_id = 256000
     config.image_token_id = 262144
-    
+
     return config
 
 
@@ -503,9 +502,9 @@ class TestGemma3VLBridgeCompatibility:
         for head_dim in test_head_dims:
             mock_hf_pretrained.config.text_config.head_dim = head_dim
             mock_hf_pretrained.config.text_config.query_pre_attn_scalar = head_dim
-            
+
             provider = gemma3_vl_bridge.provider_bridge(mock_hf_pretrained)
-            
+
             assert provider.kv_channels == head_dim
             expected_scale = 1.0 / math.sqrt(head_dim)
             assert provider.softmax_scale == expected_scale

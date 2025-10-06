@@ -18,48 +18,40 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import Gemma3ForConditionalGeneration, GemmaTokenizer, SiglipVisionConfig, Gemma3Config
+from transformers import Gemma3Config, Gemma3ForConditionalGeneration, GemmaTokenizer
 
 
 # Gemma3 VL toy model configuration based on typical Gemma3 VL structure
 HF_GEMMA3_VL_TOY_MODEL_CONFIG = {
-  "architectures": [
-    "Gemma3ForConditionalGeneration"
-  ],
-  "boi_token_index": 255999,
-  "eoi_token_index": 256000,
-  "eos_token_id": [
-    1,
-    106
-  ],
-  "image_token_index": 262144,
-  "initializer_range": 0.02,
-  "mm_tokens_per_image": 256,
-  "model_type": "gemma3",
-  "text_config": {
-    "hidden_size": 512,
-    "intermediate_size": 10240,
-    "model_type": "gemma3_text",
-    "num_hidden_layers": 8,
-    "rope_scaling": {
-      "factor": 8.0,
-      "rope_type": "linear"
+    "architectures": ["Gemma3ForConditionalGeneration"],
+    "boi_token_index": 255999,
+    "eoi_token_index": 256000,
+    "eos_token_id": [1, 106],
+    "image_token_index": 262144,
+    "initializer_range": 0.02,
+    "mm_tokens_per_image": 256,
+    "model_type": "gemma3",
+    "text_config": {
+        "hidden_size": 512,
+        "intermediate_size": 10240,
+        "model_type": "gemma3_text",
+        "num_hidden_layers": 8,
+        "rope_scaling": {"factor": 8.0, "rope_type": "linear"},
+        "sliding_window": 1024,
+        "num_attention_heads": 16,
     },
-    "sliding_window": 1024,
-    "num_attention_heads": 16
-  },
-  "torch_dtype": "bfloat16",
-  "transformers_version": "4.50.0.dev0",
-  "vision_config": {
-    "hidden_size": 256,
-    "image_size": 896,
-    "intermediate_size": 1024,
-    "model_type": "siglip_vision_model",
-    "num_attention_heads": 16,
-    "num_hidden_layers": 8,
-    "patch_size": 14,
-    "vision_use_head": False
-  }
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.50.0.dev0",
+    "vision_config": {
+        "hidden_size": 256,
+        "image_size": 896,
+        "intermediate_size": 1024,
+        "model_type": "siglip_vision_model",
+        "num_attention_heads": 16,
+        "num_hidden_layers": 8,
+        "patch_size": 14,
+        "vision_use_head": False,
+    },
 }
 
 
@@ -88,23 +80,20 @@ class TestGemma3VLConversion:
         # This is a simplified approach for testing purposes
         config_dict = HF_GEMMA3_VL_TOY_MODEL_CONFIG.copy()
 
-
         # Try to create the model if Gemma3ForConditionalGeneration is available
-        from transformers import AutoConfig, AutoModelForCausalLM
-        
+
         # Create config object
         config = Gemma3Config(**config_dict)
         config.torch_dtype = torch.bfloat16
 
         # Create model with random weights and convert to bfloat16
-        model = Gemma3ForConditionalGeneration(config)            
+        model = Gemma3ForConditionalGeneration(config)
         model = model.bfloat16()
 
         # Debug: Check model dtype before saving
         for name, param in model.named_parameters():
             print(f"Before save - {name}: {param.dtype}")
             break  # Just check the first parameter
-
 
         # Download and save tokenizer from a reference Gemma model
         # We use a Gemma model for tokenizer artifacts since they should be compatible
@@ -233,9 +222,7 @@ class TestGemma3VLConversion:
             str(pp),
         ]
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
         print(cmd)
 
         # Check that the conversion completed successfully
@@ -269,4 +256,6 @@ class TestGemma3VLConversion:
         assert "text_config" in saved_config, "VL model should have text_config"
         assert "vision_config" in saved_config, "VL model should have vision_config"
         assert saved_config["text_config"]["hidden_size"] == 512, "Hidden size should match toy config"
-        assert saved_config["text_config"]["num_attention_heads"] == 16, "Number of attention heads should match toy config"
+        assert saved_config["text_config"]["num_attention_heads"] == 16, (
+            "Number of attention heads should match toy config"
+        )

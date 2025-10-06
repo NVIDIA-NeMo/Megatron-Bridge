@@ -20,19 +20,19 @@ import torch
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gemma.gemma3_provider import (
+    Gemma3LanguageModelEmbedding,
     Gemma3ModelProvider,
     Gemma3ModelProvider1B,
     Gemma3ModelProvider4B,
     Gemma3ModelProvider12B,
     Gemma3ModelProvider27B,
-    openai_gelu,
-    gelu_impl,
-    _is_local_attn_layer,
+    Gemma3RotaryEmbedding,
     Gemma3SelfAttention,
     Gemma3TEDotProductAttention,
-    Gemma3LanguageModelEmbedding,
-    Gemma3RotaryEmbedding,
     TERowParallelLinearLayerNorm,
+    _is_local_attn_layer,
+    gelu_impl,
+    openai_gelu,
 )
 
 
@@ -124,11 +124,11 @@ class TestGemma3ModelProvider:
             # Verify that custom rotary embedding was created
             mock_rotary_embedding.assert_called_once()
             rotary_call_args = mock_rotary_embedding.call_args[1]
-            assert rotary_call_args['kv_channels'] == provider.kv_channels
-            assert rotary_call_args['rotary_base'] == 1_000_000  # global base
-            assert rotary_call_args['rope_scaling'] is False
-            assert rotary_call_args['rope_scaling_factor'] == provider.rope_scaling_factor
-            assert rotary_call_args['rotary_base_local'] == 10_000
+            assert rotary_call_args["kv_channels"] == provider.kv_channels
+            assert rotary_call_args["rotary_base"] == 1_000_000  # global base
+            assert rotary_call_args["rope_scaling"] is False
+            assert rotary_call_args["rope_scaling_factor"] == provider.rope_scaling_factor
+            assert rotary_call_args["rotary_base_local"] == 10_000
 
             # Verify setup method was called
             mock_model.setup_embeddings_and_output_layer.assert_called_once()
@@ -140,7 +140,7 @@ class TestGemma3ModelProvider:
             hidden_size=1152,
             num_attention_heads=4,
             vocab_size=262144,  # Add required vocab_size
-            kv_channels=256,    # Add required kv_channels
+            kv_channels=256,  # Add required kv_channels
         )
 
         # Check initial rotary_base
@@ -152,8 +152,10 @@ class TestGemma3ModelProvider:
             mock_model.setup_embeddings_and_output_layer = Mock()
             mock_super_provide.return_value = mock_model
 
-            with patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3LanguageModelEmbedding"), \
-                 patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3RotaryEmbedding"):
+            with (
+                patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3LanguageModelEmbedding"),
+                patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3RotaryEmbedding"),
+            ):
                 provider.provide()
 
                 # Verify rotary_base was temporarily set to local value during super().provide()
@@ -172,12 +174,14 @@ class TestGemma3ModelProvider:
             hidden_size=1152,
             num_attention_heads=4,
             vocab_size=262144,  # Add required vocab_size
-            kv_channels=256,    # Add required kv_channels
+            kv_channels=256,  # Add required kv_channels
         )
 
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            with patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3LanguageModelEmbedding") as mock_embedding, \
-                 patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3RotaryEmbedding"):
+            with (
+                patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3LanguageModelEmbedding") as mock_embedding,
+                patch("megatron.bridge.models.gemma.gemma3_provider.Gemma3RotaryEmbedding"),
+            ):
                 result = provider.provide()
 
                 # Verify that custom embedding was NOT created
@@ -298,7 +302,7 @@ class TestGemma3ModelProvider27B:
     def test_gemma3_27b_softmax_scale_calculation(self):
         """Test that 27B model has correct softmax scale calculation."""
         provider = Gemma3ModelProvider27B()
-        
+
         # Verify the softmax scale calculation: (5376 // 32)^(-0.5) = 168^(-0.5)
         expected_scale = 1.0 / math.sqrt(168)
         assert abs(provider.softmax_scale - expected_scale) < 1e-10
@@ -317,13 +321,13 @@ class TestGemma3ActivationFunctions:
         # Test with some known values
         x = torch.tensor([0.0, 1.0, -1.0, 2.0])
         result = gelu_impl(x)
-        
+
         # GELU(0) should be 0
         assert abs(result[0].item()) < 1e-6
-        
+
         # GELU should be approximately x for large positive x
         assert result[3].item() > 1.9  # GELU(2) ≈ 2
-        
+
         # GELU should be close to 0 for large negative x
         assert abs(result[2].item()) < 0.2  # GELU(-1) ≈ -0.16 (more lenient)
 
@@ -332,7 +336,7 @@ class TestGemma3ActivationFunctions:
         x = torch.tensor([0.5, -0.5])
         result1 = openai_gelu(x)
         result2 = gelu_impl(x)
-        
+
         # Should produce the same results
         assert torch.allclose(result1, result2)
 
@@ -344,19 +348,19 @@ class TestGemma3UtilityFunctions:
         """Test the _is_local_attn_layer function."""
         # Test with default pattern (5, 1) - sum = 6
         pattern = (5, 1)
-        
+
         # Layer 0: 0 % 6 = 0, should be global (False)
         assert _is_local_attn_layer(0, pattern) is False
-        
+
         # Layer 1: 1 % 6 = 1, should be local (True)
         assert _is_local_attn_layer(1, pattern) is True
-        
+
         # Layer 5: 5 % 6 = 5, should be local (True)
         assert _is_local_attn_layer(5, pattern) is True
-        
+
         # Layer 6: 6 % 6 = 0, should be global (False)
         assert _is_local_attn_layer(6, pattern) is False
-        
+
         # Layer 12: 12 % 6 = 0, should be global (False)
         assert _is_local_attn_layer(12, pattern) is False
 
@@ -364,17 +368,17 @@ class TestGemma3UtilityFunctions:
         """Test _is_local_attn_layer with different pattern."""
         # Test with pattern (3, 2) - sum = 5
         pattern = (3, 2)
-        
+
         # Layer 0: 0 % 5 = 0, should be global (False)
         assert _is_local_attn_layer(0, pattern) is False
-        
+
         # Layer 1-3: should be local (True)
         for i in range(1, 4):
             assert _is_local_attn_layer(i, pattern) is True
-        
+
         # Layer 4: 4 % 5 = 4, should be local (True)
         assert _is_local_attn_layer(4, pattern) is True
-        
+
         # Layer 5: 5 % 5 = 0, should be global (False)
         assert _is_local_attn_layer(5, pattern) is False
 
@@ -387,6 +391,7 @@ class TestGemma3CustomComponents:
         # This is a basic test since the actual functionality requires complex mocking
         # The main logic is in the forward method which switches rope embeddings
         from megatron.core.transformer.attention import SelfAttention
+
         assert issubclass(Gemma3SelfAttention, SelfAttention)  # Check it inherits from SelfAttention
 
     def test_gemma3_te_dot_product_attention_initialization(self):
@@ -401,19 +406,17 @@ class TestGemma3CustomComponents:
         # Create a simple test without complex initialization
         mock_config = Mock()
         mock_config.hidden_size = 3
-        
+
         # Create a minimal embedding instance
         embedding = Gemma3LanguageModelEmbedding.__new__(Gemma3LanguageModelEmbedding)
         embedding.config = mock_config
-        
+
         # Mock the parent forward method
-        with patch.object(Gemma3LanguageModelEmbedding.__bases__[0], 'forward', 
-                         return_value=torch.tensor([[1.0, 2.0, 3.0]])):
-            result = embedding.forward(
-                input_ids=torch.tensor([[1]]),
-                position_ids=torch.tensor([[0]])
-            )
-            
+        with patch.object(
+            Gemma3LanguageModelEmbedding.__bases__[0], "forward", return_value=torch.tensor([[1.0, 2.0, 3.0]])
+        ):
+            result = embedding.forward(input_ids=torch.tensor([[1]]), position_ids=torch.tensor([[0]]))
+
             # Should apply scaling: embeddings * sqrt(hidden_size)
             expected_scale = math.sqrt(3)
             expected = torch.tensor([[1.0, 2.0, 3.0]]) * expected_scale
@@ -429,11 +432,11 @@ class TestGemma3CustomComponents:
                     kv_channels=256,
                     rotary_percent=1.0,  # Add required parameter
                 )
-        
+
         # Test successful initialization with proper mocking
         with patch("megatron.bridge.models.gemma.gemma3_provider.RotaryEmbedding") as mock_rotary_embedding:
             mock_rotary_embedding.return_value = Mock()
-            
+
             embedding = Gemma3RotaryEmbedding(
                 rope_scaling=False,
                 rope_scaling_factor=8.0,
@@ -442,7 +445,7 @@ class TestGemma3CustomComponents:
                 kv_channels=256,
                 rotary_percent=1.0,  # Add required parameter
             )
-            
+
             # Verify that RotaryEmbedding was called for local rope
             assert mock_rotary_embedding.call_count >= 1
 
@@ -451,20 +454,21 @@ class TestGemma3CustomComponents:
         # Test that the class exists and can be imported
         assert TERowParallelLinearLayerNorm is not None
         assert callable(TERowParallelLinearLayerNorm)
-        
+
         # Test forward method logic with minimal mocking
         layer = TERowParallelLinearLayerNorm.__new__(TERowParallelLinearLayerNorm)
         layer.post_layernorm = Mock(return_value=torch.randn(2, 512))
-        
+
         # Mock the super().forward method
-        with patch.object(TERowParallelLinearLayerNorm.__bases__[0], 'forward', 
-                         return_value=(torch.randn(2, 512), None)) as mock_super_forward:
+        with patch.object(
+            TERowParallelLinearLayerNorm.__bases__[0], "forward", return_value=(torch.randn(2, 512), None)
+        ) as mock_super_forward:
             x = torch.randn(2, 1024)
             output, bias = layer.forward(x)
-            
+
             # Verify super().forward was called
             mock_super_forward.assert_called_once_with(x)
-            
+
             # Verify post_layernorm was called
             layer.post_layernorm.assert_called_once()
 
@@ -490,14 +494,14 @@ class TestGemma3ModelProviderIntegration:
         # 1B is not VL
         provider_1b = Gemma3ModelProvider1B()
         assert provider_1b.is_vision_language is False
-        
+
         # 4B, 12B, 27B are VL models
         vl_providers = [
             Gemma3ModelProvider4B(),
             Gemma3ModelProvider12B(),
             Gemma3ModelProvider27B(),
         ]
-        
+
         for provider in vl_providers:
             assert provider.is_vision_language is True
 
@@ -506,14 +510,14 @@ class TestGemma3ModelProviderIntegration:
         # 1B has no rope scaling
         provider_1b = Gemma3ModelProvider1B()
         assert provider_1b.rope_scaling_factor == 1.0
-        
+
         # Larger models have rope scaling
         scaled_providers = [
             Gemma3ModelProvider4B(),
             Gemma3ModelProvider12B(),
             Gemma3ModelProvider27B(),
         ]
-        
+
         for provider in scaled_providers:
             assert provider.rope_scaling_factor == 8.0
 
@@ -522,14 +526,14 @@ class TestGemma3ModelProviderIntegration:
         # 1B has smaller window
         provider_1b = Gemma3ModelProvider1B()
         assert provider_1b.window_size == 512
-        
+
         # Larger models have bigger window
         larger_providers = [
             Gemma3ModelProvider4B(),
             Gemma3ModelProvider12B(),
             Gemma3ModelProvider27B(),
         ]
-        
+
         for provider in larger_providers:
             assert provider.window_size == 1024
 
@@ -541,10 +545,10 @@ class TestGemma3ModelProviderIntegration:
             Gemma3ModelProvider4B(),
             Gemma3ModelProvider12B(),
         ]
-        
+
         for provider in standard_providers:
             assert provider.kv_channels == 256
-        
+
         # 27B uses different kv_channels
         provider_27b = Gemma3ModelProvider27B()
         assert provider_27b.kv_channels == 128
@@ -554,14 +558,14 @@ class TestGemma3ModelProviderIntegration:
         # 1B has different vocab size
         provider_1b = Gemma3ModelProvider1B()
         assert provider_1b.vocab_size == 262_144
-        
+
         # Larger models have same vocab size
         larger_providers = [
             Gemma3ModelProvider4B(),
             Gemma3ModelProvider12B(),
             Gemma3ModelProvider27B(),
         ]
-        
+
         for provider in larger_providers:
             assert provider.vocab_size == 262_208
 
@@ -573,27 +577,27 @@ class TestGemma3ModelProviderIntegration:
             Gemma3ModelProvider12B(),
             Gemma3ModelProvider27B(),
         ]
-        
+
         for provider in providers:
             assert isinstance(provider, Gemma3ModelProvider)
 
     def test_softmax_scale_configuration(self):
         """Test features unique to the 27B model."""
         provider_27b = Gemma3ModelProvider27B()
-        
+
         # 27B has unique softmax_scale
-        assert hasattr(provider_27b, 'softmax_scale')
+        assert hasattr(provider_27b, "softmax_scale")
         expected_scale = 1.0 / math.sqrt(168)
         assert abs(provider_27b.softmax_scale - expected_scale) < 1e-10
-        
+
         # Other models have this attribute set to 1.0 / math.sqrt(256)
         other_providers = [
             Gemma3ModelProvider1B(),
             Gemma3ModelProvider4B(),
             Gemma3ModelProvider12B(),
         ]
-        
+
         for provider in other_providers:
-            assert hasattr(provider, 'softmax_scale')
+            assert hasattr(provider, "softmax_scale")
             expected_scale = 1.0 / math.sqrt(256)
             assert abs(provider.softmax_scale - expected_scale) < 1e-10

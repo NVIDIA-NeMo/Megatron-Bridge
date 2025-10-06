@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import Gemma3TextConfig, Gemma3ForCausalLM, GemmaTokenizer
+from transformers import Gemma3ForCausalLM, Gemma3TextConfig, GemmaTokenizer
 
 
 HF_GEMMA3_TOY_MODEL_CONFIG = {

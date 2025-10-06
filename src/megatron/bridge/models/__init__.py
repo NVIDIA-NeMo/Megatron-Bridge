@@ -44,14 +44,14 @@ from megatron.bridge.models.gemma import (
     Gemma2ModelProvider2B,
     Gemma2ModelProvider9B,
     Gemma2ModelProvider27B,
-    GemmaModelProvider,
-    GemmaModelProvider2B,
-    GemmaModelProvider7B,
     Gemma3ModelProvider,
     Gemma3ModelProvider1B,
     Gemma3ModelProvider4B,
     Gemma3ModelProvider12B,
     Gemma3ModelProvider27B,
+    GemmaModelProvider,
+    GemmaModelProvider2B,
+    GemmaModelProvider7B,
 )
 from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,

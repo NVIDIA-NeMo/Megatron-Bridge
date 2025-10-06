@@ -13,17 +13,20 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
-from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
+
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from transformers import SiglipVisionConfig, Gemma3TextConfig
-from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLMultimodalProjectorConfig
+from transformers import SiglipVisionConfig
+
+from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
+from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel, Gemma3VLMultimodalProjectorConfig
+
 
 @dataclass
 class Gemma3VLModelProvider(Gemma3ModelProvider):
     """
     Base model provider for Gemma VL Models.
     """
+
     # VL models shouldn't scatter embeddings across sequence parallel regions because
     # the vision embeddings are going to be inserted into the language embeddings.
     scatter_embedding_sequence_parallel: bool = False
@@ -31,7 +34,9 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
     # Vision configuration
     vision_config: SiglipVisionConfig = field(default_factory=SiglipVisionConfig)
     # We need to provide the HF text config in order to initialize the Gemma3MultiModalProjector
-    vision_projector_config: Gemma3VLMultimodalProjectorConfig = field(default_factory=Gemma3VLMultimodalProjectorConfig)
+    vision_projector_config: Gemma3VLMultimodalProjectorConfig = field(
+        default_factory=Gemma3VLMultimodalProjectorConfig
+    )
     mm_tokens_per_image: int = 256
 
     # Token IDs
@@ -58,6 +63,6 @@ class Gemma3VLModelProvider(Gemma3ModelProvider):
             )
 
         return model
-    
+
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)

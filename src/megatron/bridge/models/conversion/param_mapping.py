@@ -1096,14 +1096,9 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             )
         cls._MODULE_TYPE_REGISTRY[parallelism_type].add(module_name)
 
-    def __init__(
-        self, 
-        megatron_param: str, 
-        hf_param: str, 
-        permute_dims: Optional[Tuple[int, ...]] = None
-    ):
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         """Initialize TP-aware mapping.
-        
+
         Args:
             megatron_param (str): Megatron parameter name pattern.
             hf_param (str): HuggingFace parameter name pattern.
@@ -1115,7 +1110,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Cache for detected parallelism type and delegate mapping
         self._detected_type: Optional[str] = None
         self._mapping: Optional[MegatronParamMapping[torch.Tensor]] = None
-        
+
         # Permutation settings
         self.permute_dims = permute_dims
 
@@ -1197,7 +1192,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Apply permutation if specified (before distribution)
         if self.permute_dims is not None and self.tp_rank == 0:
             hf_weights = torch.permute(hf_weights, self.permute_dims).contiguous()
-        
+
         # Detect type and create delegate on first use
         if self._mapping is None:
             self._detected_type = self._detect_parallelism_type(megatron_module)
@@ -1226,19 +1221,19 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
         result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
-        
+
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
             # Get the tensor from the result dict
             key = list(result.keys())[0]
             tensor = result[key]
-            
+
             # Apply reverse permutation (same permutation applied again) and make contiguous
             permuted_tensor = torch.permute(tensor, self.permute_dims).contiguous()
-            
+
             # Update the result with the correct HF param name
             result = {str(self.hf_param): permuted_tensor}
-        
+
         return result
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
