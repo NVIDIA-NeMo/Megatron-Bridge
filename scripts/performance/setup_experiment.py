@@ -120,17 +120,21 @@ if __name__ == "__main__":
     if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
         if agrs.compute_dtype == "bf16" and not args.use_tokendrop:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" # OOM if not set
+    del_cudnn_ln = False
     if args.gpu.lower() in ["h100"]:
-        del_cudnn_ln = False
         if args.model_name == "llama31" and args.model_size == "405b":
             del_cudnn_ln = True
         elif args.model_name == "llama3" and args.model_size == "70b" and args.compute_dtype == "bf16":
             del_cudnn_ln = True
-        if del_cudnn_ln:
-            if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
-                executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
-            if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
-                executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
+    if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["b200"]:
+        del_cudnn_ln = True
+    if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b"] and args.gpu.lower() in ["gb200"]:
+        del_cudnn_ln = True
+    if del_cudnn_ln:
+        if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
+        if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
     target_script_args = [
         "--config_file",
