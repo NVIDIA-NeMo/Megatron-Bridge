@@ -66,7 +66,7 @@ class Gemma3VLModel(MegatronModule):
         position_ids: Optional[torch.LongTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pixel_values: Optional[torch.Tensor] = None,
-        labels: Tensor = None,
+        labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
         *,
         loss_mask: Optional[Tensor] = None,

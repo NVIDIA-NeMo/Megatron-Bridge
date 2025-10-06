@@ -22,7 +22,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
-    TransposeMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
@@ -115,11 +114,10 @@ class Gemma3VLBridge(MegatronModelBridge):
                     megatron_param="vision_tower.**",
                     hf_param="vision_tower.**",
                 ),
-                TransposeMapping(
+                AutoMapping(
                     megatron_param="multi_modal_projector.proj.weight",
                     hf_param="multi_modal_projector.mm_input_projection_weight",
-                    dims=(1, 0),
-                    force_contiguous=True,
+                    permute_dims=(1, 0),
                 ),
                 # QKV: Combine separate Q, K, V matrices into single QKV matrix
                 QKVMapping(
