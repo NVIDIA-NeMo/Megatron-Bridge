@@ -142,8 +142,19 @@ MIXED_PRECISION_RECIPES: dict[str, Callable[[], "MixedPrecisionConfig"]] = {}
 
 
 def register(func: Callable[[], "MixedPrecisionConfig"]):
-    """Decorator that registers a mixed-precision recipe factory by its function name."""
-    MIXED_PRECISION_RECIPES[func.__name__] = func
+    """Decorator that registers a mixed-precision recipe factory by its function name.
+
+    Automatically registers both underscore and hyphen versions (e.g., 'bf16_mixed' and 'bf16-mixed')
+    to simplify migrating from NeMo2.
+    """
+    name = func.__name__
+    MIXED_PRECISION_RECIPES[name] = func
+
+    # Also register hyphen version if the name contains underscores
+    if "_" in name:
+        hyphen_name = name.replace("_", "-")
+        MIXED_PRECISION_RECIPES[hyphen_name] = func
+
     return func
 
 
@@ -367,15 +378,17 @@ def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
-def get_mixed_precision_config(name: str) -> MixedPrecisionConfig:
+def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisionConfig:
     """Return a :class:`MixedPrecisionConfig` for *name*.
 
     Args:
-        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES`.
+        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES` or a :class:`MixedPrecisionConfig` instance.
 
     Raises:
         ValueError: If *name* is not a known recipe.
     """
+    if isinstance(name, MixedPrecisionConfig):
+        return name
     try:
         return MIXED_PRECISION_RECIPES[name]()
     except KeyError as err:

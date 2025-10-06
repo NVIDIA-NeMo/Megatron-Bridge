@@ -240,6 +240,11 @@ def build_and_load_model(
     )
     from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
     from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
+    from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
+
+    if has_modelopt_state(checkpoint_path):
+        if hasattr(model_cfg, "restore_modelopt_state"):
+            model_cfg.restore_modelopt_state = True
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
@@ -281,6 +286,13 @@ def build_and_load_model(
                 model = _call_model_provider(model_cfg)
         else:
             model = _call_model_provider(model_cfg)
+
+        if getattr(model_cfg, "restore_modelopt_state", False):
+            from megatron.bridge.training.post_training.checkpointing import (
+                load_modelopt_state,
+            )
+
+            load_modelopt_state(model, checkpoint_path)
 
         maybe_state_dict = _load_model_weights_from_checkpoint(
             checkpoint_path, model, return_state_dict=return_state_dict
@@ -382,7 +394,7 @@ def save_megatron_model(
         >>> save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
-        ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+        ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
         ... )
 
     Note:
