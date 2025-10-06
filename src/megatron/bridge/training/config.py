@@ -420,6 +420,28 @@ class SchedulerConfig:
         if self.override_opt_param_scheduler:
             assert not self.use_checkpoint_opt_param_scheduler, "both override and use-checkpoint are set."
 
+        # Validate mutual exclusivity between iteration-based and sample-based scheduler fields
+        has_iter_fields = (
+            self.lr_decay_iters is not None or self.lr_warmup_iters != 0 or self.lr_wsd_decay_iters is not None
+        )
+        has_sample_fields = (
+            self.lr_decay_samples is not None or self.lr_warmup_samples != 0 or self.lr_wsd_decay_samples is not None
+        )
+
+        assert not (has_iter_fields and has_sample_fields), (
+            f"Cannot mix iteration-based and sample-based scheduler fields. "
+            f"Found iteration fields: lr_decay_iters={self.lr_decay_iters}, lr_warmup_iters={self.lr_warmup_iters}, lr_wsd_decay_iters={self.lr_wsd_decay_iters}. "
+            f"Found sample fields: lr_decay_samples={self.lr_decay_samples}, lr_warmup_samples={self.lr_warmup_samples}, lr_wsd_decay_samples={self.lr_wsd_decay_samples}. "
+            f"Use either iteration fields OR sample fields, not both."
+        )
+
+        # Validate mutual exclusivity between lr_warmup_fraction and specific warmup fields
+        if self.lr_warmup_fraction is not None:
+            assert self.lr_warmup_iters == 0 and self.lr_warmup_samples == 0, (
+                f"Cannot specify lr_warmup_fraction={self.lr_warmup_fraction} with lr_warmup_iters={self.lr_warmup_iters} or lr_warmup_samples={self.lr_warmup_samples}. "
+                f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
+            )
+
 
 @dataclass(kw_only=True)
 class TrainingConfig:
@@ -520,14 +542,11 @@ class TrainingConfig:
         has_train_iters = self.train_iters is not None
         has_train_samples = self.train_samples is not None
 
-        if not (has_train_iters or has_train_samples):
-            raise ValueError("Either train_iters or train_samples must be provided")
-        if has_train_iters and has_train_samples:
-            raise ValueError("Cannot specify both train_iters and train_samples")
+        assert has_train_iters or has_train_samples, "Either train_iters or train_samples must be provided"
+        assert not (has_train_iters and has_train_samples), "Cannot specify both train_iters and train_samples"
         if has_train_samples:
             assert self.train_samples > 0, "train_samples must be positive"
-            if self.rampup_batch_size is not None:
-                raise ValueError("Batch size rampup not supported with sample-based training yet")
+            assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
 
             # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
             self.train_iters = self.train_samples // self.global_batch_size
@@ -1204,20 +1223,26 @@ class ConfigContainer(Container):
 
         if has_train_samples:
             # Sample-based training validation
-            if self.scheduler.lr_decay_iters is not None:
-                raise ValueError("Use lr_decay_samples for sample-based training, not lr_decay_iters")
-            if self.scheduler.lr_warmup_iters != 0:
-                raise ValueError("Use lr_warmup_samples for sample-based training, not lr_warmup_iters")
-            if self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_samples != 0:
-                raise ValueError("Can only specify one of lr_warmup_fraction or lr_warmup_samples")
+            assert self.scheduler.lr_decay_iters is None, (
+                "Use lr_decay_samples for sample-based training, not lr_decay_iters"
+            )
+            assert self.scheduler.lr_warmup_iters == 0, (
+                "Use lr_warmup_samples for sample-based training, not lr_warmup_iters"
+            )
+            assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_samples != 0), (
+                "Can only specify one of lr_warmup_fraction or lr_warmup_samples"
+            )
         else:
             # Iteration-based training validation
-            if self.scheduler.lr_decay_samples is not None:
-                raise ValueError("Use lr_decay_iters for iteration-based training, not lr_decay_samples")
-            if self.scheduler.lr_warmup_samples != 0:
-                raise ValueError("Use lr_warmup_iters for iteration-based training, not lr_warmup_samples")
-            if self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_iters != 0:
-                raise ValueError("Can only specify one of lr_warmup_fraction or lr_warmup_iters")
+            assert self.scheduler.lr_decay_samples is None, (
+                "Use lr_decay_iters for iteration-based training, not lr_decay_samples"
+            )
+            assert self.scheduler.lr_warmup_samples == 0, (
+                "Use lr_warmup_iters for iteration-based training, not lr_warmup_samples"
+            )
+            assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_iters != 0), (
+                "Can only specify one of lr_warmup_fraction or lr_warmup_iters"
+            )
 
     def _calculate_scheduler_steps(self) -> None:
         """Calculate scheduler steps for both iteration-based and sample-based training."""

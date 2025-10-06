@@ -608,12 +608,12 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_scheduler_lr_warmup_steps_fraction_precedence(self, monkeypatch):
-        """Test `lr_warmup_fraction` takes precedence over `lr_warmup_iters`."""
+    def test_scheduler_lr_warmup_fraction_and_iters_mutual_exclusivity(self, monkeypatch):
+        """Test that lr_warmup_fraction and lr_warmup_iters cannot both be specified."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=1000, global_batch_size=10)
         lr_warmup_fraction = 0.05
-        lr_warmup_iters = 50  # This should be ignored when lr_warmup_fraction is set
+        lr_warmup_iters = 50  # This should not be allowed with lr_warmup_fraction
         sched_cfg = create_test_scheduler_config(
             lr_warmup_fraction=lr_warmup_fraction, lr_warmup_iters=lr_warmup_iters
         )
@@ -621,8 +621,8 @@ class TestConfigContainerValidation:
             world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
         )
         try:
-            # This should fail validation due to mutual exclusivity
-            with pytest.raises(ValueError, match="Can only specify one of lr_warmup_fraction or lr_warmup_iters"):
+            # This should fail validation due to mutual exclusivity at scheduler finalize level
+            with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.05 with lr_warmup_iters=50"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1836,7 +1836,7 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(ValueError, match="Cannot specify both train_iters and train_samples"):
+            with pytest.raises(AssertionError, match="Cannot specify both train_iters and train_samples"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1852,7 +1852,7 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(ValueError, match="Either train_iters or train_samples must be provided"):
+            with pytest.raises(AssertionError, match="Either train_iters or train_samples must be provided"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1868,7 +1868,9 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(ValueError, match="Use lr_decay_samples for sample-based training, not lr_decay_iters"):
+            with pytest.raises(
+                AssertionError, match="Use lr_decay_samples for sample-based training, not lr_decay_iters"
+            ):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1885,7 +1887,7 @@ class TestSampleBasedTraining:
 
         try:
             with pytest.raises(
-                ValueError, match="Use lr_decay_iters for iteration-based training, not lr_decay_samples"
+                AssertionError, match="Use lr_decay_iters for iteration-based training, not lr_decay_samples"
             ):
                 container.validate()
         finally:
@@ -1905,7 +1907,10 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(ValueError, match="Can only specify one of lr_warmup_fraction or lr_warmup_samples"):
+            # This should now fail at scheduler finalize level with detailed field values
+            with pytest.raises(
+                AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"
+            ):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1920,7 +1925,7 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(ValueError, match="Batch size rampup not supported with sample-based training yet"):
+            with pytest.raises(AssertionError, match="Batch size rampup not supported with sample-based training yet"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -2014,3 +2019,34 @@ class TestSampleBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws1, cfg_mod1)
             restore_get_world_size_safe(og_ws2, cfg_mod2)
+
+    def test_scheduler_field_mixing_validation(self):
+        """Test that mixing iteration-based and sample-based scheduler fields fails in scheduler finalize."""
+        # This should fail at the SchedulerConfig.finalize() level, before cross-validation
+        sched_cfg = create_test_scheduler_config(
+            lr_decay_iters=100,  # iteration-based
+            lr_decay_samples=1000,  # sample-based - mixing not allowed
+        )
+
+        with pytest.raises(AssertionError, match="Cannot mix iteration-based and sample-based scheduler fields"):
+            sched_cfg.finalize()
+
+    def test_scheduler_warmup_fraction_with_iters_validation(self):
+        """Test that lr_warmup_fraction with lr_warmup_iters fails in scheduler finalize."""
+        sched_cfg = create_test_scheduler_config(
+            lr_warmup_fraction=0.1,
+            lr_warmup_iters=100,  # Should not be mixed with lr_warmup_fraction
+        )
+
+        with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with lr_warmup_iters=100"):
+            sched_cfg.finalize()
+
+    def test_scheduler_warmup_fraction_with_samples_validation(self):
+        """Test that lr_warmup_fraction with lr_warmup_samples fails in scheduler finalize."""
+        sched_cfg = create_test_scheduler_config(
+            lr_warmup_fraction=0.1,
+            lr_warmup_samples=1000,  # Should not be mixed with lr_warmup_fraction
+        )
+
+        with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"):
+            sched_cfg.finalize()
