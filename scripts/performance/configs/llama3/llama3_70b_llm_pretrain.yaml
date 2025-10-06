@@ -76,12 +76,12 @@ perf_matrix:
         pp: 8
         cp: 1
   b200:
-    num_gpus_32:
+    num_gpus_64:
       common:
         num_gpus_per_node: 8
         seq_length: 8192
         mbs: 1
-        gbs: 64
+        gbs: 128
         ep: 1
         etp: null
       bf16:
@@ -115,11 +115,11 @@ perf_matrix:
         use_megatron_fsdp: false
         cuda_graphs: false
   gb200:
-    num_gpus_32:
+    num_gpus_64:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
-        gbs: 64
+        gbs: 128
         cuda_graphs: false
         cp: 1
         ep: 1
@@ -151,11 +151,11 @@ perf_matrix:
         vp: 5
         use_megatron_fsdp: false
   gb300:
-    num_gpus_32:
+    num_gpus_64:
       common:
         num_gpus_per_node: 4
         seq_length: 8192
-        gbs: 64
+        gbs: 128
         cuda_graphs: false
         cp: 1
         ep: 1
