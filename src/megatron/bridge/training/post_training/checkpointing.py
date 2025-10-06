@@ -20,26 +20,35 @@ except ImportError as e:
     raise ImportError('Required `"nvidia-modelopt[torch]"` is not installed!') from e
 
 import os.path
-from typing import List
 
+import torch
+from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
 
-def has_modelopt_state(checkpoint_path: str) -> bool:
+def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = True) -> bool:
     """Check if modelopt_state folder exists inside the checkpoint path.
 
     Args:
         checkpoint_path: Path to the checkpoint directory
+        ignore_kd_state: If True, ignore the distillation state, as it is a placeholder
 
     Returns:
-        True if modelopt_state folder exists, False otherwise
+        True if modelopt_state folder exists when ignore_kd_state is False,
+        True if modelopt_state folder exists when ignore_kd_state is True and has only
+        distillation state, False otherwise
     """
     modelopt_state_path = os.path.join(checkpoint_path, "modelopt_state")
-    return os.path.isdir(modelopt_state_path)
+    if not os.path.isdir(modelopt_state_path):
+        return False
+    elif not ignore_kd_state:
+        return True
+    else:
+        return not _has_only_kd_state(modelopt_state_path)
 
 
-def load_modelopt_state(model: List[MegatronModule], checkpoint_path: str) -> None:
+def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
     """Load modelopt_state from a checkpoint.
     Args:
         model: The model to load the modelopt_state into
@@ -47,3 +56,11 @@ def load_modelopt_state(model: List[MegatronModule], checkpoint_path: str) -> No
     """
     unwrapped_model = unwrap_model(model)
     restore_sharded_modelopt_state(unwrapped_model, checkpoint_path)
+
+
+def _has_only_kd_state(modelopt_state_path: str) -> bool:
+    modelopt_state = torch.load(modelopt_state_path + "/" + COMMON_STATE_FNAME, weights_only=False)
+    modes_dict = modelopt_state["modelopt_state_dict"]
+    if len(modes_dict) == 1 and modes_dict[0][0] == "kd_loss":
+        return True
+    return False
