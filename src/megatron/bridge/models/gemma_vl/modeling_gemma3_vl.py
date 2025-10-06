@@ -33,6 +33,41 @@ TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEN
 
 
 class Gemma3VLModel(MegatronModule):
+    """
+    Gemma3 Vision-Language (VL) model wrapper for Megatron.
+    Args:
+        config (GPTModelProvider): Model provider containing configuration for language and vision modules.
+        pre_process (bool, optional): Whether to construct the vision tower and projector. Default: True.
+        post_process (bool, optional): Whether to apply post-processing. Default: True.
+        vp_stage (Optional[int], optional): Pipeline stage for model parallelism. Default: None.
+
+    Attributes:
+        pre_process (bool): If True, enables vision and multimodal components.
+        post_process (bool): If True, enables post-processing.
+        vp_stage (Optional[int]): Pipeline stage for model parallelism.
+        vision_tower (nn.Module): Vision encoder (e.g., SigLIP or other vision backbone).
+        multi_modal_projector (nn.Module): Projects vision features to language model space.
+        language_model (nn.Module): The underlying language model.
+        get_image_features (callable): Method to extract image features, compatible with HuggingFace Gemma3Model.
+
+    Forward Inputs:
+        input_ids (torch.LongTensor, optional): Tokenized input ids for the language model.
+        attention_mask (torch.Tensor, optional): Attention mask for the language model.
+        position_ids (torch.LongTensor, optional): Position ids for the language model.
+        inputs_embeds (torch.FloatTensor, optional): Precomputed input embeddings.
+        pixel_values (torch.Tensor, optional): Image tensor(s) for the vision tower.
+        labels (torch.Tensor, optional): Target labels for supervised training.
+        runtime_gather_output (bool, optional): If True, gather outputs across pipeline stages.
+        loss_mask (Tensor, optional): Mask for loss computation.
+
+    Returns:
+        Tensor: Model output (e.g., logits or loss, depending on mode).
+
+    Note:
+        - If `pre_process` is False, only the language model is constructed.
+        - The vision tower and projector are only active if `pre_process` is True.
+        - This class is intended for use within the Megatron-LM framework.
+    """
     def __init__(
         self,
         config: GPTModelProvider,
