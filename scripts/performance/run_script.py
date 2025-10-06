@@ -63,6 +63,11 @@ def main():
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
         pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
+        if args.gpu.lower() in ["gb200"]:
+            pp, vp = (4, 4)
+            layout = None
+        else:
+            layout = "Et|(tt|)*30mL"
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -70,7 +75,7 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
-            layout="Et|(tt|)*30mL",
+            pipeline_model_parallel_layout=layout,
         )
 
         if enable_deepep:
@@ -89,7 +94,7 @@ def main():
         if args.gpu.lower() in ["h100", "b200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         elif args.gpu.lower() in ["gb200"]:
-            recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
+            recipe.model.recompute_modules = ["mla_up_proj"]
         if args.gpu.lower() in ["gb200", "b200"]:
             recipe.comm_overlap.overlap_grad_reduce = True
         elif args.gpu.lower() in ["h100"]:
@@ -165,6 +170,10 @@ def main():
     recipe.model.apply_rope_fusion = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
+
+    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
+        recipe.dataset.num_workers = 0
+        recipe.dataset.pin_memory = False
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()

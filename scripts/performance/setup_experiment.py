@@ -102,7 +102,10 @@ if __name__ == "__main__":
         start_step = profile_cfg["profile_step_start"]
         end_step = profile_cfg["profile_step_end"]
         ranks = list(range(num_nodes * args.gpus_per_node))
-        plugins.append(NsysPlugin(profile_step_start=start_step, profile_step_end=end_step, profile_ranks=ranks, nsys_gpu_metrics=args.profiling_gpu_metrics))
+        plugins.append(NsysPlugin(profile_step_start=start_step,
+            profile_step_end=end_step,
+            profile_ranks=ranks,
+            nsys_gpu_metrics=args.profiling_gpu_metrics))
 
     executor = slurm_executor(
         args.gpu.lower(),
@@ -124,12 +127,22 @@ if __name__ == "__main__":
         if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
+        if args.compute_dtype == "bf16" and not args.use_tokendrop:
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" # OOM if not set
+
+    if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["b200"]:
+        if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
+        if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
+
     target_script_args = [
         "--config_file",
         str(config_filepath),
     ]
     # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu"]
+    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
     for arg_name in args_to_forward:
         if hasattr(args, arg_name):
             arg_value = getattr(args, arg_name)
