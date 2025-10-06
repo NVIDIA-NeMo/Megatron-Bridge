@@ -68,6 +68,7 @@ class Gemma3VLModel(MegatronModule):
         - The vision tower and projector are only active if `pre_process` is True.
         - This class is intended for use within the Megatron-LM framework.
     """
+
     def __init__(
         self,
         config: GPTModelProvider,
