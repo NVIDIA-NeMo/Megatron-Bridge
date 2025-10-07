@@ -143,6 +143,12 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.models.glm import (
+    GLMMoEModelProvider,
+    GLM45ModelProvider355B,
+    GLM45AirModelProvider106B,
+    GLM45Bridge,
+)
 
 
 __all__ = [
@@ -165,6 +171,10 @@ __all__ = [
     "Gemma2ModelProvider2B",
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
+    "GLMMoEModelProvider",
+    "GLM45ModelProvider355B",
+    "GLM45AirModelProvider106B",
+    "GLM45Bridge",
     "GPTModelProvider",
     "T5ModelProvider",
     "LlamaModelProvider",
