@@ -2090,10 +2090,10 @@ def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba
     """TODO: add comments
     """
     hidden_size = provider.hidden_size
-    qk_head_dim = provider.gdn_qk_head_dim
-    v_head_dim = provider.gdn_v_head_dim
-    num_qk_heads = provider.gdn_num_qk_heads
-    num_v_heads = provider.gdn_num_v_heads
+    qk_head_dim = provider.linear_key_head_dim
+    v_head_dim = provider.linear_value_head_dim
+    num_qk_heads = provider.linear_num_key_heads
+    num_v_heads = provider.linear_num_value_heads
     qk_dim = qk_head_dim * num_qk_heads
     v_dim = v_head_dim * num_v_heads
     in_proj_dim = qk_dim * 2 + v_dim * 2 + num_v_heads * 2
