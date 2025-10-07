@@ -63,7 +63,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
     Example:
         >>> # Load and convert a model to Megatron format
-        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
         >>> provider = bridge.to_megatron_provider()
         >>> megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
 
@@ -159,7 +159,7 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> from transformers import AutoConfig
             >>>
             >>> # Load just the configuration
-            >>> config = AutoConfig.from_pretrained("meta-llama/Llama-3-8B")
+            >>> config = AutoConfig.from_pretrained("meta-llama/Meta-Llama-3-8B")
             >>>
             >>> # Create bridge from config (no weights)
             >>> bridge = AutoBridge.from_hf_config(config)
@@ -191,7 +191,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: HuggingFace model ID or path to model directory
-                Examples: "meta-llama/Llama-3-8B", "./my_model"
+                Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             **kwargs: Additional arguments passed to HuggingFace from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -211,7 +211,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
             >>> # Load with specific settings
             >>> bridge = AutoBridge.from_hf_pretrained(
-            ...     "meta-llama/Llama-3-8B",
+            ...     "meta-llama/Meta-Llama-3-8B",
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
             ... )
@@ -240,7 +240,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: Path to model directory or HuggingFace model ID
-                Examples: "meta-llama/Llama-3-8B", "/models/my_model"
+                Examples: "meta-llama/Meta-Llama-3-8B", "/models/my_model"
             trust_remote_code: Whether to trust remote code when loading config.
                 Set to True for models that use custom modeling code.
 
@@ -249,7 +249,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Check if a model is supported
-            >>> if AutoBridge.can_handle("meta-llama/Llama-3-8B"):
+            >>> if AutoBridge.can_handle("meta-llama/Meta-Llama-3-8B"):
             ...     print("Model is supported!")
             ... else:
             ...     print("Model requires a custom bridge implementation")
@@ -462,7 +462,7 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> bridge.save_megatron_model(
             ...     megatron_model,
             ...     "./megatron_checkpoint",
-            ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+            ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
             ... )
 
         Note:
@@ -559,7 +559,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             hf_model_id: HuggingFace model ID or path to model directory
-                Examples: "meta-llama/Llama-3-8B", "./my_model"
+                Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
@@ -571,13 +571,13 @@ class AutoBridge(Generic[MegatronModelT]):
         Example:
             >>> # Basic import
             >>> AutoBridge.import_ckpt(
-            ...     "meta-llama/Llama-3-8B",
+            ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b"
             ... )
 
             >>> # Import with specific settings
             >>> AutoBridge.import_ckpt(
-            ...     "meta-llama/Llama-3-8B",
+            ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b",
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
@@ -680,7 +680,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Create provider and model with loaded weights
-            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             >>> provider = bridge.to_megatron_provider()
             >>> model = provider.get_model()
 

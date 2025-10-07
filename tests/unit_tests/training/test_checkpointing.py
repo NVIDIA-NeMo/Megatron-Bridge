@@ -16,7 +16,7 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 import pytest
 import torch
@@ -374,6 +374,7 @@ class TestSaveCheckpoint:
 
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("torch.save")
     @patch("shutil.copy")
     @_patch_modelopt_state_saver()
@@ -414,6 +415,7 @@ class TestSaveCheckpoint:
         mock_save_modelopt,
         mock_shutil_copy,
         mock_torch_save,
+        mock_file_open,
         mock_is_last_rank,
         mock_wandb,
         save_checkpoint_fixtures,
@@ -459,6 +461,22 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+
+        # Verify that the tracker file was written with the correct iteration
+        tracker_calls = [
+            call
+            for call in mock_file_open.call_args_list
+            if len(call[0]) > 0 and "latest_checkpointed_iteration.txt" in call[0][0]
+        ]
+        assert len(tracker_calls) > 0, "Tracker file should be written"
+
+        # Verify the iteration was written to the file
+        mock_file_handle = mock_file_open()
+        write_calls = [call for call in mock_file_handle.write.call_args_list]
+        assert len(write_calls) > 0, "Should write iteration to tracker file"
+        # Check that the iteration (1000) was written
+        written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
+        assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
 
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_save_checkpoint_invalid_non_persistent_type(self, mock_print_rank_0, save_checkpoint_fixtures):
