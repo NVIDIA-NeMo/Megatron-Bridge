@@ -79,11 +79,11 @@ class Qwen3NextBridge(MegatronModelBridge):
             rotary_percent=hf_config.partial_rotary_factor,
             moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
             moe_shared_expert_gate=True,
-            gdn_conv_kernel_dim=hf_config.linear_conv_kernel_dim,
-            gdn_qk_head_dim=hf_config.linear_key_head_dim,
-            gdn_v_head_dim=hf_config.linear_value_head_dim,
-            gdn_num_qk_heads=hf_config.linear_num_key_heads,
-            gdn_num_v_heads=hf_config.linear_num_value_heads,
+            linear_conv_kernel_dim=hf_config.linear_conv_kernel_dim,
+            linear_key_head_dim=hf_config.linear_key_head_dim,
+            linear_value_head_dim=hf_config.linear_value_head_dim,
+            linear_num_key_heads=hf_config.linear_num_key_heads,
+            linear_num_value_heads=hf_config.linear_num_value_heads,
             mtp_num_layers=1,
         )
 
@@ -141,7 +141,7 @@ class Qwen3NextBridge(MegatronModelBridge):
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
         AutoMapping.register_module_type("Conv1d", "column")
         AutoMapping.register_module_type('SharedExpertMLP', 'column')
-        AutoMapping.register_module_type('GatedDeltaNetMixer', 'column')
+        AutoMapping.register_module_type('GatedDeltaNet', 'column')
 
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(

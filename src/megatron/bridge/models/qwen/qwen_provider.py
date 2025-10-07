@@ -437,11 +437,11 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     # GDN specific parameters
     linear_attention_type: str = "gated_delta_net"
     linear_attention_freq: Union[int, List[int]] = 4  # 1 standard attention layer per 4 layers
-    gdn_conv_kernel_dim: int = 4
-    gdn_qk_head_dim: int = 128
-    gdn_v_head_dim: int = 128
-    gdn_num_qk_heads: int = 16
-    gdn_num_v_heads: int = 32
+    linear_conv_kernel_dim: int = 4
+    linear_key_head_dim: int = 128
+    linear_value_head_dim: int = 128
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 32
 
     # MoE specific parameters
     num_moe_experts: int = 512
