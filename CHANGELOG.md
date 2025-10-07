@@ -4,11 +4,9 @@
 
 * Model Collection Support
   * Llama
-  * Qwen-3
+  * Qwen 2, Qwen 3, Qwen 3 MoE
   * DeepSeek
   * Mamba
-  * Nemotron Nano v2 12B and 9B
-  * Nemotron-H
 * Migration guide from NeMo 2 to Megatron-Bridge
 * [Contribution guide for adding a new model](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html)
 * [Checkpoint conversion from Hugging Face to Megatron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/conversion)
