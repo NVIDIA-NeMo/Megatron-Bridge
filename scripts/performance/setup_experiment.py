@@ -105,7 +105,8 @@ if __name__ == "__main__":
         plugins.append(NsysPlugin(profile_step_start=start_step,
             profile_step_end=end_step,
             profile_ranks=ranks,
-            nsys_gpu_metrics=args.profiling_gpu_metrics))
+            nsys_gpu_metrics=args.profiling_gpu_metrics,
+            nsys_trace=['cuda']))
 
     executor = slurm_executor(
         args.gpu.lower(),
@@ -126,10 +127,6 @@ if __name__ == "__main__":
     if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
         if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
-        if args.compute_dtype == "bf16" and not args.use_tokendrop:
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" # OOM if not set
 
     if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["b200"]:
         if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:

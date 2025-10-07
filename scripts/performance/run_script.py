@@ -75,7 +75,7 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
-            pipeline_model_parallel_layout=layout,
+            layout=layout,
         )
 
         if enable_deepep:
@@ -169,11 +169,12 @@ def main():
             recipe.ddp.fsdp_double_buffer = True
     recipe.model.apply_rope_fusion = True
 
-    pretrain(config=recipe, forward_step_func=forward_step)
 
     if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
         recipe.dataset.num_workers = 0
         recipe.dataset.pin_memory = False
+
+    pretrain(config=recipe, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
