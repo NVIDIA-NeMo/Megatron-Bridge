@@ -57,35 +57,47 @@ perf_matrix:
     num_gpus_16:
       common:
         num_gpus_per_node: 8
-        seq_length: 4096
-        gbs: 512
         cuda_graphs: false
-        tp: 1
-        pp: 2
-        cp: 1
-        vp: 24
-        ep: 8
-        etp: 1
-        fsdp: false
+        ConfigContainer:
+          train:
+            global_batch_size: 512
+          dataset:
+            sequence_length: 4096
+          model:
+            seq_length: 4096
+            tensor_model_parallel_size: 1
+            pipeline_model_parallel_size: 2
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: 24
+            expert_model_parallel_size: 8
+            expert_tensor_parallel_size: 1
       bf16:
-        mbs: 1
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
       fp8_cs:
-        mbs: 2
+        ConfigContainer:
+          train:
+            micro_batch_size: 2
   gb200:
     num_gpus_8:
       common:
         num_gpus_per_node: 4
-        seq_length: 4096
-        mbs: 4
-        gbs: 512
         cuda_graphs: true
-        tp: 1
-        pp: 1
-        cp: 1
-        vp: null
-        ep: 8
-        etp: 1
-        fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 4
+            global_batch_size: 512
+          dataset:
+            sequence_length: 4096
+          model:
+            seq_length: 4096
+            tensor_model_parallel_size: 1
+            pipeline_model_parallel_size: 1
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: null
+            expert_model_parallel_size: 8
+            expert_tensor_parallel_size: 1
       bf16:
       fp8_cs:
       fp8_mx:
@@ -93,17 +105,21 @@ perf_matrix:
     num_gpus_8:
       common:
         num_gpus_per_node: 8
-        seq_length: 4096
-        mbs: 1
-        gbs: 512
         cuda_graphs: true
-        tp: 1
-        pp: 8
-        cp: 1
-        vp: 12
-        ep: 8
-        etp: 1
-        fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 512
+          dataset:
+            sequence_length: 4096
+          model:
+            seq_length: 4096
+            tensor_model_parallel_size: 1
+            pipeline_model_parallel_size: 1
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: null
+            expert_model_parallel_size: 8
+            expert_tensor_parallel_size: 1
       bf16:
       fp8_cs:
       fp8_mx:

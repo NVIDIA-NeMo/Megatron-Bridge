@@ -58,17 +58,22 @@ perf_matrix:
     num_gpus_1024:
       common:
         num_gpus_per_node: 8
-        seq_length: 8192
-        mbs: 1
-        gbs: 512
         cuda_graphs: false
-        tp: 8
-        pp: 8
-        cp: 2
-        vp: 8
-        ep: 1
-        etp: null
         use_megatron_fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 512
+          dataset:
+            sequence_length: 8192
+          model:
+            seq_length: 8192
+            tensor_model_parallel_size: 8
+            pipeline_model_parallel_size: 8
+            context_parallel_size: 2
+            virtual_pipeline_model_parallel_size: 8
+            expert_model_parallel_size: 1
+            expert_tensor_parallel_size: null
       bf16:
       fp8_ds:
       fp8_cs:
@@ -76,17 +81,22 @@ perf_matrix:
     num_gpus_128:
       common:
         num_gpus_per_node: 8
-        seq_length: 8192
-        mbs: 1
-        gbs: 64
         cuda_graphs: false
-        tp: 4
-        pp: 8
-        cp: 2
-        vp: 8
-        ep: 1
-        etp: null
         use_megatron_fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 64
+          dataset:
+            sequence_length: 8192
+          model:
+            seq_length: 8192
+            tensor_model_parallel_size: 4
+            pipeline_model_parallel_size: 8
+            context_parallel_size: 2
+            virtual_pipeline_model_parallel_size: 8
+            expert_model_parallel_size: 1
+            expert_tensor_parallel_size: null
       bf16:
       fp8_ds:
       fp8_cs:
@@ -95,35 +105,48 @@ perf_matrix:
     num_gpus_128:
       common:
         num_gpus_per_node: 4
-        seq_length: 8192
-        mbs: 1
-        gbs: 64
         cuda_graphs: false
-        ep: 1
-        etp: null
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 64
+          dataset:
+            sequence_length: 8192
+          model:
+            seq_length: 8192
+            expert_model_parallel_size: 1
+            expert_tensor_parallel_size: null
       bf16:
-        tp: 4
-        pp: 8
-        cp: 2
-        vp: 8
         use_megatron_fsdp: false
+        ConfigContainer:
+          model:
+            tensor_model_parallel_size: 4
+            pipeline_model_parallel_size: 8
+            context_parallel_size: 2
+            virtual_pipeline_model_parallel_size: 8
       fp8_ds:
-        tp: 2
-        pp: 1
-        cp: 1
-        vp: null
         use_megatron_fsdp: true
+        ConfigContainer:
+          model:
+            tensor_model_parallel_size: 2
+            pipeline_model_parallel_size: 1
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: null
         cpu_offloading_num_layers: 95
       fp8_cs:
-        tp: 2
-        pp: 1
-        cp: 1
-        vp: null
         use_megatron_fsdp: true
+        ConfigContainer:
+          model:
+            tensor_model_parallel_size: 2
+            pipeline_model_parallel_size: 1
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: null
         cpu_offloading_num_layers: 95
       fp8_mx:
-        tp: 4
-        pp: 8
-        cp: 2
-        vp: 8
         use_megatron_fsdp: false
+        ConfigContainer:
+          model:
+            tensor_model_parallel_size: 4
+            pipeline_model_parallel_size: 8
+            context_parallel_size: 2
+            virtual_pipeline_model_parallel_size: 8

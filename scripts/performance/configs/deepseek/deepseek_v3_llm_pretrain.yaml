@@ -61,17 +61,22 @@ perf_matrix:
     num_gpus_1024:
       common:
         num_gpus_per_node: 8
-        seq_length: 4096
-        mbs: 1
-        gbs: 8192
         cuda_graphs: false
-        tp: 2
-        pp: 8
-        cp: 1
-        vp: 4
-        ep: 64
-        etp: 1
         use_megatron_fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 8192
+          dataset:
+            sequence_length: 4096
+          model:
+            seq_length: 4096
+            tensor_model_parallel_size: 2
+            pipeline_model_parallel_size: 8
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: 4
+            expert_model_parallel_size: 64
+            expert_tensor_parallel_size: 1
       bf16:
       fp8_cs:
       fp8_ss:
@@ -79,18 +84,23 @@ perf_matrix:
     num_gpus_256:
       common:
         num_gpus_per_node: 8
-        seq_length: 4096
-        mbs: 1
-        gbs: 2048
-        tp: 2
-        pp: 16
-        cp: 1
-        vp: null
-        ep: 8
-        etp: 1
-        use_megatron_fsdp: false
-      bf16:
         cuda_graphs: false
+        use_megatron_fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 2048
+          dataset:
+            sequence_length: 4096
+          model:
+            seq_length: 4096
+            tensor_model_parallel_size: 1
+            pipeline_model_parallel_size: 16
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: null
+            expert_model_parallel_size: 8
+            expert_tensor_parallel_size: 1
+      bf16:
       fp8_cs:
         cuda_graphs: true
       fp8_mx:
@@ -99,17 +109,22 @@ perf_matrix:
     num_gpus_256:
       common:
         num_gpus_per_node: 4
-        seq_length: 4096
-        mbs: 1
-        gbs: 2048
-        tp: 1
-        pp: 4
-        cp: 1
-        vp: 8
-        ep: 64
-        etp: 1
-        use_megatron_fsdp: false
         cuda_graphs: false
+        use_megatron_fsdp: false
+        ConfigContainer:
+          train:
+            micro_batch_size: 1
+            global_batch_size: 2048
+          dataset:
+            sequence_length: 4096
+          model:
+            seq_length: 4096
+            tensor_model_parallel_size: 1
+            pipeline_model_parallel_size: 4
+            context_parallel_size: 1
+            virtual_pipeline_model_parallel_size: 8
+            expert_model_parallel_size: 64
+            expert_tensor_parallel_size: 1
       bf16:
       fp8_cs:
       fp8_mx:

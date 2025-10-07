@@ -27,6 +27,7 @@ from megatron.bridge.training.mixed_precision import (
 )
 
 from .common import get_perf_matrix_overrides
+from megatron.bridge.training.utils.omegaconf_utils import apply_overrides
 
 
 logger = logging.getLogger(__name__)
@@ -64,11 +65,13 @@ COMM_OVERLAP_CONFIG_MAP = {
 }
 
 
-def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
-    """Set the mcore fsdp overrides from the performance matrix."""
-    use_megatron_fsdp = perf_overrides.get("use_megatron_fsdp", False)
-    if use_megatron_fsdp:
-        recipe.ddp.use_megatron_fsdp = True
+def set_megatron_fsdp_overrides(recipe: Any) -> None:
+    """Apply dependent overrides when Megatron FSDP is enabled.
+
+    This uses the current recipe values (e.g., recipe.ddp.use_megatron_fsdp)
+    instead of reading convenience flags from perf_matrix.
+    """
+    if getattr(recipe.ddp, "use_megatron_fsdp", False):
         recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         recipe.ddp.keep_fp8_transpose_cache = False
         # average_in_collective is not supported with Megatron FSDP
@@ -112,31 +115,48 @@ def get_precision_config(compute_dtype: str, fp8_recipe: str):
 
 
 def set_cuda_graph_overrides(recipe: Any, perf_overrides: Any) -> None:
-    """Set the CUDA graph overrides from the performance matrix."""
-    enable_cuda_graph = perf_overrides.get("cuda_graphs", False)
+    """Optionally apply convenience CUDA graphs flag from perf_matrix.
 
-    recipe.model.enable_cuda_graph = enable_cuda_graph
-    recipe.model.use_te_rng_tracker = enable_cuda_graph
-    recipe.rng.te_rng_tracker = enable_cuda_graph
+    If the perf_matrix provides a top-level `cuda_graphs` convenience key, set
+    the related flags on the recipe. If not present, do nothing so that any
+    explicit ConfigContainer overrides remain intact.
+    """
+    if "cuda_graphs" in perf_overrides:
+        enable_cuda_graph = bool(perf_overrides.get("cuda_graphs", False))
+        recipe.model.enable_cuda_graph = enable_cuda_graph
+        recipe.model.use_te_rng_tracker = enable_cuda_graph
+        recipe.rng.te_rng_tracker = enable_cuda_graph
 
 
 def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
-    """Set the recompute num layers overrides from the performance matrix."""
-    recompute_num_layers = perf_overrides.get("recompute_num_layers", None)
-    if recompute_num_layers is not None:
-        recipe.model.recompute_granularity = "full"
-        recipe.model.recompute_method = "block"
-        recipe.model.recompute_num_layers = recompute_num_layers
+    """Optionally apply convenience recompute/cpu-offloading knobs from perf_matrix.
 
-    cpu_offloading_num_layers = perf_overrides.get("cpu_offloading_num_layers", 0)
-    if cpu_offloading_num_layers > 0:
-        recipe.model.cpu_offloading = True
-        recipe.model.cpu_offloading_weights = False
-        recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
+    These only apply if the corresponding top-level convenience keys are present.
+    Otherwise, explicit ConfigContainer overrides (e.g., under model) are respected.
+    """
+    if "recompute_num_layers" in perf_overrides:
+        recompute_num_layers = perf_overrides.get("recompute_num_layers", None)
+        if recompute_num_layers is not None:
+            recipe.model.recompute_granularity = "full"
+            recipe.model.recompute_method = "block"
+            recipe.model.recompute_num_layers = recompute_num_layers
+
+    if "cpu_offloading_num_layers" in perf_overrides:
+        cpu_offloading_num_layers = perf_overrides.get("cpu_offloading_num_layers", 0)
+        if cpu_offloading_num_layers > 0:
+            recipe.model.cpu_offloading = True
+            recipe.model.cpu_offloading_weights = False
+            recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
-    """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""
+    """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix.
+
+    Supports two styles:
+    1) Preferred: Nested overrides mirroring ConfigContainer (train/model/ddp/...)
+       placed either directly at this dtype block or under `ConfigContainer:` key.
+       These are applied generically via apply_overrides.
+    """
     preset = get_perf_matrix_overrides(yaml_root, args)
     if not preset:
         num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
@@ -151,19 +171,23 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
     perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore
 
-    recipe.train.micro_batch_size = perf_overrides.get("mbs", recipe.train.micro_batch_size)
-    recipe.train.global_batch_size = perf_overrides.get("gbs", recipe.train.global_batch_size)
-    recipe.dataset.sequence_length = perf_overrides.get("seq_length", recipe.dataset.sequence_length)
+    cfg_like_overrides: Dict[str, Any] = (
+        perf_overrides.get("ConfigContainer") if isinstance(perf_overrides, dict) else None
+    )
+    if cfg_like_overrides is None:
+        # If no explicit ConfigContainer wrapper, try applying the dict directly; unknown keys are skipped
+        cfg_like_overrides = perf_overrides
 
-    recipe.model.tensor_model_parallel_size = perf_overrides.get("tp", 1)
-    recipe.model.pipeline_model_parallel_size = perf_overrides.get("pp", 1)
-    recipe.model.virtual_pipeline_model_parallel_size = perf_overrides.get("vp", None)
-    recipe.model.context_parallel_size = perf_overrides.get("cp", 1)
-    recipe.model.expert_model_parallel_size = perf_overrides.get("ep", 1)
-    recipe.model.expert_tensor_parallel_size = perf_overrides.get("etp", None)
+    if isinstance(cfg_like_overrides, dict):
+        apply_overrides(recipe, cfg_like_overrides, excluded_fields)
 
-    set_megatron_fsdp_overrides(recipe, perf_overrides)
+    if hasattr(recipe.model, "tensor_model_parallel_size"):
+        recipe.model.sequence_parallel = bool(recipe.model.tensor_model_parallel_size > 1)
+
+    # Keep only bundled convenience flags
+    if "use_megatron_fsdp" in perf_overrides:
+        recipe.ddp.use_megatron_fsdp = bool(perf_overrides.get("use_megatron_fsdp", False))
+
     set_cuda_graph_overrides(recipe, perf_overrides)
     set_recompute_overrides(recipe, perf_overrides)
-
-    recipe.model.sequence_parallel = bool(recipe.model.tensor_model_parallel_size > 1)
+    set_megatron_fsdp_overrides(recipe)
