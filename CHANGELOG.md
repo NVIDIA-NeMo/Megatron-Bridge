@@ -4,11 +4,14 @@
 
 * Model Collection Support
   * Llama
-  * Qwen 3
-  * Qwen 2.5 VL
+  * Qwen-3
   * DeepSeek
   * Mamba
-* Megatron FSDP support
+  * Nemotron Nano v2 12B and 9B
+  * Nemotron-H
+* Migration guide from NeMo 2 to Megatron-Bridge
+* [Contribution guide for adding a new model](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html)
+* [Checkpoint conversion from Hugging Face to Megatron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/conversion)
 * Performance
   * MoE LLM
     * Change the model to dropless with balanced gating
@@ -30,7 +33,7 @@
   * Others
     * Full iteration cuda graph for dense model without pipelining
     * Fusion of activation and cast fusion (currently tensor-wise scaling only)
-    * Store SwiGLU input in FP8 to save aviation memory
+    * Store SwiGLU input in FP8 to save activation memory
 
 ## NVIDIA Megatron-Bridge 0.1.0a0
 
