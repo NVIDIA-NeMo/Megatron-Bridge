@@ -23,7 +23,7 @@ from tests.functional_tests.utils import compare_provider_configs
 
 
 HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
-    "google/gemma-3-1b-it": Gemma3ModelProvider1B,
+    "google/gemma-3-1b-pt": Gemma3ModelProvider1B,
 }
 
 ROOT_PATH: str = "/home/TestData/megatron_bridge/hf_home"

@@ -32,7 +32,6 @@ from typing import (
 
 import torch
 from megatron.core import parallel_state
-from megatron.core.transformer import TransformerLayer
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import (
@@ -126,7 +125,7 @@ def _megatron_local_name_to_global(
         _, layer_module = get_module_and_param_from_name(models=models, param_name=layer_prefix, vp_stage=vp_stage)
 
         local_layer_number = int(param_name.split("layers.")[1].split(".")[0])
-        if isinstance(layer_module, TransformerLayer):
+        if isinstance(layer_module, MegatronModule):
             global_layer_number = layer_module.layer_number - 1
             param_name = param_name.replace(
                 f"layers.{local_layer_number}.",
