@@ -435,7 +435,7 @@ def training_log(
 
                 with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
-        if logger_config.log_throughput_to_wandb or logger_config.log_throughput_to_tensorboard:
+        if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
                 iteration=iteration,
                 train_config=train_config,
@@ -443,22 +443,18 @@ def training_log(
                 history_wct=history_wct,
                 window_size=logger_config.throughput_window_size,
             )
-
-            if wandb_writer and logger_config.log_throughput_to_wandb:
+            for metric, value in throughput_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
                 wandb_writer.log(throughput_report, iteration)
-
-            if logger_config.log_throughput_to_tensorboard:
-                for metric, value in throughput_report.items():
-                    writer.add_scalar(metric, value, iteration)
-        if logger_config.log_memory_to_wandb or logger_config.log_memory_to_tensorboard:
+        if logger_config.log_memory_to_tensorboard:
             memory_report = report_memory(memory_keys=logger_config.memory_keys)
             memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
-            if wandb_writer and logger_config.log_memory_to_wandb:
+            for metric, value in memory_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
                 wandb_writer.log(memory_report, iteration)
-            if logger_config.log_memory_to_tensorboard:
-                for metric, value in memory_report.items():
-                    writer.add_scalar(metric, value, iteration)
-        if logger_config.log_runtime_to_wandb or logger_config.log_runtime_to_tensorboard:
+        if logger_config.log_runtime_to_tensorboard:
             runtime_report = report_runtime(
                 train_state=train_state,
                 start_time=global_state.start_time,
@@ -466,18 +462,16 @@ def training_log(
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )
-            if wandb_writer and logger_config.log_runtime_to_wandb:
+            for metric, value in runtime_report:
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
                 wandb_writer.log(runtime_report, iteration)
-            if logger_config.log_runtime_to_tensorboard:
-                for metric, value in runtime_report:
-                    writer.add_scalar(metric, value, iteration)
-        if logger_config.log_l2_norm_grad_to_wandb or logger_config.log_l2_norm_grad_to_tensorboard:
+        if logger_config.log_l2_norm_grad_to_tensorboard:
             l2_report = report_l2_norm_grad(model)
-            if wandb_writer and logger_config.log_l2_norm_grad_to_wandb:
+            for metric, value in l2_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
                 wandb_writer.log(l2_report, iteration)
-            if logger_config.log_l2_norm_grad_to_tensorboard:
-                for metric, value in l2_report.items():
-                    writer.add_scalar(metric, value, iteration)
         if wandb_writer:
             wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
         writer.add_scalar("learning-rate", learning_rate, iteration)
