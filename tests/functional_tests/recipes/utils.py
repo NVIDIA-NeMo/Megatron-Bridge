@@ -82,9 +82,9 @@ def run_pretrain_recipe_test(
         config.dataset.split = [train_split, valid_split, test_split]
 
         if tensor_parallelism is not None:
-            config.model.tensor_parallelism = tensor_parallelism
+            config.model.tensor_model_parallel_size = tensor_parallelism
         if pipeline_parallelism is not None:
-            config.model.pipeline_parallelism = pipeline_parallelism
+            config.model.pipeline_model_parallel_size = pipeline_parallelism
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
