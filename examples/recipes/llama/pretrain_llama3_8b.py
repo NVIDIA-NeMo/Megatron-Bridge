@@ -138,7 +138,8 @@ def main() -> None:
     # Print configuration on rank 0
     if get_rank_safe() == 0:
         cfg.print_yaml()
-
+    
+    cfg.model.generation_config = cfg.model.generation_config.to_dict()
     # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(cfg)
 

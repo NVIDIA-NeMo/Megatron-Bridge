@@ -58,15 +58,16 @@ except ImportError:
 
 
 MEMORY_KEYS = {
-    "allocated_bytes.all.current": "current_allocated_mem",
-    "active_bytes.all.current": "current_active_mem",
-    "inactive_split_bytes.all.current": "current_inactive_mem",
-    "reserved_bytes.all.current": "current_reserved_mem",
-    "allocated_bytes.all.peak": "peak_allocated_mem",
-    "active_bytes.all.peak": "peak_active_mem",
-    "inactive_split_bytes.all.peak": "peak_inactive_mem",
-    "reserved_bytes.all.peak": "peak_reserved_mem",
-    "num_alloc_retries": "alloc_retries",
+    "allocated_bytes.all.current": "mem-allocated-bytes",
+    "active_bytes.all.current": "mem-active-bytes",
+    "inactive_split_bytes.all.current": "mem-inactive-bytes",
+    "reserved_bytes.all.current": "mem-reserved-bytes",
+    "allocated_bytes.all.peak": "mem-max-allocated-bytes",
+    "active_bytes.all.peak": "mem-max-active-bytes",
+    "inactive_split_bytes.all.peak": "mem-max-inactive-bytes",
+    "reserved_bytes.all.peak": "mem-max-reserved-bytes",
+    "num_alloc_retries": "mem-alloc-retires",
+    "allocation.all.current": "mem-allocated-count",
 }
 
 
@@ -462,7 +463,7 @@ def training_log(
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )
-            for metric, value in runtime_report:
+            for metric, value in runtime_report.items():
                 writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(runtime_report, iteration)
@@ -560,11 +561,9 @@ def training_log(
             if writer:
                 writer.add_scalar("throughput/tflops/device", per_gpu_tf, iteration)
                 writer.add_scalar("throughput/tflops", per_gpu_tf * get_world_size_safe(), iteration)
-
-        if logger_config.log_throughput_to_wandb:
-            if wandb_writer:
-                wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
-                wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
+                if wandb_writer:
+                    wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
+                    wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
 
         if logger_config.log_timers_to_tensorboard:
             if writer:

@@ -233,7 +233,7 @@ def train(
 
     # Track train step elapsed time for throughput logging
     history_wct = None
-    if config.logger.log_throughput_to_wandb or config.logger.log_throughput_to_tensorboard:
+    if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -294,7 +294,7 @@ def train(
             wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
         )
         fault_tolerance.on_training_step_end(global_state)
-        if config.logger.log_throughput_to_wandb or config.logger.log_throughput_to_tensorboard:
+        if config.logger.log_throughput_to_tensorboard:
             history_wct.append(time.time() - global_state.start_time)
         if should_checkpoint:
             save_checkpoint_and_time(
