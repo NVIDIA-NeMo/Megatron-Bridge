@@ -158,9 +158,8 @@ if __name__ == "__main__":
         for k in yaml_overrides_omega["perf_matrix"][args.gpu]
         if k.startswith("num_gpus_")
     ]
-    default_num_gpus = args.num_gpus if args.num_gpus in num_gpus_supported else num_gpus_supported[0]
-    train_config = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{default_num_gpus}"]["common"]
-    gbs = args.num_gpus * 8 if args.model_name in ["deepseek"] else train_config["gbs"]
+    train_config = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]
+
     exp_config = (
         f"gpus{args.num_gpus}_"
         f"tp{train_config['tp']}_"
@@ -169,7 +168,7 @@ if __name__ == "__main__":
         f"vp{train_config['vp']}_"
         f"ep{train_config['ep']}_"
         f"mbs{train_config['mbs']}_"
-        f"gbs{gbs}"
+        f"gbs{train_config['gbs']}"
     )
     exp_name = f"pretrain_{args.model_name}_{args.model_size}_{dtype}_{exp_config}"
 

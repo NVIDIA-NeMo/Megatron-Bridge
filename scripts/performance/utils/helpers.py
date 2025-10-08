@@ -151,9 +151,6 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
     perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore
 
-    if args.model_name in ["deepseek"]:
-        perf_overrides["gbs"] = args.num_gpus * 8
-
     recipe.train.micro_batch_size = perf_overrides.get("mbs", recipe.train.micro_batch_size)
     recipe.train.global_batch_size = perf_overrides.get("gbs", recipe.train.global_batch_size)
     recipe.dataset.sequence_length = perf_overrides.get("seq_length", recipe.dataset.sequence_length)

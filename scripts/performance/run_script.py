@@ -63,11 +63,13 @@ def main():
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
         pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
-        if args.gpu.lower() in ["gb200"]:
+        layout = "Et|(tt|)*30mL"
+        if args.gpu.lower() in ["gb200", "gb300"]:
             pp, vp = (4, 4)
             layout = None
-        else:
-            layout = "Et|(tt|)*30mL"
+        elif args.gpu.lower() in ["b200"]:
+            pp, vp = (16, 1)
+            layout = None
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -170,7 +172,7 @@ def main():
     recipe.model.apply_rope_fusion = True
 
 
-    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
+    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200", "gb300"]:
         recipe.dataset.num_workers = 0
         recipe.dataset.pin_memory = False
 
