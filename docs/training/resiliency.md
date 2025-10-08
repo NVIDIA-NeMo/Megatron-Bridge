@@ -546,6 +546,8 @@ The system uses `RerunDataIterator` to handle data replay:
 
 The in-process restart mechanism provides automatic fault recovery by restarting the training function within the same operating system process when failures occur. Unlike traditional scheduler-level restarts, in-process restart eliminates the overhead of launching new jobs, starting containers, initializing Python interpreters, and creating new CUDA contexts.
 
+> **Note**: In-process restart is not suitable for all types of failures. Hardware-level failures such as switch failures, network partitions, or multiple node failures that render nodes inaccessible cannot be recovered through in-process restart alone. For comprehensive fault tolerance, it is recommended to combine in-process restart with the fault tolerance system (in-job restarts) described earlier in this document. This layered approach provides both fast recovery for software faults and robust handling of hardware-level failures.
+
 For comprehensive information about this functionality, refer to the [NVIDIA Resiliency Extension In-Process Restart documentation](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/index.html).
 
 ### Key Features
@@ -569,55 +571,6 @@ Before using in-process restart, ensure the following requirements are met:
 4. **GIL-Released Operations**: All operations that wait on NCCL kernels or synchronize with GPU must release the Python Global Interpreter Lock (GIL).
 
 > **Important**: If operations hold the GIL during a fault, graceful restart cannot proceed, and affected ranks will be forcibly terminated.
-
-### Slurm Configuration Requirements
-
-> **Warning**: Running in-process restart through NeMo-Run's Slurm Executor is **not currently supported**.
-
-If you need to use in-process restart with Slurm, you must launch your jobs directly using `srun` with the proper configuration. Refer to the [NVIDIA Resiliency Extension Slurm configuration guide](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/usage_guide.html#running-with-slurm) for detailed instructions on:
-
-- Setting `--kill-on-bad-exit=0` to prevent Slurm from terminating the entire job on rank failures
-- Using the `wait_daemon.py` utility for proper monitoring process cleanup
-- Configuring SLURM PMI for compatibility
-
-#### Monitor Process Log Files
-
-When `monitor_process_logdir` is configured, the system automatically generates monitor process log files for rank 0 only. The log file path must be coordinated between your Python configuration and the `wait_daemon.py` script used in your Slurm launch command.
-
-The system creates log files with the following naming convention:
-
-```
-monitor_{SLURM_JOB_ID}_{hostname}_{SLURM_PROCID}_{SLURM_LOCALID}.log
-```
-
-Where:
-- `SLURM_JOB_ID`: The Slurm job ID from the `SLURM_JOB_ID` environment variable
-- `hostname`: The hostname of the node where rank 0 is running
-- `SLURM_PROCID`: The global rank from the `SLURM_PROCID` environment variable
-- `SLURM_LOCALID`: The local rank on the node from the `SLURM_LOCALID` environment variable
-
-**Python Configuration:**
-
-```python
-config.inprocess_restart = InProcessRestartConfig(
-    enabled=True,
-    monitor_process_logdir="/scratch/logs/monitor",  # Provide directory only
-)
-```
-
-**Corresponding Slurm Launch Command:**
-
-You must pass the same log file path pattern to `wait_daemon.py` in your sbatch script. The path should include `{rank}` as a placeholder that will be substituted with the actual rank:
-
-```bash
-srun --kill-on-bad-exit=0 \
-    python -m nvidia_resiliency_ext.inprocess.wait_daemon \
-    --monitor-process-logfile=/scratch/logs/monitor/monitor_${SLURM_JOB_ID}_$(hostname)_\${SLURM_PROCID}_\${SLURM_LOCALID}.log \
-    -- \
-    python your_training_script.py
-```
-
-> **Important**: The monitor process log file path must match between your Python configuration (`monitor_process_logdir`) and the `wait_daemon.py` command-line argument. This coordination ensures that `wait_daemon.py` can properly monitor and wait for the monitor process to complete its cleanup before exiting.
 
 ### Configuration
 
@@ -671,6 +624,55 @@ config.inprocess_restart = InProcessRestartConfig(
 | `empty_cuda_cache` | `bool` | `True` | Empty CUDA cache during restart finalization |
 | `max_rank_faults` | `int` | `None` | Maximum number of rank faults allowed before terminating (None = unlimited) |
 | `monitor_process_logdir` | `str` | `None` | Directory for monitor process log files (None = disabled) |
+
+### Slurm Configuration Requirements
+
+> **Warning**: Running in-process restart through NeMo-Run's Slurm Executor is **not currently supported**.
+
+If you need to use in-process restart with Slurm, you must launch your jobs directly using `srun` with the proper configuration. Refer to the [NVIDIA Resiliency Extension Slurm configuration guide](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/usage_guide.html#running-with-slurm) for detailed instructions on:
+
+- Setting `--kill-on-bad-exit=0` to prevent Slurm from terminating the entire job on rank failures
+- Using the `wait_daemon.py` utility for proper monitoring process cleanup
+- Configuring SLURM PMI for compatibility
+
+#### Monitor Process Log Files
+
+When `monitor_process_logdir` is configured, the system automatically generates monitor process log files for rank 0 only. The log file path must be coordinated between your Python configuration and the `wait_daemon.py` script used in your Slurm launch command.
+
+The system creates log files with the following naming convention:
+
+```
+monitor_{SLURM_JOB_ID}_{hostname}_{SLURM_PROCID}_{SLURM_LOCALID}.log
+```
+
+Where:
+- `SLURM_JOB_ID`: The Slurm job ID from the `SLURM_JOB_ID` environment variable
+- `hostname`: The hostname of the node where rank 0 is running
+- `SLURM_PROCID`: The global rank from the `SLURM_PROCID` environment variable
+- `SLURM_LOCALID`: The local rank on the node from the `SLURM_LOCALID` environment variable
+
+**Python Configuration:**
+
+```python
+config.inprocess_restart = InProcessRestartConfig(
+    enabled=True,
+    monitor_process_logdir="/scratch/logs/monitor",  # Provide directory only
+)
+```
+
+**Corresponding Slurm Launch Command:**
+
+You must pass the same log file path pattern to `wait_daemon.py` in your sbatch script. The path should include `{rank}` as a placeholder that will be substituted with the actual rank:
+
+```bash
+srun --kill-on-bad-exit=0 \
+    python -m nvidia_resiliency_ext.inprocess.wait_daemon \
+    --monitor-process-logfile=/scratch/logs/monitor/monitor_${SLURM_JOB_ID}_$(hostname)_\${SLURM_PROCID}_\${SLURM_LOCALID}.log \
+    -- \
+    python your_training_script.py
+```
+
+> **Important**: The monitor process log file path must match between your Python configuration (`monitor_process_logdir`) and the `wait_daemon.py` command-line argument. This coordination ensures that `wait_daemon.py` can properly monitor and wait for the monitor process to complete its cleanup before exiting.
 
 ### Integration in Megatron Bridge
 
