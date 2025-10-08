@@ -7,7 +7,7 @@
   * Qwen 2, Qwen 3, Qwen 3 MoE
   * DeepSeek
   * Mamba
-* Migration guide from NeMo 2 to Megatron-Bridge
+* [Migration guide from NeMo 2 to Megatron-Bridge](https://docs.nvidia.com/nemo/megatron-bridge/latest/nemo2-migration-guide.html)
 * [Contribution guide for adding a new model](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html)
 * [Checkpoint conversion from Hugging Face to Megatron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/conversion)
 * Performance
