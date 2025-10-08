@@ -101,26 +101,16 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
     print(name, tuple(weight.shape))
 ```
 
-Training quickstart:
+Training quickstart using pre-configured recipes:
 ```python
-from megatron.bridge import AutoBridge
-
-import megatron.bridge.recipes.llama.llama32_1b as llama32_1b
+from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
-    # Load Llama from Hugging Face Hub and convert to Megatron
-    bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-    model_provider = bridge.to_megatron_provider()
-
-    # Get defaults for other configuration from an existing Llama 3.2 recipe
-    cfg = llama32_1b.pretrain_config()
-    cfg.model = model_provider
+    # The recipe uses the Llama 3.2 1B model configuration from HuggingFace
+    cfg = llama32_1b_pretrain_config(seq_length=1024)
     cfg.train.train_iters = 10
-
-    cfg.dataset.seq_length = cfg.model.seq_length
-    cfg.tokenizer.vocab_size = cfg.model.vocab_size
 
     pretrain(cfg, forward_step)
 ```
