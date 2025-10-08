@@ -723,7 +723,6 @@ def report_l2_norm_grad(model: Union[MegatronModule, list[MegatronModule]]) -> d
     for model_chunk in model:
         for name, p in model_chunk.named_parameters():
             if p.main_grad is not None and p.requires_grad:
-                # Always log grad norm as a default metric if it's not specified
                 if f"l2_norm/grad/{name}" not in optimizer_metrics:
                     param_grad_norm = torch.linalg.vector_norm(p.main_grad)
                     optimizer_metrics[f"l2_norm/grad/{name}"] = param_grad_norm
