@@ -17,7 +17,7 @@ import os
 import sys
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Union
 
 import torch
@@ -33,6 +33,7 @@ from megatron.core.num_microbatches_calculator import (
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
@@ -236,6 +237,7 @@ def train(
     if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
     # Run training iterations till done.
+    start_iteration = global_state.train_state.step
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -250,6 +252,14 @@ def train(
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
+
+        # Update the timeout for all process groups after initialization
+        # We update the timeout after the first successful iteration,
+        # which takes longer than others usually
+        if global_state.train_state.step == start_iteration + 1:
+            distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
+            if distributed_timeout_seconds_after_init is not None:
+                update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
 
         # Update number of microbatches first without consistency check to decide if a
         # checkpoint should be saved. If the number of microbatches is different

@@ -185,6 +185,9 @@ class DistributedInitConfig:
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
+    distributed_timeout_seconds_after_init: int | None = None
+    """Timeout in seconds for process groups after initialization. This timeout is applied to all process groups after initialization and the first iteration completes."""
+
 
 @dataclass
 class RerunStateMachineConfig:
