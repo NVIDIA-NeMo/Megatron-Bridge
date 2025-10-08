@@ -52,6 +52,7 @@ class Qwen25VLBridge(MegatronModelBridge):
             ffn_hidden_size=hf_config.intermediate_size,
             num_attention_heads=hf_config.num_attention_heads,
             num_query_groups=hf_config.num_key_value_heads,
+            kv_channels=getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads),
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
             gated_linear_unit=True,
