@@ -177,6 +177,12 @@ def setup(
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
     )
+
+    if cfg.model.restore_modelopt_state:
+        from megatron.bridge.training.post_training.checkpointing import load_modelopt_state
+
+        load_modelopt_state(model, cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load)
+
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
     optimizer, scheduler = setup_optimizer(
