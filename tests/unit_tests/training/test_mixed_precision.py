@@ -783,6 +783,19 @@ class TestRegisterAndGetMixedPrecisionConfig:
         assert config_underscore.params_dtype == config_hyphen.params_dtype
         assert config_underscore.pipeline_dtype == config_hyphen.pipeline_dtype
 
+    def test_get_mixed_precision_config_with_hyphens_and_underscores(self):
+        """Edge case user input."""
+        config_underscore = get_mixed_precision_config("fp16_with_mxfp8_mixed")
+        config_both = get_mixed_precision_config("fp16-with-mxfp8_mixed")
+
+        # Both should be valid MixedPrecisionConfig instances
+        assert isinstance(config_both, MixedPrecisionConfig)
+        assert isinstance(config_underscore, MixedPrecisionConfig)
+
+        assert config_both.bf16 == config_underscore.bf16
+        assert config_both.params_dtype == config_underscore.params_dtype
+        assert config_both.pipeline_dtype == config_underscore.pipeline_dtype
+
     def test_get_mixed_precision_config_hyphen_aliases_for_all_recipes(self):
         """Verify that all registered recipes with underscores also work with hyphens."""
         from megatron.bridge.training.mixed_precision import MIXED_PRECISION_RECIPES
