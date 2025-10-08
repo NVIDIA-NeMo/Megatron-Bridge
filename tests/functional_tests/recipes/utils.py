@@ -34,6 +34,7 @@ def run_pretrain_recipe_test(
     tmp_path: Path,
     tensor_parallelism: Optional[int] = None,
     pipeline_parallelism: Optional[int] = None,
+    model_overrides: Optional[dict] = None,
 ):
     """
     Common test implementation for pretrain recipe configurations.
@@ -50,6 +51,7 @@ def run_pretrain_recipe_test(
         tmp_path: Temporary directory for test outputs
         tensor_parallelism: Override tensor parallelism (None = use recipe default)
         pipeline_parallelism: Override pipeline parallelism (None = use recipe default)
+        model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
     shared_base_dir = broadcast_path(tmp_path)
@@ -83,6 +85,11 @@ def run_pretrain_recipe_test(
             config.model.tensor_parallelism = tensor_parallelism
         if pipeline_parallelism is not None:
             config.model.pipeline_parallelism = pipeline_parallelism
+
+        # Apply any model-specific overrides provided by the caller
+        if model_overrides:
+            for attribute_name, attribute_value in model_overrides.items():
+                setattr(config.model, attribute_name, attribute_value)
 
         pretrain(config, forward_step)
 
