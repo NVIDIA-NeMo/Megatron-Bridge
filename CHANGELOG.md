@@ -10,7 +10,7 @@
 * [Migration guide from NeMo 2 to Megatron-Bridge](https://docs.nvidia.com/nemo/megatron-bridge/latest/nemo2-migration-guide.html)
 * [Contribution guide for adding a new model](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html)
 * [Checkpoint conversion from Hugging Face to Megatron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/conversion)
-* Performance
+* [Performance](https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-summary.html)
   * MoE LLM
     * Change the model to dropless with balanced gating
     * Fusion of operators in router function
