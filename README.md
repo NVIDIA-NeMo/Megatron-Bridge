@@ -114,6 +114,8 @@ if __name__ == "__main__":
     # Override training parameters
     cfg.train.train_iters = 10
     cfg.scheduler.lr_decay_iters = 10000
+    cfg.model.vocab_size = 8192
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
 
     pretrain(cfg, forward_step)
 ```
