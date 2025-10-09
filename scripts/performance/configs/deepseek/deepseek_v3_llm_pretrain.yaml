@@ -20,7 +20,6 @@ ConfigContainer:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
     recompute_granularity: "selective"
-    pipeline_model_parallel_layout: "Et|(tt|)*30mL"
 
   train:
     train_iters: 100

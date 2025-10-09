@@ -171,7 +171,7 @@ def main():
             if args.model_size in ["8b"] and args.gpu.lower() in ["h100"]:
                 recipe.ddp.nccl_ub = True
             if args.model_size in ["8b", "70b"]:
-               recipe.model.gradient_accumulation_fusion = False
+                recipe.model.gradient_accumulation_fusion = False
         if args.model_name in ["llama3"] and args.model_size in ["70b"]:
             recipe.ddp.suggested_communication_unit_size = 800000000
     recipe.model.apply_rope_fusion = True
