@@ -668,6 +668,11 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
+    save_tokenizer_assets: bool = True
+    """Save tokenizer files to checkpoint directory. When enabled, saves all tokenizer artifacts
+    (vocab files, special tokens, tokenizer config) to make checkpoints self-contained and portable.
+    Set to False for performance-sensitive scenarios where tokenizer files are not needed."""
+
     replication: bool = False
     """If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks."""
 

@@ -454,6 +454,22 @@ def save_megatron_model(
         num_floating_point_operations_so_far=0,
     )
 
+    # Save tokenizer files separately if tokenizer config is provided
+    if tokenizer_config is not None:
+        from megatron.bridge.training.checkpointing import (
+            get_checkpoint_name,
+            save_tokenizer_assets,
+        )
+
+        # Build the tokenizer
+        tokenizer = build_tokenizer(tokenizer_config)
+
+        # Get the checkpoint name for step 0
+        checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
+
+        # Save tokenizer files
+        save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name)
+
 
 def dtype_from_str(dtype: str) -> torch.dtype:
     """Convert a string representation of a dtype to a torch.dtype.
