@@ -49,6 +49,7 @@ HF_GLM45_TOY_MODEL_CONFIG = {
     "rms_norm_eps": 1e-06,
     "rope_theta": 1000000.0,
     "routed_scaling_factor": 2.5,
+    "num_nextn_predict_layers": 0,  # Huggingface initialization does not handle MTP correctly
     "tie_word_embeddings": False,
     "torch_dtype": "bfloat16",
     "transformers_version": "4.54.0",

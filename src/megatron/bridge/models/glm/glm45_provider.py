@@ -90,6 +90,9 @@ class GLMMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     bias_dropout_fusion: bool = True
 
+    # MTP
+    mtp_num_layers: Optional[int] = 1
+    mtp_loss_scaling_factor: Optional[float] = 0.3  # https://arxiv.org/pdf/2508.06471 0.3 for the first 15T tokens, 0.1 for the remaining tokens.
 
 @dataclass
 class GLM45ModelProvider355B(GLMMoEModelProvider):
