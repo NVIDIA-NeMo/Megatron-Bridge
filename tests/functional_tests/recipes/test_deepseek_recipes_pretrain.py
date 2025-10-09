@@ -20,9 +20,6 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v2_lite_pretrain_config as deepseek_v2_lite_config,
 )
 from megatron.bridge.recipes.deepseek import (
-    deepseek_v2_pretrain_config as deepseek_v2_config,
-)
-from megatron.bridge.recipes.deepseek import (
     deepseek_v3_pretrain_config as deepseek_v3_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
@@ -33,19 +30,13 @@ DEEPSEEK_PRETRAIN_RECIPES = [
     (
         deepseek_v2_lite_config,
         "deepseek_v2_lite",
-        {"tensor_parallelism": 1, "pipeline_parallelism": 1},
-        {"num_layers": 2, "num_moe_experts": 8, "moe_router_topk": 1, "moe_layer_freq": [0, 1]},
-    ),
-    (
-        deepseek_v2_config,
-        "deepseek_v2",
-        {"tensor_parallelism": 1, "pipeline_parallelism": 1},
+        {"tensor_parallelism": 1, "pipeline_parallelism": 1, "expert_parallelism": 1},
         {"num_layers": 2, "num_moe_experts": 8, "moe_router_topk": 1, "moe_layer_freq": [0, 1]},
     ),
     (
         deepseek_v3_config,
         "deepseek_v3",
-        {"tensor_parallelism": 2, "pipeline_parallelism": 1},
+        {"tensor_parallelism": 2, "pipeline_parallelism": 1, "expert_parallelism": 1},
         {"num_layers": 2, "num_moe_experts": 8, "moe_router_topk": 1, "moe_layer_freq": [0, 1]},
     ),
 ]

@@ -34,6 +34,7 @@ def run_pretrain_recipe_test(
     tmp_path: Path,
     tensor_parallelism: Optional[int] = None,
     pipeline_parallelism: Optional[int] = None,
+    expert_parallelism: Optional[int] = None,
     model_overrides: Optional[dict] = None,
 ):
     """
@@ -51,6 +52,7 @@ def run_pretrain_recipe_test(
         tmp_path: Temporary directory for test outputs
         tensor_parallelism: Override tensor parallelism (None = use recipe default)
         pipeline_parallelism: Override pipeline parallelism (None = use recipe default)
+        expert_parallelism: Override expert parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
@@ -85,6 +87,8 @@ def run_pretrain_recipe_test(
             config.model.tensor_model_parallel_size = tensor_parallelism
         if pipeline_parallelism is not None:
             config.model.pipeline_model_parallel_size = pipeline_parallelism
+        if expert_parallelism is not None:
+            config.model.expert_model_parallel_size = expert_parallelism
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:

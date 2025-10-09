@@ -16,7 +16,6 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
@@ -27,6 +26,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedDataParallelConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
@@ -57,9 +57,14 @@ class DeepSeekCommonKwargs(TypedDict, total=False):
     pipeline_parallelism_dtype: Optional[torch.dtype]
     virtual_pipeline_parallelism: Optional[int]
     context_parallelism: int
+    expert_parallelism: Optional[int]
     sequence_parallelism: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
+    # Recompute configuration
+    recompute_granularity: Optional[str]
+    recompute_method: Optional[str]
+    recompute_num_layers: Optional[int]
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -86,6 +91,7 @@ def deepseek_v2_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]
         "hf_path": "deepseek-ai/DeepSeek-V2-Lite",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
+        "expert_parallelism": 8,
     }
     combined_kwargs: DeepSeekCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _deepseek_common(**combined_kwargs)
@@ -100,15 +106,13 @@ def deepseek_v2_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> 
         "hf_path": "deepseek-ai/DeepSeek-V2",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "expert_parallelism": 32,
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1,
     }
     combined_kwargs: DeepSeekCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _deepseek_common(**combined_kwargs)
-
-
-def pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> ConfigContainer:
-    """Backward-compatible alias for DeepSeek-V2 pretraining config."""
-    return deepseek_v2_pretrain_config(**user_kwargs)
 
 
 def _deepseek_common(
@@ -129,9 +133,14 @@ def _deepseek_common(
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
+    expert_parallelism: Optional[int] = None,
     sequence_parallelism: bool = False,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
+    # Recompute configuration
+    recompute_granularity: Optional[str] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 512,
@@ -167,8 +176,14 @@ def _deepseek_common(
     model_cfg.pipeline_dtype = pipeline_parallelism_dtype
     model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
     model_cfg.context_parallel_size = context_parallelism
+    if expert_parallelism is not None:
+        model_cfg.expert_model_parallel_size = expert_parallelism
     model_cfg.sequence_parallel = sequence_parallelism
     model_cfg.seq_length = seq_length
+
+    model_cfg.recompute_granularity = recompute_granularity
+    model_cfg.recompute_method = recompute_method
+    model_cfg.recompute_num_layers = recompute_num_layers
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
