@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+
 from megatron.bridge.training.utils.train_utils import (
     report_l2_norm_grad,
     report_memory,
@@ -77,9 +78,7 @@ class TestTrainingMetrics:
         seq_length = 2048
         train_iters = 1000
 
-        train_state = MockTrainState(
-            step=step, consumed_train_samples=consumed_train_samples
-        )
+        train_state = MockTrainState(step=step, consumed_train_samples=consumed_train_samples)
         runtime_report = report_runtime(
             train_state=train_state,
             start_time=start_time,
@@ -98,9 +97,7 @@ class TestTrainingMetrics:
         seq_length = 4096
         history_wct = [0.9, 1.7, 2.9, 4.2, 5.9]
         window_size = len(history_wct)
-        train_config = MockTrainConfig(
-            global_batch_size=global_batch_size, micro_batch_size=micro_batch_size
-        )
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
 
         throughput_report = report_throughput(
             train_config=train_config,
