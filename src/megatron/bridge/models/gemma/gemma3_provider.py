@@ -81,7 +81,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     # mlp
     gated_linear_unit: bool = True
     add_bias_linear: bool = False
-    activation_func: Callable = field(default_factory=lambda: fast_gelu) # identical to openai_gelu
+    activation_func: Callable = field(default_factory=lambda: fast_gelu)  # identical to openai_gelu
 
     # Do not change
     is_vision_language: bool = False
