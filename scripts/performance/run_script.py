@@ -86,7 +86,7 @@ def main():
             recipe.comm_overlap.delay_wgrad_compute = False
             recipe.model.moe_shared_expert_overlap = True
         recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
-        elif args.gpu.lower() in ["gb200"]:
+        if args.gpu.lower() in ["gb200"]:
             if use_tokendrop:
                 recipe.model.recompute_modules = ["mla_up_proj"]
                 recipe.model.pipeline_model_parallel_layout = "Et*4|(tttt|)*14tmL"
