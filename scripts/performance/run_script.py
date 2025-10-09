@@ -90,7 +90,8 @@ def main():
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
             recipe.comm_overlap.delay_wgrad_compute = False
             recipe.model.moe_shared_expert_overlap = True
-        recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
+        if args.gpu.lower() in ["h100"]:
+            recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         if args.gpu.lower() == "b200":
             recipe.model.recompute_modules = ["mla_up_proj"]
         if args.gpu.lower() == "gb200":
