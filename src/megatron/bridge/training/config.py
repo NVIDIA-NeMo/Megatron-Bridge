@@ -831,6 +831,10 @@ class ProfilingConfig:
     record_shapes: bool = False
     """Record shapes of tensors."""
 
+    nvtx_ranges: bool = False
+    """Enable NVTX range annotations for profiling. When enabled, inserts NVTX markers
+    to categorize execution in profiler output."""
+
     def finalize(self) -> None:
         """Validate profiling configuration."""
         assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
