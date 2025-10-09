@@ -91,7 +91,17 @@ def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -
         "hf_path": "deepseek-ai/DeepSeek-V3",
         "tensor_parallelism": 2,
         "pipeline_parallelism": 16,
+        "expert_parallelism": 64,
         "pipeline_parallelism_dtype": torch.bfloat16,
+        # Old recipe-compatible defaults passed via wrapper
+        "recompute_granularity": "selective",
+        "precision_config": MixedPrecisionConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=torch.bfloat16,
+            autocast_enabled=False,
+            grad_reduce_in_fp32=False,
+        ),
     }
     combined_kwargs: DeepSeekV3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _deepseek_v3_common(**combined_kwargs)
@@ -105,8 +115,18 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
         ConfigContainer: Configuration for pre-training.
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
+        "hf_path": "deepseek-ai/DeepSeek-V3",
+        "tensor_parallelism": 2,
         "pipeline_parallelism": 8,
         "expert_parallelism": 32,
+        # Maintain old recipe defaults via wrapper overrides
+        "precision_config": MixedPrecisionConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=torch.bfloat16,
+            autocast_enabled=False,
+            grad_reduce_in_fp32=False,
+        ),
         "recompute_granularity": "full",
         "recompute_method": "uniform",
         "recompute_num_layers": 1,
@@ -133,12 +153,12 @@ def _deepseek_v3_common(
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    expert_parallelism: int = 1,
+    expert_parallelism: int = 64,
     sequence_parallelism: bool = True,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
-    recompute_granularity: Optional[str] = None,
+    recompute_granularity: Optional[str] = "selective",
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
     # Training hyperparameters
@@ -154,7 +174,7 @@ def _deepseek_v3_common(
     save_interval: int = 2000,
     use_null_tokenizer: bool = True,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
@@ -179,10 +199,35 @@ def _deepseek_v3_common(
     model_cfg.expert_model_parallel_size = expert_parallelism
     model_cfg.sequence_parallel = sequence_parallelism
     model_cfg.seq_length = seq_length
-    # Optional recompute settings
+
+    model_cfg.expert_tensor_parallel_size = 1
+    model_cfg.mtp_num_layers = 1
+    model_cfg.mtp_loss_scaling_factor = 0.1
+    model_cfg.init_method_std = 0.006
+    model_cfg.rotary_base = 10000.0
+    model_cfg.rotary_scaling_factor = 40
+    model_cfg.rotary_base = float(model_cfg.rotary_base)
+    model_cfg.rotary_scaling_factor = int(model_cfg.rotary_scaling_factor)
+
     model_cfg.recompute_granularity = recompute_granularity
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
+
+    mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
+    last_layer = ["mtp"] * mtp_layers + ["loss"]
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    pp_size = pipeline_parallelism or 1
+    vp_size = virtual_pipeline_parallelism or 1
+    if (pp_size, vp_size) in layout_map:
+        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -190,6 +235,13 @@ def _deepseek_v3_common(
         max_lr=lr,
         min_lr=min_lr,
     )
+
+    # Match old recipe optimizer dtype behavior
+    opt_config.use_precision_aware_optimizer = True
+    opt_config.main_params_dtype = torch.float32
+    opt_config.main_grads_dtype = torch.bfloat16
+    opt_config.exp_avg_dtype = torch.bfloat16
+    opt_config.exp_avg_sq_dtype = torch.bfloat16
 
     cfg = ConfigContainer(
         model=model_cfg,
@@ -200,13 +252,17 @@ def _deepseek_v3_common(
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
             manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
+            manual_gc_interval=5,
+            manual_gc_eval=5,
         ),
         optimizer=opt_config,
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=check_for_nan_in_grad,
+            grad_reduce_in_fp32=False,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
             use_distributed_optimizer=True,
             use_megatron_fsdp=use_megatron_fsdp,
         ),
@@ -248,9 +304,8 @@ def _deepseek_v3_common(
         mixed_precision=precision_config,
     )
 
+    # Ensure comm_overlap exists with old default tp_comm_overlap=False when not provided
     if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=False,
-        )
+        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     return cfg

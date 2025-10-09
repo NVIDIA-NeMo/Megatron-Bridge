@@ -57,6 +57,10 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     # Minimal provider to accept attribute assignments used in recipes
+    def __init__(self):
+        # Provide defaults for attributes that recipes might read
+        self.rotary_base = 10000.0
+
     def finalize(self):
         return None
 

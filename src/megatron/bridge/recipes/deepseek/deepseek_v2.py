@@ -92,6 +92,11 @@ def deepseek_v2_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
         "expert_parallelism": 8,
+        # Match old defaults
+        "pipeline_parallelism_dtype": None,
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1,
     }
     combined_kwargs: DeepSeekCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _deepseek_common(**combined_kwargs)
@@ -181,6 +186,11 @@ def _deepseek_common(
     model_cfg.sequence_parallel = sequence_parallelism
     model_cfg.seq_length = seq_length
 
+    # Match old DeepSeek V2/V2-Lite defaults for initializer std and rotary base
+    if isinstance(hf_path, str) and "DeepSeek-V2" in hf_path:
+        model_cfg.init_method_std = 0.006
+        model_cfg.rotary_base = float(model_cfg.rotary_base)
+
     model_cfg.recompute_granularity = recompute_granularity
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
@@ -208,6 +218,11 @@ def _deepseek_common(
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=check_for_nan_in_grad,
+            # Match old DeepSeek V2-Lite defaults
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
             use_distributed_optimizer=True,
             use_megatron_fsdp=use_megatron_fsdp,
         ),
