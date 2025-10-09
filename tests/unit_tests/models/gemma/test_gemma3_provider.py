@@ -31,8 +31,6 @@ from megatron.bridge.models.gemma.gemma3_provider import (
     Gemma3TEDotProductAttention,
     TERowParallelLinearLayerNorm,
     _is_local_attn_layer,
-    gelu_impl,
-    openai_gelu,
 )
 
 
@@ -74,7 +72,6 @@ class TestGemma3ModelProvider:
         # Check MLP settings
         assert provider.gated_linear_unit is True
         assert provider.add_bias_linear is False
-        assert provider.activation_func == openai_gelu
 
         # Check other settings
         assert provider.is_vision_language is False
@@ -213,7 +210,6 @@ class TestGemma3ModelProvider1B:
 
         # Test inherited Gemma3 defaults
         assert provider.normalization == "RMSNorm"
-        assert provider.activation_func == openai_gelu
         assert provider.gated_linear_unit is True
         assert provider.rotary_base == (10_000, 1_000_000)
         assert provider.interleaved_attn_pattern == (5, 1)
@@ -245,7 +241,6 @@ class TestGemma3ModelProvider4B:
 
         # Test inherited Gemma3 defaults
         assert provider.normalization == "RMSNorm"
-        assert provider.activation_func == openai_gelu
         assert provider.gated_linear_unit is True
 
     def test_gemma3_4b_inheritance(self):
@@ -311,34 +306,6 @@ class TestGemma3ModelProvider27B:
         """Test that Gemma3ModelProvider27B properly inherits from Gemma3ModelProvider."""
         provider = Gemma3ModelProvider27B()
         assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ActivationFunctions:
-    """Test cases for Gemma3 activation functions."""
-
-    def test_gelu_impl_function(self):
-        """Test the OpenAI GELU implementation."""
-        # Test with some known values
-        x = torch.tensor([0.0, 1.0, -1.0, 2.0])
-        result = gelu_impl(x)
-
-        # GELU(0) should be 0
-        assert abs(result[0].item()) < 1e-6
-
-        # GELU should be approximately x for large positive x
-        assert result[3].item() > 1.9  # GELU(2) ≈ 2
-
-        # GELU should be close to 0 for large negative x
-        assert abs(result[2].item()) < 0.2  # GELU(-1) ≈ -0.16 (more lenient)
-
-    def test_openai_gelu_wrapper(self):
-        """Test the openai_gelu wrapper function."""
-        x = torch.tensor([0.5, -0.5])
-        result1 = openai_gelu(x)
-        result2 = gelu_impl(x)
-
-        # Should produce the same results
-        assert torch.allclose(result1, result2)
 
 
 class TestGemma3UtilityFunctions:

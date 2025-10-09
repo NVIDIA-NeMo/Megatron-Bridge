@@ -19,6 +19,7 @@ from functools import lru_cache
 from typing import Callable, Optional, Tuple, Union
 
 import torch
+from megatron.core.activations import fast_gelu
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.language_model_embedding import (
@@ -80,7 +81,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     # mlp
     gated_linear_unit: bool = True
     add_bias_linear: bool = False
-    activation_func: Callable = field(default_factory=lambda: openai_gelu)
+    activation_func: Callable = field(default_factory=lambda: fast_gelu) # identical to openai_gelu
 
     # Do not change
     is_vision_language: bool = False
@@ -207,17 +208,6 @@ class Gemma3ModelProvider27B(Gemma3ModelProvider):
     window_size: int = 1024
     rope_scaling_factor: float = 8.0
     vocab_size: int = 262_208
-
-
-@torch.jit.script
-def gelu_impl(x):
-    """OpenAI's gelu implementation."""
-    return 0.5 * x * (1.0 + torch.tanh(0.7978845608028654 * x * (1.0 + 0.044715 * x * x)))
-
-
-def openai_gelu(x):
-    """OpenAI's gelu implementation."""
-    return gelu_impl(x)
 
 
 def gemma3_layer_spec(config) -> ModuleSpec:
