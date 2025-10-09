@@ -68,6 +68,16 @@ def pretrain(
     state.cfg = config
 
     if config.inprocess_restart and config.inprocess_restart.enabled:
+        if dist.is_initialized():
+            raise RuntimeError(
+                "In-process restart is incompatible with user-initialized process groups. "
+                "The in-process restart mechanism expects to manage the process group lifecycle "
+                "and will destroy it during fault recovery. Either:\n"
+                "1. Disable in-process restart and manage the process group yourself, or\n"
+                "2. Let the framework initialize the process group by not calling "
+                "torch.distributed.init_process_group() before training."
+            )
+
         # Apply in-process restart wrapper directly to _pretrain
         from megatron.bridge.training.inprocess_restart import maybe_wrap_for_inprocess_restart
 
