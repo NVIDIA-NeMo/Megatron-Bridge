@@ -67,9 +67,9 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.logger")
     def test_save_tokenizer_assets_sentencepiece(
-        self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture
+        self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture
     ):
         """Test saving SentencePiece tokenizer files."""
         mock_dist_init.return_value = False
@@ -101,8 +101,8 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    def test_save_tokenizer_assets_gpt2bpe(self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture):
+    @patch("megatron.bridge.training.checkpointing.logger")
+    def test_save_tokenizer_assets_gpt2bpe(self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture):
         """Test saving GPT2BPE tokenizer files (vocab + merges)."""
         mock_dist_init.return_value = False
 
@@ -130,8 +130,8 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    def test_save_tokenizer_assets_bert(self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture):
+    @patch("megatron.bridge.training.checkpointing.logger")
+    def test_save_tokenizer_assets_bert(self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture):
         """Test saving BERT tokenizer files."""
         mock_dist_init.return_value = False
 
@@ -154,8 +154,8 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    def test_save_tokenizer_assets_tiktoken(self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture):
+    @patch("megatron.bridge.training.checkpointing.logger")
+    def test_save_tokenizer_assets_tiktoken(self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture):
         """Test saving TikToken tokenizer files."""
         mock_dist_init.return_value = False
 
@@ -177,9 +177,9 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.logger")
     def test_save_tokenizer_assets_null_tokenizer(
-        self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture
+        self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture
     ):
         """Test that NullTokenizer doesn't save files."""
         mock_dist_init.return_value = False
@@ -197,8 +197,8 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    def test_save_tokenizer_assets_relative_path(self, mock_print, mock_get_rank, mock_dist_init):
+    @patch("megatron.bridge.training.checkpointing.logger")
+    def test_save_tokenizer_assets_relative_path(self, mock_logger, mock_get_rank, mock_dist_init):
         """Test that relative paths are resolved correctly."""
         mock_dist_init.return_value = False
 
@@ -229,9 +229,9 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.logger")
     def test_save_tokenizer_assets_huggingface_with_instance(
-        self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture
+        self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture
     ):
         """Test saving HuggingFace tokenizer files using provided instance."""
         mock_dist_init.return_value = False
@@ -255,9 +255,9 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.logger")
     def test_save_tokenizer_assets_all_sentencepiece_variants(
-        self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture
+        self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture
     ):
         """Test all SentencePiece-based tokenizer types."""
         mock_dist_init.return_value = False
@@ -292,9 +292,9 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.logger")
     def test_save_tokenizer_assets_missing_file(
-        self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture
+        self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture
     ):
         """Test handling of missing tokenizer files."""
         mock_dist_init.return_value = False
@@ -307,15 +307,14 @@ class TestSaveTokenizerAssets:
         # Should not raise error
         save_tokenizer_assets(mock_tokenizer, config, checkpoint_path_fixture)
 
-        # Should print warning
-        warning_calls = [call for call in mock_print.call_args_list if "WARNING" in str(call)]
-        assert len(warning_calls) > 0
+        # Should log debug message about missing file
+        assert mock_logger.debug.called
 
     @patch("megatron.bridge.training.checkpointing.MultiStorageClientFeature")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    def test_save_tokenizer_assets_with_msc(self, mock_print, mock_get_rank, mock_dist_init, mock_msc_feature):
+    @patch("megatron.bridge.training.checkpointing.logger")
+    def test_save_tokenizer_assets_with_msc(self, mock_logger, mock_get_rank, mock_dist_init, mock_msc_feature):
         """Test saving tokenizer files with MultiStorageClient enabled."""
         mock_dist_init.return_value = False
         mock_msc_feature.is_enabled.return_value = True
@@ -351,9 +350,9 @@ class TestSaveTokenizerAssets:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
-    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("megatron.bridge.training.checkpointing.logger")
     def test_save_tokenizer_assets_huggingface_save_pretrained(
-        self, mock_print, mock_get_rank, mock_dist_init, checkpoint_path_fixture
+        self, mock_logger, mock_get_rank, mock_dist_init, checkpoint_path_fixture
     ):
         """Test that HuggingFace tokenizer's save_pretrained is called."""
         mock_dist_init.return_value = False

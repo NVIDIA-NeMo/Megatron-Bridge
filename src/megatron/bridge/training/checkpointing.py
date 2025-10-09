@@ -917,10 +917,10 @@ def save_tokenizer_assets(
                     elif hasattr(tokenizer, "_tokenizer") and hasattr(tokenizer._tokenizer, "save_pretrained"):
                         tokenizer._tokenizer.save_pretrained(tmp_dir)
                     else:
-                        print_rank_0(f"  WARNING: {tokenizer_type} does not support save_pretrained()")
+                        logger.debug(f"{tokenizer_type} does not support save_pretrained(), skipping tokenizer save")
                         return
 
-                    print_rank_0(f"  saving {tokenizer_type} files to {tokenizer_dir}")
+                    logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
                     for filename in os.listdir(tmp_dir):
                         src_path = os.path.join(tmp_dir, filename)
                         if os.path.isfile(src_path):
@@ -929,7 +929,7 @@ def save_tokenizer_assets(
                                 with msc.open(str(dest_path), "wb") as dest_f:
                                     dest_f.write(src_f.read())
             else:
-                print_rank_0(f"  saving {tokenizer_type} files to {tokenizer_dir}")
+                logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
                 if hasattr(tokenizer, "save_pretrained"):
                     tokenizer.save_pretrained(tokenizer_dir)
                 elif hasattr(tokenizer, "_tokenizer") and hasattr(tokenizer._tokenizer, "save_pretrained"):
@@ -963,12 +963,12 @@ def save_tokenizer_assets(
                 files_to_copy.append(("tokenizer_model", resolved_path, "tokenizer.json"))
 
         elif tokenizer_type == "NullTokenizer":
-            print_rank_0(f"  {tokenizer_type} requires no file artifacts")
+            logger.debug(f"{tokenizer_type} requires no file artifacts")
             return
 
         # Copy the files
         if files_to_copy:
-            print_rank_0(f"  saving {tokenizer_type} files to {tokenizer_dir}")
+            logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
             for config_attr, source_path, dest_filename in files_to_copy:
                 if source_path and os.path.exists(source_path):
                     if use_msc:
@@ -976,19 +976,20 @@ def save_tokenizer_assets(
                         with open(source_path, "rb") as src_f:
                             with msc.open(str(dest_path), "wb") as dest_f:
                                 dest_f.write(src_f.read())
-                        print_rank_0(f"    copied {config_attr}: {source_path} -> {dest_path}")
+                        logger.debug(f"Copied {config_attr}: {source_path} -> {dest_path}")
                     else:
                         dest_path = os.path.join(tokenizer_dir, dest_filename)
                         shutil.copy2(source_path, dest_path)
-                        print_rank_0(f"    copied {config_attr}: {source_path} -> {dest_path}")
+                        logger.debug(f"Copied {config_attr}: {source_path} -> {dest_path}")
                 else:
-                    print_rank_0(f"    WARNING: {config_attr} not found at resolved path: {source_path}")
+                    logger.debug(f"{config_attr} not found at resolved path: {source_path}")
 
     except Exception as e:
-        print_rank_0(f"WARNING: Failed to save tokenizer files: {e}")
-        import traceback
+        if get_rank_safe() == 0:
+            logger.error(f"Failed to save tokenizer files: {e}")
+            import traceback
 
-        print_rank_0(traceback.format_exc())
+            logger.error(traceback.format_exc())
 
 
 def _generate_model_state_dict(
