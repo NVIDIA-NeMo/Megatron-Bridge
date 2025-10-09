@@ -28,6 +28,10 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
+# Register Gemma3-specific module types for AutoMapping
+AutoMapping.register_module_type("Gemma3TEDotProductAttention", "replicated")
+AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
+
 
 @MegatronModelBridge.register_bridge(source=Gemma3ForCausalLM, target=GPTModel)
 class Gemma3ModelBridge(MegatronModelBridge):
