@@ -44,6 +44,7 @@ PERF_ENV_VARS = {
     "NVTE_FUSED_ATTN": "1",  # Enable cuDNN fused attention
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
+    "TORCH_NCCL_HIGH_PRIORITY": "1",
 }
 
 

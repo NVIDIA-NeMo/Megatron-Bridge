@@ -61,7 +61,8 @@ def main():
             logger.info("Using token drop, disabling DeepEP")
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
-        pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
+        pp_vp_map = {"h100": (8, 4), "b200": (16, 1), "gb200": (4, 4)}
+        pp, vp = pp_vp_map[args.gpu.lower()] if args.gpu.lower() in pp_vp_map else (1, 1)
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -69,7 +70,6 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
-            layout="Et|(tt|)*30mL",
         )
 
         if enable_deepep:
@@ -85,10 +85,11 @@ def main():
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
             recipe.comm_overlap.delay_wgrad_compute = False
             recipe.model.moe_shared_expert_overlap = True
-        if args.gpu.lower() in ["h100", "b200"]:
-            recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
+        recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         elif args.gpu.lower() in ["gb200"]:
-            recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
+            if use_tokendrop:
+                recipe.model.recompute_modules = ["mla_up_proj"]
+                recipe.model.pipeline_model_parallel_layout = "Et*4|(tttt|)*14tmL"
         if args.gpu.lower() in ["gb200", "b200"]:
             recipe.comm_overlap.overlap_grad_reduce = True
         elif args.gpu.lower() in ["h100"]:
@@ -159,7 +160,7 @@ def main():
             recipe.model.use_transformer_engine_op_fuser = False
 
     if recipe.ddp.use_megatron_fsdp:
-        if args.model_name in ["llama3", "llama31"] :
+        if args.model_name in ["llama3", "llama31"]:
             if args.model_size in ["70b", "405b"]:
                 recipe.ddp.fsdp_double_buffer = True
             if args.model_size in ["8b"] and args.gpu.lower() in ["h100"]:
