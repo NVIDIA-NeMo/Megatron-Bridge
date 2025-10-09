@@ -146,7 +146,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | `--weight-decay` | `optimizer.weight_decay` | Weight decay. |
 | `--train-samples` | `train.train_samples` | Total training samples (sample-based mode). |
 
-#### MoE
+### MoE
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -277,7 +277,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--logging-level` | `logger.logging_level` | Python logging level (e.g., 20=INFO). |
 | `--log-energy` | `logger.log_energy` | Log energy in Joules (if available). |
 
-#### RNG / Initialization (add_initialization_args)
+### RNG / Initialization (add_initialization_args)
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -286,7 +286,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--te-rng-tracker` | `rng.te_rng_tracker` | Use TE RNG (needed for CUDA graphs). |
 | `--inference-rng-tracker` | `rng.inference_rng_tracker` | RNG tuned for inference stability. |
 
-#### Distributed init and topology (add_distributed_args)
+### Distributed init and topology (add_distributed_args)
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -307,7 +307,7 @@ Additional distributed/optimizer overlap settings:
 | `--overlap-grad-reduce` | `ddp.overlap_grad_reduce` | Overlap DP gradient reduce-scatter. |
 | `--overlap-param-gather` | `ddp.overlap_param_gather` | Overlap parameter all-gather with fprop. |
 
-#### Profiling (profile args and add_inprocess_restart_args)
+### Profiling (profile args and add_inprocess_restart_args)
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -320,7 +320,7 @@ Additional distributed/optimizer overlap settings:
 | `--memory-snapshot-path` | `profiling.memory_snapshot_path` | Output path for memory snapshot. |
 | (shapes) | `profiling.record_shapes` | Record tensor shapes (overhead). |
 
-#### In-process restart (add_inprocess_restart_args)
+### In-process restart (add_inprocess_restart_args)
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -341,7 +341,7 @@ Additional distributed/optimizer overlap settings:
 | `--inprocess-active-world-size` | `inprocess_restart.active_world_size` | Active ranks count; rest are reserve. |
 | `--inprocess-empty-cuda-cache` | `inprocess_restart.empty_cuda_cache` | Empty CUDA cache on restart finalize. |
 
-#### Straggler detection (add_straggler_detector_args)
+### Straggler detection (add_straggler_detector_args)
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -350,7 +350,7 @@ Additional distributed/optimizer overlap settings:
 | `--straggler-ctrlr-port` | `straggler.straggler_ctrlr_port` | Controller port for toggling. |
 | `--straggler-minmax-count` | `straggler.straggler_minmax_count` | Num ranks to report for min/max throughput. |
 
-#### Rerun state machine (add_rerun_machine_args)
+### Rerun state machine (add_rerun_machine_args)
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
