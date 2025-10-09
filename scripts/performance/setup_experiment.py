@@ -118,7 +118,7 @@ if __name__ == "__main__":
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
             executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
     if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
-        if agrs.compute_dtype == "bf16" and not args.use_tokendrop:
+        if agrs.compute_dtype == "bf16" and (not args.use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
     if args.gpu.lower() in ["h100"]:
