@@ -53,6 +53,9 @@ class MixedPrecisionConfig:
     fp8_multi_head_attention: bool = False
     fp8_param: Optional[bool] = None
     fp8_param_gather: bool = False
+    # fp4 related
+    fp4: Optional[str] = None
+    fp4_recipe: str = "nvfp4"
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
     initial_loss_scale: Optional[float] = 4294967296  # 2**32
