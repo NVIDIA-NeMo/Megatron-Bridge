@@ -68,7 +68,6 @@ class GLM45Bridge(MegatronModelBridge):
         param_mappings = {
             # MLP
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
             "decoder.layers.*.mlp.shared_experts.router.weight": "model.layers.*.mlp.shared_experts.gate.weight",
@@ -85,8 +84,9 @@ class GLM45Bridge(MegatronModelBridge):
             #  (a) `decoder.layers.*.pre_mlp_layernorm.weight`, if the layer is MoE
             #  (b) `decoder.layers.*.mlp.linear_fc1.layer_norm_weight`, if the layer is dense
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
-            
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
+            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
             # LM Head
             "decoder.final_layernorm.weight": "model.norm.weight",
             "output_layer.weight": "lm_head.weight",

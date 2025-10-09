@@ -50,7 +50,7 @@ class GLMMoEModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     vocab_size: int = 151552
     share_embeddings_and_output_weights: Optional[bool] = False
-    layernorm_epsilon: float = 1e-6
+    layernorm_epsilon: float = 1e-5
     position_embedding_type: str = "rope"
     autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
@@ -72,7 +72,6 @@ class GLMMoEModelProvider(GPTModelProvider):
     moe_shared_expert_overlap: bool = True
     moe_token_dispatcher_type: str = "alltoall"
     moe_router_load_balancing_type: str = "seq_aux_loss"
-    moe_router_topk_scaling_factor: float = 2.5
     moe_aux_loss_coeff: float = 1e-3
     moe_router_pre_softmax: bool = False
     moe_grouped_gemm: bool = True
@@ -101,6 +100,7 @@ class GLM45ModelProvider355B(GLMMoEModelProvider):
     moe_ffn_hidden_size: int = 1536
     moe_shared_expert_intermediate_size: int = 1536
     qk_layernorm: bool = True
+    moe_router_topk_scaling_factor: float = 2.5
 
 @dataclass
 class GLM45AirModelProvider106B(GLMMoEModelProvider):
@@ -116,3 +116,4 @@ class GLM45AirModelProvider106B(GLMMoEModelProvider):
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 1408
     qk_layernorm: bool = False
+    moe_router_topk_scaling_factor: float = 1.0
