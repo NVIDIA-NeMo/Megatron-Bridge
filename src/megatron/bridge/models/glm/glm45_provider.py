@@ -15,12 +15,20 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Union, List
-
+from typing import Callable, Optional, Union, List, TYPE_CHECKING
+from functools import partial
 import torch
 import torch.nn.functional as F
-
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+if TYPE_CHECKING:
+    from megatron.core.transformer import ModuleSpec
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +36,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GLMMoEModelProvider(GPTModelProvider):
     """Base provider for GLM MoE Models."""
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
+        get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
+    )
 
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
@@ -58,18 +69,18 @@ class GLMMoEModelProvider(GPTModelProvider):
 
     # MoE specific parameters
     moe_router_topk: int = 8
-    moe_shared_expert_intermediate_size: int = 1536
     moe_shared_expert_overlap: bool = True
+    moe_token_dispatcher_type: str = "alltoall"
     moe_router_load_balancing_type: str = "seq_aux_loss"
     moe_router_topk_scaling_factor: float = 2.5
     moe_aux_loss_coeff: float = 1e-3
-    moe_router_pre_softmax: bool = True # TODO: Confirm this
+    moe_router_pre_softmax: bool = False
     moe_grouped_gemm: bool = True
     moe_router_score_function: str = "sigmoid"
     moe_permute_fusion: bool = True
     moe_router_dtype: str = "fp32"
     moe_router_enable_expert_bias: bool = True
-    moe_router_bias_update_rate: float = 0 # TODO: Confirm this
+    moe_router_bias_update_rate: float = 0
 
     # optimization
     persist_layer_norm: bool = True
@@ -88,6 +99,7 @@ class GLM45ModelProvider355B(GLMMoEModelProvider):
     ffn_hidden_size: int = 12288
     moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 3 + [1] * 89)  # first three layers are dense
     moe_ffn_hidden_size: int = 1536
+    moe_shared_expert_intermediate_size: int = 1536
     qk_layernorm: bool = True
 
 @dataclass
@@ -102,4 +114,5 @@ class GLM45AirModelProvider106B(GLMMoEModelProvider):
     ffn_hidden_size: int = 10944
     moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 45)  # first one layer is dense
     moe_ffn_hidden_size: int = 1408
+    moe_shared_expert_intermediate_size: int = 1408
     qk_layernorm: bool = False

@@ -35,7 +35,7 @@ class GLM45Bridge(MegatronModelBridge):
             kv_channels=hf_config.head_dim,
             hidden_size=hf_config.hidden_size,
             rotary_base=hf_config.rope_theta,
-            rotary_percent=hf_config.rope_scaling,
+            rotary_percent=hf_config.partial_rotary_factor,
             init_method_std=hf_config.initializer_range,
             ffn_hidden_size=hf_config.intermediate_size,
             seq_length=hf_config.max_position_embeddings,
@@ -45,13 +45,13 @@ class GLM45Bridge(MegatronModelBridge):
             # n group, topk group
             num_moe_experts=hf_config.n_routed_experts,
             # n shared expert
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size,
             moe_router_topk_scaling_factor=hf_config.routed_scaling_factor,
             moe_router_topk=hf_config.num_experts_per_tok,
             moe_layer_freq=moe_layer_freq,
             num_layers=hf_config.num_hidden_layers,
             num_query_groups=hf_config.num_key_value_heads,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=hf_config.rope_theta,
             # MTP
             qk_layernorm=hf_config.use_qk_norm,
             vocab_size=hf_config.vocab_size,
@@ -63,14 +63,15 @@ class GLM45Bridge(MegatronModelBridge):
         )
     
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = {}
+        mapping_list = []
 
         param_mappings = {
             # MLP
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
-            "decoder.layers.*.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
-            "decoder.layers.*.shared_experts.router.weight": "model.layers.*.mlp.shared_experts.gate.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.router.weight": "model.layers.*.mlp.shared_experts.gate.weight",
             "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
             "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
             "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
@@ -80,7 +81,7 @@ class GLM45Bridge(MegatronModelBridge):
             "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
             # Reference: https://github.com/NVIDIA/NeMo/blob/50cceb9c90ea1f440d1e14074fa13bd45f60a1c4/nemo/collections/llm/gpt/model/deepseek.py#L637-L650
-            #  In deepseek, HF weight `model.layers.*.post_attention_layernorm.weight` is mapped to the following mcore weights depending on the layer type:
+            #  In GLM, HF weight `model.layers.*.post_attention_layernorm.weight` is mapped to the following mcore weights depending on the layer type:
             #  (a) `decoder.layers.*.pre_mlp_layernorm.weight`, if the layer is MoE
             #  (b) `decoder.layers.*.mlp.linear_fc1.layer_norm_weight`, if the layer is dense
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
@@ -117,7 +118,7 @@ class GLM45Bridge(MegatronModelBridge):
                     up="model.layers.*.mlp.up_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="decoder.layers.*.shared_experts.linear_fc1.weight",
+                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
                     gate="model.layers.*.mlp.shared_experts.gate_proj.weight",
                     up="model.layers.*.mlp.shared_experts.up_proj.weight",
                 ),
