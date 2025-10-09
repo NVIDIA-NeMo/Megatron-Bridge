@@ -124,6 +124,8 @@ if __name__ == "__main__":
     if args.gpu.lower() in ["h100"]:
         if args.model_name == "llama3" and args.model_size == "8b":
             if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+                executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                executor.env_vars["NCCL_CTA_POLICY"] = "1"
                 del_cudnn_ln = False
     if args.gpu.lower() in ["gb200"]:
         if args.model_name == "llama3" and args.model_size == "70b":
