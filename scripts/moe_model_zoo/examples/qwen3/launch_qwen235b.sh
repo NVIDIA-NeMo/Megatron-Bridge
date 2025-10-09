@@ -19,4 +19,4 @@ export MBS=1
 export SEQ_LEN=4096
 export MOE_GROUPED_GEMM=true
 
-A2A_OVERLAP=1 TP=2 PP=8 VPP=4 EP=32 NNODES=32 GBS=2048 bash ./sbatch_benchmarking.sh --recompute-granularity selective --recompute-modules moe_act layernorm --moe-router-force-load-balancing
+A2A_OVERLAP=1 TP=2 PP=8 VPP=4 EP=32 NNODES=32 GBS=2048 bash ./sbatch_benchmarking.sh config_container.model.recompute_granularity=selective config_container.model.recompute_modules="moe_act layernorm" config_container.model.moe_router_force_load_balancing=true
