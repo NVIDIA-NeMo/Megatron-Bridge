@@ -673,3 +673,41 @@ class TestMaybeWrapForInProcessRestart:
 
             assert result_fn == mock_wrapped_fn
             assert result_store == mock_store_instance
+
+
+class TestPretrainInProcessRestartCompatibility:
+    """Test cases for pretrain function's in-process restart compatibility checks."""
+
+    def test_pretrain_raises_error_when_process_group_initialized_with_inprocess_restart(self):
+        """Test that pretrain raises RuntimeError when process group is pre-initialized and in-process restart is enabled."""
+        from unittest.mock import MagicMock, patch
+
+        import pytest
+
+        from megatron.bridge.training.config import InProcessRestartConfig
+        from megatron.bridge.training.pretrain import pretrain
+
+        # Create mock config with in-process restart enabled
+        mock_config = MagicMock()
+        mock_inprocess_config = MagicMock(spec=InProcessRestartConfig)
+        mock_inprocess_config.enabled = True
+        mock_config.inprocess_restart = mock_inprocess_config
+
+        # Mock forward step function
+        mock_forward_step = MagicMock()
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("megatron.bridge.training.pretrain.runtime_config_update"),
+            patch("megatron.bridge.training.pretrain.GlobalState"),
+        ):
+            # Should raise RuntimeError when process group is already initialized
+            with pytest.raises(RuntimeError) as exc_info:
+                pretrain(mock_config, mock_forward_step)
+
+            # Verify the error message contains key information
+            error_message = str(exc_info.value)
+            assert "In-process restart is incompatible with user-initialized process groups" in error_message
+            assert "Either:" in error_message
+            assert "Disable in-process restart" in error_message
+            assert "Let the framework initialize the process group" in error_message

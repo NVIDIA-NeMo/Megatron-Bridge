@@ -96,6 +96,118 @@ lora_config = LoRA(
 )
 ```
 
+### Canonical LoRA: Performant vs Canonical Variants
+
+There are two variants of LoRA implemented in Megatron Bridge: "performant LoRA" (`LoRA`) and "canonical LoRA" (`CanonicalLoRA`).
+
+The distinction comes from the fact that Megatron Core optimizes the implementation of the following two linear modules by fusing multiple linear layers into one layer. When these layers are adapted with LoRA, the performant version also uses only one adapter for the linear module. The two linear modules are:
+
+1. `linear_qkv`: The projection matrix in self attention that transforms hidden state to query, key and value. Megatron Core fuses these three projection matrices into a single matrix to efficiently parallelize the matrix multiplication. Hence, performant LoRA applies a single adapter to the qkv projection matrix, whereas canonical LoRA applies three adapters.
+2. `linear_fc1`: The first linear layer in the MLP module before the intermediate activation. For gated linear activations, Megatron Core fuses the up and gate projection matrices into a single matrix for efficient parallelization. Hence, performant LoRA applies a single adapter to the up and gate projection matrices, whereas canonical LoRA applies two adapters.
+
+The following two figures illustrate the difference between canonical and performant LoRA, using the `linear_qkv` layer as an example. Canonical LoRA runs three adapters sequentially, while performant LoRA runs one adapter.
+
+```{image} images/canonical_lora.png
+:width: 640
+:align: center
+```
+
+```{image} images/performant_lora.png
+:width: 400
+:align: center
+```
+
+Canonical LoRA conforms more closely to reference implementations, though it is slower in comparison since it performs several matrix multiplications sequentially, as described above. Performant LoRA has fewer parameters than canonical LoRA and can often achieve the same level of accuracy as canonical LoRA.
+
+Though not immediately apparent, performant LoRA is mathematically equivalent to canonical LoRA when the $A_q$, $A_k$, $A_v$ matrices are tied (i.e. forced to share the same weight during training) in `linear_qkv`, and similarly when the $A_{up}$, $A_{gate}$ matrices are tied in `linear_fc1`.
+
+```{admonition} Mathematical Proof: Performant LoRA Equivalence to Canonical LoRA with Tied Weights
+:class: dropdown
+
+Let $[x \quad y]$ denote matrix concatenation. (In Megatron Bridge, this concatenation is done in an interleaved fashion, but this does not affect the proof below.)
+
+Let $A_q = A_k = A_v = A_{qkv}$ (weight tying)
+
+Then
+
+$$
+\begin{align}
+& [query \quad key \quad value] \\
+= & [W_q x + B_q A_q x \quad W_k x + B_k A_k x \quad W_v x + B_v A_v x] \quad\quad \text{(canonical formulation)} \\
+= & [W_q x + B_q (A_{qkv} x) \quad W_k x + B_k (A_{qkv} x) \quad W_v x + B_v (A_{qkv} x)] \\
+= & [W_q \quad W_k \quad W_v] x + [B_q \quad B_k \quad B_v]A_{qkv} x \\
+= & W_{qkv} x + B_{qkv} A_{qkv} x  \quad\quad \text{(performant formulation)}
+\end{align}
+$$
+
+Note: dimensions of weight matrices are as follows:
+
+$$
+\begin{align}
+W_q:     &\ h \times n_q d          \qquad & A_q:     &\ h \times r \qquad  & B_q:     &\ r \times n_q d \\
+W_k:     &\ h \times n_{kv} d       \qquad & A_k:     &\ h \times r \qquad  & B_k:     &\ r \times n_{kv} d \\
+W_v:     &\ h \times n_{kv} d       \qquad & A_v:     &\ h \times r \qquad  & B_v:     &\ r \times n_{kv} d \\
+W_{qkv}: &\ h \times (n_q+2n_{kv})d \qquad & A_{qkv}: &\ h \times r \qquad  & B_{qkv}: &\ r \times (n_q+2n_{kv})d
+\end{align}
+$$
+
+Where:
+- $n_q$: Number of attention heads (`num_attention_heads`).
+- $n_{kv}$: Number of key value heads (`num_query_groups`). Note that if grouped query attention (GQA) is not used, $n_{kv} = n_q$.
+- $h$: Transformer hidden size (`hidden_size`).
+- $d$: Transformer head dimension (`kv_channels`).
+- $r$: LoRA rank.
+
+```
+
+#### Using Canonical LoRA
+
+```python
+from megatron.bridge.peft.canonical_lora import CanonicalLoRA
+
+canonical_lora_config = CanonicalLoRA(
+    target_modules=[
+        "linear_q", "linear_k", "linear_v",      # Individual Q, K, V projections
+        "linear_proj",                           # Attention output projection
+        "linear_fc1_up", "linear_fc1_gate",     # Individual up and gate projections
+        "linear_fc2"                             # Second MLP layer
+    ],
+    dim=16,                    # Rank of adaptation
+    alpha=32,                  # Scaling parameter
+    dropout=0.1,               # Dropout rate
+)
+```
+
+#### Key Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `target_modules` | `List[str]` | All canonical linear layers | Modules to apply canonical LoRA to |
+| `dim` | `int` | `32` | Rank of the low-rank adaptation |
+| `alpha` | `float` | `32` | Scaling parameter for LoRA |
+| `dropout` | `float` | `0.0` | Dropout rate for LoRA layers |
+| `dropout_position` | `Literal["pre", "post"]` | `"pre"` | Position for applying dropout |
+| `lora_A_init_method` | `str` | `"xavier"` | Initialization method for LoRA A matrix |
+| `lora_B_init_method` | `str` | `"zero"` | Initialization method for LoRA B matrix |
+
+#### Target Modules for Canonical LoRA
+
+The following table lists specific submodules within transformer architectures that are targeted for canonical LoRA:
+
+| Module | Description |
+|--------|-------------|
+| `linear_q` | Query projection in attention |
+| `linear_k` | Key projection in attention |
+| `linear_v` | Value projection in attention |
+| `linear_proj` | Attention output projection |
+| `linear_fc1_up` | Up projection in MLP |
+| `linear_fc1_gate` | Gate projection in MLP |
+| `linear_fc2` | Second MLP layer |
+
+```{note}
+Canonical LoRA does not support `linear_qkv` or `linear_fc1` targets. Use the individual component targets (`linear_q`, `linear_k`, `linear_v` for QKV and `linear_fc1_up`, `linear_fc1_gate` for FC1) instead.
+```
+
 ### [DoRA: Weight-Decomposed Low-Rank Adaptation](https://arxiv.org/abs/2402.09353)
 
 DoRA decomposes the pre-trained weight into magnitude and direction. It learns a separate magnitude parameter while employing LoRA for directional updates, efficiently minimizing the number of trainable parameters. DoRA enhances both the learning capacity and training stability of LoRA, while avoiding any additional inference overhead. DoRA has been shown to consistently outperform LoRA on various downstream tasks.

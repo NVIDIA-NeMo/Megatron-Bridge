@@ -37,6 +37,17 @@ from megatron.bridge.models.deepseek import (
     MoonlightModelProvider16B,
     MoonlightProvider,
 )
+from megatron.bridge.models.gemma import (
+    CodeGemmaModelProvider2B,
+    CodeGemmaModelProvider7B,
+    Gemma2ModelProvider,
+    Gemma2ModelProvider2B,
+    Gemma2ModelProvider9B,
+    Gemma2ModelProvider27B,
+    GemmaModelProvider,
+    GemmaModelProvider2B,
+    GemmaModelProvider7B,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
     CodeLlamaModelProvider7B,
@@ -145,6 +156,15 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "CodeGemmaModelProvider2B",
+    "CodeGemmaModelProvider7B",
+    "GemmaModelProvider",
+    "GemmaModelProvider2B",
+    "GemmaModelProvider7B",
+    "Gemma2ModelProvider",
+    "Gemma2ModelProvider2B",
+    "Gemma2ModelProvider9B",
+    "Gemma2ModelProvider27B",
     "GPTModelProvider",
     "T5ModelProvider",
     "LlamaModelProvider",
