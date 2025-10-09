@@ -128,9 +128,6 @@ if __name__ == "__main__":
         if args.compute_dtype == "fp8" and args.fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
             executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
-    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
-        if agrs.compute_dtype == "bf16" and not args.use_tokendrop:
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True" # OOM if not set
     del_cudnn_ln = False
     if args.gpu.lower() in ["h100"]:
         if args.model_name == "llama31" and args.model_size == "405b":
@@ -142,12 +139,6 @@ if __name__ == "__main__":
     if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b"] and args.gpu.lower() in ["gb200"]:
         del_cudnn_ln = True
     if del_cudnn_ln:
-        if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
-            executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
-        if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
-            executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
-
-    if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["b200"]:
         if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
             executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
         if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
@@ -172,12 +163,9 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    num_gpus_supported = [
-        int(k.split("_")[-1])
-        for k in yaml_overrides_omega["perf_matrix"][args.gpu]
-        if k.startswith("num_gpus_")
-    ]
-    train_config = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]["common"]
+    base_config = preset["common"]
+    extra_config = preset[dtype]
+    train_config = OmegaConf.merge(base_config, extra_config) if extra_config else base_config
 
     exp_config = (
         f"gpus{args.num_gpus}_"

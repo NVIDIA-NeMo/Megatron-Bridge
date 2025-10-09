@@ -27,4 +27,11 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     gpu_block = perf.get(args.gpu) or {}
     preset = gpu_block.get(num_gpus_yaml_key) or {}
 
+    # weak scaling for deepseek
+    if preset == {} and args.model_name in ["deepseek"]:
+        default_num_gpus = 1024 if args.gpu.lower() in ["h100"] else 256
+        num_gpus_yaml_key = f"num_gpus_{default_num_gpus}"
+        preset = gpu_block.get(num_gpus_yaml_key)
+        preset["common"]["gbs"] = args.num_gpus * 8
+
     return preset
