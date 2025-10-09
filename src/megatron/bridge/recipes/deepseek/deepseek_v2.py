@@ -80,6 +80,9 @@ class DeepSeekCommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
+    enable_deepep: bool
+    apply_rope_fusion: bool
+    layout: Optional[Union[str, List[List[str]]]]
 
 
 def deepseek_v2_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> ConfigContainer:
@@ -161,6 +164,9 @@ def _deepseek_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    enable_deepep: bool = False,
+    apply_rope_fusion: bool = True,
+    layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek V2/V2-Lite models using a given HuggingFace path.
@@ -190,6 +196,10 @@ def _deepseek_common(
     if isinstance(hf_path, str) and "DeepSeek-V2" in hf_path:
         model_cfg.init_method_std = 0.006
         model_cfg.rotary_base = float(model_cfg.rotary_base)
+
+    # Allow overriding pipeline layout if provided
+    if layout is not None:
+        model_cfg.pipeline_model_parallel_layout = layout
 
     model_cfg.recompute_granularity = recompute_granularity
     model_cfg.recompute_method = recompute_method
@@ -263,6 +273,16 @@ def _deepseek_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
+
+    # Forward RoPE fusion preference to the model provider
+    model_cfg.apply_rope_fusion = apply_rope_fusion
+    # Apply DeepEP if requested
+    if enable_deepep:
+        from megatron.bridge.training.deepep import apply_deepep as _apply_deepep
+        from megatron.bridge.training.deepep import validate_deepep as _validate_deepep
+
+        _apply_deepep(model_cfg)
+        _validate_deepep(model_cfg)
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(

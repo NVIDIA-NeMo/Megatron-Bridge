@@ -80,6 +80,9 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
+    enable_deepep: bool
+    apply_rope_fusion: bool
+    layout: Optional[Union[str, List[List[str]]]]
 
 
 def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
@@ -176,6 +179,9 @@ def _deepseek_v3_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    enable_deepep: bool = False,
+    apply_rope_fusion: bool = False,
+    layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 models using a given HuggingFace path.
@@ -226,7 +232,10 @@ def _deepseek_v3_common(
     }
     pp_size = pipeline_parallelism or 1
     vp_size = virtual_pipeline_parallelism or 1
-    if (pp_size, vp_size) in layout_map:
+    if layout is not None:
+        # Allow overriding the automatically selected layout
+        model_cfg.pipeline_model_parallel_layout = layout
+    elif (pp_size, vp_size) in layout_map:
         model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -303,7 +312,17 @@ def _deepseek_v3_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
+    # Forward RoPE fusion preference to the model provider
+    model_cfg.apply_rope_fusion = apply_rope_fusion
+    if apply_rope_fusion:
+        cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
+    # Apply DeepEP if requested
+    if enable_deepep:
+        from megatron.bridge.training.deepep import apply_deepep as _apply_deepep
+        from megatron.bridge.training.deepep import validate_deepep as _validate_deepep
 
+        _apply_deepep(model_cfg)
+        _validate_deepep(model_cfg)
     # Ensure comm_overlap exists with old default tp_comm_overlap=False when not provided
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
