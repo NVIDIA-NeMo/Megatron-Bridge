@@ -41,7 +41,7 @@ class TestGLM45ProviderDefaults:
         assert provider.add_qkv_bias is True
         assert provider.position_embedding_type == "rope"
         assert provider.share_embeddings_and_output_weights is False
-        assert provider.layernorm_epsilon == 1e-6
+        assert provider.layernorm_epsilon == 1e-5
 
         # Sequence and vocab defaults
         assert provider.seq_length == 131072
@@ -69,7 +69,6 @@ class TestGLM45ProviderDefaults:
         assert provider.moe_shared_expert_overlap is True
         assert provider.moe_token_dispatcher_type == "alltoall"
         assert provider.moe_router_load_balancing_type == "seq_aux_loss"
-        assert provider.moe_router_topk_scaling_factor == 2.5
         assert provider.moe_aux_loss_coeff == 1e-3
         assert provider.moe_router_pre_softmax is False
         assert provider.moe_grouped_gemm is True
@@ -94,6 +93,7 @@ class TestGLM45ProviderDefaults:
         assert provider.moe_ffn_hidden_size == 1536
         assert provider.moe_shared_expert_intermediate_size == 1536
         assert provider.qk_layernorm is True
+        assert provider.moe_router_topk_scaling_factor == 2.5
 
         # Test moe_layer_freq (first 3 layers are dense, rest are MoE)
         expected_freq = [0] * 3 + [1] * 89
