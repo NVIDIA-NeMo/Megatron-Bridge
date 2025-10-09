@@ -240,6 +240,6 @@ Megatron-Bridge is the continuation of [MBridge](https://github.com/ISEEKYAN/mbr
 - [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
 - [slime](https://github.com/THUDM/slime) has adopted MBridge as Megatron-Core checkpoint converter.
 - [Nemo-RL](https://github.com/NVIDIA/nemo-rl) has adopted Megatron-Bridge as Megatron-Core connector.
-- Community contributions: Special Thanks to @Thaurun @liuzhenhai93 @jeffhong1997 from wechat team for contributing lots of VLM models support.
+- Community contributions: Special thanks to [Guanyou He](https://github.com/Thaurun) and [Junyu Wu](https://github.com/nrailg) from Weixin Group Infrastructure Center.
 
 Please see our [Contributor Guidelines](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md) for more information on how to get involved.
