@@ -56,7 +56,6 @@ class GLMMoEModelProvider(GPTModelProvider):
     vocab_size: int = 151552
     share_embeddings_and_output_weights: Optional[bool] = False
     layernorm_epsilon: float = 1e-5
-    position_embedding_type: str = "rope"
     autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
