@@ -97,21 +97,22 @@ def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -
     return _deepseek_v3_common(**combined_kwargs)
 
 
-def deepseek_v3_pretrain_config_32nodes(**kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
+def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek-V3 (671B) model with minimal number of nodes (32).
 
     Returns:
         ConfigContainer: Configuration for pre-training.
     """
-    return deepseek_v3_pretrain_config(
-        pipeline_parallelism=8,
-        expert_parallelism=32,
-        recompute_granularity="full",
-        recompute_method="uniform",
-        recompute_num_layers=1,
-        **kwargs,
-    )
+    recommended_kwargs: DeepSeekV3CommonKwargs = {
+        "pipeline_parallelism": 8,
+        "expert_parallelism": 32,
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1,
+    }
+    combined_kwargs: DeepSeekV3CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return deepseek_v3_pretrain_config(**combined_kwargs)
 
 
 def _deepseek_v3_common(
