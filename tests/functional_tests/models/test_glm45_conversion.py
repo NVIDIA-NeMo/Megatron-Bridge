@@ -80,18 +80,18 @@ class TestGLM45Conversion:
 
         # Create GLM 4.5 config from the toy model config using AutoConfig
         config = AutoConfig.from_pretrained("zai-org/GLM-4.5")
-        
+
         # Override with toy model config
         for key, value in HF_GLM45_TOY_MODEL_CONFIG.items():
             setattr(config, key, value)
-        
+
         config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
         # Create model with random weights and convert to bfloat16
         from transformers import Glm4MoeForCausalLM
+
         model = Glm4MoeForCausalLM(config)
 
-        
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
         # Debug: Check model dtype before saving
@@ -170,6 +170,7 @@ class TestGLM45Conversion:
         # Try loading the model to verify it's valid
         try:
             from transformers import Glm4MoeForCausalLM
+
             model = Glm4MoeForCausalLM.from_pretrained(
                 glm45_toy_model_path,
                 torch_dtype=torch.bfloat16,
@@ -308,4 +309,3 @@ class TestGLM45Conversion:
         except Exception as e:
             print(f"Error during GLM 4.5 MoE {test_name} conversion test: {e}")
             raise
-

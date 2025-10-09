@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.glm.glm45_provider import GLMMoEModelProvider, GLM45ModelProvider355B, GLM45AirModelProvider106B
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
+from megatron.bridge.models.glm.glm45_provider import (
+    GLM45AirModelProvider106B,
+    GLM45ModelProvider355B,
+    GLMMoEModelProvider,
+)
+
 
 __all__ = [
     "GLMMoEModelProvider",

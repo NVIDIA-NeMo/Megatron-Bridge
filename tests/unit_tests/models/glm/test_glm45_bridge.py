@@ -143,7 +143,7 @@ class TestGLM45Bridge:
         """Test provider bridge correctly maps config for GLM 4.5 355B."""
         bridge = GLM45Bridge()
         provider = bridge.provider_bridge(mock_pretrained_355b)
-        
+
         assert isinstance(provider, GLMMoEModelProvider)
         assert provider.hidden_size == mock_pretrained_355b.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_355b.config.num_attention_heads
@@ -155,7 +155,7 @@ class TestGLM45Bridge:
         assert provider.kv_channels == mock_pretrained_355b.config.head_dim
         assert provider.seq_length == mock_pretrained_355b.config.max_position_embeddings
         assert provider.init_method_std == mock_pretrained_355b.config.initializer_range
-        
+
         # MoE specific
         assert provider.num_moe_experts == mock_pretrained_355b.config.n_routed_experts
         assert provider.moe_ffn_hidden_size == mock_pretrained_355b.config.moe_intermediate_size
@@ -166,11 +166,11 @@ class TestGLM45Bridge:
         assert provider.num_query_groups == mock_pretrained_355b.config.num_key_value_heads
         assert provider.qk_layernorm == mock_pretrained_355b.config.use_qk_norm
         assert provider.add_qkv_bias == mock_pretrained_355b.config.attention_bias
-        
+
         # Test moe_layer_freq (first 3 layers are dense, rest are MoE)
         expected_freq = [0] * 3 + [1] * (92 - 3)
         assert provider.moe_layer_freq == expected_freq
-        
+
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
@@ -179,7 +179,7 @@ class TestGLM45Bridge:
         """Test provider bridge correctly maps config for GLM 4.5 Air 106B."""
         bridge = GLM45Bridge()
         provider = bridge.provider_bridge(mock_pretrained_air_106b)
-        
+
         assert isinstance(provider, GLMMoEModelProvider)
         assert provider.hidden_size == mock_pretrained_air_106b.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_air_106b.config.num_attention_heads
@@ -187,11 +187,11 @@ class TestGLM45Bridge:
         assert provider.vocab_size == mock_pretrained_air_106b.config.vocab_size
         assert provider.num_layers == mock_pretrained_air_106b.config.num_hidden_layers
         assert provider.qk_layernorm == mock_pretrained_air_106b.config.use_qk_norm
-        
+
         # Test moe_layer_freq (first 1 layer is dense, rest are MoE)
         expected_freq = [0] * 1 + [1] * (46 - 1)
         assert provider.moe_layer_freq == expected_freq
-        
+
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
@@ -200,21 +200,21 @@ class TestGLM45Bridge:
         """Test that mapping registry is properly defined."""
         bridge = GLM45Bridge()
         registry = bridge.mapping_registry()
-        
+
         # Verify registry has mappings
         assert len(registry.mappings) > 0
-        
+
         # Verify some key mappings exist
         mapping_dict = {m.megatron_param: m.hf_param for m in registry.mappings}
-        
+
         # Check embedding mapping
         assert "embedding.word_embeddings.weight" in mapping_dict
         assert mapping_dict["embedding.word_embeddings.weight"] == "model.embed_tokens.weight"
-        
+
         # Check final layernorm mapping
         assert "decoder.final_layernorm.weight" in mapping_dict
         assert mapping_dict["decoder.final_layernorm.weight"] == "model.norm.weight"
-        
+
         # Check LM head mapping
         assert "output_layer.weight" in mapping_dict
         assert mapping_dict["output_layer.weight"] == "lm_head.weight"
@@ -222,18 +222,18 @@ class TestGLM45Bridge:
     def test_dtype_mapping_fp16(self, glm45_355b_config):
         """Test dtype mapping for FP16 models."""
         glm45_355b_config["torch_dtype"] = "float16"
-        
+
         cfg = Mock()
         for k, v in glm45_355b_config.items():
             setattr(cfg, k, v)
-        
+
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
         m.generation_config = Mock(spec=GenerationConfig)
-        
+
         bridge = GLM45Bridge()
         provider = bridge.provider_bridge(m)
-        
+
         assert provider.fp16 is True
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float16
@@ -241,20 +241,18 @@ class TestGLM45Bridge:
     def test_dtype_mapping_default(self, glm45_355b_config):
         """Test dtype mapping defaults to float32 when not specified."""
         del glm45_355b_config["torch_dtype"]
-        
+
         cfg = Mock()
         for k, v in glm45_355b_config.items():
             setattr(cfg, k, v)
-        
+
         m = Mock(spec=PreTrainedCausalLM)
         m.config = cfg
         m.generation_config = Mock(spec=GenerationConfig)
-        
+
         bridge = GLM45Bridge()
         provider = bridge.provider_bridge(m)
-        
+
         assert provider.fp16 is False
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float32
-
-

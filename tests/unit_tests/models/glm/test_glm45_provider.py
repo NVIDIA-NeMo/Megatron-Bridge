@@ -20,9 +20,9 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.glm.glm45_provider import (
-    GLMMoEModelProvider,
-    GLM45ModelProvider355B,
     GLM45AirModelProvider106B,
+    GLM45ModelProvider355B,
+    GLMMoEModelProvider,
 )
 
 
@@ -113,5 +113,3 @@ class TestGLM45ProviderDefaults:
         # Test moe_layer_freq (first 1 layer is dense, rest are MoE)
         expected_freq = [0] * 1 + [1] * 45
         assert provider.moe_layer_freq == expected_freq
-
-

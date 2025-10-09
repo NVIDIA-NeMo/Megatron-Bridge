@@ -9,8 +9,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.glm.glm45_provider import GLMMoEModelProvider
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
 
 @MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel)
 class GLM45Bridge(MegatronModelBridge):
@@ -29,7 +30,9 @@ class GLM45Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GLMMoEModelProvider:
         hf_config = hf_pretrained.config
 
-        moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace)
+        moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
+            hf_config.num_hidden_layers - hf_config.first_k_dense_replace
+        )
         return GLMMoEModelProvider(
             add_qkv_bias=hf_config.attention_bias,
             kv_channels=hf_config.head_dim,
@@ -55,13 +58,12 @@ class GLM45Bridge(MegatronModelBridge):
             # MTP
             qk_layernorm=hf_config.use_qk_norm,
             vocab_size=hf_config.vocab_size,
-
             fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             generation_config=hf_pretrained.generation_config,
         )
-    
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
 
@@ -94,7 +96,7 @@ class GLM45Bridge(MegatronModelBridge):
 
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-        
+
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(
             [
@@ -127,7 +129,6 @@ class GLM45Bridge(MegatronModelBridge):
                     gate="model.layers.*.mlp.experts.*.gate_proj.weight",
                     up="model.layers.*.mlp.experts.*.up_proj.weight",
                 ),
-
             ]
         )
 

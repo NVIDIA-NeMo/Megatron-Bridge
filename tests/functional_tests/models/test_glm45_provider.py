@@ -18,8 +18,8 @@ import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.glm import (
-    GLM45ModelProvider355B,
     GLM45AirModelProvider106B,
+    GLM45ModelProvider355B,
 )
 from tests.functional_tests.utils import compare_provider_configs
 
@@ -52,4 +52,3 @@ class TestGLM45ModelProviderMapping:
 
         # Compare configs
         compare_provider_configs(converted_provider, predefined_provider, hf_model_id)
-

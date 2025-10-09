@@ -1,4 +1,3 @@
-
 # Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,12 +14,16 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Union, List, TYPE_CHECKING
 from functools import partial
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
+
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
 try:
     import transformer_engine  # type: ignore  # noqa: F401
 
@@ -33,9 +36,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class GLMMoEModelProvider(GPTModelProvider):
     """Base provider for GLM MoE Models."""
+
     transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
         get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
     )
@@ -86,6 +91,7 @@ class GLMMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     bias_dropout_fusion: bool = True
 
+
 @dataclass
 class GLM45ModelProvider355B(GLMMoEModelProvider):
     """
@@ -96,11 +102,14 @@ class GLM45ModelProvider355B(GLMMoEModelProvider):
     num_moe_experts: int = 160
     hidden_size: int = 5120
     ffn_hidden_size: int = 12288
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 3 + [1] * 89)  # first three layers are dense
+    moe_layer_freq: Union[int, List[int]] = field(
+        default_factory=lambda: [0] * 3 + [1] * 89
+    )  # first three layers are dense
     moe_ffn_hidden_size: int = 1536
     moe_shared_expert_intermediate_size: int = 1536
     qk_layernorm: bool = True
     moe_router_topk_scaling_factor: float = 2.5
+
 
 @dataclass
 class GLM45AirModelProvider106B(GLMMoEModelProvider):
@@ -112,7 +121,9 @@ class GLM45AirModelProvider106B(GLMMoEModelProvider):
     num_moe_experts: int = 128
     hidden_size: int = 4096
     ffn_hidden_size: int = 10944
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 45)  # first one layer is dense
+    moe_layer_freq: Union[int, List[int]] = field(
+        default_factory=lambda: [0] * 1 + [1] * 45
+    )  # first one layer is dense
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 1408
     qk_layernorm: bool = False
