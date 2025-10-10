@@ -111,6 +111,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tp_group = None
             self._etp_group = None
 
+        # if a param mapping class takes in modified HF weight name from maybe_modify_loaded_hf_weight,
+        # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
         self.allow_hf_name_mismatch = False
 
     @property
