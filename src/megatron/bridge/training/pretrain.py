@@ -187,6 +187,15 @@ def _pretrain(
         )
 
     _finish_train(state)
-    if should_destroy_process_group and dist.is_initialized():
+    _maybe_destroy_process_group(should_destroy_process_group)
+
+
+def _maybe_destroy_process_group(should_destroy: bool) -> None:
+    """Destroy the process group if it was created by this training session.
+
+    Args:
+        should_destroy: Whether the process group should be destroyed
+    """
+    if should_destroy and dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()
