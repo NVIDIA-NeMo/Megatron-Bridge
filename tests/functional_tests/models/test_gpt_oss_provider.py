@@ -51,7 +51,7 @@ class TestGptOssProviderMapping:
             hidden_size=provider_class.hidden_size if hasattr(provider_class, "hidden_size") else 2880,
             num_hidden_layers=getattr(provider_class, "num_layers", 24),
             num_attention_heads=getattr(provider_class, "num_attention_heads", 64),
-            num_key_value_heads=getattr(provider_class, "num_attention_heads", 64),
+            num_key_value_heads=getattr(provider_class, "num_key_value_heads", 8),
             num_local_experts=getattr(provider_class, "num_moe_experts", 32),
             vocab_size=201088,
         )
