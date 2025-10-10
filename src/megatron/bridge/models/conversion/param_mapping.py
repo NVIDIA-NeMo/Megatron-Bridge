@@ -1338,10 +1338,11 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             resolved_hf_param["v"],
         )
 
+
 class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """Mapping for Mamba input projection weights that handles z, x, B, C, dt components.
-    
-    Converts between HuggingFace's concatenated in_proj format and Megatron's 
+
+    Converts between HuggingFace's concatenated in_proj format and Megatron's
     tensor-parallel distributed format for Mamba SSM layers.
     """
 
@@ -1370,19 +1371,17 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             z_shard_idx = torch.arange(d_inner)
             x_shard_idx = torch.arange(d_inner, 2 * d_inner)
             B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm)
-            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 
-                                2 * d_inner + 2 * d_tot_ssm)
-            dt_shard_idx = torch.arange(2 * (d_inner + d_tot_ssm), 
-                                2 * (d_inner + d_tot_ssm) + config.mamba_num_heads)
+            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm)
+            dt_shard_idx = torch.arange(2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads)
 
             # Reshape for tensor parallel distribution
             target_shape = (self.tp_size, -1, config.hidden_size)
-            z_shard = hf_weights['hf_param'][z_shard_idx].reshape(target_shape)
-            x_shard = hf_weights['hf_param'][x_shard_idx].reshape(target_shape)
-            B_shard = hf_weights['hf_param'][B_shard_idx].reshape(target_shape)
-            C_shard = hf_weights['hf_param'][C_shard_idx].reshape(target_shape)
-            dt_shard = hf_weights['hf_param'][dt_shard_idx].reshape(target_shape)
-            
+            z_shard = hf_weights[z_shard_idx].reshape(target_shape)
+            x_shard = hf_weights[x_shard_idx].reshape(target_shape)
+            B_shard = hf_weights[B_shard_idx].reshape(target_shape)
+            C_shard = hf_weights[C_shard_idx].reshape(target_shape)
+            dt_shard = hf_weights[dt_shard_idx].reshape(target_shape)
+
             merged = torch.cat([z_shard, x_shard, B_shard, C_shard, dt_shard], dim=1)
             merged = merged.reshape(*target_shape[1:])
         else:
@@ -1408,14 +1407,10 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = remove_non_pickleables(config, max_depth=2)
             config = self.broadcast_obj_from_pp_rank(config)
 
-        d_inner_local = (
-            config.mamba_num_heads * config.mamba_head_dim
-        ) // self.tp_size
-        d_tot_ssm_local = ( 
-            config.mamba_state_dim * config.mamba_num_groups
-        ) // self.tp_size
+        d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
+        d_tot_ssm_local = (config.mamba_state_dim * config.mamba_num_groups) // self.tp_size
         n_heads_local = config.mamba_num_heads // self.tp_size
-        
+
         # Extract local components
         z_shard_idx = torch.arange(d_inner_local)
         x_shard_idx = torch.arange(d_inner_local) + d_inner_local
@@ -1425,12 +1420,12 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         local_components = [
             megatron_weights[z_shard_idx],
-            megatron_weights[x_shard_idx], 
+            megatron_weights[x_shard_idx],
             megatron_weights[B_shard_idx],
             megatron_weights[C_shard_idx],
-            megatron_weights[dt_shard_idx]
+            megatron_weights[dt_shard_idx],
         ]
-        
+
         # Gather each component across TP ranks
         full_weights = []
         for component in local_components:
@@ -1444,9 +1439,10 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         return {self.hf_param: torch.cat(full_weights, dim=0)}
 
+
 class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """Mapping for Mamba 1D convolution weights that handles x, B, C components.
-    
+
     Converts between HuggingFace's concatenated conv1d format and Megatron's
     tensor-parallel distributed format for Mamba SSM layers.
     """
@@ -1469,27 +1465,27 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """Split conv1d into x, B, C components and distribute across TP ranks."""
         if self.tp_rank == 0:
             config = self._get_config(megatron_module)
-            
+
             # Determine reshape based on weight vs bias
-            if 'weight' in self.megatron_param:
-                target_shape = (self.tp_size, -1, *hf_weights['hf_param'].shape[-2:])
+            if "weight" in self.megatron_param:
+                target_shape = (self.tp_size, -1, *hf_weights.shape[-2:])
             else:
-                assert 'bias' in self.megatron_param, "Only bias and weight are supported for conv1d"
+                assert "bias" in self.megatron_param, "Only bias and weight are supported for conv1d"
                 target_shape = (self.tp_size, -1)
 
             d_inner = config.mamba_num_heads * config.mamba_head_dim
             d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
-            
+
             # Define component indices
             x_shard_idx = torch.arange(d_inner)
             B_shard_idx = torch.arange(d_tot_ssm) + d_inner
             C_shard_idx = torch.arange(d_tot_ssm) + d_inner + d_tot_ssm
-            
+
             # Extract and reshape components
-            x_shard = hf_weights['hf_param'][x_shard_idx].reshape(target_shape)
-            B_shard = hf_weights['hf_param'][B_shard_idx].reshape(target_shape)
-            C_shard = hf_weights['hf_param'][C_shard_idx].reshape(target_shape)
-            
+            x_shard = hf_weights[x_shard_idx].reshape(target_shape)
+            B_shard = hf_weights[B_shard_idx].reshape(target_shape)
+            C_shard = hf_weights[C_shard_idx].reshape(target_shape)
+
             merged = torch.cat([x_shard, B_shard, C_shard], dim=1)
             merged = merged.reshape(*target_shape[1:])
         else:
@@ -1505,7 +1501,7 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """Gather conv1d shards and merge into single HF tensor."""
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
-        
+
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
             config = self.broadcast_obj_from_pp_rank(None)
@@ -1514,14 +1510,10 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             # create shallow copy and remove non-picklable objects with max depth=2
             config = remove_non_pickleables(config, max_depth=2)
             config = self.broadcast_obj_from_pp_rank(config)
-        
-        d_inner_local = (
-            config.mamba_num_heads * config.mamba_head_dim
-        ) // self.tp_size
-        d_tot_ssm_local = ( 
-            config.mamba_state_dim * config.mamba_num_groups
-        ) // self.tp_size
-        
+
+        d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
+        d_tot_ssm_local = (config.mamba_state_dim * config.mamba_num_groups) // self.tp_size
+
         # Extract local components
         x_shard_idx = torch.arange(d_inner_local)
         B_shard_idx = torch.arange(d_tot_ssm_local) + d_inner_local
@@ -1530,9 +1522,9 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         local_components = [
             megatron_weights[x_shard_idx],
             megatron_weights[B_shard_idx],
-            megatron_weights[C_shard_idx]
+            megatron_weights[C_shard_idx],
         ]
-        
+
         # Gather each component across TP ranks
         full_weights = []
         for component in local_components:
@@ -1545,6 +1537,7 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             full_weights.append(full_weight)
 
         return {self.hf_param: torch.cat(full_weights, dim=0)}
+
 
 class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     r"""Mapping for **gated-MLP** projection weights (SwiGLU / GeGLU).
