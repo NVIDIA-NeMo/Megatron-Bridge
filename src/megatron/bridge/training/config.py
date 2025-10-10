@@ -754,7 +754,7 @@ class LoggerConfig:
     log_memory_to_tensorboard: bool = False
     """Enable memory logging to tensorboard."""
 
-    memory_keys: dict[str, str] = None
+    memory_keys: dict[str, str] | None = None
     """Names of memory statistics to log from `torch.cuda.memory_stats()`"""
 
     log_l2_norm_grad_to_tensorboard: bool = False
