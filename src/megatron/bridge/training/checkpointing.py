@@ -665,6 +665,7 @@ def save_checkpoint(
         train_state_local_filename = get_checkpoint_train_state_filename(checkpoint_name)
         train_state_global_filename = get_checkpoint_train_state_filename(save_dir, prefix=TRACKER_PREFIX)
         config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+        tracker_filename = get_checkpoint_tracker_filename(save_dir)
         if ckpt_type == CheckpointType.LOCAL:
 
             def train_state_finalize_fn():
@@ -685,9 +686,15 @@ def save_checkpoint(
                     msc = MultiStorageClientFeature.import_package()
                     msc.torch.save(train_state_dict, train_state_local_filename)
                     msc.torch.save(train_state_dict, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with msc.open(tracker_filename, "w") as f:
+                        f.write(str(train_state.step))
                 else:
                     torch.save(train_state_dict, train_state_local_filename)
                     shutil.copy(train_state_local_filename, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with open(tracker_filename, "w") as f:
+                        f.write(str(train_state.step))
 
                 cfg.to_yaml(config_filename)
 

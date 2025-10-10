@@ -21,7 +21,7 @@ both YAML configuration files and command-line overrides using Hydra-style synta
 
 Examples:
     Basic usage with default configuration:
-        $ torchrun --nproc_per_node=8 pretrain_llama3_8b.py
+        $ torchrun --nproc_per_node=8 examples/recipes/llama/pretrain_llama3_8b.py
 
     Using a custom YAML config file:
         $ torchrun --nproc_per_node=8 pretrain_llama3_8b.py --config-file my_custom_config.yaml
@@ -58,7 +58,7 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain

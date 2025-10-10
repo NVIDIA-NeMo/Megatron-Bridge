@@ -768,6 +768,11 @@ class ProfilingConfig:
         assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
             "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
         )
+        assert self.profile_step_start >= 0, f"profile_step_start must be >= 0, got {self.profile_step_start}"
+        assert self.profile_step_end >= 0, f"profile_step_end must be >= 0, got {self.profile_step_end}"
+        assert self.profile_step_end >= self.profile_step_start, (
+            f"profile_step_end ({self.profile_step_end}) must be >= profile_step_start ({self.profile_step_start})"
+        )
 
 
 @dataclass

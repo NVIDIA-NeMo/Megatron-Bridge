@@ -29,11 +29,17 @@ except ImportError:
 if HAS_NEMO_RUN:
     from megatron.bridge.recipes.run_plugins import (
         FaultTolerancePlugin,
+        FaultTolerancePluginScriptArgs,
         NsysPlugin,
+        NsysPluginScriptArgs,
         PerfEnvPlugin,
+        PerfEnvPluginScriptArgs,
         PreemptionPlugin,
+        PreemptionPluginScriptArgs,
         PyTorchProfilerPlugin,
+        PyTorchProfilerPluginScriptArgs,
         WandbPlugin,
+        WandbPluginScriptArgs,
     )
     from megatron.bridge.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
     from megatron.bridge.training.config import ProfilingConfig
@@ -245,6 +251,58 @@ class TestPreemptionPlugin:
             # If it exists, it should be a Mock object, not an actual string
             assert isinstance(executor.signal, MagicMock)
 
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter that uses argparse-style arguments
+        def custom_converter(args: PreemptionPluginScriptArgs):
+            result = []
+            if args.enable_exit_handler:
+                result.append("--enable-exit-handler")
+            if args.enable_exit_handler_for_data_loader:
+                result.append("--enable-exit-handler-dataloader")
+            return result
+
+        plugin = PreemptionPlugin(
+            enable_exit_handler=True,
+            enable_exit_handler_for_data_loader=True,
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock(spec=run.SlurmExecutor)
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--enable-exit-handler" in task.args
+        assert "--enable-exit-handler-dataloader" in task.args
+        # Verify hydra-style args are NOT present
+        assert "train.exit_signal_handler=True" not in task.args
+
+    def test_default_converter_used_when_none_provided(self):
+        """Test that default converter is used when script_args_converter_fn is None."""
+        plugin = PreemptionPlugin(enable_exit_handler=True, script_args_converter_fn=None)
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify default hydra-style args are present
+        assert "train.exit_signal_handler=True" in task.args
+        assert "train.exit_signal_handler_for_dataloader=False" in task.args
+
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 class TestFaultTolerancePlugin:
@@ -350,6 +408,36 @@ class TestFaultTolerancePlugin:
         # Verify warning was logged
         mock_warning.assert_called_once()
         assert "Nsys not supported with the FaultTolerancePlugin" in mock_warning.call_args[0][0]
+
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter
+        def custom_converter(args: FaultTolerancePluginScriptArgs):
+            return [
+                f"--ft-enabled={str(args.enable_ft_package).lower()}",
+                f"--ft-calc-timeouts={str(args.calc_ft_timeouts).lower()}",
+            ]
+
+        plugin = FaultTolerancePlugin(
+            enable_ft_package=True, calc_ft_timeouts=False, script_args_converter_fn=custom_converter
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+
+        with patch.object(run, "FaultTolerance", return_value=MagicMock()):
+            plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--ft-enabled=true" in task.args
+        assert "--ft-calc-timeouts=false" in task.args
+        # Verify hydra-style args are NOT present
+        assert "ft.enable_ft_package=true" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -463,6 +551,61 @@ class TestNsysPlugin:
         for arg in expected_args:
             assert arg in task.args
 
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter that uses JSON format
+        def custom_converter(args: NsysPluginScriptArgs):
+            import json
+
+            config = {
+                "nsys_enabled": True,
+                "start": args.profile_step_start,
+                "end": args.profile_step_end,
+                "ranks": args.profile_ranks,
+                "shapes": args.record_shapes,
+            }
+            return ["--nsys-config", json.dumps(config)]
+
+        plugin = NsysPlugin(
+            profile_step_start=10,
+            profile_step_end=20,
+            profile_ranks=[0, 1],
+            record_shapes=True,
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+        mock_launcher = MagicMock()
+        executor.get_launcher.return_value = mock_launcher
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--nsys-config" in task.args
+        # Find the JSON arg
+        json_arg = None
+        for i, arg in enumerate(task.args):
+            if arg == "--nsys-config" and i + 1 < len(task.args):
+                json_arg = task.args[i + 1]
+                break
+
+        assert json_arg is not None
+        import json
+
+        config = json.loads(json_arg)
+        assert config["nsys_enabled"] is True
+        assert config["start"] == 10
+        assert config["end"] == 20
+        # Verify hydra-style args are NOT present
+        assert "profiling.use_nsys_profiler=true" not in task.args
+
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 class TestPyTorchProfilerPlugin:
@@ -518,6 +661,46 @@ class TestPyTorchProfilerPlugin:
         assert task.config.profiling.record_memory_history is True
         assert task.config.profiling.memory_snapshot_path == "snapshot.pickle"
         assert task.config.profiling.record_shapes is False
+
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter
+        def custom_converter(args: PyTorchProfilerPluginScriptArgs):
+            return [
+                "--pytorch-profiler",
+                f"--profile-start={args.profile_step_start}",
+                f"--profile-end={args.profile_step_end}",
+                f"--profile-ranks={','.join(map(str, args.profile_ranks))}",
+                f"--memory-history={'true' if args.record_memory_history else 'false'}",
+            ]
+
+        plugin = PyTorchProfilerPlugin(
+            profile_step_start=5,
+            profile_step_end=15,
+            profile_ranks=[0, 1],
+            record_memory_history=True,
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--pytorch-profiler" in task.args
+        assert "--profile-start=5" in task.args
+        assert "--profile-end=15" in task.args
+        assert "--profile-ranks=0,1" in task.args
+        assert "--memory-history=true" in task.args
+        # Verify hydra-style args are NOT present
+        assert "profiling.use_pytorch_profiler=true" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -622,6 +805,46 @@ class TestWandbPlugin:
         ]
         for arg in expected_args:
             assert arg in task.args
+
+    @patch.dict(os.environ, {"WANDB_API_KEY": "test_api_key"})
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter
+        def custom_converter(args: WandbPluginScriptArgs):
+            result = ["--wandb"]
+            result.append(f"--wandb-project={args.project}")
+            if args.entity:
+                result.append(f"--wandb-entity={args.entity}")
+            if args.name:
+                result.append(f"--wandb-name={args.name}")
+            return result
+
+        plugin = WandbPlugin(
+            project="custom_project",
+            entity="custom_entity",
+            name="custom_run",
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--wandb" in task.args
+        assert "--wandb-project=custom_project" in task.args
+        assert "--wandb-entity=custom_entity" in task.args
+        assert "--wandb-name=custom_run" in task.args
+        # Verify hydra-style args are NOT present
+        assert "logger.wandb_project=custom_project" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -746,6 +969,38 @@ class TestPerfEnvPlugin:
         # Verify CLI overrides for manual GC
         assert "train.manual_gc=true" in task.args
         assert "train.manual_gc_interval=150" in task.args
+
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter
+        def custom_converter(args: PerfEnvPluginScriptArgs):
+            result = []
+            if args.enable_manual_gc:
+                result.append("--enable-gc")
+                result.append(f"--gc-interval={args.manual_gc_interval}")
+            return result
+
+        plugin = PerfEnvPlugin(
+            enable_manual_gc=True, manual_gc_interval=250, script_args_converter_fn=custom_converter
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--enable-gc" in task.args
+        assert "--gc-interval=250" in task.args
+        # Verify hydra-style args are NOT present
+        assert "train.manual_gc=true" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
