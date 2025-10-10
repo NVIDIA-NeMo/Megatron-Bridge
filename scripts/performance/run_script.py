@@ -68,6 +68,7 @@ def main():
 
         pp_vp_map = {"h100": (8, 4), "b200": (16, 1), "gb200": (4, 4)}
         pp, vp = pp_vp_map[args.gpu.lower()] if args.gpu.lower() in pp_vp_map else (1, 1)
+        layout = "Et|(tt|)*30mL" if args.gpu.lower() in ["h100"] else None
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -75,6 +76,7 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
+            layout=layout,
         )
 
         if enable_deepep:
