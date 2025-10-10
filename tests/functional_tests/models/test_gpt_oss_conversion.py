@@ -81,6 +81,11 @@ class TestGptOssConversion:
         ],
     )
     def test_gpt_oss_conversion_parallelism(self, gpt_oss_toy_model_path, tmp_path, tp, pp, ep, test_name):
+        from megatron.core.utils import is_te_min_version
+
+        if not is_te_min_version("2.8.0"):
+            pytest.skip("TE version needs to be at least 2.8.0 to use fused sink attention")
+
         out_dir = tmp_path / f"gpt_oss_{test_name}"
         out_dir.mkdir(exist_ok=True)
 
