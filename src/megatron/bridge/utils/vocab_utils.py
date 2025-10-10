@@ -14,8 +14,45 @@
 
 import math
 from functools import lru_cache
+from typing import Optional
 
 from megatron.bridge.utils.common_utils import print_rank_0
+
+
+def validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
+    """Validate and determine the correct vocab size for the model.
+
+    Args:
+        model_vocab_size: Vocab size set in model config (can be None)
+        tokenizer_vocab_size: Unpadded tokenizer vocab size
+
+    Returns:
+        tuple[int, bool]: The validated unpadded vocab size and padding flag
+            - vocab_size: The validated unpadded vocab size to use for the model
+            - should_pad_vocab: True if vocab should be padded, False otherwise
+
+    Raises:
+        ValueError: If model vocab size is invalid
+    """
+    if model_vocab_size is None:
+        # If model vocab size is not set, use the tokenizer's vocab size
+        # Enable padding since this came from tokenizer
+        return tokenizer_vocab_size, True
+    elif model_vocab_size < tokenizer_vocab_size:
+        # Vocab size smaller than tokenizer
+        raise ValueError(
+            f"Model vocab_size ({model_vocab_size}) cannot be smaller than tokenizer's vocab_size "
+            f"({tokenizer_vocab_size})."
+        )
+    else:
+        # Model vocab size is explicitly set and is >= tokenizer vocab size
+        # Disable padding since this was explicitly set
+        if model_vocab_size > tokenizer_vocab_size:
+            print_rank_0(
+                f"Using preset vocab_size: {model_vocab_size} over the tokenizer vocab_size: {tokenizer_vocab_size}, dummy tokens:"
+                f" {model_vocab_size - tokenizer_vocab_size}."
+            )
+        return model_vocab_size, False
 
 
 def calculate_padded_vocab_size(
