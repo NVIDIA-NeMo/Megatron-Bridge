@@ -215,15 +215,15 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         # First merge adapters into base weights
         merge_transform = CanonicalLoRAMerge()
         merge_transform(model, training=False)
-        
+
         # Then unwrap adapter modules to return clean base structure
         unwrapped_model = []
-        for stage in (model if isinstance(model, list) else [model]):
+        for stage in model if isinstance(model, list) else [model]:
             unwrapped_stage = self._unwrap_canonical_modules(stage)
             unwrapped_model.append(unwrapped_stage)
-        
+
         return unwrapped_model
-    
+
     def _unwrap_canonical_modules(self, module):
         """Recursively unwrap canonical LoRA adapter modules."""
         # Handle canonical LoRA wrapper types
@@ -233,12 +233,12 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
         elif isinstance(module, LoRALinear):
             # Handle standard LoRA modules too
             return module.to_wrap
-        
+
         # For non-adapter modules, recursively unwrap children
         for name, child in list(module.named_children()):
             unwrapped_child = self._unwrap_canonical_modules(child)
             setattr(module, name, unwrapped_child)
-        
+
         return module
 
 

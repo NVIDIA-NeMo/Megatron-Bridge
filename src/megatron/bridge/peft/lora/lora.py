@@ -172,27 +172,27 @@ class LoRA(PEFT, ModuleMatcher):
         # First merge adapters into base weights
         merge_transform = LoRAMerge()
         merge_transform(model, training=False)  # training=False for merge operation
-        
+
         # Then unwrap adapter modules to return clean base structure
         unwrapped_model = []
-        for stage in (model if isinstance(model, list) else [model]):
+        for stage in model if isinstance(model, list) else [model]:
             unwrapped_stage = self._unwrap_lora_modules(stage)
             unwrapped_model.append(unwrapped_stage)
-        
+
         return unwrapped_model
-    
+
     def _unwrap_lora_modules(self, module):
         """Recursively unwrap LoRA adapter modules."""
         # Handle LoRA wrapper types
         if isinstance(module, (LoRALinear, LinearAdapter, TELinearAdapter)):
             # Return the unwrapped base module
             return module.to_wrap
-        
+
         # For non-adapter modules, recursively unwrap children
         for name, child in list(module.named_children()):
             unwrapped_child = self._unwrap_lora_modules(child)
             setattr(module, name, unwrapped_child)
-        
+
         return module
 
 

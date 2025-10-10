@@ -39,6 +39,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft import get_peft_model
 from megatron.bridge.peft.lora.lora import LoRA
 
+
 console = Console()
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
@@ -69,18 +70,13 @@ def main(
     targets = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
 
     # Create fused LoRA configuration
-    console.print(f"\n🔧 Fused LoRA Configuration:")
+    console.print("\n🔧 Fused LoRA Configuration:")
     console.print(f"  • Rank (r): {rank}")
     console.print(f"  • Alpha: {alpha}")
     console.print(f"  • Dropout: {dropout}")
     console.print(f"  • Target Modules: {targets}")
 
-    lora = LoRA(
-        target_modules=targets,
-        dim=rank,
-        alpha=alpha,
-        dropout=dropout
-    )
+    lora = LoRA(target_modules=targets, dim=rank, alpha=alpha, dropout=dropout)
 
     # Apply LoRA to model
     console.print("\n⚙️  Creating PEFT model...")
@@ -98,7 +94,10 @@ def main(
             console.print("  ✓ Successfully merged adapters into base weights")
 
             # Save merged model as standard model
-            os.makedirs(os.path.dirname(f"{save_path}_merged") if os.path.dirname(f"{save_path}_merged") else ".", exist_ok=True)
+            os.makedirs(
+                os.path.dirname(f"{save_path}_merged") if os.path.dirname(f"{save_path}_merged") else ".",
+                exist_ok=True,
+            )
             console.print(f"  💾 Saving merged model to {save_path}_merged...")
             base_bridge.save_hf_pretrained(merged_model, f"{save_path}_merged")
             console.print("  ✓ Merged model saved as standard HuggingFace model")
@@ -116,7 +115,7 @@ def main(
 
     console.print("\n✨ Fused LoRA example completed successfully!")
     console.print("Next steps:")
-    console.print(f"  • Train the PEFT model with your training loop")
+    console.print("  • Train the PEFT model with your training loop")
 
     return True
 

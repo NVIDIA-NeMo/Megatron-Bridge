@@ -145,7 +145,7 @@ class DoRA(PEFT, ModuleMatcher):
 
         # Then unwrap adapter modules to return clean base structure
         unwrapped_model = []
-        for stage in (model if isinstance(model, list) else [model]):
+        for stage in model if isinstance(model, list) else [model]:
             unwrapped_stage = self._unwrap_dora_modules(stage)
             unwrapped_model.append(unwrapped_stage)
 
@@ -208,7 +208,7 @@ class DoRAMerge(PEFT):
             directional = base_weight + lora_delta
 
             # Calculate magnitude scaling: m / ||W0 + BA||
-            if hasattr(adapter, 'weight_magnitude'):
+            if hasattr(adapter, "weight_magnitude"):
                 # Get magnitude vector
                 magnitude = adapter.weight_magnitude.to(base_weight.device)
 

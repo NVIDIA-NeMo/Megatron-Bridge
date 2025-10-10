@@ -39,6 +39,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft import get_peft_model
 from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 
+
 console = Console()
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
@@ -69,19 +70,14 @@ def main(
     targets = ["linear_q", "linear_k", "linear_v", "linear_proj", "linear_fc1_gate", "linear_fc1_up", "linear_fc2"]
 
     # Create canonical LoRA configuration
-    console.print(f"\n🔧 Canonical LoRA Configuration:")
+    console.print("\n🔧 Canonical LoRA Configuration:")
     console.print(f"  • Rank (r): {rank}")
     console.print(f"  • Alpha: {alpha}")
     console.print(f"  • Dropout: {dropout}")
     console.print(f"  • Target Modules: {targets}")
-    console.print(f"  • Layout: Individual projections (follows HuggingFace PEFT)")
+    console.print("  • Layout: Individual projections (follows HuggingFace PEFT)")
 
-    canonical_lora = CanonicalLoRA(
-        target_modules=targets,
-        dim=rank,
-        alpha=alpha,
-        dropout=dropout
-    )
+    canonical_lora = CanonicalLoRA(target_modules=targets, dim=rank, alpha=alpha, dropout=dropout)
 
     # Apply canonical LoRA to model
     console.print("\n⚙️  Creating PEFT model...")
@@ -99,7 +95,10 @@ def main(
             console.print("  ✓ Successfully merged adapters and unwrapped modules")
 
             # Save merged model as standard model
-            os.makedirs(os.path.dirname(f"{save_path}_merged") if os.path.dirname(f"{save_path}_merged") else ".", exist_ok=True)
+            os.makedirs(
+                os.path.dirname(f"{save_path}_merged") if os.path.dirname(f"{save_path}_merged") else ".",
+                exist_ok=True,
+            )
             console.print(f"  💾 Saving merged model to {save_path}_merged...")
             base_bridge.save_hf_pretrained(merged_model, f"{save_path}_merged")
             console.print("  ✓ Merged model saved as standard HuggingFace model")
@@ -116,14 +115,16 @@ def main(
 
     console.print("\n✨ Canonical LoRA example completed successfully!")
     console.print("Next steps:")
-    console.print(f"  • Train the PEFT model with your training loop")
+    console.print("  • Train the PEFT model with your training loop")
 
     return True
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Create and demonstrate canonical LoRA adapters")
-    parser.add_argument("--base-model-id", type=str, default=BASE_MODEL_ID, help="Base model to apply canonical LoRA to")
+    parser.add_argument(
+        "--base-model-id", type=str, default=BASE_MODEL_ID, help="Base model to apply canonical LoRA to"
+    )
     parser.add_argument("--rank", type=int, default=16, help="LoRA rank (r) parameter")
     parser.add_argument("--alpha", type=int, default=32, help="LoRA alpha scaling parameter")
     parser.add_argument("--dropout", type=float, default=0.05, help="LoRA dropout rate")

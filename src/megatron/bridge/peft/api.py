@@ -269,7 +269,7 @@ class MegatronPEFTModel(nn.ModuleList):
         # Delegate to the PEFT instance's merge method
         # The PEFT merge method should handle both merging and unwrapping
         merged_model = self.peft.merge(list(self))
-        
+
         # Ensure we return a list
         if isinstance(merged_model, list):
             return merged_model

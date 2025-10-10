@@ -36,6 +36,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft import get_peft_model
 from megatron.bridge.peft.lora.dora import DoRA
 
+
 console = Console()
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
@@ -66,19 +67,14 @@ def main(
     targets = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
 
     # Create DoRA configuration
-    console.print(f"\n🔧 DoRA Configuration:")
+    console.print("\n🔧 DoRA Configuration:")
     console.print(f"  • Rank (r): {rank}")
     console.print(f"  • Alpha: {alpha}")
     console.print(f"  • Dropout: {dropout}")
     console.print(f"  • Target Modules: {targets}")
-    console.print(f"  • Features: Low-rank adaptation + magnitude vectors")
+    console.print("  • Features: Low-rank adaptation + magnitude vectors")
 
-    dora = DoRA(
-        target_modules=targets,
-        dim=rank,
-        alpha=alpha,
-        dropout=dropout
-    )
+    dora = DoRA(target_modules=targets, dim=rank, alpha=alpha, dropout=dropout)
 
     # Apply DoRA to model
     console.print("\n⚙️  Creating PEFT model...")
@@ -97,7 +93,10 @@ def main(
             console.print("  ✓ DoRA magnitude and direction components properly handled")
 
             # Save unwrapped model
-            os.makedirs(os.path.dirname(f"{save_path}_unwrapped") if os.path.dirname(f"{save_path}_unwrapped") else ".", exist_ok=True)
+            os.makedirs(
+                os.path.dirname(f"{save_path}_unwrapped") if os.path.dirname(f"{save_path}_unwrapped") else ".",
+                exist_ok=True,
+            )
             console.print(f"  💾 Saving unwrapped model to {save_path}_unwrapped...")
             base_bridge.save_hf_pretrained(merged_model, f"{save_path}_unwrapped")
             console.print("  ✓ Merged model saved as standard HuggingFace model")
@@ -114,7 +113,7 @@ def main(
 
     console.print("\n✨ DoRA example completed successfully!")
     console.print("Next steps:")
-    console.print(f"  • Train the PEFT model with your training loop")
+    console.print("  • Train the PEFT model with your training loop")
 
     return True
 
