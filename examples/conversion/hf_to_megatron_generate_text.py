@@ -134,6 +134,7 @@ def main(args) -> None:
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )

@@ -111,6 +111,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             self._tp_group = None
             self._etp_group = None
 
+        # if a param mapping class takes in modified HF weight name from maybe_modify_loaded_hf_weight,
+        # allow_hf_name_mismatch should be set to True to bypass a check in `build_conversion_tasks`
+        self.allow_hf_name_mismatch = False
+
     @property
     def tp_group(self):
         """Get the tensor model parallel group."""
@@ -672,7 +676,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             )
             for i in range(self.ep_size)
         ]
-        assert hf_param_name in gathered_expert_param_names, (
+        assert str(hf_param_name) in gathered_expert_param_names, (
             f"hf_param_name {hf_param_name} not in gathered_expert_param_names {gathered_expert_param_names}"
         )
 
@@ -680,8 +684,18 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         gathered_weights = [torch.empty_like(megatron_weights) for _ in range(self.ep_size)]
         torch.distributed.all_gather(gathered_weights, megatron_weights, group=self.ep_group)
 
-        # Return dictionary mapping HF parameter names to weights
-        return {param_name: gathered_weights[i] for i, param_name in enumerate(gathered_expert_param_names)}
+        # this should be in the right order because of the all-gather
+        weights_dict = {}
+        for i, param_name in enumerate(gathered_expert_param_names):
+            if param_name in weights_dict:
+                weights_dict[param_name] = torch.cat(
+                    [weights_dict[param_name], gathered_weights[i].unsqueeze(0)], dim=0
+                )
+            else:
+                weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
+        for param_name in weights_dict:
+            weights_dict[param_name] = weights_dict[param_name].squeeze()
+        return weights_dict
 
     def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
         """Dequantize FP8 tensor if needed."""
@@ -881,15 +895,10 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             if hf_weights is None:
                 raise ValueError("hf_weights should not be None on rank 0")
 
-            # For bias (1D), we still split along dim 0
+            # bias (1D) is replicated across tp ranks
             # For weight (2D), we split along dim 1
             if hf_weights.ndim == 1:
-                full_size = hf_weights.shape[0]
-                if full_size % self.tp_size != 0:
-                    raise ValueError(
-                        f"Cannot evenly split dimension 0 size {full_size} across {self.tp_size} TP ranks"
-                    )
-                splits = torch.chunk(hf_weights, self.tp_size, dim=0)
+                splits = [hf_weights] * self.tp_size
             else:
                 assert hf_weights.ndim == 2
                 full_size = hf_weights.shape[1]
@@ -925,7 +934,8 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.tp_size == 1:
+        if self.tp_size == 1 or len(megatron_weights.shape) == 1:
+            # bias is unsharded in row parallel, so we can just return it
             full_weights = megatron_weights
         else:
             gathered = self.gather_from_tp_ranks(megatron_weights)
@@ -954,7 +964,11 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Replicate weight to all TP ranks."""
-        target_device = megatron_module.weight.device
+        if hasattr(megatron_module, "weight"):
+            target_device = megatron_module.weight.device
+        else:
+            # the parameter may not be called "weight"
+            target_device = next(megatron_module.parameters()).device
         hf_weights = hf_weights.to(device=target_device)
         if self.tp_size == 1:
             return hf_weights
@@ -1045,6 +1059,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "TELayerNormColumnParallelLinear",
             "TEColumnParallelGroupedLinear",
             "VocabParallelEmbedding",
+            "DotProductAttention",  # for attention sink only
+            "TEDotProductAttention",  # for attention sink only
         },
         "row": {
             "RowParallelLinear",
@@ -1061,8 +1077,6 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             "L2Norm",
             # Other non-parallel modules
             "IdentityOp",
-            "DotProductAttention",
-            "TEDotProductAttention",
             "TopKRouter",
         },
     }
