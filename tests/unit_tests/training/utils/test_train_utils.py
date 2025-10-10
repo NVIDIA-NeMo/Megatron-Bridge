@@ -359,7 +359,7 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
-            history_wct=[1,2,3],
+            history_wct=None,
             model=None,
         )
 
