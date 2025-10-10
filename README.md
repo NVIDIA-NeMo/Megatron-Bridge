@@ -234,6 +234,7 @@ Megatron-Bridge/
 Megatron-Bridge is the continuation of [MBridge](https://github.com/ISEEKYAN/mbridge) by [Yan Bai](https://github.com/ISEEKYAN). We appreciate all the contribution and adoptions by the community partners:
 - [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
 - [slime](https://github.com/THUDM/slime) has adopted MBridge as Megatron-Core checkpoint converter.
+- [SkyRL](https://github.com/NovaSky-AI/SkyRL) has adopted MBridge as Megatron-Core connector and is migrating to Megatron-Bridge.
 - [Nemo-RL](https://github.com/NVIDIA/nemo-rl) has adopted Megatron-Bridge as Megatron-Core connector.
 - Community contributions: Special thanks to [Guanyou He](https://github.com/Thaurun) and [Junyu Wu](https://github.com/nrailg) from Weixin Group Infrastructure Center.
 
