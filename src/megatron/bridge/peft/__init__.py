@@ -33,23 +33,39 @@ Example:
     >>> peft_model = get_peft_model(provider, lora)
 """
 
-# Check for required dependencies
-try:
-    import peft
-except ImportError as e:
-    raise ImportError(
-        "HuggingFace PEFT library is required for PEFT integration. "
-        "Please install it with: pip install megatron-bridge[peft]"
-    ) from e
-
-# Import main API components
 from megatron.bridge.peft.api import MegatronPEFTModel, get_peft_model
-from megatron.bridge.peft.conversion.auto_peft_bridge import AutoPEFTBridge
 from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora.dora import DoRA
 
 # Import PEFT implementations
 from megatron.bridge.peft.lora.lora import LoRA
+
+# Check for optional peft dependency (only needed for AutoPEFTBridge)
+try:
+    import peft
+
+    _PEFT_AVAILABLE = True
+except ImportError:
+    _PEFT_AVAILABLE = False
+
+# Conditionally import AutoPEFTBridge (requires peft library)
+if _PEFT_AVAILABLE:
+    from megatron.bridge.peft.conversion.auto_peft_bridge import AutoPEFTBridge
+else:
+    # Create a lazy import that raises an error when AutoPEFTBridge is accessed
+    class AutoPEFTBridge:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "HuggingFace PEFT library is required for AutoPEFTBridge. "
+                "Please install it with: pip install megatron-bridge[peft]"
+            )
+
+        @classmethod
+        def from_hf_pretrained(cls, *args, **kwargs):
+            raise ImportError(
+                "HuggingFace PEFT library is required for AutoPEFTBridge. "
+                "Please install it with: pip install megatron-bridge[peft]"
+            )
 
 
 __all__ = [
