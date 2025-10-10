@@ -1376,7 +1376,7 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                                 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads)
 
             # Reshape for tensor parallel distribution
-            target_shape = (config.tensor_model_parallel_size, -1, config.hidden_size)
+            target_shape = (self.tp_size, -1, config.hidden_size)
             z_shard = hf_weights['hf_param'][z_shard_idx].reshape(target_shape)
             x_shard = hf_weights['hf_param'][x_shard_idx].reshape(target_shape)
             B_shard = hf_weights['hf_param'][B_shard_idx].reshape(target_shape)
@@ -1410,11 +1410,11 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         d_inner_local = (
             config.mamba_num_heads * config.mamba_head_dim
-        ) // config.tensor_model_parallel_size
+        ) // self.tp_size
         d_tot_ssm_local = ( 
             config.mamba_state_dim * config.mamba_num_groups
-        ) // config.tensor_model_parallel_size
-        n_heads_local = config.mamba_num_heads // config.tensor_model_parallel_size
+        ) // self.tp_size
+        n_heads_local = config.mamba_num_heads // self.tp_size
         
         # Extract local components
         z_shard_idx = torch.arange(d_inner_local)
@@ -1472,10 +1472,10 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             
             # Determine reshape based on weight vs bias
             if 'weight' in self.megatron_param:
-                target_shape = (config.tensor_model_parallel_size, -1, *hf_weights['hf_param'].shape[-2:])
+                target_shape = (self.tp_size, -1, *hf_weights['hf_param'].shape[-2:])
             else:
                 assert 'bias' in self.megatron_param, "Only bias and weight are supported for conv1d"
-                target_shape = (config.tensor_model_parallel_size, -1)
+                target_shape = (self.tp_size, -1)
 
             d_inner = config.mamba_num_heads * config.mamba_head_dim
             d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
@@ -1517,10 +1517,10 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         
         d_inner_local = (
             config.mamba_num_heads * config.mamba_head_dim
-        ) // config.tensor_model_parallel_size
+        ) // self.tp_size
         d_tot_ssm_local = ( 
             config.mamba_state_dim * config.mamba_num_groups
-        ) // config.tensor_model_parallel_size
+        ) // self.tp_size
         
         # Extract local components
         x_shard_idx = torch.arange(d_inner_local)
