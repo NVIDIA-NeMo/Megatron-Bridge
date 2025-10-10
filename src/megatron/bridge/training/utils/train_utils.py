@@ -435,6 +435,7 @@ def training_log(
             if config.profiling.record_memory_history and is_last_rank():
                 snapshot = torch.cuda.memory._snapshot()
                 from pickle import dump
+
                 with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
         if logger_config.log_throughput_to_tensorboard:

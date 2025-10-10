@@ -12,25 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest.mock as mock
-from functools import partial
-from dataclasses import dataclass
-
 import time
+import unittest.mock as mock
+from dataclasses import dataclass
+from functools import partial
+
+import numpy as np
 import pytest
 import torch
-import numpy as np
+
 
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     maybe_inject_state,
     needs_global_state_injection,
     prepare_forward_step_func,
-    training_log,
     report_l2_norm_grad,
     report_memory,
     report_runtime,
     report_throughput,
+    training_log,
 )
 
 
