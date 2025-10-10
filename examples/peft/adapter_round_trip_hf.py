@@ -43,7 +43,7 @@ console = Console()
 ADAPTER_ID = "codelion/Llama-3.2-1B-Instruct-tool-calling-lora"
 
 
-def main(adapter_id: str = ADAPTER_ID, output_dir: str = None) -> bool:
+def main(adapter_id: str = ADAPTER_ID, output_dir: str | None = None) -> bool:
     """Perform round-trip conversion between HuggingFace PEFT adapters and Megatron PEFT models."""
     adapter_name = adapter_id.split("/")[-1]
     if output_dir:

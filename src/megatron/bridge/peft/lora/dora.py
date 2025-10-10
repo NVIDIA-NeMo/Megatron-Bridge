@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional
 
+import torch
 from torch import nn
 
 from megatron.bridge.peft.base import PEFT
@@ -141,27 +142,27 @@ class DoRA(PEFT, ModuleMatcher):
         # First merge DoRA weights using the DoRAMerge transform
         merge_transform = DoRAMerge()
         merge_transform(model, training=False)
-        
+
         # Then unwrap adapter modules to return clean base structure
         unwrapped_model = []
         for stage in (model if isinstance(model, list) else [model]):
             unwrapped_stage = self._unwrap_dora_modules(stage)
             unwrapped_model.append(unwrapped_stage)
-        
+
         return unwrapped_model
-    
+
     def _unwrap_dora_modules(self, module):
         """Recursively unwrap DoRA adapter modules."""
         # Handle DoRA wrapper types
         if isinstance(module, DoRALinear):
             # Return the unwrapped base module (no weight merge for now)
             return module.to_wrap
-        
+
         # For non-adapter modules, recursively unwrap children
         for name, child in list(module.named_children()):
             unwrapped_child = self._unwrap_dora_modules(child)
             setattr(module, name, unwrapped_child)
-        
+
         return module
 
 
@@ -174,7 +175,7 @@ class DoRAMerge(PEFT):
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
         Merges the DoRA adapter with the base model weights.
-        
+
         DoRA decomposition: W = m * (W0 + BA) / ||W0 + BA||
         Where:
         - m: magnitude vector
@@ -194,7 +195,7 @@ class DoRAMerge(PEFT):
             logging.info(f"merging DoRALinear {(prefix if prefix else '') + '.' + (name if name else '')}")
             base_weight = module.to_wrap.weight
             adapter = module.adapter
-            
+
             # Calculate low-rank adaptation: BA
             lora_delta = (
                 adapter.alpha
@@ -202,30 +203,30 @@ class DoRAMerge(PEFT):
                 * adapter.linear_out.weight.to(base_weight.device)
                 @ adapter.linear_in.weight.to(base_weight.device)
             )
-            
+
             # Calculate directional component: W0 + BA
             directional = base_weight + lora_delta
-            
+
             # Calculate magnitude scaling: m / ||W0 + BA||
             if hasattr(adapter, 'weight_magnitude'):
                 # Get magnitude vector
                 magnitude = adapter.weight_magnitude.to(base_weight.device)
-                
+
                 # Calculate L2 norm along the output dimension (dim=1 for weight matrices)
                 direction_norms = torch.norm(directional, dim=1, keepdim=True)
-                
+
                 # Avoid division by zero
                 direction_norms = torch.clamp(direction_norms, min=1e-8)
-                
+
                 # Apply magnitude scaling: W = m * (W0 + BA) / ||W0 + BA||
                 merged_weight = magnitude.unsqueeze(1) * directional / direction_norms
             else:
                 # Fallback: if no magnitude vector, use directional component
                 logging.warning(f"No magnitude vector found for DoRA module {name}, using directional component only")
                 merged_weight = directional
-            
+
             # Update base weight with merged result
             module.to_wrap.weight.data = merged_weight
             return module
-        
+
         return module
