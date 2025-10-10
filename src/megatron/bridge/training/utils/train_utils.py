@@ -327,7 +327,7 @@ def training_log(
     config: ConfigContainer,
     global_state: GlobalState,
     history_wct: list,
-    model,
+    model: list[MegatronModule],
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -348,6 +348,8 @@ def training_log(
         num_zeros_in_grad (Optional[int]): Number of zeros in gradient if computed, else None.
         config: The main configuration container.
         global_state: The global training state.
+        history_wct (list): list of elapsed time per each iteration.
+        model (list[MegatronModule]): megatron model state.
 
     Returns:
         bool: The updated report_memory_flag.
@@ -693,7 +695,7 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
     return memory_report
 
 
-def report_l2_norm_grad(model: Union[MegatronModule, list[MegatronModule]]) -> dict:
+def report_l2_norm_grad(model: list[MegatronModule]) -> dict:
     """
     Computes and logs the L2 norm of gradients.
     L2 norms are calculated after the reduction of gradients across GPUs. This function iterates over the parameters
