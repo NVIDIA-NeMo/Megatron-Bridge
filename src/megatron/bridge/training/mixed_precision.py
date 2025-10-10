@@ -56,6 +56,8 @@ class MixedPrecisionConfig:
     # fp4 related
     fp4: Optional[str] = None
     fp4_recipe: str = "nvfp4"
+    fp4_param: Optional[bool] = None
+    fp4_param_gather: bool = False
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
     initial_loss_scale: Optional[float] = 4294967296  # 2**32
@@ -78,6 +80,14 @@ class MixedPrecisionConfig:
             if self.fp8_param_gather != value:
                 object.__setattr__(self, "fp8_param_gather", value)
 
+        # Keep fp4_param and fp4_param_gather in sync
+        if name == "fp4_param_gather" and hasattr(self, "fp4_param"):
+            if self.fp4_param != value:
+                object.__setattr__(self, "fp4_param", value)
+        elif name == "fp4_param" and hasattr(self, "fp4_param_gather"):
+            if self.fp4_param_gather != value:
+                object.__setattr__(self, "fp4_param_gather", value)
+
     def finalize(self):
         # If fp8_param is None, initialize it from fp8_param_gather
         if self.fp8_param is None:
@@ -89,6 +99,13 @@ class MixedPrecisionConfig:
                 "When fp8_param_gather=True and fp8_recipe='mxfp8', "
                 "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
             )
+        # FP4 and FP8 are mutually exclusive
+        if self.fp4 and self.fp8:
+            raise ValueError("fp4 and fp8 cannot be used simultaneously. Please choose one.")
+
+        # FP4 param not supported for now
+        if self.fp4_param or self.fp4_param_gather:
+            raise ValueError("fp4_param and fp4_param_gather are not supported for now.")
 
     def setup(
         self,
