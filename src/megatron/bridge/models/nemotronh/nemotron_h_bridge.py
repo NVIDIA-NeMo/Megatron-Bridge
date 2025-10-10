@@ -21,10 +21,10 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
-    QKVMapping,
-    MambaInProjMapping,
-    MambaConv1dMapping,
     ColumnParallelMapping,
+    MambaConv1dMapping,
+    MambaInProjMapping,
+    QKVMapping,
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -80,7 +80,6 @@ class NemotronHBridge(MegatronModelBridge):
         )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        logger.warning("WARNING: NemotronHBridge is currently experimental and may not work with tensor parallel > 1.")
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
 
@@ -105,33 +104,41 @@ class NemotronHBridge(MegatronModelBridge):
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-        
+
         # Handling Mamba Mixer submodules separately for more clarity
         # Special Handling for InProj and Conv1d due to specific TP logic
         for mixer_sub_module in ["A_log", "D", "dt_bias", "norm.weight"]:
             mapping_list.extend(
                 [
-                    ColumnParallelMapping(megatron_param=rf"decoder.layers.*.mixer.{mixer_sub_module}", 
-                    hf_param=rf"backbone.layers.*.mixer.{mixer_sub_module}"),
+                    ColumnParallelMapping(
+                        megatron_param=rf"decoder.layers.*.mixer.{mixer_sub_module}",
+                        hf_param=rf"backbone.layers.*.mixer.{mixer_sub_module}",
+                    ),
                 ]
             )
         mapping_list.extend(
             [
-                RowParallelMapping(megatron_param="decoder.layers.*.mixer.out_proj.weight", 
-                hf_param="backbone.layers.*.mixer.out_proj.weight"),
+                RowParallelMapping(
+                    megatron_param="decoder.layers.*.mixer.out_proj.weight",
+                    hf_param="backbone.layers.*.mixer.out_proj.weight",
+                ),
             ]
         )
         mapping_list.extend(
             [
-                MambaInProjMapping(megatron_param="decoder.layers.*.mixer.in_proj.weight", 
-                hf_param="backbone.layers.*.mixer.in_proj.weight"),
+                MambaInProjMapping(
+                    megatron_param="decoder.layers.*.mixer.in_proj.weight",
+                    hf_param="backbone.layers.*.mixer.in_proj.weight",
+                ),
             ]
         )
         for conv1d_sub_module in ["weight", "bias"]:
             mapping_list.extend(
                 [
-                    MambaConv1dMapping(megatron_param=rf"decoder.layers.*.mixer.conv1d.{conv1d_sub_module}", 
-                    hf_param=rf"backbone.layers.*.mixer.conv1d.{conv1d_sub_module}"),
+                    MambaConv1dMapping(
+                        megatron_param=rf"decoder.layers.*.mixer.conv1d.{conv1d_sub_module}",
+                        hf_param=rf"backbone.layers.*.mixer.conv1d.{conv1d_sub_module}",
+                    ),
                 ]
             )
         # Add special mappings that require parameter concatenation/transformation, pruning, etc.
