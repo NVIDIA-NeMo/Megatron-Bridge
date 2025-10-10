@@ -47,6 +47,7 @@ training/packed-sequences.md
 :hidden:
 
 adding-new-models.md
+bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
 ```
