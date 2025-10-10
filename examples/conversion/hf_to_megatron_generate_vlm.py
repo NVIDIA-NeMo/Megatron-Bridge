@@ -339,7 +339,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf_model_path",
         type=str,
-        default="Qwen/Qwen2.5-VL-3B-Instruct",
+        required=True,
         help="Path to the HuggingFace VL model.",
     )
     parser.add_argument(

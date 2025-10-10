@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 import unittest.mock as mock
+from dataclasses import dataclass
 from functools import partial
 
+import numpy as np
 import pytest
 import torch
 
@@ -23,8 +26,39 @@ from megatron.bridge.training.utils.train_utils import (
     maybe_inject_state,
     needs_global_state_injection,
     prepare_forward_step_func,
+    report_l2_norm_grad,
+    report_memory,
+    report_runtime,
+    report_throughput,
     training_log,
 )
+
+
+@dataclass
+class MockTrainState:
+    step: int = None
+    consumed_train_samples: int = None
+
+
+@dataclass
+class MockTrainConfig:
+    global_batch_size: int = None
+    micro_batch_size: int = None
+
+
+@dataclass
+class MockParam:
+    requires_grad: bool = True
+    main_grad: float = None
+
+
+class MockModelChunk:
+    def __init__(self, layer_name, param):
+        self.layer_name = layer_name
+        self.param = param
+
+    def named_parameters(self):
+        yield self.layer_name, self.param
 
 
 class TestTrainingLog:
@@ -139,6 +173,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Assertions
@@ -200,6 +236,8 @@ class TestTrainingLog:
             num_zeros_in_grad=None,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Assertions
@@ -262,6 +300,8 @@ class TestTrainingLog:
             num_zeros_in_grad=None,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Assertions
@@ -272,8 +312,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_tensorboard_logging_interval(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -288,6 +334,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -310,6 +359,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify tensorboard logging was called
@@ -367,6 +418,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Memory reporting should disable the flag
@@ -382,8 +435,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_moe_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
         mock_is_last_rank,
@@ -399,6 +458,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -426,6 +488,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify MoE tracking was called
@@ -440,8 +504,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.MTPLossLoggingHelper")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_mtp_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_mtp_helper,
         mock_print_rank_last,
         mock_is_last_rank,
@@ -457,6 +527,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -479,6 +552,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify MTP tracking was called
@@ -536,6 +611,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Check that the log string includes decoupled learning rate
@@ -591,6 +668,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify energy monitoring was called
@@ -618,8 +697,14 @@ class TestTrainingLog:
     @mock.patch("torch.cuda.memory._snapshot")
     @mock.patch("builtins.open")
     @mock.patch("pickle.dump")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_profiling_memory_snapshot(
         self,
+        mock_report_runtime,
+        mock_report_throughput,
+        mock_report_l2_norm_grad,
         mock_pickle_dump,
         mock_open,
         mock_memory_snapshot,
@@ -637,6 +722,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -668,6 +756,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify memory snapshot was taken and saved
@@ -680,8 +770,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_wandb_specific_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -696,6 +792,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -718,6 +817,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify WandB logging was called for various metrics
@@ -780,6 +881,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         assert result is False
@@ -792,9 +895,17 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     @mock.patch("torch.cuda.memory_stats")
     def test_memory_tensorboard_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_report_memory,
         mock_memory_stats,
         mock_print_rank_last,
         mock_is_last_rank,
@@ -810,16 +921,19 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
         mock_is_last_rank.return_value = True
 
         mock_memory_stats.return_value = {
-            "reserved_bytes.all.current": 2048000000,
-            "allocated_bytes.all.current": 1536000000,
-            "allocated_bytes.all.peak": 1792000000,
-            "allocation.all.current": 5000,
+            "mem-reserved-gigabytes": 2.048,
+            "mem-allocated-gigabytes": 1.536000000,
+            "mem-max-allocated-gigabytes": 1.792,
+            "mem-allocated-count": 5000,
         }
 
         # Enable memory logging
@@ -842,14 +956,90 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify memory stats were logged to tensorboard
         writer = mock_global_state.tensorboard_logger
-        writer.add_scalar.assert_any_call("mem-reserved-bytes", 2048000000, 10)
-        writer.add_scalar.assert_any_call("mem-allocated-bytes", 1536000000, 10)
-        writer.add_scalar.assert_any_call("mem-max-allocated-bytes", 1792000000, 10)
-        writer.add_scalar.assert_any_call("mem-allocated-count", 5000, 10)
+        writer.add_scalar.assert_any_call("memory/mem-reserved-gigabytes", 2.048, 10)
+        writer.add_scalar.assert_any_call("memory/mem-allocated-gigabytes", 1.536, 10)
+        writer.add_scalar.assert_any_call("memory/mem-max-allocated-gigabytes", 1.792, 10)
+        writer.add_scalar.assert_any_call("memory/mem-allocated-count", 5000, 10)
+
+    def test_report_memory(self):
+        """Test memory metrics."""
+        memory_report = report_memory(memory_keys=None)
+        assert len(memory_report) == 10
+
+        memory_keys = {
+            "reserved_bytes.all.current": "mem-reserved-bytes",
+            "reserved_bytes.all.peak": "mem-max-reserved-bytes",
+        }
+        expected_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
+        memory_report = report_memory(memory_keys=memory_keys)
+        assert list(memory_report.keys()) == expected_keys
+
+    def test_report_runtime(self):
+        """Test runtime metrics."""
+        start_time = time.time()
+
+        step = 100
+        consumed_train_samples = 1000
+        seq_length = 2048
+        train_iters = 1000
+
+        train_state = MockTrainState(step=step, consumed_train_samples=consumed_train_samples)
+        runtime_report = report_runtime(
+            train_state=train_state,
+            start_time=start_time,
+            seq_length=seq_length,
+            train_iters=train_iters,
+        )
+
+        assert runtime_report["time/tokens"] == consumed_train_samples * seq_length
+        assert runtime_report["time/samples"] == consumed_train_samples
+
+    def test_report_throughput(self):
+        """Test throughput metrics."""
+        global_batch_size = 64
+        micro_batch_size = 4
+        iteration = 100
+        seq_length = 4096
+        history_wct = [0.9, 1.7, 2.9, 4.2, 5.9]
+        window_size = len(history_wct)
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+
+        throughput_report = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        assert throughput_report["throughput/tokens_per_sec"] == 209715.2
+        assert throughput_report["throughput/batches_per_sec"] == 0.8
+        assert throughput_report["throughput/micro_batch_size"] == 4
+        assert throughput_report["throughput/device/samples_per_sec"] == 51.2
+
+    def test_l2_norm_grad(self):
+        """Test l2 norm grad metrics."""
+        num_chunks = 10
+        layer_name = "layer"
+        model = []
+        # generate mock model
+        for i in range(num_chunks):
+            chunk_name = f"{layer_name}_{i}"
+            main_grad = torch.tensor(i).float()
+            param = MockParam(main_grad=main_grad)
+            model_chunk = MockModelChunk(chunk_name, param)
+            model.append(model_chunk)
+
+        l2_norm_report = report_l2_norm_grad(model)
+        assert np.round(l2_norm_report["l2_norm/grad/global"], 2) == 74.92
+        assert l2_norm_report["l2_norm/grad/layer_2"] == 2.0
+        assert l2_norm_report["l2_norm/grad/layer_9"] == 9.0
 
 
 class TestNeedsGlobalStateInjection:
