@@ -40,6 +40,7 @@ from megatron.bridge.peft.lora.dora import DoRA
 # Import PEFT implementations
 from megatron.bridge.peft.lora.lora import LoRA
 
+
 # Check for optional peft dependency (only needed for AutoPEFTBridge)
 try:
     import peft
@@ -54,6 +55,8 @@ if _PEFT_AVAILABLE:
 else:
     # Create a lazy import that raises an error when AutoPEFTBridge is accessed
     class AutoPEFTBridge:
+        """Lazy import of AutoPEFTBridge"""
+
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "HuggingFace PEFT library is required for AutoPEFTBridge. "
