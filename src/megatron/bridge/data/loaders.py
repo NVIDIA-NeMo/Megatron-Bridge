@@ -204,6 +204,7 @@ def build_train_valid_test_data_loaders(
         persistent_workers=cfg.dataset.persistent_workers,
         data_parallel_rank=mpu.get_data_parallel_rank(),
         data_parallel_size=mpu.get_data_parallel_world_size(),
+        global_batch_size=cfg.train.global_batch_size,
     )
     if cfg.train.skip_train and cfg.train.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
@@ -219,6 +220,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
+            global_batch_size=cfg.train.global_batch_size,
         )
     elif cfg.train.eval_iters > 0:
         valid_dataloader = build_pretraining_data_loader(
@@ -234,6 +236,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
+            global_batch_size=cfg.train.global_batch_size,
         )
 
     if cfg.train.eval_iters > 0:
@@ -250,6 +253,7 @@ def build_train_valid_test_data_loaders(
             persistent_workers=cfg.dataset.persistent_workers,
             data_parallel_rank=mpu.get_data_parallel_rank(),
             data_parallel_size=mpu.get_data_parallel_world_size(),
+            global_batch_size=cfg.train.global_batch_size,
         )
 
     # Flags to know if we need to do training/validation/testing.
@@ -293,11 +297,12 @@ def build_train_valid_test_data_iterators(
 
     # Build iterators.
     dl_type = cfg.dataset.dataloader_type
-    assert dl_type in ["single", "cyclic", "external"]
+    assert dl_type in ["single", "cyclic", "batch", "external"]
 
     def _get_iterator(dataloader_type, dataloader):
         """Return dataset iterator."""
-        if dataloader_type == "single":
+        if dataloader_type in ("single", "batch"):
+            # Both 'single' and 'batch' use single-pass iteration (no cycling)
             return RerunDataIterator(iter(dataloader))
         elif dataloader_type == "cyclic":
             return RerunDataIterator(iter(cyclic_iter(dataloader)))
