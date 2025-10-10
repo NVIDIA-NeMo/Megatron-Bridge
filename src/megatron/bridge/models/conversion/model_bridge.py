@@ -125,11 +125,12 @@ def _megatron_local_name_to_global(
         _, layer_module = get_module_and_param_from_name(models=models, param_name=layer_prefix, vp_stage=vp_stage)
 
         local_layer_number = int(param_name.split("layers.")[1].split(".")[0])
-        global_layer_number = layer_module.layer_number - 1
-        param_name = param_name.replace(
-            f"layers.{local_layer_number}.",
-            f"layers.{global_layer_number}.",
-        )
+        if isinstance(layer_module, MegatronModule):
+            global_layer_number = layer_module.layer_number - 1
+            param_name = param_name.replace(
+                f"layers.{local_layer_number}.",
+                f"layers.{global_layer_number}.",
+            )
 
     # EP
     ep_group = parallel_state.get_expert_model_parallel_group()

@@ -528,3 +528,206 @@ class TestMappingEdgeCases:
         module_without_config = torch.nn.Linear(10, 10)
         with pytest.raises(ValueError, match="Could not find config"):
             mapping._get_config(module_without_config)
+
+
+class TestAutoMappingWithPermute:
+    """Test AutoMapping functionality with permute_dims."""
+
+    def test_basic_transpose_hf_to_megatron(self, mock_distributed_env, transformer_config):
+        """Test basic transpose functionality from HF to Megatron."""
+        mock_distributed_env()
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
+
+        # Create a test tensor [4, 8]
+        hf_weight = torch.randn(4, 8)
+        megatron_module = MockModule(transformer_config, weight_shape=(8, 4))
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = torch.randn(8, 4)
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            # Verify the tensor was transposed and made contiguous
+            mock_delegate.hf_to_megatron.assert_called_once()
+            transposed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            expected_transposed = torch.permute(hf_weight, (1, 0)).contiguous()
+            assert torch.equal(transposed_tensor, expected_transposed)
+            assert transposed_tensor.shape == (8, 4)
+
+    def test_basic_transpose_megatron_to_hf(self, mock_distributed_env, transformer_config):
+        """Test basic transpose functionality from Megatron to HF."""
+        mock_distributed_env()
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
+
+        # Create a test tensor [8, 4]
+        megatron_weight = torch.randn(8, 4)
+        megatron_module = MockModule(transformer_config, weight_shape=(8, 4))
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            # Mock delegate to return the tensor under the megatron_param key
+            mock_delegate.megatron_to_hf.return_value = {"transpose.weight": megatron_weight}
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                result = mapping.megatron_to_hf(megatron_weight, megatron_module)
+
+            # Verify the result is transposed back and made contiguous
+            assert "hf.weight" in result
+            expected_transposed = torch.permute(megatron_weight, (1, 0)).contiguous()
+            assert torch.equal(result["hf.weight"], expected_transposed)
+            assert result["hf.weight"].shape == (4, 8)
+
+    def test_transpose_with_different_dims(self, mock_distributed_env, transformer_config):
+        """Test transpose with different dimension permutations."""
+        mock_distributed_env()
+
+        # Test 3D tensor transpose
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(2, 0, 1))
+        hf_weight = torch.randn(2, 3, 4)  # [2, 3, 4]
+        megatron_module = MockModule(transformer_config, weight_shape=(4, 2, 3))
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = torch.randn(4, 2, 3)
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            # Verify the tensor was permuted correctly
+            transposed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            expected_shape = (4, 2, 3)  # dims=(2, 0, 1) applied to (2, 3, 4)
+            assert transposed_tensor.shape == expected_shape
+
+    def test_transpose_tp_distribution(self, mock_distributed_env, transformer_config):
+        """Test AutoMapping with permute_dims and tensor parallelism."""
+        mock_mpu, mock_dist = mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
+
+        hf_weight = torch.randn(4, 8)
+        megatron_module = MockModule(transformer_config, weight_shape=(4, 4))  # Each rank gets half
+
+        # Mock the AutoMapping's TP behavior
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = torch.randn(4, 4)
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            # Verify transpose happened before TP distribution
+            mock_delegate.hf_to_megatron.assert_called_once()
+            transposed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            assert transposed_tensor.shape == (8, 4)  # Transposed from (4, 8)
+
+    def test_transpose_tp_gathering(self, mock_distributed_env, transformer_config):
+        """Test AutoMapping with permute_dims gathering from multiple TP ranks."""
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
+
+        megatron_weight = torch.randn(4, 4)  # Shard from current rank
+        megatron_module = MockModule(transformer_config, weight_shape=(4, 4))
+
+        # Mock AutoMapping to return gathered tensor
+        full_gathered = torch.randn(8, 4)  # Full tensor after TP gathering
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.megatron_to_hf.return_value = {"transpose.weight": full_gathered}
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                result = mapping.megatron_to_hf(megatron_weight, megatron_module)
+
+            # Verify the gathered tensor was transposed back
+            assert "hf.weight" in result
+            expected_shape = (4, 8)  # Transposed from (8, 4)
+            assert result["hf.weight"].shape == expected_shape
+
+    def test_transpose_empty_result_handling(self, mock_distributed_env, transformer_config):
+        """Test AutoMapping with permute_dims handles empty results from delegate."""
+        mock_distributed_env()
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
+
+        megatron_weight = torch.randn(8, 4)
+        megatron_module = MockModule(transformer_config, weight_shape=(8, 4))
+
+        # Mock delegate to return empty dict (e.g., from non-rank-0 in TP)
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.megatron_to_hf.return_value = {}
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                result = mapping.megatron_to_hf(megatron_weight, megatron_module)
+
+            # Should return empty dict without error
+            assert result == {}
+
+    def test_transpose_wildcard_resolution(self, mock_distributed_env):
+        """Test AutoMapping with permute_dims wildcard pattern resolution."""
+        mock_distributed_env()
+        mapping = AutoMapping("layer.*.transpose.weight", "model.*.hf.weight", permute_dims=(1, 0))
+
+        # Test resolve method
+        resolved = mapping.resolve(("0",))
+        assert resolved.megatron_param == "layer.0.transpose.weight"
+        assert resolved.hf_param == "model.0.hf.weight"
+        assert resolved.permute_dims == (1, 0)  # permute_dims should be preserved
+        assert isinstance(resolved, AutoMapping)
+
+    def test_transpose_non_rank_zero_hf_to_megatron(self, mock_distributed_env, transformer_config):
+        """Test AutoMapping with permute_dims on non-rank-0 during HF to Megatron conversion."""
+        mock_distributed_env(tp_size=2, tp_rank=1)  # Non-rank-0
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(1, 0))
+
+        hf_weight = torch.randn(4, 8)
+        megatron_module = MockModule(transformer_config, weight_shape=(4, 4))
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = torch.randn(4, 4)
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            # On non-rank-0, permutation is skipped, original tensor passed to delegate
+            mock_delegate.hf_to_megatron.assert_called_once()
+            passed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            assert torch.equal(passed_tensor, hf_weight)
+
+    def test_transpose_identity_permutation(self, mock_distributed_env, transformer_config):
+        """Test AutoMapping with identity permutation."""
+        mock_distributed_env()
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(0, 1))  # Identity
+
+        hf_weight = torch.randn(4, 8)
+        megatron_module = MockModule(transformer_config, weight_shape=(4, 8))
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = hf_weight.clone()
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            # Even with identity permutation, tensor should be passed through (permuted then contiguous)
+            transposed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            assert torch.equal(transposed_tensor, hf_weight.contiguous())  # Should be unchanged except contiguous
+
+    def test_transpose_higher_dimensional_tensors(self, mock_distributed_env, transformer_config):
+        """Test AutoMapping with higher dimensional tensors."""
+        mock_distributed_env()
+        mapping = AutoMapping("transpose.weight", "hf.weight", permute_dims=(3, 1, 0, 2))
+
+        # 4D tensor
+        hf_weight = torch.randn(2, 3, 4, 5)  # [2, 3, 4, 5]
+        expected_shape = (5, 3, 2, 4)  # After permutation (3, 1, 0, 2)
+        megatron_module = MockModule(transformer_config, weight_shape=expected_shape)
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = torch.randn(*expected_shape)
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            transposed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            assert transposed_tensor.shape == expected_shape
+
+    def test_permute_without_permute_dims(self, mock_distributed_env, transformer_config):
+        """Test that AutoMapping works normally without permute_dims."""
+        mock_distributed_env()
+        mapping = AutoMapping("weight", "hf.weight")  # No permute_dims
+
+        hf_weight = torch.randn(4, 8)
+        megatron_module = MockModule(transformer_config, weight_shape=(4, 8))
+
+        with patch.object(mapping, "_mapping") as mock_delegate:
+            mock_delegate.hf_to_megatron.return_value = hf_weight.clone()
+            with patch.object(mapping, "_detect_parallelism_type", return_value="column"):
+                mapping.hf_to_megatron(hf_weight, megatron_module)
+
+            # Without permute_dims, tensor should be passed unchanged
+            passed_tensor = mock_delegate.hf_to_megatron.call_args[0][0]
+            assert torch.equal(passed_tensor, hf_weight)
