@@ -21,7 +21,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-
+from megatron.core.utils import is_te_min_version
 
 @dataclass(kw_only=True)
 class MixedPrecisionConfig:
@@ -56,8 +56,6 @@ class MixedPrecisionConfig:
     # fp4 related
     fp4: Optional[str] = None
     fp4_recipe: str = "nvfp4"
-    fp4_param: Optional[bool] = None
-    fp4_param_gather: bool = False
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
     initial_loss_scale: Optional[float] = 4294967296  # 2**32
@@ -80,14 +78,6 @@ class MixedPrecisionConfig:
             if self.fp8_param_gather != value:
                 object.__setattr__(self, "fp8_param_gather", value)
 
-        # Keep fp4_param and fp4_param_gather in sync
-        if name == "fp4_param_gather" and hasattr(self, "fp4_param"):
-            if self.fp4_param != value:
-                object.__setattr__(self, "fp4_param", value)
-        elif name == "fp4_param" and hasattr(self, "fp4_param_gather"):
-            if self.fp4_param_gather != value:
-                object.__setattr__(self, "fp4_param_gather", value)
-
     def finalize(self):
         # If fp8_param is None, initialize it from fp8_param_gather
         if self.fp8_param is None:
@@ -103,9 +93,8 @@ class MixedPrecisionConfig:
         if self.fp4 and self.fp8:
             raise ValueError("fp4 and fp8 cannot be used simultaneously. Please choose one.")
 
-        # FP4 param not supported for now
-        if self.fp4_param or self.fp4_param_gather:
-            raise ValueError("fp4_param and fp4_param_gather are not supported for now.")
+        if self.fp4 and not is_te_min_version("2.7.0.dev0"):
+            raise ValueError("fp4 requires Transformer Engine >= 2.7.0.dev0 for NVFP4BlockScaling support.")
 
     def setup(
         self,
@@ -397,6 +386,19 @@ def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     cfg.fp8_param_gather = False
     return cfg
 
+@register
+def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with MXFP8.
+
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with MXFP8 mixed precision training
+    """
+    cfg = bf16_mixed()
+    cfg.fp8 = None
+    cfg.fp4 = "e2m1"
+    cfg.fp4_recipe = "nvfp4"
+    cfg.fp8_param_gather = False
+    return cfg
 
 def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisionConfig:
     """Return a :class:`MixedPrecisionConfig` for *name*.
