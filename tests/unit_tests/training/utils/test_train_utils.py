@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 import torch
 
-
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     maybe_inject_state,
