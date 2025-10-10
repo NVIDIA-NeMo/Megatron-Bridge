@@ -186,6 +186,16 @@ def main():
         recipe.dataset.num_workers = 0
         recipe.dataset.pin_memory = False
 
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+
+    dp = int(args.num_gpus / (tp * pp * cp))
+    logger.info(f"DP: {dp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+
     pretrain(config=recipe, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
