@@ -64,6 +64,7 @@ The performance data includes:
 | LLAMA3.1_405B | 128 | 64 | 1 | 8192 | 0 | 4 | 8 | 2 | 8 | 1 | 32 | 664 (622) | 1676 (1569) |
 | DeepSeekV3 | 256 | 2048 | 1 | 4096 | 0 | 1 | 16 | 1 | 1 | 8 | 128 | 2265 (2159) | 589 (562) |
 | Qwen3_30B_a3B | 8 | 512 | 1 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 64 | 18066 | 416 |
+| Qwen3_235B_a22B | 64 | 1024 | 1 | 4096 | 0 | 1 | 8 | 1 | 2 | 8 | 128 | 4104 (4275) | 607 (633) |
 
 #### System: DGX-H100
 
@@ -72,6 +73,8 @@ The performance data includes:
 | LLAMA3_8B | 8 | 128 | 1 | 8192 | 1 | 1 | 1 | 1 | n/a | 1 | 16 | 14079 | 725 |
 | LLAMA3_70B | 64 | 128 | 1 | 8192 | 0 | 4 | 8 | 1 | 5 | 1 | 64 | 1619 | 727 |
 | LLAMA3.1_405B | 1024 | 512 | 1 | 8192 | 0 | 8 | 8 | 2 | 8 | 1 | 64 | 302 | 763 |
-| DeepSeekV3 | 1024 | 8192 | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 64 | 128 | 1297 | 338 |
+| DeepSeekV3 | 1024 | 8192 | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 64 | 128 | 1297 | 338 (330) |
 | Qwen3_30B_a3B | 16 | 512 | 2 | 4096 | 0 | 1 | 2 | 1 | 24 | 8 | 32 | 10494 | 241 |
 | Qwen3_235B_a22B | 256 | 2048 | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 32 | 128 | 1204 | 178 |
+
+- The numbers in parentheses for DeepSeekV3 indicate the use of different quantization granularities: 128×128 for weights and 1×128 for activations, which match those used in the original DeepSeekV3 pre-training.
