@@ -66,6 +66,10 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
+from megatron.bridge.training.tensor_inspect import (
+    tensor_inspect_end_if_enabled,
+    tensor_inspect_step_if_enabled,
+)
 
 
 def train(
@@ -289,6 +293,9 @@ def train(
             wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
         )
         fault_tolerance.on_training_step_end(global_state)
+
+        # Advance NVIDIA DLFw Inspect step if enabled
+        tensor_inspect_step_if_enabled(config.tensor_inspect)
         if should_checkpoint:
             save_checkpoint_and_time(
                 global_state,
@@ -467,12 +474,17 @@ def train(
 
     # If any exit conditions (signal handler, duration, iterations) have been reached, exit.
     if should_exit:
+        # Close NVIDIA DLFw Inspect if enabled
+        tensor_inspect_end_if_enabled(config.tensor_inspect)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=True, terminate=True)
         wandb_writer = global_state.wandb_logger
         if wandb_writer:
             wandb_writer.finish()
         fault_tolerance.shutdown(global_state)
         sys.exit(exit_code)
+
+    # Close NVIDIA DLFw Inspect at clean finish
+    tensor_inspect_end_if_enabled(config.tensor_inspect)
 
 
 def train_step(
