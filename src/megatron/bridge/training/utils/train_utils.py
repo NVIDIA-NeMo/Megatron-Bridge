@@ -57,7 +57,7 @@ except ImportError:
         from megatron.core.utils import local_multi_tensor_l2_norm as multi_tensor_l2norm
 
 
-MEMORY_KEYS = {
+MEMORY_KEYS: dict[str, str] = {
     "allocated_bytes.all.current": "mem-allocated-bytes",
     "active_bytes.all.current": "mem-active-bytes",
     "inactive_split_bytes.all.current": "mem-inactive-bytes",
