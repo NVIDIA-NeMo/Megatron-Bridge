@@ -210,8 +210,9 @@ class RerunStateMachineConfig:
 class DataloaderConfig:
     """Base configuration for data loading."""
 
-    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = None
-    """Single pass vs multiple pass data loader"""
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
+    """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
+    'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
     num_workers: int = 8
     """Dataloader number of workers."""
@@ -337,7 +338,14 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 
 @dataclass(kw_only=True)
 class FinetuningDatasetConfig(DataloaderConfig):
-    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig."""
+    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig.
+
+    Note: For fine-tuning, dataloader_type defaults to 'batch' which ensures sequences
+    within each global batch are padded to the same length.
+    """
+
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
+    """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
 
     dataset_root: Optional[Union[str, Path]] = None
     seq_length: int
