@@ -63,8 +63,12 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     check_for_nan_in_grad: bool
     # Recompute configuration
     recompute_granularity: Optional[str]
+    recompute_modules: Optional[List[str]]
     recompute_method: Optional[str]
     recompute_num_layers: Optional[int]
+    # MTP support
+    mtp_num_layers: Optional[int]
+    mtp_loss_scaling_factor: Optional[float]
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -162,8 +166,12 @@ def _deepseek_v3_common(
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
     recompute_granularity: Optional[str] = "selective",
+    recompute_modules: Optional[List[str]] = None,
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
+    # MTP support
+    mtp_num_layers: Optional[int] = 1,
+    mtp_loss_scaling_factor: Optional[float] = 0.1,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 4096,
@@ -207,8 +215,9 @@ def _deepseek_v3_common(
     model_cfg.seq_length = seq_length
 
     model_cfg.expert_tensor_parallel_size = 1
-    model_cfg.mtp_num_layers = 1
-    model_cfg.mtp_loss_scaling_factor = 0.1
+    # MTP configuration (allow None to disable by setting to 0)
+    model_cfg.mtp_num_layers = 0 if mtp_num_layers is None else mtp_num_layers
+    model_cfg.mtp_loss_scaling_factor = mtp_loss_scaling_factor
     model_cfg.init_method_std = 0.006
     model_cfg.rotary_base = 10000.0
     model_cfg.rotary_scaling_factor = 40
@@ -216,6 +225,7 @@ def _deepseek_v3_common(
     model_cfg.rotary_scaling_factor = int(model_cfg.rotary_scaling_factor)
 
     model_cfg.recompute_granularity = recompute_granularity
+    model_cfg.recompute_modules = recompute_modules
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
 
@@ -238,19 +248,43 @@ def _deepseek_v3_common(
     elif (pp_size, vp_size) in layout_map:
         model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
+    # Pipeline split for asymmetric stages are specified with map_pp_vp_to_layout below
+    model_cfg.account_for_embedding_in_pipeline_split = False
+    model_cfg.account_for_loss_in_pipeline_split = False
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
+
+    # Performance optimization knobs
+    model_cfg.moe_permute_fusion = True
+    if enable_deepep:
+        model_cfg.moe_token_dispatcher_type = "flex"
+        model_cfg.moe_enable_deepep = True
+        model_cfg.moe_shared_expert_overlap = False
+
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters,
+        adam_beta1=0.9,
+        adam_beta2=0.95,
+        adam_eps=1e-5,
+        weight_decay=0.1,
         max_lr=lr,
         min_lr=min_lr,
     )
-
-    # Match old recipe optimizer dtype behavior
     opt_config.use_precision_aware_optimizer = True
     opt_config.main_params_dtype = torch.float32
     opt_config.main_grads_dtype = torch.bfloat16
     opt_config.exp_avg_dtype = torch.bfloat16
     opt_config.exp_avg_sq_dtype = torch.bfloat16
+
+    if precision_config is None:
+        precision_config = MixedPrecisionConfig(
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            pipeline_dtype=torch.bfloat16,
+            autocast_enabled=False,
+            grad_reduce_in_fp32=False,
+        )
 
     cfg = ConfigContainer(
         model=model_cfg,
@@ -268,12 +302,12 @@ def _deepseek_v3_common(
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=check_for_nan_in_grad,
-            grad_reduce_in_fp32=False,
+            grad_reduce_in_fp32=False,  # V3 recipe sets this to False
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,
+            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -312,17 +346,9 @@ def _deepseek_v3_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-    # Forward RoPE fusion preference to the model provider
-    model_cfg.apply_rope_fusion = apply_rope_fusion
     if apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
-    # Apply DeepEP if requested
-    if enable_deepep:
-        from megatron.bridge.training.deepep import apply_deepep as _apply_deepep
-        from megatron.bridge.training.deepep import validate_deepep as _validate_deepep
 
-        _apply_deepep(model_cfg)
-        _validate_deepep(model_cfg)
     # Ensure comm_overlap exists with old default tp_comm_overlap=False when not provided
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
