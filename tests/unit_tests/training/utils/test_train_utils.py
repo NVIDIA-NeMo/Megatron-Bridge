@@ -976,9 +976,9 @@ class TestTrainingLog:
             "reserved_bytes.all.current": "mem-reserved-bytes",
             "reserved_bytes.all.peak": "mem-max-reserved-bytes",
         }
-        excepted_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
+        expected_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
         memory_report = report_memory(memory_keys=memory_keys)
-        assert list(memory_report.keys()) == excepted_keys
+        assert list(memory_report.keys()) == expected_keys
 
     def test_report_runtime(self):
         """Test runtime metrics."""
