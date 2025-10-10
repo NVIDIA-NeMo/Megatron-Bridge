@@ -28,6 +28,9 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 )
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -238,7 +241,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         kwargs = {}
         if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
             kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
-
+        if self.attention_backend == AttnBackend.local:
+            if hasattr(transformer_layer_spec, "submodules"):
+                transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
         with model_init_device_context():
             model = MCoreGPTModel(
                 self,

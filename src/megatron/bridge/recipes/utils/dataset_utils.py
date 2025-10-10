@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import List, Optional, Tuple
+from megatron.bridge.training.config import GPTDatasetConfig
 
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
 
@@ -83,3 +84,25 @@ def get_blend_fields_from_data_paths(
             split = "1,1,1"
 
     return blend, blend_per_split, split
+
+
+def get_pretrain_dataset(
+    seq_length: int, 
+    blend: _BLEND_TYPE, 
+    blend_per_split: _BLEND_PER_SPLIT_TYPE, 
+    split: _SPLIT_TYPE
+):
+    return GPTDatasetConfig(
+        random_seed=1234,
+        reset_attention_mask=False,
+        reset_position_ids=False,
+        eod_mask_loss=False,
+        sequence_length=seq_length,
+        num_dataset_builder_threads=1,
+        blend=blend,
+        blend_per_split=blend_per_split,
+        split=split,
+        data_sharding=True,
+        dataloader_type="single",
+        skip_getting_attention_mask_from_dataset=True,
+    )
