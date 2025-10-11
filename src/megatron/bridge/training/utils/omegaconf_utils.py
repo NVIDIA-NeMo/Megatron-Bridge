@@ -17,6 +17,7 @@
 
 import dataclasses
 import functools
+import inspect
 import logging
 from typing import Any, Dict, Tuple, TypeVar
 
@@ -168,13 +169,31 @@ def _dataclass_to_omegaconf_dict(val_to_convert: Any, path: str = "") -> Any:
     """
     current_path = path
 
+    # Handle Hugging Face GenerationConfig / PretrainedConfig by converting to a callable dict
+    # compatible with our YAML representer logic
+    try:
+        from transformers import GenerationConfig, PretrainedConfig  # type: ignore
+
+        if isinstance(val_to_convert, (GenerationConfig, PretrainedConfig)):
+            cfg_class = val_to_convert.__class__
+            target = f"{inspect.getmodule(cfg_class).__name__}.{cfg_class.__qualname__}.from_dict"
+            logger.debug(f"Converting {cfg_class.__qualname__} at {current_path} to callable dict")
+            return {
+                "_target_": target,
+                "_call_": True,
+                "config_dict": val_to_convert.to_dict(),
+            }
+    except ModuleNotFoundError:
+        # transformers is optional; if unavailable, fall through to other handlers
+        pass
+
     # Explicitly handle torch.dtype - convert to string
     if isinstance(val_to_convert, torch.dtype):
         logger.debug(f"Converting torch.dtype at {current_path}: {val_to_convert}")
         return str(val_to_convert)
 
     # Handle callables - exclude them completely
-    elif _is_omegaconf_problematic(val_to_convert):
+    if _is_omegaconf_problematic(val_to_convert):
         logger.debug(f"Excluding callable at {current_path}: {type(val_to_convert)} - {val_to_convert}")
         return _EXCLUDE_FIELD
 
