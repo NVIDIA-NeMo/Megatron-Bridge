@@ -23,7 +23,7 @@ ConfigContainer:
     seq_length: 8192
 
   train:
-    train_iters: 25
+    train_iters: 100
     eval_iters: 0
 
   rerun_state_machine:
