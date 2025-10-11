@@ -63,7 +63,7 @@ perf_matrix:
         tp: 1
         pp: 2
         cp: 1
-        vp: 24
+        vp: 12
         ep: 8
         etp: 1
         fsdp: false
