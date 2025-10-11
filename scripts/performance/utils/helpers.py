@@ -46,6 +46,10 @@ COMM_OVERLAP_CONFIG_MAP = {
             "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
             "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
         },
+        "gb300": {
+            "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
+        },
     },
     "llama31_405b": {
         "h100": {
@@ -57,6 +61,10 @@ COMM_OVERLAP_CONFIG_MAP = {
             "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
         },
         "gb200": {
+            "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
+            "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
+        },
+        "gb300": {
             "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
             "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
         },
