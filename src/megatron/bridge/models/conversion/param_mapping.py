@@ -1395,8 +1395,14 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather Mamba in_proj shards and merge into single HF tensor."""
-        if megatron_weights is not None:
-            megatron_weights = self.maybe_dequantize(megatron_weights)
+        # Handle cross-PP broadcast
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
+
+        if megatron_weights is None:
+            return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
@@ -1429,7 +1435,6 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Gather each component across TP ranks
         full_weights = []
         for component in local_components:
-            component = self.broadcast_from_pp_rank(component)
             if self.tp_size == 1:
                 full_weight = component
             else:
@@ -1499,8 +1504,13 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         megatron_module: Optional[nn.Module],
     ) -> Dict[str, torch.Tensor]:
         """Gather conv1d shards and merge into single HF tensor."""
-        if megatron_weights is not None:
-            megatron_weights = self.maybe_dequantize(megatron_weights)
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
+
+        if megatron_weights is None:
+            return {}
+
+        # Dequantize if needed
+        megatron_weights = self.maybe_dequantize(megatron_weights)
 
         # Broadcast config to all PP ranks for collective communication
         if megatron_module is None:
@@ -1528,7 +1538,6 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Gather each component across TP ranks
         full_weights = []
         for component in local_components:
-            component = self.broadcast_from_pp_rank(component)
             if self.tp_size == 1:
                 full_weight = component
             else:
