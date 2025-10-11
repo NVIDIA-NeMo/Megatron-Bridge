@@ -189,7 +189,7 @@ def main():
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size
     cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
 
     dp = int(args.num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
