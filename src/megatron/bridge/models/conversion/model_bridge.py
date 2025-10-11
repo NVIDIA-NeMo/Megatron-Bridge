@@ -598,7 +598,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
-                            yield HFWeightTuple("lm_head.weight", final_tensor)
+                            yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
                     # This should not happen when embeddings are tied - assert error
                     raise ValueError(
