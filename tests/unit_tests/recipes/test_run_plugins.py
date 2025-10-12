@@ -868,15 +868,14 @@ class TestPerfEnvPlugin:
             enable_layernorm_sm_margin=True,
             layernorm_sm_margin=32,
             gpu_sm100_or_newer=True,
-            tp_size=4,
-            cp_size=2,
-            pp_size=4,
             nccl_pp_comm_chunksize=2048,
         )
 
         # Create mock task and executor
         task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(create_test_config())
+        task.config = prepare_config_for_nemo_run(
+            create_test_config(tensor_parallelism=4, context_parallelism=2, pipeline_parallelism=4)
+            )
 
         executor = MagicMock()
         executor.env_vars = {}
@@ -892,11 +891,11 @@ class TestPerfEnvPlugin:
 
     def test_setup_with_older_gpu(self):
         """Test setup with older GPU architecture."""
-        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, tp_size=2, cp_size=1)
+        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False)
 
         # Create mock task and executor
         task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(create_test_config())
+        task.config = prepare_config_for_nemo_run(create_test_config(tensor_parallelism=2, context_parallelism=1))
 
         executor = MagicMock()
         executor.env_vars = {}
@@ -1012,7 +1011,7 @@ class TestPluginIntegration:
         # Create plugins
         preemption_plugin = PreemptionPlugin(preempt_time=300)
         ft_plugin = FaultTolerancePlugin(num_in_job_restarts=5)
-        perf_plugin = PerfEnvPlugin(tp_size=2, pp_size=2, enable_manual_gc=True)
+        perf_plugin = PerfEnvPlugin(enable_manual_gc=True)
 
         # Create config from llama3_8b recipe
         config = create_test_config(

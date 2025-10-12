@@ -562,9 +562,6 @@ class PerfEnvPlugin(Plugin):
         gpu_sm100_or_newer (bool): Whether GPU is SM100 or newer architecture.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
-        tp_size (int): Tensor parallelism size. Default is 1.
-        cp_size (int): Context parallelism size. Default is 1.
-        pp_size (int): Pipeline parallelism size. Default is 1.
         script_args_converter_fn (Optional[Callable]): A function that takes PerfEnvPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
@@ -577,9 +574,6 @@ class PerfEnvPlugin(Plugin):
     gpu_sm100_or_newer: bool = False
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
-    tp_size: int = 1
-    cp_size: int = 1
-    pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
 
     def get_vboost_srun_cmd(self, nodes, job_dir):
@@ -602,19 +596,59 @@ class PerfEnvPlugin(Plugin):
 
         return vboost_cmd
 
+    def _set_num_cuda_device_max_connections(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        import torch
+
+        tp_size = task.config.model.tensor_model_parallel_size
+        cp_size = task.config.model.context_parallel_size
+        dp_size = task.config.comm_overlap.data_parallel_size
+        pp_size = task.config.model.pipeline_model_parallel_size
+        major, _ = torch.cuda.get_device_capability()
+
+        unset_cuda_device_max_connections = False
+        if major > 9:
+            if (tp_size > 1 or cp_size > 1) and (dp_size > 1 or pp_size > 1):
+                """
+                We need extra connections to avoid serialization of streams, so we use the max connections of 32 
+                instead of the default device connection of 8.
+                """
+                executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
+                logging.info("Set CUDA_DEVICE_MAX_CONNECTIONS to 32")
+            elif "CUDA_DEVICE_MAX_CONNECTIONS" in os.environ or "CUDA_DEVICE_MAX_CONNECTIONS" in executor.env_vars:
+                unset_cuda_device_max_connections = True
+        else:
+            # Hopper or earlier generation GPUs
+            if (tp_size > 1 or cp_size > 1) and not task.config.model.overlap_moe_expert_parallel_comm:
+                """
+                Set the device connection to 1 to enforce the kernel queuing order from the host to the execution 
+                order on GPU. This is needed to schedule a communication kernel before the overlapping persistent 
+                GEMM kernel. Otherwise, then communication kernel will be pushed to the end of the GEMM kernel so 
+                failing to overlap the kernels.
+                """
+                executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
+                logging.info("Set CUDA_DEVICE_MAX_CONNECTIONS to 1")
+            elif "CUDA_DEVICE_MAX_CONNECTIONS" in os.environ or "CUDA_DEVICE_MAX_CONNECTIONS" in executor.env_vars:
+                unset_cuda_device_max_connections = True
+
+        if unset_cuda_device_max_connections:
+            os.environ.pop("CUDA_DEVICE_MAX_CONNECTIONS", None)
+            executor.env_vars.pop("CUDA_DEVICE_MAX_CONNECTIONS", None)
+            logging.info("Unset CUDA_DEVICE_MAX_CONNECTIONS")
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
 
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
+        tp_size = task.config.model.tensor_model_parallel_size
+        cp_size = task.config.model.context_parallel_size
+        pp_size = task.config.model.pipeline_model_parallel_size
+
         # Environment variables work for both task types
 
         # Force program order kernel launch for TP, CP overlap
-        if self.gpu_sm100_or_newer and (self.tp_size > 1 or self.cp_size > 1):
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
-        elif (not self.gpu_sm100_or_newer) and (self.tp_size > 1 or self.cp_size > 1):
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
+        self._set_num_cuda_device_max_connections(task, executor)
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
         if self.enable_layernorm_sm_margin:
@@ -622,7 +656,7 @@ class PerfEnvPlugin(Plugin):
             executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin)
 
         # Set the chunk size of P2P communications
-        if self.pp_size > 1 and self.nccl_pp_comm_chunksize is not None:
+        if pp_size > 1 and self.nccl_pp_comm_chunksize is not None:
             assert isinstance(self.nccl_pp_comm_chunksize, int) and self.nccl_pp_comm_chunksize > 1
             executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(self.nccl_pp_comm_chunksize)
 
