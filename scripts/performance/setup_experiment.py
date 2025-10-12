@@ -116,7 +116,6 @@ if __name__ == "__main__":
     if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
         if args.compute_dtype == "fp8" and args.fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
     if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
         if args.compute_dtype == "bf16" and (not args.use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
