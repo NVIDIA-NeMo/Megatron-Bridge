@@ -60,7 +60,7 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
         default_num_gpus = gpu_defaults[args.gpu][args.model_size]
         num_gpus_yaml_key = f"num_gpus_{default_num_gpus}"
         preset = gpu_block.get(num_gpus_yaml_key)
-        scaling_factor = preset["common"]["gbs"] // default_num_gpus
-        preset["common"]["gbs"] = args.num_gpus * scaling_factor
+        scaling_factor = preset["common"]["gbs"] / default_num_gpus
+        preset["common"]["gbs"] = int(args.num_gpus * scaling_factor)
 
     return preset
