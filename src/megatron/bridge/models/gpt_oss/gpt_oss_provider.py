@@ -18,6 +18,9 @@ from typing import Callable, List, Literal, Optional, Tuple, Union
 
 import torch
 from megatron.core.fusions.fused_bias_geglu import quick_gelu
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -72,6 +75,13 @@ class GPTOSSProvider(GPTModelProvider):
     bias_dropout_fusion: bool = False
     window_attn_skip_freq: Optional[Union[int, List[int]]] = 2  # alternative SWA/full
     activation_func_clamp_value: Optional[float] = 7.0
+
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        if not is_te_min_version("2.8"):
+            logger.info("Fused sink attention requires TE >= 2.8. Falling back to MCore local sink attention.")
+            self.attention_backend = AttnBackend.local
+        return super().provide(pre_process, post_process, vp_stage)
 
 
 @dataclass
