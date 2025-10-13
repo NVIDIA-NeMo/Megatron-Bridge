@@ -30,6 +30,7 @@ from megatron.core.num_microbatches_calculator import (
     get_num_microbatches,
     update_num_microbatches,
 )
+from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -532,7 +533,15 @@ def train_step(
         )
 
         # Forward pass.
-        forward_backward_func = get_forward_backward_func()
+        # if get_world_size_safe() == 0:
+        #    import pdb; pdb.set_trace()
+        if cfg.model.enable_cuda_graph and cfg.model.cuda_graph_scope == "full_iteration":
+            print_rank_0("Using full cuda graph")
+            forward_backward_func = FullCudaGraphWrapper(get_forward_backward_func())
+        else:
+            print_rank_0("Not Using full cuda graph")
+            forward_backward_func = get_forward_backward_func()
+        
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=data_iterator,

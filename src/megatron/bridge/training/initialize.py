@@ -356,7 +356,7 @@ def _initialize_distributed(
                 torch.cuda.set_device(get_local_rank_preinit())
 
         # Set to non-default stream for cudagraph capturing.
-        if model_config.external_cuda_graph:
+        if model_config.external_cuda_graph: # or (model_config.enable_cuda_graph and model_config.cuda_graph_scope == "full_iteration"):
             torch.cuda.set_stream(torch.cuda.Stream())
 
         # Call the init process
