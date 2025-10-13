@@ -95,6 +95,11 @@ no-build-isolation-package = [
     "flash_mla",
 ]
 prerelease = "allow"
+override-dependencies = [
+    "torch; sys_platform == 'never'",
+    "torchvision; sys_platform == 'never'",
+    "triton; sys_platform == 'never'",
+]
 
 # uv.sources allows us to override dependencies with VCS commits. 
 # Lets use this only for debugging purposes, but not for production (main).
