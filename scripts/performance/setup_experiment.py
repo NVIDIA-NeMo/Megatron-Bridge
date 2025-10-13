@@ -144,6 +144,9 @@ if __name__ == "__main__":
         if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
             executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
+    if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["gb200"] and args.num_gpus == 128:
+        executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
     target_script_args = [
         "--config_file",
         str(config_filepath),
