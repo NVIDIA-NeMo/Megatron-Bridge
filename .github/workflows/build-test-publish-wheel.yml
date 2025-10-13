@@ -51,6 +51,7 @@ jobs:
       runner: self-hosted-nemo
       no-build-isolation: true
       submodules: recursive
+      container-options: "--gpus all --runtime=nvidia"
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
