@@ -1,6 +1,6 @@
 # Megatron-LM to Megatron Bridge Guide
 
-Megatron-Bridge is Python-first: configure models, data, and training via typed Python APIs. All configuration lives in a structured `ConfigContainer` (see [Configuration overview](training/config-container-overview.md)). Any field can be overridden from the command line using Hydra/OmegaConf syntax in the example training scripts.
+Megatron Bridge is Python-first: configure models, data, and training via typed Python APIs. All configuration lives in a structured `ConfigContainer` (see [Configuration overview](training/config-container-overview.md)). Any field can be overridden from the command line using Hydra/OmegaConf syntax in the example training scripts.
 
 ## Quick start
 
@@ -21,14 +21,14 @@ Notes:
 - Config groups are nested: `rng`, `train`, `model`, `optimizer`, `ddp`, `scheduler`, `dataset`, `logger`, `tokenizer`, `checkpoint`, `dist`, `profiling`, `peft`, `comm_overlap`, `mixed_precision`, `inprocess_restart`.
 - After overrides are applied, runtime validation computes any dependent fields (e.g., data-parallel size, scheduler steps) and checks consistency.
 
-## Mapping Megatron-LM arguments to Megatron-Bridge config
+## Mapping Megatron-LM arguments to Megatron Bridge config
 
 Below is a concise mapping from common `megatron-lm/megatron/training/arguments.py` flags to the new dataclass fields. If a field is not listed here (e.g., highly model-specific knobs), it typically lives under `model.*`, `optimizer.*`, `dataset.*`, or `tokenizer.*` with similar names.
 
 
 ### Model topology and parallelisms
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--tensor-model-parallel-size` | `model.tensor_model_parallel_size` | TP degree. |
 | `--pipeline-model-parallel-size` | `model.pipeline_model_parallel_size` | PP degree. |
@@ -41,7 +41,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 
 ### Model architecture knobs
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--untie-embeddings-and-output-weights` | `model.share_embeddings_and_output_weights=false` | Untie embeddings/output. |
 | `--position-embedding-type` | `model.position_embedding_type` | `learned_absolute` or `rope`. |
@@ -70,7 +70,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 
 ### MoE
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--num-experts` | `model.num_moe_experts` | Experts per MoE layer. |
 | `--moe-ffn-hidden-size` | `model.moe_ffn_hidden_size` | Expert MLP hidden size. |
@@ -87,7 +87,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 
 ### Mixed precision
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--bf16` | `mixed_precision` preset (e.g., "bf16_mixed") | Select a mixed-precision recipe; sets `model.bf16`/`optimizer.bf16`. |
 
@@ -95,7 +95,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 ### Training
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--micro-batch-size` | `train.micro_batch_size` | Per-rank batch size before gradient accumulation. |
 | `--global-batch-size` | `train.global_batch_size` | Total batch across DP and micro-batches. |
@@ -117,7 +117,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 ### Scheduler / Regularization
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--lr-decay-style` | `scheduler.lr_decay_style` | LR schedule: constant/linear/cosine/ISR/WSD. |
 | `--lr-decay-iters` | `scheduler.lr_decay_iters` | Iterations over which to decay LR. |
@@ -142,7 +142,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 ### Checkpointing
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--save` | `checkpoint.save` | Directory to write checkpoints. |
 | `--save-interval` | `checkpoint.save_interval` | Iterations between persistent saves. |
@@ -179,7 +179,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 ### Logging
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--log-interval` | `logger.log_interval` | Steps between console logs. |
 | `--log-params-norm` | `logger.log_params_norm` | Compute and log parameter L2 norm. |
@@ -204,7 +204,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 ### RNG / Initialization
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--seed` | `rng.seed` | Global random seed. |
 | `--data-parallel-random-init` | `rng.data_parallel_random_init` | Enable per-DP-rank random init. |
@@ -213,7 +213,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 ### Distributed init and topology
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--distributed-backend` | `dist.distributed_backend` | Process group backend (nccl/gloo). |
 | `--distributed-timeout-minutes` | `dist.distributed_timeout_minutes` | PG init and collective timeout. |
@@ -226,7 +226,7 @@ Mixed precision is selected via the `mixed_precision` config key (e.g., preset n
 
 Additional distributed/optimizer overlap settings:
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--use-distributed-optimizer` | `ddp.use_distributed_optimizer` and `optimizer.use_distributed_optimizer` | Enable distributed optimizer; settings are synchronized. |
 | `--overlap-grad-reduce` | `ddp.overlap_grad_reduce` | Overlap DP gradient reduce-scatter. |
@@ -234,7 +234,7 @@ Additional distributed/optimizer overlap settings:
 
 ### Profiling
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--profile` | `profiling.use_nsys_profiler` | Enable nsys profiling (capture is controlled via external CLI). |
 | `--use-pytorch-profiler` | `profiling.use_pytorch_profiler` | Enable PyTorch profiler (TB-friendly). |
@@ -247,7 +247,7 @@ Additional distributed/optimizer overlap settings:
 
 ### In-process restart
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--inprocess-restart` | `inprocess_restart.enabled` | Enable nvrx in-process restart. |
 | `--inprocess-max-iterations` | `inprocess_restart.max_iterations` | Max restart attempts. |
@@ -268,7 +268,7 @@ Additional distributed/optimizer overlap settings:
 
 ### Straggler detection
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--log-straggler` | `straggler.log_straggler` | Track and log straggler GPUs. |
 | `--disable-straggler-on-startup` | `straggler.disable_straggler_on_startup` | Start with straggler detector disabled. |
@@ -277,7 +277,7 @@ Additional distributed/optimizer overlap settings:
 
 ### Rerun state machine
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--error-injection-rate` | `rerun_state_machine.error_injection_rate` | Frequency of injected validation perturbations. |
 | `--error-injection-type` | `rerun_state_machine.error_injection_type` | Kind of injection (correct/transient/persistent). |
@@ -285,7 +285,7 @@ Additional distributed/optimizer overlap settings:
 
 ### Data / Tokenizer args
 
-| megatron-lm arguments | megatron-bridge config | Description |
+| megatron-lm arguments | Megatron Bridge config | Description |
 | --- | --- | --- |
 | `--tokenizer-type` | `tokenizer.tokenizer_type` | Tokenizer implementation (e.g., HuggingFaceTokenizer). |
 | `--tokenizer-model` | `tokenizer.tokenizer_model` | Model name/path for tokenizer. |
