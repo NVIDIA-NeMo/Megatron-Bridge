@@ -12,9 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Union
+from typing import Any, List, Union
 
-from peft import LoraConfig
+
+# Make peft import optional
+try:
+    from peft import LoraConfig
+
+    _PEFT_AVAILABLE = True
+except ImportError:
+    _PEFT_AVAILABLE = False
+    # Create a dummy LoraConfig for type hints
+    LoraConfig = Any  # type: ignore
 
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
@@ -34,7 +43,7 @@ from megatron.bridge.peft.lora.dora import DoRA
 from megatron.bridge.peft.lora.lora import LoRA
 
 
-@MegatronPEFTBridge.register_bridge(source=LoraConfig, target=LoRA)  # Handles both LoRA and DoRA
+# Define the bridge class first
 class LoRABridge(MegatronPEFTBridge):
     """
     Unified Megatron Bridge for LoRA, DoRA, and Canonical LoRA adapters.
@@ -249,3 +258,8 @@ class LoRABridge(MegatronPEFTBridge):
                 canonical_targets.append(hf_target)
 
         return canonical_targets
+
+
+# Register the bridge only if peft is available
+if _PEFT_AVAILABLE:
+    MegatronPEFTBridge.register_bridge(source=LoraConfig, target=LoRA)(LoRABridge)

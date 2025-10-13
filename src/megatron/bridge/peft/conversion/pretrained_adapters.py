@@ -14,9 +14,28 @@
 
 import sys
 from pathlib import Path
-from typing import Generic, List, Optional, TypeVar, Union
+from typing import Any, Generic, List, Optional, TypeVar, Union
 
-from peft import PeftConfig
+
+# Make peft import optional
+try:
+    from peft import PeftConfig
+
+    _PEFT_AVAILABLE = True
+except ImportError:
+    _PEFT_AVAILABLE = False
+
+    # Create a dummy PeftConfig class that raises an error when used
+    class PeftConfig:  # type: ignore
+        """Dummy PeftConfig that raises an error when peft is not installed."""
+
+        @classmethod
+        def from_pretrained(cls, *args: Any, **kwargs: Any) -> Any:
+            raise ImportError(
+                "HuggingFace PEFT library is required to load adapters. "
+                "Please install it with: pip install megatron-bridge[peft]"
+            )
+
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
