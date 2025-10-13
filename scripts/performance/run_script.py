@@ -55,21 +55,23 @@ def main():
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
         enable_deepep = bool(args.gpu.lower() in ["h100"])
-        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200", "gb300"])
         use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
         if use_tokendrop:
             enable_deepep = False
             logger.info("Using token drop, disabling DeepEP")
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
-        pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
-        layout = "Et|(tt|)*30mL"
-        if args.gpu.lower() in ["gb200", "gb300"]:
+        layout = None
+        if args.gpu.lower() in ["gb300"]:
             pp, vp = (4, 4)
-            layout = None
+        elif args.gpu.lower() in ["gb200"]:
+            pp, vp = (4, 1) if args.num_gpus == 128 else (4, 1)
         elif args.gpu.lower() in ["b200"]:
             pp, vp = (16, 1)
-            layout = None
+        elif args.gpu.lower() in ["h100"]:
+            pp, vp = (8, 4)
+            layout = "Et|(tt|)*30mL"
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -97,7 +99,7 @@ def main():
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         elif args.gpu.lower() in ["gb200"]:
             recipe.model.recompute_modules = ["mla_up_proj"]
-        if args.gpu.lower() in ["gb200", "b200"]:
+        if args.gpu.lower() in ["gb300", "gb200", "b200"]:
             recipe.comm_overlap.overlap_grad_reduce = True
         elif args.gpu.lower() in ["h100"]:
             recipe.comm_overlap.overlap_grad_reduce = False
