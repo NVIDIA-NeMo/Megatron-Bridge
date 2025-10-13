@@ -31,6 +31,8 @@ from megatron.bridge.recipes.qwen import (
     qwen3_30b_a3b_pretrain_config,
     qwen3_235b_a22b_pretrain_config,
 )
+from megatron.bridge.recipes.kimi.kimi_k2 import pretrain_config as kimi_k2_llm_pretrain_config
+# from megatron.bridge.recipes.kimi.kimi_k2_proxy import pretrain_config as kimi_k2_proxy_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -112,6 +114,45 @@ def main():
             comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
         )
         recipe.model = apply_moe_token_drop(recipe.model)
+    elif args.model_name == "kimi" and args.model_size == "k2":
+
+        enable_deepep = bool(args.gpu.lower() in ["h100"])
+        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+
+        if enable_deepep:
+            recipe.model.moe_token_dispatcher_type = "flex"
+            recipe.model.moe_enable_deepep = True
+            recipe.model.moe_shared_expert_overlap = False
+        if use_tokendrop:
+            enable_deepep = False
+            logger.info("Using token drop, disabling DeepEP")
+            recipe.model = apply_moe_token_drop(recipe.model)
+        
+        pp, vp = 1, 1
+        recipe = kimi_k2_llm_pretrain_config(
+            mock=True,
+            precision_config=precision_config,
+            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+            pipeline_parallelism=pp,
+            virtual_pipeline_parallelism=vp,
+            enable_deepep=enable_deepep,
+            layout="Et|(tt|)*30mL",
+        )
+        if enable_deepep:
+            recipe.model.moe_router_force_load_balancing = True
+        
+        A2A_1F1B = bool(args.gpu.lower() in ["h100"])
+        if A2A_1F1B:
+            recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+            recipe.comm_overlap.delay_wgrad_compute = True
+            recipe.model.moe_shared_expert_overlap = False
+        else:
+            recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
+            recipe.comm_overlap.delay_wgrad_compute = False
+            recipe.model.moe_shared_expert_overlap = True
+        if args.gpu.lower() in ["h100"]:
+            recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
+
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 

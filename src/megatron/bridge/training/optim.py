@@ -15,7 +15,8 @@
 from typing import Callable, Optional, Union
 
 import torch.nn as nn
-from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer, get_megatron_muon_optimizer
+from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
+from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
 from megatron.bridge.training.config import SchedulerConfig
