@@ -41,6 +41,12 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
+      - name: Install git
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -89,6 +95,12 @@ jobs:
     env:
       EXTRA: ${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
     steps:
+      - name: Install git
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -135,6 +147,12 @@ jobs:
       matrix:
         python-version: ["3.12"]
     steps:
+      - name: Install git
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -182,6 +200,12 @@ jobs:
       matrix:
         python-version: ["3.12"]
     steps:
+      - name: Install git
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
