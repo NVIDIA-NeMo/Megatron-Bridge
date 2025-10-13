@@ -300,10 +300,10 @@ class TestLoRA:
         assert isinstance(result.te_linear, LinearAdapter)
 
         # Verify the adapter has the expected LoRA structure
-        assert hasattr(result.te_linear, 'lora_a')
-        assert hasattr(result.te_linear, 'lora_b')
-        assert hasattr(result.te_linear, 'dim')
-        assert hasattr(result.te_linear, 'scale')
+        assert hasattr(result.te_linear, "lora_a")
+        assert hasattr(result.te_linear, "lora_b")
+        assert hasattr(result.te_linear, "dim")
+        assert hasattr(result.te_linear, "scale")
 
     def test_lora_list_model_support(self):
         """Test LoRA support for list of model chunks (pipeline parallelism)."""
