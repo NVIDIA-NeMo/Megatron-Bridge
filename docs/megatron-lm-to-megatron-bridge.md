@@ -1,10 +1,10 @@
 # Megatron-LM to Megatron-Bridge Guide
 
-Megatron-Bridge uses structured, typed configs instead of a flat CLI. All options are exposed as Hydra-configurable fields under a top-level container (`ConfigContainer`) defined {py:class}`bridge.training.config.TrainingConfig` contains settings related to the training loop bounds, exit conditions, validation, batch sizing, and memory management. You can override any option from the command line using standard Hydra override syntax.
+Megatron-Bridge is Python-first: configure models, data, and training via typed Python APIs. All configuration lives in a structured `ConfigContainer` (see [Configuration overview](training/config-container-overview.md)). Any field can be overridden from the command line using Hydra/OmegaConf syntax in the example training scripts.
 
 ## Quick start
 
-Run your training entrypoint and override config keys directly:
+Run your example training entrypoint and override config keys directly:
 
 ```bash
 python examples/recipes/llama/pretrain_llama3_8b.py \
@@ -21,9 +21,9 @@ Notes:
 - Config groups are nested: `rng`, `train`, `model`, `optimizer`, `ddp`, `scheduler`, `dataset`, `logger`, `tokenizer`, `checkpoint`, `dist`, `profiling`, `peft`, `comm_overlap`, `mixed_precision`, `inprocess_restart`.
 - After overrides are applied, runtime validation computes any dependent fields (e.g., data-parallel size, scheduler steps) and checks consistency.
 
-## Mapping Megaton-LM arguments to Megatron-Bridge config
+## Mapping Megatron-LM arguments to Megatron-Bridge config
 
-Below is a concise mapping from common `megatron-lm/megatron/training/arguments.py` flags to the new Hydra keys. If a field is not listed here (e.g., highly model-specific knobs), it typically lives under `model.*`, `optimizer.*`, `dataset.*`, or `tokenizer.*` with similar names.
+Below is a concise mapping from common `megatron-lm/megatron/training/arguments.py` flags to the new dataclass fields. If a field is not listed here (e.g., highly model-specific knobs), it typically lives under `model.*`, `optimizer.*`, `dataset.*`, or `tokenizer.*` with similar names.
 
 
 ### Model topology and parallelisms
@@ -60,21 +60,13 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | `--num-query-groups` | `model.num_query_groups` | Number of query groups. |
 | `--qk-layernorm` | `model.qk_layernorm` | Enable QK LayerNorm. |
 | `--seq-length` | `model.seq_length` | Max model sequence length. |
-| `--max-position-embeddings` | `model.seq_length` | Alias via HF conversions. |
+| `--max-position-embeddings` | `model.seq_length` | Alias used by HF conversions. |
 | `--make-vocab-size-divisible-by` | `model.make_vocab_size_divisible_by` | TP padding multiple. |
 | `--disable-bias-linear` | `model.add_bias_linear=false` | Disable linear bias. |
 | `--use-flash-attn` | `model.attention_backend=flash` | Use FlashAttention backend. |
 | `--init-method-std` | `model.init_method_std` | Weight init standard deviation. |
-
-### Regularization / Training loop extras
-
-| megatron-lm arguments | megatron-bridge config | Description |
-| --- | --- | --- |
 | `--attention-dropout` | `model.attention_dropout` | Attention dropout. |
 | `--hidden-dropout` | `model.hidden_dropout` | Hidden dropout. |
-| `--clip-grad` | `optimizer.clip_grad` | Gradient clipping value. |
-| `--weight-decay` | `optimizer.weight_decay` | Weight decay. |
-| `--train-samples` | `train.train_samples` | Total training samples (sample-based mode). |
 
 ### MoE
 
@@ -82,12 +74,12 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | --- | --- | --- |
 | `--num-experts` | `model.num_moe_experts` | Experts per MoE layer. |
 | `--moe-ffn-hidden-size` | `model.moe_ffn_hidden_size` | Expert MLP hidden size. |
-| `--moe-router-load-balancing-type` | `model.moe_router_load_balancing_type` | aux_loss/seq_aux_loss/etc. |
+| `--moe-router-load-balancing-type` | `model.moe_router_load_balancing_type` | e.g., aux_loss or seq_aux_loss. |
 | `--moe-router-topk` | `model.moe_router_topk` | Top-k experts per token. |
 | `--moe-router-pre-softmax` | `model.moe_router_pre_softmax` | Pre-softmax routing. |
 | `--moe-grouped-gemm` | `model.moe_grouped_gemm` | Grouped GEMM for MoE. |
 | `--moe-aux-loss-coeff` | `model.moe_aux_loss_coeff` | Aux loss coefficient. |
-| `--moe-token-dispatcher-type` | `model.moe_token_dispatcher_type` | Token dispatcher: alltoall/flex. |
+| `--moe-token-dispatcher-type` | `model.moe_token_dispatcher_type` | Token dispatcher: alltoall or flex. |
 | `--moe-enable-deepep` | `model.moe_enable_deepep` | Enable DeepEP optimizations. |
 | `--moe-permute-fusion` | `model.moe_permute_fusion` | Enable MoE permute fusion. |
 | `--moe-router-fusion` | `model.moe_router_fusion` | Enable MoE router fusion. |
@@ -99,22 +91,23 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | --- | --- | --- |
 | `--bf16` | `mixed_precision` preset (e.g., "bf16_mixed") | Select a mixed-precision recipe; sets `model.bf16`/`optimizer.bf16`. |
 
-Mixed precision is selected via `mixed_precision` config (e.g., preset names like `bf16`/`fp16` if provided in your codebase) and applied to `model`, `optimizer`, and `ddp` during `runtime_config_update`.
+Mixed precision is selected via the `mixed_precision` config key (e.g., preset names like `bf16_mixed`, `bf16`, or `fp16`, depending on your codebase) and is applied to `model`, `optimizer`, and `ddp` during `runtime_config_update`.
 
-### Training (add_training_args)
+### Training
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
-| `--micro-batch-size` | `train.micro_batch_size` | Per-rank batch size before grad-accumulation. |
-| `--global-batch-size` | `train.global_batch_size` | Total batch across DP and microbatches. |
-| `--rampup-batch-size` | `train.rampup_batch_size` | Start, increment, samples for linear batch ramp. |
+| `--micro-batch-size` | `train.micro_batch_size` | Per-rank batch size before gradient accumulation. |
+| `--global-batch-size` | `train.global_batch_size` | Total batch across DP and micro-batches. |
+| `--train-samples` | `train.train_samples` | Total training samples (sample-based mode). |
+| `--rampup-batch-size` | `train.rampup_batch_size` | Start size, increment, and sample count for linear batch ramp-up. |
 | `--decrease-batch-size-if-needed` | `train.decrease_batch_size_if_needed` | Adjust GBS to remain divisible when DP changes. |
-| `--empty-unused-memory-level` | `train.empty_unused_memory_level` | Torch CUDA empty_cache cadence (0/1/2). |
+| `--empty-unused-memory-level` | `train.empty_unused_memory_level` | PyTorch CUDA empty_cache cadence (0, 1, or 2). |
 | `--check-weight-hash-across-dp-replicas-interval` | `train.check_weight_hash_across_dp_replicas_interval` | Interval to validate DP weight consistency. |
 | `--train-iters` | `train.train_iters` | Number of training iterations. |
 | `--exit-interval` | `train.exit_interval` | Exit when iteration % interval == 0. |
 | `--exit-duration-in-mins` | `train.exit_duration_in_mins` | Exit after N minutes. |
-| `--exit-signal-handler` | `train.exit_signal_handler` | Save and shutdown on SIGTERM. |
+| `--exit-signal-handler` | `train.exit_signal_handler` | Save and shut down on SIGTERM. |
 | `--manual-gc` | `train.manual_gc` | Enable manual Python GC scheduling. |
 | `--manual-gc-interval` | `train.manual_gc_interval` | Steps between manual GC runs. |
 | `--no-manual-gc-eval` | `train.manual_gc_eval=false` | Disable GC at eval boundaries. |
@@ -122,7 +115,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--eval-interval` | `train.eval_interval` | Steps between validations. |
 | `--skip-train` | `train.skip_train` | Skip training loop (eval-only). |
 
-### Scheduler / Regularization (add_learning_rate_args, add_regularization_args)
+### Scheduler / Regularization
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -137,6 +130,8 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--lr-warmup-samples` | `scheduler.lr_warmup_samples` | Warmup samples (sample-based training). |
 | `--lr` | `optimizer.lr` | Base learning rate. |
 | `--min-lr` | `optimizer.min_lr` | Minimum learning rate. |
+| `--clip-grad` | `optimizer.clip_grad` | Gradient clipping value. |
+| `--weight-decay` | `optimizer.weight_decay` | Weight decay. |
 | `--adam-beta1` | `optimizer.adam_beta1` | Adam beta1. |
 | `--adam-beta2` | `optimizer.adam_beta2` | Adam beta2. |
 | `--override-opt_param-scheduler` | `scheduler.override_opt_param_scheduler` | Ignore ckpt scheduler and use config. |
@@ -145,7 +140,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--end-weight-decay` | `scheduler.end_weight_decay` | WD at end (non-constant modes). |
 | `--weight-decay-incr-style` | `scheduler.weight_decay_incr_style` | WD schedule: constant/linear/cosine. |
 
-### Checkpointing (add_checkpointing_args)
+### Checkpointing
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -182,7 +177,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--replication-factor` | `checkpoint.replication_factor` | Number of replicas. |
 | `--no-strict-fsdp-dtensor-load` | `checkpoint.strict_fsdp_dtensor_load=false` | Relax FSDP-DTensor strict load. |
 
-### Logging (add_logging_args)
+### Logging
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -197,7 +192,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--tensorboard-queue-size` | `logger.tensorboard_queue_size` | Pending TB event queue size. |
 | `--log-timers-to-tensorboard` | `logger.log_timers_to_tensorboard` | Write timers to TB. |
 | `--no-log-loss-scale-to-tensorboard` | `logger.log_loss_scale_to_tensorboard=false` | Disable loss-scale TB logs. |
-| `--log-validation-ppl-to-tensorboard` | `logger.log_validation_ppl_to_tensorboard` | Write validation ppl to TB. |
+| `--log-validation-ppl-to-tensorboard` | `logger.log_validation_ppl_to_tensorboard` | Write validation perplexity (ppl) to TB. |
 | `--log-memory-to-tensorboard` | `logger.log_memory_to_tensorboard` | Enable memory stats in TB. |
 | `--log-world-size-to-tensorboard` | `logger.log_world_size_to_tensorboard` | Log world size in TB. |
 | `--wandb-project` | `logger.wandb_project` | Weights & Biases project. |
@@ -207,7 +202,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--logging-level` | `logger.logging_level` | Python logging level (e.g., 20=INFO). |
 | `--log-energy` | `logger.log_energy` | Log energy in Joules (if available). |
 
-### RNG / Initialization (add_initialization_args)
+### RNG / Initialization
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -216,7 +211,7 @@ Mixed precision is selected via `mixed_precision` config (e.g., preset names lik
 | `--te-rng-tracker` | `rng.te_rng_tracker` | Use TE RNG (needed for CUDA graphs). |
 | `--inference-rng-tracker` | `rng.inference_rng_tracker` | RNG tuned for inference stability. |
 
-### Distributed init and topology (add_distributed_args)
+### Distributed init and topology
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -237,11 +232,11 @@ Additional distributed/optimizer overlap settings:
 | `--overlap-grad-reduce` | `ddp.overlap_grad_reduce` | Overlap DP gradient reduce-scatter. |
 | `--overlap-param-gather` | `ddp.overlap_param_gather` | Overlap parameter all-gather with fprop. |
 
-### Profiling (profile args and add_inprocess_restart_args)
+### Profiling
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
-| `--profile` | `profiling.use_nsys_profiler` | Enable nsys profiling (external CLI controls capture). |
+| `--profile` | `profiling.use_nsys_profiler` | Enable nsys profiling (capture is controlled via external CLI). |
 | `--use-pytorch-profiler` | `profiling.use_pytorch_profiler` | Enable PyTorch profiler (TB-friendly). |
 | `--profile-step-start` | `profiling.profile_step_start` | Global step to start profiling. |
 | `--profile-step-end` | `profiling.profile_step_end` | Global step to stop profiling. |
@@ -250,7 +245,7 @@ Additional distributed/optimizer overlap settings:
 | `--memory-snapshot-path` | `profiling.memory_snapshot_path` | Output path for memory snapshot. |
 | (shapes) | `profiling.record_shapes` | Record tensor shapes (overhead). |
 
-### In-process restart (add_inprocess_restart_args)
+### In-process restart
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -271,7 +266,7 @@ Additional distributed/optimizer overlap settings:
 | `--inprocess-active-world-size` | `inprocess_restart.active_world_size` | Active ranks count; rest are reserve. |
 | `--inprocess-empty-cuda-cache` | `inprocess_restart.empty_cuda_cache` | Empty CUDA cache on restart finalize. |
 
-### Straggler detection (add_straggler_detector_args)
+### Straggler detection
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -280,7 +275,7 @@ Additional distributed/optimizer overlap settings:
 | `--straggler-ctrlr-port` | `straggler.straggler_ctrlr_port` | Controller port for toggling. |
 | `--straggler-minmax-count` | `straggler.straggler_minmax_count` | Num ranks to report for min/max throughput. |
 
-### Rerun state machine (add_rerun_machine_args)
+### Rerun state machine
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
@@ -296,9 +291,3 @@ Additional distributed/optimizer overlap settings:
 | `--tokenizer-model` | `tokenizer.tokenizer_model` | Model name/path for tokenizer. |
 | `--num-workers` | `dataset.num_workers` | DataLoader workers. |
 | `--no-create-attention-mask-in-dataloader` | `dataset.skip_getting_attention_mask_from_dataset=true` | Use backend-generated masks. |
-
-### Tips
-
-- Use dot-path overrides to change any leaf field: `logger.logging_level=20` (INFO).
-- Lists can be overridden with `key=[a,b,c]` or `key+=[d]` syntax.
-- To disable booleans, set `key=false`; to enable, set `key=true`.

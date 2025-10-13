@@ -68,3 +68,4 @@ Monitor training consistency and synchronization across distributed processes.
 |-----------|------|---------|-------------|
 | `check_weight_hash_across_dp_replicas_interval` | `Optional[int]` | `None` | Check weight hash consistency across data parallel replicas |
 | `train_sync_interval` | `Optional[int]` | `None` | CPU-GPU synchronization interval to prevent CPU running ahead |
+
