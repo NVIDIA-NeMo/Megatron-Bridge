@@ -1,7 +1,7 @@
 name: Dependabot
 on:
   schedule:
-    - cron: "0 8 * * 1"
+    - cron: "0 8 * * *"
   workflow_dispatch: # Allow manual triggering
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
       matrix:
         include:
           - target-branch: ${{ needs.get-release-branch-names.outputs.megatron-bridge }}
-          - target-branch: ko3n1g/chore/add-submodule # main
+          - target-branch: main
     uses: ./.github/workflows/_update_dependencies.yml
     with:
       target-branch: ${{ matrix.target-branch }}

@@ -95,18 +95,6 @@ jobs:
           megatron-bridge \
           bash -c 'uv lock --upgrade'
 
-      - name: Upload lock file
-        uses: actions/upload-artifact@v4
-        with:
-          name: lock-file-test-submodules
-          path: uv.lock
-
-      - name: Update submodules
-        uses: actions/upload-artifact@v4
-        with:
-          name: submodules-test-submodules
-          path: 3rdparty/Megatron-LM
-
       - name: Install GPG
         run: sudo apt-get install -y gnupg2
 
