@@ -76,7 +76,6 @@ class GPTOSSProvider(GPTModelProvider):
     window_attn_skip_freq: Optional[Union[int, List[int]]] = 2  # alternative SWA/full
     activation_func_clamp_value: Optional[float] = 7.0
 
-
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         if not is_te_min_version("2.8"):
             logger.info("Fused sink attention requires TE >= 2.8. Falling back to MCore local sink attention.")
