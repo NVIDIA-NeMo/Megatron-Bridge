@@ -19,9 +19,9 @@ from typing import Callable, Optional
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.core.utils import is_te_min_version
 
 @dataclass(kw_only=True)
 class MixedPrecisionConfig:
