@@ -1403,18 +1403,18 @@ class TestParamIsNotShared:
 
     def test_param_without_shared_attribute(self):
         """Test parameter without 'shared' attribute returns True."""
-        param = nn.Parameter(torch.randn(10, 10))
+        param = torch.nn.Parameter(torch.randn(10, 10))
         assert param_is_not_shared(param) is True
 
     def test_param_with_shared_false(self):
         """Test parameter with shared=False returns True."""
-        param = nn.Parameter(torch.randn(10, 10))
+        param = torch.nn.Parameter(torch.randn(10, 10))
         param.shared = False
         assert param_is_not_shared(param) is True
 
     def test_param_with_shared_true(self):
         """Test parameter with shared=True returns False."""
-        param = nn.Parameter(torch.randn(10, 10))
+        param = torch.nn.Parameter(torch.randn(10, 10))
         param.shared = True
         assert param_is_not_shared(param) is False
 
@@ -1426,9 +1426,9 @@ class TestCalcParamsL2Norm:
     @pytest.fixture
     def simple_model(self):
         """Create a simple model for testing."""
-        model = nn.Sequential(
-            nn.Linear(10, 20, bias=False),
-            nn.Linear(20, 10, bias=False),
+        model = torch.nn.Sequential(
+            torch.nn.Linear(10, 20, bias=False),
+            torch.nn.Linear(20, 10, bias=False),
         ).cuda()
         return model
 
@@ -1476,7 +1476,7 @@ class TestCalcParamsL2Norm:
 
         # Initialize model parameters to known values
         for param in simple_model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
 
         # Expected L2 norm: sqrt(sum of squares of all parameters)
         # Model has 10*20 + 20*10 = 400 parameters, each = 1.0
@@ -1510,8 +1510,8 @@ class TestCalcParamsL2Norm:
     ):
         """Test calc_params_l2_norm with a list of models."""
         # Create two simple models
-        model1 = nn.Linear(5, 5, bias=False).cuda()
-        model2 = nn.Linear(5, 5, bias=False).cuda()
+        model1 = torch.nn.Linear(5, 5, bias=False).cuda()
+        model2 = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1520,8 +1520,8 @@ class TestCalcParamsL2Norm:
         mock_get_ranks.return_value = [0]
 
         # Initialize to known values
-        nn.init.constant_(model1.weight, 1.0)
-        nn.init.constant_(model2.weight, 1.0)
+        torch.nn.init.constant_(model1.weight, 1.0)
+        torch.nn.init.constant_(model2.weight, 1.0)
 
         # Expected: 2 models * 25 params each = 50 params
         # L2 norm = sqrt(50 * 1.0^2) = sqrt(50) ≈ 7.071
@@ -1552,7 +1552,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_bf16,
     ):
         """Test calc_params_l2_norm in BF16 mode without main_param attribute."""
-        model = nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1560,7 +1560,7 @@ class TestCalcParamsL2Norm:
         mock_to_local.side_effect = lambda x: x
         mock_get_ranks.return_value = [0]
 
-        nn.init.constant_(model.weight, 1.0)
+        torch.nn.init.constant_(model.weight, 1.0)
 
         expected_norm = torch.sqrt(torch.tensor(25.0)).item()
 
@@ -1589,7 +1589,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_bf16,
     ):
         """Test calc_params_l2_norm in BF16 mode with main_param attribute."""
-        model = nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1599,7 +1599,7 @@ class TestCalcParamsL2Norm:
 
         # Add main_param attribute (FP32 copy)
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             param.main_param = torch.ones_like(param, dtype=torch.float32).cuda()
             param.main_param_sharded = False
 
@@ -1630,7 +1630,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_bf16,
     ):
         """Test calc_params_l2_norm with sharded main params (distributed optimizer)."""
-        model = nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1640,7 +1640,7 @@ class TestCalcParamsL2Norm:
 
         # Add sharded main_param attribute
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             param.main_param = torch.ones(13, dtype=torch.float32).cuda()  # Sharded to 13 elements
             param.main_param_sharded = True
 
@@ -1671,7 +1671,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_bf16,
     ):
         """Test force_create_fp32_copy flag ignores main_param."""
-        model = nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1681,7 +1681,7 @@ class TestCalcParamsL2Norm:
 
         # Add main_param but it should be ignored with force_create_fp32_copy=True
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             # Set main_param to different value to verify it's not used
             param.main_param = torch.zeros_like(param, dtype=torch.float32).cuda()
             param.main_param_sharded = False
@@ -1713,7 +1713,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_fp32,
     ):
         """Test calc_params_l2_norm with MoE parameters (allreduce=False)."""
-        model = nn.Linear(5, 5, bias=False).cuda()
+        model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1723,7 +1723,7 @@ class TestCalcParamsL2Norm:
 
         # Mark parameters as MoE (allreduce=False)
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             param.allreduce = False
 
         result = calc_params_l2_norm(model, mock_model_config_fp32)
@@ -1752,7 +1752,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_fp32,
     ):
         """Test calc_params_l2_norm skips shared parameters."""
-        model = nn.Linear(5, 5, bias=False).cuda()
+        model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1762,7 +1762,7 @@ class TestCalcParamsL2Norm:
 
         # Mark parameters as shared (should be skipped)
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             param.shared = True
 
         result = calc_params_l2_norm(model, mock_model_config_fp32)
@@ -1779,14 +1779,14 @@ class TestCalcParamsL2Norm:
         mock_model_config_fp32,
     ):
         """Test calc_params_l2_norm skips TP duplicate parameters."""
-        model = nn.Linear(5, 5, bias=False).cuda()
+        model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
         # Mark all params as TP duplicates
         mock_is_not_tp_dup.return_value = False
 
-        nn.init.constant_(model.weight, 1.0)
+        torch.nn.init.constant_(model.weight, 1.0)
 
         with (
             mock.patch("megatron.core.parallel_state.get_data_parallel_group"),
@@ -1830,8 +1830,8 @@ class TestCalcParamsL2Norm:
         model.stop_communication = mock.MagicMock()
 
         # Mock parameter without DTensor attribute
-        mock_param = mock.MagicMock(spec=nn.Parameter)
-        mock_param.__class__ = nn.Parameter
+        mock_param = mock.MagicMock(spec=torch.nn.Parameter)
+        mock_param.__class__ = torch.nn.Parameter
         del mock_param._local_tensor  # Ensure attribute doesn't exist
         model.named_parameters.return_value = [("weight", mock_param)]
 
@@ -1860,9 +1860,9 @@ class TestCalcParamsL2Norm:
     ):
         """Test calc_params_l2_norm with mixed dense and MoE parameters."""
         # Create a model with multiple layers
-        model = nn.Sequential(
-            nn.Linear(5, 5, bias=False),
-            nn.Linear(5, 5, bias=False),
+        model = torch.nn.Sequential(
+            torch.nn.Linear(5, 5, bias=False),
+            torch.nn.Linear(5, 5, bias=False),
         ).cuda()
 
         # Setup mocks
@@ -1874,7 +1874,7 @@ class TestCalcParamsL2Norm:
         # Initialize all params to 1.0
         params = list(model.parameters())
         for param in params:
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
 
         # Mark first layer as dense, second as MoE
         params[0].allreduce = True
@@ -1907,7 +1907,7 @@ class TestCalcParamsL2Norm:
         mock_model_config_fp32,
     ):
         """Test calc_params_l2_norm with a model that has no parameters."""
-        model = nn.Sequential().cuda()  # Empty model
+        model = torch.nn.Sequential().cuda()  # Empty model
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -1941,9 +1941,9 @@ class TestCalcParamsL2Norm:
         mock_model_config_fp32,
     ):
         """Test calc_params_l2_norm with different dense and expert reduce groups."""
-        model = nn.Sequential(
-            nn.Linear(3, 3, bias=False),
-            nn.Linear(3, 3, bias=False),
+        model = torch.nn.Sequential(
+            torch.nn.Linear(3, 3, bias=False),
+            torch.nn.Linear(3, 3, bias=False),
         ).cuda()
 
         # Setup mocks
@@ -1958,10 +1958,10 @@ class TestCalcParamsL2Norm:
         ]
 
         params = list(model.parameters())
-        nn.init.constant_(params[0], 1.0)
+        torch.nn.init.constant_(params[0], 1.0)
         params[0].allreduce = True  # Dense
 
-        nn.init.constant_(params[1], 1.0)
+        torch.nn.init.constant_(params[1], 1.0)
         params[1].allreduce = False  # MoE
 
         result = calc_params_l2_norm(model, mock_model_config_fp32)
@@ -1996,7 +1996,7 @@ class TestCalcParamsL2Norm:
         When main_param_sharded=True but main_param is None, the parameter is skipped
         (nothing is added to sharded_params_data list).
         """
-        model = nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -2007,7 +2007,7 @@ class TestCalcParamsL2Norm:
         # Add main_param_sharded attribute but set main_param to None
         # This causes the parameter to be skipped entirely
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             param.main_param = None
             param.main_param_sharded = True
 
@@ -2043,7 +2043,7 @@ class TestCalcParamsL2Norm:
         documents the current behavior - ideally the code should handle this more
         gracefully (e.g., skip None values or fallback to creating FP32 copy).
         """
-        model = nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
+        model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
         mock_get_dp_group_if_dtensor.return_value = None
@@ -2053,7 +2053,7 @@ class TestCalcParamsL2Norm:
 
         # Add main_param attribute set to None with main_param_sharded=False
         for param in model.parameters():
-            nn.init.constant_(param, 1.0)
+            torch.nn.init.constant_(param, 1.0)
             param.main_param = None
             param.main_param_sharded = False
 
