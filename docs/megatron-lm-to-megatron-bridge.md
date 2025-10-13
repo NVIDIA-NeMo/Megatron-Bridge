@@ -1,4 +1,4 @@
-# Megatron-LM to Megatron-Bridge Guide
+# Megatron-LM to Megatron Bridge Guide
 
 Megatron-Bridge uses structured, typed configs instead of a flat CLI. All options are exposed as Hydra-configurable fields under a top-level container (`ConfigContainer`) defined {py:class}`bridge.training.config.TrainingConfig` contains settings related to the training loop bounds, exit conditions, validation, batch sizing, and memory management. You can override any option from the command line using standard Hydra override syntax.
 
