@@ -23,6 +23,7 @@ from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
+
 @dataclass(kw_only=True)
 class MixedPrecisionConfig:
     """Mixed precision configuration for models.
@@ -386,6 +387,7 @@ def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     cfg.fp8_param_gather = False
     return cfg
 
+
 @register
 def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using BF16 with MXFP8.
@@ -399,6 +401,7 @@ def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     cfg.fp4_recipe = "nvfp4"
     cfg.fp8_param_gather = False
     return cfg
+
 
 def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisionConfig:
     """Return a :class:`MixedPrecisionConfig` for *name*.
