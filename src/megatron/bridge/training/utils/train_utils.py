@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import inspect
+import math
+import time
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
@@ -28,9 +30,9 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
-from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
 from megatron.bridge.utils.common_utils import get_world_size_safe, is_last_rank, print_rank_0, print_rank_last
@@ -53,6 +55,20 @@ except ImportError:
 
         from megatron.core.utils import local_multi_tensor_applier as multi_tensor_applier
         from megatron.core.utils import local_multi_tensor_l2_norm as multi_tensor_l2norm
+
+
+MEMORY_KEYS: dict[str, str] = {
+    "allocated_bytes.all.current": "mem-allocated-bytes",
+    "active_bytes.all.current": "mem-active-bytes",
+    "inactive_split_bytes.all.current": "mem-inactive-bytes",
+    "reserved_bytes.all.current": "mem-reserved-bytes",
+    "allocated_bytes.all.peak": "mem-max-allocated-bytes",
+    "active_bytes.all.peak": "mem-max-active-bytes",
+    "inactive_split_bytes.all.peak": "mem-max-inactive-bytes",
+    "reserved_bytes.all.peak": "mem-max-reserved-bytes",
+    "num_alloc_retries": "mem-alloc-retires",
+    "allocation.all.current": "mem-allocated-count",
+}
 
 
 def param_is_not_shared(param: nn.Parameter) -> bool:
@@ -310,6 +326,8 @@ def training_log(
     num_zeros_in_grad: Optional[int],
     config: ConfigContainer,
     global_state: GlobalState,
+    history_wct: list,
+    model: list[MegatronModule],
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -330,6 +348,8 @@ def training_log(
         num_zeros_in_grad (Optional[int]): Number of zeros in gradient if computed, else None.
         config: The main configuration container.
         global_state: The global training state.
+        history_wct (list): list of elapsed time per each iteration.
+        model (list[MegatronModule]): megatron model state.
 
     Returns:
         bool: The updated report_memory_flag.
@@ -418,11 +438,47 @@ def training_log(
 
                 with open(config.profiling.memory_snapshot_path, "wb") as f:
                     dump(snapshot, f)
-
+        if logger_config.log_throughput_to_tensorboard:
+            throughput_report = report_throughput(
+                iteration=iteration,
+                train_config=train_config,
+                seq_length=config.dataset.sequence_length,
+                history_wct=history_wct,
+                window_size=logger_config.throughput_window_size,
+            )
+            for metric, value in throughput_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
+                wandb_writer.log(throughput_report, iteration)
+        if logger_config.log_memory_to_tensorboard:
+            memory_report = report_memory(memory_keys=logger_config.memory_keys)
+            memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
+            for metric, value in memory_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
+                wandb_writer.log(memory_report, iteration)
+        if logger_config.log_runtime_to_tensorboard:
+            runtime_report = report_runtime(
+                train_state=train_state,
+                start_time=global_state.start_time,
+                seq_length=config.dataset.sequence_length,
+                train_iters=train_config.train_iters,
+                time_unit=logger_config.runtime_time_unit,
+            )
+            for metric, value in runtime_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
+                wandb_writer.log(runtime_report, iteration)
+        if logger_config.log_l2_norm_grad_to_tensorboard:
+            l2_report = report_l2_norm_grad(model)
+            for metric, value in l2_report.items():
+                writer.add_scalar(metric, value, iteration)
+            if wandb_writer:
+                wandb_writer.log(l2_report, iteration)
         if wandb_writer:
-            wandb_writer.log({"samples vs steps": global_state.train_state.consumed_train_samples}, iteration)
+            wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
         writer.add_scalar("learning-rate", learning_rate, iteration)
-        writer.add_scalar("learning-rate vs samples", learning_rate, global_state.train_state.consumed_train_samples)
+        writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
         if wandb_writer:
             wandb_writer.log({"learning-rate": learning_rate}, iteration)
         if config.optimizer.decoupled_lr is not None:
@@ -469,28 +525,7 @@ def training_log(
             writer.add_scalar("params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({"params-norm": params_norm}, iteration)
-        if logger_config.log_memory_to_tensorboard:
-            mem_stats = torch.cuda.memory_stats()
-            writer.add_scalar(
-                "mem-reserved-bytes",
-                mem_stats["reserved_bytes.all.current"],
-                iteration,
-            )
-            writer.add_scalar(
-                "mem-allocated-bytes",
-                mem_stats["allocated_bytes.all.current"],
-                iteration,
-            )
-            writer.add_scalar(
-                "mem-max-allocated-bytes",
-                mem_stats["allocated_bytes.all.peak"],
-                iteration,
-            )
-            writer.add_scalar(
-                "mem-allocated-count",
-                mem_stats["allocation.all.current"],
-                iteration,
-            )
+
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
@@ -524,6 +559,14 @@ def training_log(
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
         print_rank_0(f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}TFLOP/s/GPU")
 
+        if logger_config.log_throughput_to_tensorboard:
+            if writer:
+                writer.add_scalar("throughput/tflops/device", per_gpu_tf, iteration)
+                writer.add_scalar("throughput/tflops", per_gpu_tf * get_world_size_safe(), iteration)
+                if wandb_writer:
+                    wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
+                    wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
+
         if logger_config.log_timers_to_tensorboard:
             if writer:
                 writer.add_scalar("iteration-time", elapsed_time_per_iteration, iteration)
@@ -538,11 +581,6 @@ def training_log(
 
         if logger_config.log_throughput:
             log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
-            if logger_config.log_timers_to_tensorboard:
-                if writer:
-                    writer.add_scalar("throughput", per_gpu_tf, iteration)
-                if wandb_writer:
-                    wandb_writer.log({"throughput": per_gpu_tf}, iteration)
 
         if energy_monitor is not None:
             energy = (energy_monitor.lap() / total_iterations) / get_world_size_safe()
@@ -590,27 +628,253 @@ def training_log(
             if torch.distributed.get_rank() == 0:
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
-            report_memory(f"(after {iteration} iterations)")
+            memory_string = f"(after {iteration} iterations) memory (GB)"
+            for metric, value in report_memory(logger_config.memory_keys).items():
+                memory_string += f" | {metric}: {value}"
+            if parallel_state.get_data_parallel_rank() == 0:
+                print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
             report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag
 
 
-def report_memory(name: str) -> None:
-    """Report current and peak GPU memory usage for the current rank.
-
-    Args:
-        name (str): A name to include in the output message (e.g., stage of training).
+def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
     """
-    mega_bytes = 1024.0 * 1024.0
-    string = name + " memory (MB)"
-    string += " | allocated: {}".format(torch.cuda.memory_allocated() / mega_bytes)
-    string += " | max allocated: {}".format(torch.cuda.max_memory_allocated() / mega_bytes)
-    string += " | reserved: {}".format(torch.cuda.memory_reserved() / mega_bytes)
-    string += " | max reserved: {}".format(torch.cuda.max_memory_reserved() / mega_bytes)
-    if parallel_state.get_data_parallel_rank() == 0:
-        print("[Rank {}] {}".format(torch.distributed.get_rank(), string), flush=True)
+    Logs the memory usage of the model.
+    This metric calls the torch memory stats API for CUDA and reports different memory statistics.
+    The following statistics are recorded:
+    +------------------------+----------------------------------------------------------------------------------------+
+    | Statistic              | Description                                                                            |
+    +========================+========================================================================================+
+    | current_allocated_mem  | Current amount of allocated memory in gigabytes.                                       |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | current_active_mem     | Current amount of active memory in gigabytes at the time of recording.                 |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | current_inactive_mem   | Current amount of inactive, non-releaseable memory in gigabytes.                       |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | current_reserved_mem   | Current amount of reserved memory in gigabytes at the time of recording.               |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | peak_allocated_mem     | Peak amount of allocated memory in gigabytes.                                          |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | peak_active_mem        | Peak amount of active memory in gigabytes at the time of recording.                    |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | peak_inactive_mem      | Peak amount of inactive, non-releaseable memory in gigabytes at the time of recording. |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | peak_reserved_mem      | Peak amount of reserved memory in gigabytes at the time of recording.                  |
+    +------------------------+----------------------------------------------------------------------------------------+
+    | alloc_retries          | Number of failed cudaMalloc calls that result in a cache flush and retry.              |
+    +------------------------+----------------------------------------------------------------------------------------+
+    Args:
+        memory_keys (dict[str, str], optional): A dict specifying memory statistics to log. Keys
+            are the names of memory statistics to log from `torch.cuda.memory_stats()`, and values
+            are the names they will be logged under. If not provided, the above statistics are
+            logged. Defaults to None.
+    Returns:
+        Memory metrics dictionary.
+    """
+
+    memory_stats = torch.cuda.memory_stats()
+    memory_keys = memory_keys if memory_keys else MEMORY_KEYS
+
+    # simplify and reformat the memory_stats
+    memory_report = {}
+    for torch_name, name in memory_keys.items():
+        if torch_name in memory_stats:
+            # Convert to gigabytes
+            if "bytes" in torch_name:
+                gigabytes = memory_stats[torch_name] / 1.0e9
+                # Round to preserve 5 significant digits
+                if gigabytes != 0:
+                    order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
+                    gigabytes = round(gigabytes, -order_of_magnitude + 4)
+                memory_report[name.replace("bytes", "gigabytes")] = gigabytes
+            else:
+                memory_report[name] = memory_stats[torch_name]
+
+    return memory_report
+
+
+def report_l2_norm_grad(model: list[MegatronModule]) -> dict:
+    """
+    Computes and logs the L2 norm of gradients.
+    L2 norms are calculated after the reduction of gradients across GPUs. This function iterates over the parameters
+    of the model and may cause a reduction in throughput while training large models. In order to ensure the
+    correctness of the norm, this function should be called after gradient unscaling in cases where gradients
+    are scaled.
+    The following statistics are recorded:
+    +-----------------------------------------------+-----------------------------------------------------+
+    | Key                                           | Logged data                                         |
+    +===============================================+=====================================================+
+    |                                               | L2 norm of the gradients of all parameters in       |
+    | ``l2_norm/grad/global``                       | the model.                                          |
+    +-----------------------------------------------+-----------------------------------------------------+
+    |                                               | Layer-wise L2 norms                                 |
+    | ``l2_norm/grad/LAYER_NAME``                   |                                                     |
+    |                                               |                                                     |
+    +-----------------------------------------------+-----------------------------------------------------+
+    Args:
+        model (Union[MegatronModule, list[MegatronModule]]): megatron model state.
+    Returns:
+        Dictionary with L2 norms for each layer.
+    """
+    norm = 0.0
+    optimizer_metrics = {}
+
+    for model_chunk in model:
+        for name, p in model_chunk.named_parameters():
+            if p.main_grad is not None and p.requires_grad:
+                if f"l2_norm/grad/{name}" not in optimizer_metrics:
+                    param_grad_norm = torch.linalg.vector_norm(p.main_grad)
+                    optimizer_metrics[f"l2_norm/grad/{name}"] = param_grad_norm
+
+        for metric in optimizer_metrics:
+            if metric.startswith("l2_norm/grad"):
+                norm += optimizer_metrics[metric] ** 2
+
+        optimizer_metrics["l2_norm/grad/global"] = norm**0.5
+
+        for metric in optimizer_metrics:
+            if isinstance(optimizer_metrics[metric], torch.Tensor):
+                optimizer_metrics[metric] = optimizer_metrics[metric].item()
+
+    return optimizer_metrics
+
+
+def report_runtime(
+    train_state: TrainState, start_time: int, seq_length: int, train_iters: int, time_unit: str = "seconds"
+) -> dict:
+    """
+    Estimates total training time.
+    The training time is computed by taking the time elapsed for the current duration and multiplying
+    out to the full extended length of the training run.
+    This metric provides a best attempt estimate. This estimate may be inaccurate if throughput
+    changes through training or other significant changes are made to the model or dataloader.
+    The following statistics are recorded:
+    +-----------------------------+-------------------------------+
+    | Key                         | Logged data                   |
+    +=============================+===============================+
+    | `time/remaining_estimate`   | Estimated time to completion  |
+    +-----------------------------+-------------------------------+
+    | `time/tokens`               | Number of consumed tokens     |
+    +-----------------------------+-------------------------------+
+    | `time/samples`              | Number of consumed samples    |
+    +-----------------------------+-------------------------------+
+    | `time/batches`              | Number of consumed batches    |
+    +-----------------------------+-------------------------------+
+    | `time/total`                | Total training time           |
+    +-----------------------------+-------------------------------+
+    Args:
+        train_state,
+        start_time (int): time when training was started.
+        seq_length (int): model sequence length.
+        train_iters (int): number of train iters to be done per training.
+        time_unit (str, optional): Time unit to use for `time` logging. Can be one of
+            'seconds', 'minutes', 'hours', or 'days'. Defaults to 'hours'.
+    """
+    elapsed_dur = train_state.step / train_iters
+
+    divider = 1
+    if time_unit == "seconds":
+        divider = 1
+    elif time_unit == "minutes":
+        divider = 60
+    elif time_unit == "hours":
+        divider = 60 * 60
+    elif time_unit == "days":
+        divider = 60 * 60 * 24
+    else:
+        raise ValueError(
+            f'Invalid time_unit: {time_unit}. Must be one of "seconds", "minutes", "hours", or "days".',
+        )
+
+    time_metrics = {}
+    elapsed_time = time.time() - start_time
+    rate = elapsed_time / elapsed_dur
+    remaining_time = rate * (1 - elapsed_dur)
+    time_metrics["time/remaining_estimate"] = remaining_time / divider
+
+    time_metrics["time/tokens"] = train_state.consumed_train_samples * seq_length
+    time_metrics["time/samples"] = train_state.consumed_train_samples
+    time_metrics["time/batches"] = train_state.step
+    time_metrics["time/total"] = (time.time() - start_time) / divider
+
+    return time_metrics
+
+
+def report_throughput(
+    train_config: TrainingConfig,
+    iteration: int,
+    seq_length: int,
+    history_wct: list,
+    window_size: int,
+) -> dict:
+    """
+    Logs the training throughput and utilization.
+    The training throughput is logged on the event once we have reached the `window_size` threshold.
+    The following statistics are recorded:
+    +-------------------------------------+-----------------------------------------------------------+
+    | Key                                 | Logged data                                               |
+    +=====================================+===========================================================+
+    |                                     | Rolling average (over `window_size` most recent           |
+    | `throughput/batches_per_sec`        | batches) of the number of batches processed per second.   |
+    |                                     |                                                           |
+    +-------------------------------------+-----------------------------------------------------------+
+    |                                     | Rolling average (over `window_size` most recent           |
+    | `throughput/samples_per_sec`        | batches) of the number of samples processed per second.   |
+    |                                     |                                                           |
+    +-------------------------------------+-----------------------------------------------------------+
+    |                                     | Rolling average (over `window_size` most recent           |
+    | `throughput/tokens_per_sec`         | batches) of the number of tokens processed per second.    |
+    |                                     | Only logged if dataspec returns tokens per batch.         |
+    +-------------------------------------+-----------------------------------------------------------+
+    | `throughput/device/batches_per_sec` | `throughput/batches_per_sec` divided by world size.       |
+    +-------------------------------------+-----------------------------------------------------------+
+    | `throughput/device/samples_per_sec` | `throughput/samples_per_sec` divided by world size.       |
+    +-------------------------------------+-----------------------------------------------------------+
+    |                                     | `throughput/tokens_per_sec` divided by world size. Only   |
+    | `throughput/device/tokens_per_sec`  | logged if dataspec returns tokens per batch.              |
+    |                                     |                                                           |
+    +-------------------------------------+-----------------------------------------------------------+
+    Args:
+        train_config (TrainingConfig): model train config.
+        iteration (int): current train iteration.
+        seq_length (int): model sequence length.
+        history_wct (list): list of elapsed time per each iteration.
+        window_size (int, optional): Number of batches to use for a rolling average of throughput.
+    Returns:
+        Dictionary with throughput metrics.
+    """
+    if iteration >= window_size:
+        history_iters = [i for i in range(iteration - window_size + 1, iteration + 1)]
+        history_samples = [i * train_config.global_batch_size for i in history_iters]
+        history_tokens = [i * seq_length for i in history_samples]
+        world_size = get_world_size_safe()
+        elapsed_batches = len(history_samples) - 1
+        elapsed_samples = int(history_samples[-1]) - int(history_samples[0])
+        elapsed_tokens = int(history_tokens[-1]) - int(history_tokens[0])
+        elapsed_wct = history_wct[-1] - history_wct[0]
+        batches_per_sec = elapsed_batches / elapsed_wct
+        samples_per_sec = elapsed_samples / elapsed_wct
+        dev_batches_per_sec = batches_per_sec / world_size
+        dev_samples_per_sec = samples_per_sec / world_size
+        metrics = {
+            "throughput/batches_per_sec": batches_per_sec,
+            "throughput/samples_per_sec": samples_per_sec,
+            "throughput/device/batches_per_sec": dev_batches_per_sec,
+            "throughput/device/samples_per_sec": dev_samples_per_sec,
+            "throughput/micro_batch_size": train_config.micro_batch_size,
+            "throughput/global_batch_size": train_config.global_batch_size,
+        }
+        if elapsed_tokens > 0:
+            tokens_per_sec = elapsed_tokens / elapsed_wct
+            dev_tokens_per_sec = tokens_per_sec / world_size
+            metrics.update({"throughput/tokens_per_sec": tokens_per_sec})
+            metrics.update({"throughput/device/tokens_per_sec": dev_tokens_per_sec})
+
+        return metrics
+
+    return {}
 
 
 def prepare_forward_step_func(forward_step_func: ForwardStepCallable, state: GlobalState) -> ForwardStepCallable:
