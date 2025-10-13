@@ -44,8 +44,8 @@ jobs:
       - name: Install git
         shell: bash -x -e -u -o pipefail {0}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git
+          apt-get update
+          apt-get install -y git
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -98,8 +98,8 @@ jobs:
       - name: Install git
         shell: bash -x -e -u -o pipefail {0}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git
+          apt-get update
+          apt-get install -y git
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -150,8 +150,8 @@ jobs:
       - name: Install git
         shell: bash -x -e -u -o pipefail {0}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git
+          apt-get update
+          apt-get install -y git
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -203,8 +203,8 @@ jobs:
       - name: Install git
         shell: bash -x -e -u -o pipefail {0}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git
+          apt-get update
+          apt-get install -y git
 
       - name: Checkout repository
         uses: actions/checkout@v4
