@@ -37,7 +37,13 @@ DEEPSEEK_PRETRAIN_RECIPES = [
         deepseek_v3_config,
         "deepseek_v3",
         {"tensor_parallelism": 2, "pipeline_parallelism": 1, "expert_parallelism": 1},
-        {"num_layers": 2, "num_moe_experts": 8, "moe_router_topk": 1, "moe_layer_freq": [0, 1]},
+        {
+            "num_layers": 2,
+            "num_moe_experts": 8,
+            "moe_router_topk": 1,
+            "moe_layer_freq": [0, 1],
+            "pipeline_model_parallel_layout": [["embedding"] + ["decoder"] * 2 + ["mtp", "loss"]],
+        },
     ),
 ]
 
