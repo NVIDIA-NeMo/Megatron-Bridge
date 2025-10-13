@@ -631,6 +631,9 @@ class TestSaveMegatronModel:
             num_floating_point_operations_so_far=0,
         )
 
+    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
@@ -647,6 +650,9 @@ class TestSaveMegatronModel:
         mock_global_state,
         mock_get_model_config,
         mock_save_checkpoint,
+        mock_build_tokenizer,
+        mock_get_checkpoint_name,
+        mock_save_tokenizer_assets,
     ):
         """Test saving megatron model with tokenizer configuration."""
         # Setup mocks
@@ -665,6 +671,11 @@ class TestSaveMegatronModel:
         # Mock the ConfigContainer to capture tokenizer config
         mock_container_instance = Mock()
         mock_config_container.return_value = mock_container_instance
+
+        # Mock tokenizer building
+        mock_tokenizer = Mock()
+        mock_build_tokenizer.return_value = mock_tokenizer
+        mock_get_checkpoint_name.return_value = "/fake/checkpoint/iter_0000000"
 
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -691,6 +702,13 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+        )
+
+        # Verify tokenizer was built and saved
+        mock_build_tokenizer.assert_called_once()
+        mock_get_checkpoint_name.assert_called_once()
+        mock_save_tokenizer_assets.assert_called_once_with(
+            mock_tokenizer, tokenizer_config, "/fake/checkpoint/iter_0000000"
         )
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
