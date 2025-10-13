@@ -101,7 +101,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 
 Mixed precision is selected via `mixed_precision` config (e.g., preset names like `bf16`/`fp16` if provided in your codebase) and applied to `model`, `optimizer`, and `ddp` during `runtime_config_update`.
 
-### Training (add_training_args)
+### Training
 
 | megatron-lm arguments | megatron-bridge config | Description |
 | --- | --- | --- |
