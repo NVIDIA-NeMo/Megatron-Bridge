@@ -1,4 +1,4 @@
-# Megatron-LM to Megatron-Bridge Guide
+# Megatron-LM to Megatron Bridge Guide
 
 Megatron-Bridge is Python-first: configure models, data, and training via typed Python APIs. All configuration lives in a structured `ConfigContainer` (see [Configuration overview](training/config-container-overview.md)). Any field can be overridden from the command line using Hydra/OmegaConf syntax in the example training scripts.
 
