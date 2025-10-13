@@ -37,14 +37,13 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
-from megatron.core.utils import check_param_hashes_across_dp_replicas, get_batch_on_this_cp_rank, get_model_config
+from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
-from megatron.bridge.training.gpt_step import get_batch_on_this_tp_rank
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
@@ -1068,7 +1067,8 @@ def _dummy_train_step(
 
     This function consumes data from the iterator without performing any actual computation,
     effectively skipping the iteration while maintaining data iterator consistency.
-    Following the same pattern as Megatron-LM to ensure proper data distribution across ranks.
+
+    Advance the data iterator on first and last PP stages when data_iterator is not None.
 
     Args:
         global_state: Global state containing configuration
@@ -1079,8 +1079,9 @@ def _dummy_train_step(
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
         for _ in range(num_microbatches):
-            batch = get_batch_on_this_tp_rank(train_data_iterator, global_state.cfg)
-            batch = get_batch_on_this_cp_rank(batch)
+            if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+                if train_data_iterator is not None:
+                    _ = next(train_data_iterator)
 
 
 def _handle_mxfp8_param_buffer_copy(
