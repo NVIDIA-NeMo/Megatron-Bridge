@@ -1,136 +1,97 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-import logging
 import os
+import sys
 from pathlib import Path
-from shutil import rmtree
-from unittest.mock import patch
 
 import pytest
-from megatron.core.msc_utils import MultiStorageClientFeature
+import torch
+import torch.distributed
+
+from megatron.core import config
+from megatron.core.utils import is_te_min_version
+from tests.test_utils.python_scripts.download_unit_tests_dataset import (
+    get_oldest_release_and_assets,
+)
+from tests.unit_tests.dist_checkpointing import TempNamedDir
+from tests.unit_tests.test_utilities import Utils
 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+def pytest_addoption(parser):
+    """
+    Additional command-line arguments passed to pytest.
+    For now:
+        --experimental: Enable the Mcore experimental flag (DEFAULT: False)
+    """
+    parser.addoption(
+        '--experimental',
+        action='store_true',
+        help="pass that argument to enable experimental flag during testing (DEFAULT: False)",
+    )
 
 
 @pytest.fixture(autouse=True)
-def cleanup_local_folder():
-    """Cleanup local experiments folder"""
-    # Asserts in fixture are not recommended, but I'd rather stop users from deleting expensive training runs
-    assert not Path("./NeMo_experiments").exists()
-    assert not Path("./nemo_experiments").exists()
+def experimental(request):
+    """Simple fixture setting the experimental flag [CPU | GPU]"""
+    config.ENABLE_EXPERIMENTAL = request.config.getoption("--experimental") is True
 
-    yield
 
-    if Path("./NeMo_experiments").exists():
-        rmtree("./NeMo_experiments", ignore_errors=True)
-    if Path("./nemo_experiments").exists():
-        rmtree("./nemo_experiments", ignore_errors=True)
+def pytest_sessionfinish(session, exitstatus):
+    if exitstatus == 5:
+        session.exitstatus = 0
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ensure_test_data(tmp_path_factory):
-    """Ensure test data is available in a temporary directory by downloading if necessary."""
-    data_path = tmp_path_factory.mktemp("test_data")
-
-    # Check if data directory exists and has content
-    if not any(data_path.iterdir()):
-        logger.info(f"Test data not found at {data_path}. Downloading...")
-
-        try:
-            # Download assets to data_path
-            from tests.unit_tests.download_unit_tests_dataset import get_oldest_release_and_assets
-
-            get_oldest_release_and_assets(assets_dir=str(data_path))
-
-            logger.info("Test data downloaded successfully.")
-
-        except ImportError as e:
-            logger.info(f"Failed to import download function: {e}")
-        except ValueError as e:
-            logger.error(e)
-            pytest.exit(f"Failed to download test data: {e}", returncode=1)
-            # Don't fail the tests, just warn
-        except Exception as e:
-            logger.info(f"Failed to download test data: {e}")
-            # Don't fail the tests, just warn
-    else:
-        logger.info(f"Test data already available at {data_path}")
-
-    yield data_path
+def cleanup():
+    yield
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
 
 
 @pytest.fixture(scope="function", autouse=True)
-def disable_msc():
-    """Disable MSC for the tests."""
-    MultiStorageClientFeature.disable()
+def set_env():
+    if is_te_min_version("1.3"):
+        os.environ['NVTE_FLASH_ATTN'] = '0'
+        os.environ['NVTE_FUSED_ATTN'] = '0'
 
 
-@pytest.fixture(autouse=True)
-def reset_env_vars():
-    """Reset environment variables"""
-    # Store the original environment variables before the test
-    original_env = dict(os.environ)
+@pytest.fixture(scope="session")
+def tmp_path_dist_ckpt(tmp_path_factory) -> Path:
+    """Common directory for saving the checkpoint.
 
-    # Run the test
-    yield
+    Can't use pytest `tmp_path_factory` directly because directory must be shared between processes.
+    """
 
-    # After the test, restore the original environment
-    os.environ.clear()
-    os.environ.update(original_env)
+    tmp_dir = tmp_path_factory.mktemp('ignored', numbered=False)
+    tmp_dir = tmp_dir.parent.parent / 'tmp_dist_ckpt'
 
+    if Utils.rank == 0:
+        with TempNamedDir(tmp_dir, sync=False):
+            yield tmp_dir
 
-@pytest.fixture(autouse=True)
-def clear_lru_cache():
-    """Clear LRU cache before each test to ensure test isolation."""
-    # Import the functions that use @lru_cache
-    from megatron.bridge.training.utils.checkpoint_utils import read_run_config, read_train_state
-
-    # Clear the cache before each test
-    read_run_config.cache_clear()
-    read_train_state.cache_clear()
-
-    yield
-
-    # Clear cache after each test as well
-    read_run_config.cache_clear()
-    read_train_state.cache_clear()
+    else:
+        yield tmp_dir
 
 
-@pytest.fixture
-def mock_distributed_environment():
-    """Mock torch.distributed environment for testing."""
-    with (
-        patch("torch.distributed.is_initialized", return_value=False),
-        patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-        patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe", return_value=1),
-    ):
-        yield
+@pytest.fixture(scope="session", autouse=True)
+def ensure_test_data():
+    """Ensure test data is available at /opt/data by downloading if necessary."""
+    data_path = Path("/opt/data")
 
+    # Check if data directory exists and has content
+    if not data_path.exists() or not any(data_path.iterdir()):
+        print("Test data not found at /opt/data. Downloading...")
 
-@pytest.fixture
-def sample_config_data():
-    """Provide sample configuration data for testing."""
-    return {
-        "model": {"type": "gpt", "layers": 24, "hidden_size": 1024, "attention_heads": 16},
-        "training": {"learning_rate": 1e-4, "batch_size": 32, "max_steps": 10000, "warmup_steps": 1000},
-        "optimizer": {"type": "adam", "beta1": 0.9, "beta2": 0.999, "eps": 1e-8},
-    }
+        try:
+            # Download assets to /opt/data
+            get_oldest_release_and_assets(assets_dir=str(data_path))
 
+            print("Test data downloaded successfully.")
 
-@pytest.fixture
-def sample_train_state_data():
-    """Provide sample train state data for testing."""
-    return {"iteration": 5000, "epoch": 10, "step": 50000, "learning_rate": 0.0001, "loss": 2.34}
+        except ImportError as e:
+            print(f"Failed to import download function: {e}")
+            # Don't fail the tests, just warn
+        except Exception as e:
+            print(f"Failed to download test data: {e}")
+            # Don't fail the tests, just warn
+    else:
+        print("Test data already available at /opt/data")

@@ -1,210 +1,66 @@
-# Contributing To Megatron-Bridge
+# Contributing to Megatron-LM
 
-Thanks for your interest in contributing to Megatron-Bridge!
+This document outlines the processes and policies for issues and pull requests by non-NVIDIA contributors to the Megatron-LM github repository.
 
-## 🛠️ Setting Up Your Environment
+Everyone is welcome to contribute to the project but development of Megatron-LM continues internally at NVIDIA. When contributing it important to ensure that changes are in line with the project direction. Small changes to fix bugs are welcomed and appreciated. If proposing large architectural changes or changes for stylistic reasons open an issue first so we can discuss it.
 
-You can either follow the steps below to set up the environment from scratch, or use the [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags), which provides a pre-built environment and makes these steps unnecessary.
+PRs will first be pulled into NVIDIA's internal Megatron-LM repo and then pushed back out to the open github repo with proper credit given to the committers.
 
-### Local workstation
+## Issue policy
 
-#### Installing Cuda Toolkit
+Please do file any bugs you find, keeping the following in mind:
 
-Please see these [instructions](https://developer.nvidia.com/cudnn-downloads) for installing cuDNN for your target platform. You can check if CUDA toolkit and cuDNN are installed with:
+- If filing a bug, i.e. you have found something that doesn't work as expected, use the BUG template.
+- If you've found a regression in speed or accuracy use the REGRESSION template.
+- If you are requesting a new feature or modification of an existing feature use the ENHANCEMENT template.
+- If opening an issue to ask a question no template is needed but please make your question as clear and concise as possible.
+- One issue per bug. Putting multiple things in the same issue makes both discussion and completion unnecessarily complicated.
+- Your bug is mostly likely to get attention from the development team quickly if we can easily reproduce it.
+- Use proper spelling, grammar, and punctuation.
+- Write in an authoritative and technical tone.
 
-```bash
-dpkg -l | grep 'cuda-toolkit'
-dpkg -l | grep 'cudnn.*cuda'
-```
+## Code submission policy
 
-#### Syncing the Python environment
+Here are some dos & don'ts to try and stick to:
 
-Megatron-Bridge uses [uv](https://docs.astral.sh/uv/) for package management.
+### Do:
 
-You can configure uv with the following commands:
+- Format new code in a style that is consistent with the file being changed. Megatron-LM doesn't (yet) have a style guide or enforced formatting.
+- Split your changes into separate, atomic commits i.e. A commit per feature or fix.
+- Make sure your commits are rebased on the master branch.
+- Write the commit message subject line in the imperative mood ("Change the default argument for X", not "Changed the default argument for X").
+- Write your commit messages in proper English, with care and punctuation.
+- Check the spelling of your code, comments and commit messages.
 
-```bash
-uv sync --only-group build  # Installs build dependencies required by TransformerEngine
-uv sync
-```
+### Don't:
 
-### Alternative: Development Container
+- Submit code that's incompatible with the project licence.
+- Touch anything outside the stated scope of the PR. This includes formatting changes to code not relevant to the PR.
+- Iterate excessively on your design across multiple commits.
+- Include commented-out code.
+- Attempt large architectural changes without first opening an issue to discuss.
 
-For containerized development, use our Dockerfile for building your own container. There are three flavors: `INFERENCE_FRAMEWORK=inframework`, `INFERENCE_FRAMEWORK=trtllm` and `INFERENCE_FRAMEWORK=vllm`:
+## Issue and Pull Request Q&A (Updated Jul 2023)
 
-```bash
-docker build \
-    -f docker/Dockerfile.ci \
-    -t megatron-bridge \
-    .
-```
+### I've submitted an issue and PR. When can I expect to get some feedback?
 
-Start your container:
+Megatron-LM is developed and maintained by a small team of researchers. We will endeavour to read and acknowledge all new issues and PRs within a week. A few rules of thumb:
+- Reproducible bugs/regressions and bug/regression fixes are likely to get the attention of maintainers the quickest.
+- Issues requesting an enhancement may only recieve acknowlegement that they've been read and may be closed with a "wontfix" label if they're not inline with the project direction. If they are acknowledged and remain open you can assume the maintainers agree they're a desirable feature.
+- Support requests, i.e. requests for help running the code, have the lowest priority and will be responded to as maintainer time permits.
 
-```bash
-docker run --rm -it -w /workdir -v $(pwd):/workdir \
-  --entrypoint bash \
-  --gpus all \
-  megatron-bridge
-```
+### If my issue or PR isn't getting attention, how long should I wait before pinging one of the project maintainers?
 
-## 📝 Writing tests
+One week if there is no acknowledgement of the intial request.
 
-We use [pytest](https://docs.pytest.org/en/stable/) for writing both unit and functional tests.
+### Who are the project maintainers I should ping?
 
-Unit tests aim to test functions in isolation. They generally do not depend on artifacts like Hugging Face checkpoints or larger datasets. Exception to this is a small toy dataset consisting of tokenizers.  
-Unit tests are stored at `tests/unit_tests`. Please add your test to an existing folder or create a new one if no one matches.
+The corresponding maintainers at this time are @jaredcasper and @jon-barker.
 
-Functional tests are integration tests that perform model training or operate on larger artifacts. We use pytest for writing these. In some cases, it might be desired to run your test (or parts of it) in a subprocess to avoid process contamination. We use `subprocess.Run` for this inside the pytest function. Please add your test into one of the predefined folders. If none of the folders matches semantically, please reach out to the `@nvidia-nemo/automation` in your PR for consultation.
+### Is there a policy for issues and PRs that haven't been touched in X days? Should they be closed?
 
-## 📦 Dependencies management
+Yes, starting in July 2023 we have a bot that will mark untouched PRs as "stale" after 60 days.
 
-We use [uv](https://docs.astral.sh/uv/) for managing dependencies. For reproducible builds, our project tracks the generated `uv.lock` file in the repository.  
-On a weekly basis, the CI attemps an update of the lock file to test against upstream dependencies.
+We have a long backlog of issues and PRs dating back 3.5 years. We are trying to triage these now by working backwards. Older issues we believe may still be relevant may recieve a request to re-test them with the latest code. If there's no response they may be closed. Again, if you they should be re-opened then just respond with a comment to that effect.
 
-New required dependencies can be added by `uv add $DEPENDENCY`.
-
-New optional dependencies can be added by `uv add --optional --extra $EXTRA $DEPENDENCY`.
-
-`EXTRA` refers to the subgroup of extra-dependencies to which you're adding the new dependency.
-Example: For adding a TRT-LLM specific dependency, run `uv add --optional --extra trtllm $DEPENDENCY`.
-
-Alternatively, the `pyproject.toml` file can also be modified directly.
-
-Adding a new dependency will update UV's lock-file. Please check this into your branch:
-
-```bash
-git add uv.lock pyproject.toml
-git commit -m "build: Adding dependencies"
-git push
-```
-
-### 🧹 Linting and Formatting
-
-We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting. CI does not auto-fix linting and formatting issues, but most issues can be fixed by running the following command:
-
-```bash
-uv run ruff check --fix .
-uv run ruff format .
-```
-
-Note: If `ruff` is missing, please follow the [installation](#local-workstation) guide.
-
-### 📝 Documentation
-
-**Important**: All new key features (ex: enabling a new inference optimized library, enabling a new deployment option) must include documentation update (either a new doc or updating an existing one). This document update should:
-
-- Explain the motivation and purpose of the feature
-- Outline the technical approach and architecture
-- Provide clear usage examples and instructions for users
-- Document internal implementation details where appropriate
-
-This ensures that all significant changes are well-thought-out and properly documented for future reference. Comprehensive documentation serves two critical purposes:
-
-1. **User Adoption**: Helps users understand how to effectively use the library's features in their projects
-2. **Developer Extensibility**: Enables developers to understand the internal architecture and implementation details, making it easier to modify, extend, or adapt the code for their specific use cases
-
-Quality documentation is essential for both the usability of Megatron-Bridge and its ability to be customized by the community.
-
-## ✨ Code Quality
-
-- Follow the existing code style and conventions
-- Write tests for new features
-- Update documentation to reflect your changes
-- Ensure all tests pass before submitting a PR
-- Do not add arbitrary defaults for configs, be as explicit as possible.
-
-## ✍️ Signing Your Work
-
-- We require that all contributors "sign-off" on their commits. This certifies that the contribution is your original work, or you have rights to submit it under the same license, or a compatible license.
-
-  - Any contribution which contains commits that are not Signed-Off will not be accepted.
-
-- To sign off on a commit you simply use the `--signoff` (or `-s`) option when committing your changes:
-
-  ```bash
-  git commit -s -m "Add cool feature."
-  ```
-
-  This will append the following to your commit message:
-
-  ```
-  Signed-off-by: Your Name <your@email.com>
-  ```
-
-- Full text of the DCO:
-
-  ```
-  Developer Certificate of Origin
-  Version 1.1
-
-  Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
-
-  Everyone is permitted to copy and distribute verbatim copies of this
-  license document, but changing it is not allowed.
-
-
-  Developer's Certificate of Origin 1.1
-
-  By making a contribution to this project, I certify that:
-
-  (a) The contribution was created in whole or in part by me and I
-      have the right to submit it under the open source license
-      indicated in the file; or
-
-  (b) The contribution is based upon previous work that, to the best
-      of my knowledge, is covered under an appropriate open source
-      license and I have the right under that license to submit that
-      work with modifications, whether created in whole or in part
-      by me, under the same open source license (unless I am
-      permitted to submit under a different license), as indicated
-      in the file; or
-
-  (c) The contribution was provided directly to me by some other
-      person who certified (a), (b) or (c) and I have not modified
-      it.
-
-  (d) I understand and agree that this project and the contribution
-      are public and that a record of the contribution (including all
-      personal information I submit with it, including my sign-off) is
-      maintained indefinitely and may be redistributed consistent with
-      this project or the open source license(s) involved.
-  ```
-
-## 🚀 Running GitHub CI
-
-There are two ways to trigger CI tests on your pull request:
-
-### Automatic CI Triggering
-
-If your GitHub user is configured to use [signed commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification), CI tests will run automatically when you push commits to your pull request.
-
-> **Note**: Signed commits are different from signing-off on commits (which uses the `-s` flag mentioned in the [Signing Your Work](#signing-your-work) section).
-
-### Manual CI Triggering
-
-If you don't have signed commits set up, you can still trigger CI tests manually by commenting on your pull request:
-
-```
-/ok to test <commit-SHA>
-```
-
-For example:
-
-```
-/ok to test a1b2c3d4e5f6
-```
-
-**Important**: You'll need to add this comment for each new commit you push to ensure CI tests run on the latest changes.
-
-#### Finding Your Commit SHA
-
-You can find the commit SHA in several ways:
-
-- View your pull request's commit history on GitHub
-- Run `git log --oneline -1` in your local repository
-- Check the commit details in your Git client
-
-## Contributing Models
-
-Please see our [documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/adding-new-models.html) for a detailed guide on contributing new models.
+Thank-you!
