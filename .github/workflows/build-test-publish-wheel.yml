@@ -48,7 +48,7 @@ jobs:
       has-src-dir: true
       skip-test-wheel: true
       custom-container: nvcr.io/nvidia/pytorch:25.05-py3
-      runner: linux-amd64-cpu16
+      runner: self-hosted-nemo
       no-build-isolation: true
       submodules: recursive
     secrets:
