@@ -323,12 +323,12 @@ class AutoPEFTBridge:
     @classmethod
     def supports(cls, adapter_config: Dict) -> bool:
         """Check if this bridge supports the given adapter configuration."""
-        from peft import PeftConfig
+        from peft import get_peft_config
 
         from megatron.bridge.peft.conversion.peft_bridge import list_registered_bridges
 
         try:
-            config_obj = PeftConfig.from_dict(adapter_config)
+            config_obj = get_peft_config(adapter_config)
             config_class = type(config_obj)
             bridges = list_registered_bridges()
             return config_class in bridges

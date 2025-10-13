@@ -23,7 +23,6 @@ import torch
 from peft import LoraConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.peft.conversion.peft_bridge import MegatronPEFTBridge
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
 from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
@@ -87,8 +86,15 @@ class TestLoRABridge:
 
         # The target modules should be converted from HF to Megatron names
         # Since the config has individual projections, it will use canonical mode
-        expected_canonical_modules = {"linear_q", "linear_k", "linear_v", "linear_proj",
-                                      "linear_fc1_gate", "linear_fc1_up", "linear_fc2"}
+        expected_canonical_modules = {
+            "linear_q",
+            "linear_k",
+            "linear_v",
+            "linear_proj",
+            "linear_fc1_gate",
+            "linear_fc1_up",
+            "linear_fc2",
+        }
         expected_fused_modules = {"linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"}
 
         # Check if it's one of the expected formats
@@ -134,7 +140,7 @@ class TestLoRABridge:
         bridge = LoRABridge()
 
         # Test that the bridge has the mapping_registry method
-        assert hasattr(bridge, 'mapping_registry')
+        assert hasattr(bridge, "mapping_registry")
         assert callable(bridge.mapping_registry)
 
     def test_create_peft_mapping(self):
@@ -142,7 +148,7 @@ class TestLoRABridge:
         bridge = LoRABridge()
 
         # Test that the bridge has the create_peft_mapping method
-        assert hasattr(bridge, 'create_peft_mapping')
+        assert hasattr(bridge, "create_peft_mapping")
         assert callable(bridge.create_peft_mapping)
 
 

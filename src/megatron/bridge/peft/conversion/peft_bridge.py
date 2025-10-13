@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Dict, Iterable, List, Mapping, Optional, Type,
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import get_pg_size
+from megatron.core.utils import get_pg_size, unwrap_model
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from torch.nn import ModuleList
 
@@ -39,7 +39,6 @@ from megatron.bridge.models.conversion.utils import extract_sort_key
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
-from megatron.core.utils import unwrap_model
 
 
 if TYPE_CHECKING:

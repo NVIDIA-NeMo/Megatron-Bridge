@@ -39,11 +39,14 @@ class MockPEFTBridge(MegatronPEFTBridge):
 
     def peft_bridge(self, adapters: PreTrainedAdapters) -> PEFT:
         mock_peft = Mock(spec=PEFT)
+        mock_peft.target_modules = ["q_proj", "k_proj", "v_proj"]
+        mock_peft.affects_module = Mock(return_value=False)  # Return False so no mappings are created
         return mock_peft
 
     def create_peft_mapping(self, base_mapping, adapter_megatron_param):
         """Mock implementation of create_peft_mapping."""
         from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+
         # Return a simple mock mapping
         mock_mapping = Mock(spec=MegatronParamMapping)
         mock_mapping.megatron_param = adapter_megatron_param
@@ -75,13 +78,39 @@ class TestMegatronPEFTBridge:
 
     def test_mapping_registry_abstract_method(self):
         """Test that mapping_registry is properly implemented."""
-        bridge = MockPEFTBridge()
+        from megatron.bridge.models.conversion.param_mapping import AutoMapping
 
-        result = bridge.mapping_registry()
-        assert isinstance(result, MegatronMappingRegistry)
+        # Create mock base bridge with _model_bridge that has some mappings
+        mock_base_bridge = Mock(spec=AutoBridge)
+        mock_model_bridge = Mock()
+
+        # Create a mapping that will be affected by PEFT
+        base_mapping = AutoMapping(
+            megatron_param="decoder.layers.0.self_attention.linear_proj.weight",
+            hf_param="model.layers.0.self_attn.o_proj.weight",
+        )
+        mock_model_bridge.mapping_registry.return_value = MegatronMappingRegistry(base_mapping)
+        mock_base_bridge._model_bridge = mock_model_bridge
+
+        bridge = MockPEFTBridge(mock_base_bridge)
+        mock_adapters = Mock(spec=PreTrainedAdapters)
+
+        # Mock the PEFT to return True for affects_module
+        with patch.object(bridge, "peft_bridge") as mock_peft_bridge_method:
+            mock_peft = Mock(spec=PEFT)
+            mock_peft.target_modules = ["q_proj", "k_proj", "v_proj"]
+            mock_peft.affects_module = Mock(return_value=True)  # Return True so mapping is included
+            mock_peft.get_megatron_adapter_params = Mock(
+                return_value=["decoder.layers.0.self_attention.linear_proj.adapter.weight"]
+            )
+            mock_peft_bridge_method.return_value = mock_peft
+
+            result = bridge.mapping_registry(mock_adapters)
+            assert isinstance(result, MegatronMappingRegistry)
 
     @patch("torch.distributed.is_initialized", return_value=False)
-    def test_global_param_names_single_process(self, mock_is_initialized):
+    @patch("megatron.bridge.peft.conversion.peft_bridge.parallel_state.get_pipeline_model_parallel_group")
+    def test_global_param_names_single_process(self, mock_pp_group, mock_is_initialized):
         """Test parameter name gathering in single-process mode."""
         bridge = MockPEFTBridge()
 
@@ -188,34 +217,27 @@ class TestPEFTBridgeRegistry:
 
     def test_get_peft_bridge_dispatch(self):
         """Test dispatch-based bridge selection."""
-        # This test requires actual registration, so we'll mock the dispatch
+        # Test that dispatch raises NotImplementedError for unregistered types
         mock_config_class = Mock()
+        mock_config_class.__name__ = "UnregisteredConfig"
 
-        with patch("megatron.bridge.peft.conversion.peft_bridge.get_peft_bridge") as mock_dispatch:
-            mock_bridge = Mock(spec=MegatronPEFTBridge)
-            mock_dispatch.return_value = mock_bridge
-
+        with pytest.raises(NotImplementedError):
             _ = get_peft_bridge(mock_config_class)
-            # In our current implementation, this calls the dispatch function
-            # The actual dispatch behavior depends on registrations
 
     def test_stream_adapters_dispatch(self):
         """Test dispatch-based streaming."""
+        # Test that dispatch raises NotImplementedError for unregistered types
         mock_model = [Mock()]
         mock_adapters = Mock(spec=PreTrainedAdapters)
 
-        with patch("megatron.bridge.peft.conversion.peft_bridge.stream_adapters_megatron_to_hf") as mock_stream:
-            mock_stream.return_value = iter([])
-
-            # Test the dispatch function exists and is callable
-            result = list(
+        with pytest.raises(NotImplementedError):
+            list(
                 stream_adapters_megatron_to_hf(
-                    (Mock(), Mock()),  # dispatch instance
+                    (Mock(), Mock()),  # dispatch instance (unregistered types)
                     mock_model,
                     mock_adapters,
                 )
             )
-            assert isinstance(result, list)
 
     def test_list_registered_bridges(self):
         """Test listing registered bridges."""
@@ -232,19 +254,39 @@ class TestPEFTBridgeRegistry:
 class TestPEFTBridgeErrorHandling:
     """Test error handling in PEFT bridge components."""
 
-    def test_build_conversion_tasks_invalid_adapters(self):
+    @patch(
+        "megatron.bridge.peft.conversion.peft_bridge.parallel_state.get_pipeline_model_parallel_rank", return_value=0
+    )
+    @patch("megatron.bridge.peft.conversion.peft_bridge.unwrap_model")
+    def test_build_conversion_tasks_invalid_adapters(self, mock_unwrap, mock_pp_rank):
         """Test build_conversion_tasks with invalid adapter state."""
-        bridge = MockPEFTBridge()
+        # Create mock base bridge
+        mock_base_bridge = Mock(spec=AutoBridge)
+        mock_model_bridge = Mock()
+        mock_model_bridge.mapping_registry.return_value = MegatronMappingRegistry()
+        mock_base_bridge._model_bridge = mock_model_bridge
+
+        bridge = MockPEFTBridge(mock_base_bridge)
 
         # Create mock adapters without proper state structure
         mock_adapters = Mock(spec=PreTrainedAdapters)
-        mock_adapters.state = Mock()
+        # Create a mock state without 'source' attribute by using spec
+        mock_state = Mock(spec=["get", "items", "keys"])  # Deliberately exclude 'source'
+        mock_adapters.state = mock_state
         # Missing 'source' attribute
 
-        mock_model = [Mock()]
+        # Create mock model with config and named_parameters
+        mock_model = Mock()
+        mock_model.config = Mock()
+        mock_model.named_parameters.return_value = iter([])  # Return empty iterator
+        mock_unwrap.return_value = [mock_model]
+        megatron_model = [mock_model]
 
-        with pytest.raises(ValueError, match="adapters.state.source is required"):
-            bridge.build_conversion_tasks(mock_adapters, mock_model)
+        # Patch mapping_registry and _megatron_global_param_names_all_pp_ranks to focus on the validation we're testing
+        with patch.object(bridge, "mapping_registry", return_value=MegatronMappingRegistry()):
+            with patch.object(bridge, "_megatron_global_param_names_all_pp_ranks", return_value=[]):
+                with pytest.raises(ValueError, match="adapters.state.source is required"):
+                    bridge.build_conversion_tasks(mock_adapters, megatron_model)
 
     def test_progress_tracking(self):
         """Test progress tracking functionality."""

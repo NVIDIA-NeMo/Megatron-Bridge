@@ -25,10 +25,7 @@ import pytest
 import torch
 from peft import LoraConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.api import MegatronPEFTModel
-from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.conversion.auto_peft_bridge import AutoPEFTBridge
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
 
@@ -265,9 +262,6 @@ class TestAutoPEFTBridge:
             assert isinstance(supported, list)
             assert "LORA" in supported
 
-
-
-
     @patch("torch.distributed.get_rank", return_value=0)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.is_available", return_value=True)
@@ -311,7 +305,6 @@ class TestAutoPEFTBridge:
                     # Config should NOT be saved on non-zero rank
                     mock_save_config.assert_not_called()
                     mock_save_weights.assert_called_once_with(mock_peft_model, temp_dir, True)
-
 
     def test_bridge_instance_creation(self, mock_pretrained_adapters):
         """Test AutoPEFTBridge instance creation."""
@@ -372,7 +365,6 @@ class TestAutoPEFTBridgeIntegration:
                 "use_dora": True,
             },
         }
-
 
     def test_supports_all_configs(self, adapter_configs):
         """Test supports method for all adapter configurations."""
