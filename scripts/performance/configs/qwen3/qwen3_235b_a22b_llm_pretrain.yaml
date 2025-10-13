@@ -78,11 +78,11 @@ perf_matrix:
         mbs: 1
         gbs: 1024
         cuda_graphs: true
-        tp: 2
-        pp: 1
+        tp: 1
+        pp: 8
         cp: 1
         vp: null
-        ep: 64
+        ep: 8
         etp: 1
         fsdp: false
       bf16:
