@@ -971,6 +971,51 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_default_pipeline_dtype(self, monkeypatch):
+        """Test pipeline_dtype is automatically set if None and PP enabled."""
+        gpt_model_cfg1 = create_test_gpt_config(params_dtype=torch.bfloat16, pipeline_model_parallel_size=2)
+
+        container1, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg1,
+        )
+
+        try:
+            container1.validate()
+            assert container1.model.pipeline_dtype == torch.bfloat16
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Do not change if already set
+        gpt_model_cfg2 = create_test_gpt_config(
+            params_dtype=torch.bfloat16, pipeline_dtype=torch.float32, pipeline_model_parallel_size=2
+        )
+
+        container2, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg2,
+        )
+
+        try:
+            container2.validate()
+            assert container2.model.pipeline_dtype == torch.float32
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Do not change if no PP
+        gpt_model_cfg3 = create_test_gpt_config(params_dtype=torch.bfloat16, pipeline_model_parallel_size=1)
+
+        container3, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg3,
+        )
+
+        try:
+            container3.validate()
+            assert container3.model.pipeline_dtype is None
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """
