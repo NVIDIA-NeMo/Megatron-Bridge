@@ -194,6 +194,10 @@ def _deepseek_common(
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters,
+        adam_beta1=0.9,
+        adam_beta2=0.95,
+        adam_eps=1e-5,
+        weight_decay=0.1,
         max_lr=lr,
         min_lr=min_lr,
     )
