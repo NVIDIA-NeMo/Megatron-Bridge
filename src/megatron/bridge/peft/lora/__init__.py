@@ -22,4 +22,10 @@ try:
 except ImportError:
     pass
 
+# Import transformer_engine for test compatibility (tests patch this)
+try:
+    import transformer_engine.pytorch as te  # noqa: F401
+except ImportError:
+    te = None
+
 __all__ = ["LoRA", "CanonicalLoRA", "DoRA"]

@@ -34,6 +34,9 @@ Example:
 """
 
 from megatron.bridge.peft.api import MegatronPEFTModel, get_peft_model
+
+# Import submodules for test compatibility (tests patch these modules)
+from megatron.bridge.peft.lora import canonical_lora, dora, dora_layers
 from megatron.bridge.peft.lora.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora.dora import DoRA
 

@@ -146,14 +146,20 @@ class TestAutoPEFTBridge:
                 mock_adapters.supports_layout.return_value = True
                 mock_from_pretrained.return_value = mock_adapters
 
-                # Create bridge with custom settings
-                bridge = AutoPEFTBridge.from_hf_pretrained(
-                    temp_dir, adapter_name="custom", trust_remote_code=True, strict=False
-                )
+                # Mock base bridge auto-detection to avoid gated model access
+                with patch(
+                    "megatron.bridge.peft.conversion.auto_peft_bridge.AutoBridge.from_hf_pretrained"
+                ) as mock_base_bridge:
+                    mock_base_bridge.return_value = Mock()
 
-                # Verify
-                assert bridge.adapter_name == "custom"
-                mock_from_pretrained.assert_called_once_with(temp_dir, trust_remote_code=True, strict=False)
+                    # Create bridge with custom settings
+                    bridge = AutoPEFTBridge.from_hf_pretrained(
+                        temp_dir, adapter_name="custom", trust_remote_code=True, strict=False
+                    )
+
+                    # Verify
+                    assert bridge.adapter_name == "custom"
+                    mock_from_pretrained.assert_called_once_with(temp_dir, trust_remote_code=True, strict=False)
 
     @pytest.mark.skip(reason="force_layout parameter no longer exists")
     def test_from_hf_pretrained_force_layout(self, lora_config_dict):
