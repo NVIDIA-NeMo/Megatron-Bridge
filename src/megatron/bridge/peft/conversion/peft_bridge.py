@@ -39,7 +39,7 @@ from megatron.bridge.models.conversion.utils import extract_sort_key
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.conversion.pretrained_adapters import PreTrainedAdapters
-from megatron.bridge.utils.common_utils import unwrap_model
+from megatron.core.utils import unwrap_model
 
 
 if TYPE_CHECKING:

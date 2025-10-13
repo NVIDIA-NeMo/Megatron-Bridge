@@ -41,8 +41,14 @@ class MockPEFTBridge(MegatronPEFTBridge):
         mock_peft = Mock(spec=PEFT)
         return mock_peft
 
-    def mapping_registry(self) -> MegatronMappingRegistry:
-        return MegatronMappingRegistry()
+    def create_peft_mapping(self, base_mapping, adapter_megatron_param):
+        """Mock implementation of create_peft_mapping."""
+        from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping
+        # Return a simple mock mapping
+        mock_mapping = Mock(spec=MegatronParamMapping)
+        mock_mapping.megatron_param = adapter_megatron_param
+        mock_mapping.hf_param = f"hf_{adapter_megatron_param}"
+        return mock_mapping
 
 
 class TestMegatronPEFTBridge:

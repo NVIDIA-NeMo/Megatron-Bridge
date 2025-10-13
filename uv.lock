@@ -2075,23 +2075,23 @@ test = [
 
 [[package]]
 name = "megatron-core"
-version = "0.15.0rc6"
+version = "0.15.0rc7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "packaging" },
     { name = "torch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/78/e242edd3de43c972bd51df67b929f261f032d1feb21fa8df92e2cd07bf16/megatron_core-0.15.0rc6.tar.gz", hash = "sha256:78304a0baad5eca619fbe98af737e54f821a773279127c567eae88564bd6c3fa", size = 859520, upload-time = "2025-09-29T04:11:29.252Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/59/e18d00532608b3660e80af5a7a1f0bd7baeb58d78e34139d87f31ea979a8/megatron_core-0.15.0rc7.tar.gz", hash = "sha256:7b8c7f6cbe73e3636e6e001bbcde97abd185d2438f75912be6f4aea47d102e02", size = 871167, upload-time = "2025-10-06T04:13:11.412Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/56/11434370cd4cb2c1892553555024cd3ac4f8881993c588ae8e20d1c9fa15/megatron_core-0.15.0rc6-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b16346d409eed5534c888c10f3f02aa5424d2b6c9fa7c6716c50fb8a2a02b815", size = 2185653, upload-time = "2025-09-29T04:11:14.947Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/7e/14ff76e05128c76bccc01ea77b703bae7f1c37c23269e2bf7cdeb0d36329/megatron_core-0.15.0rc6-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cb01923b9458ac79791256cd3ed41974686e98bdb5f75f218e48b84bccbc1b13", size = 2217006, upload-time = "2025-09-29T04:11:16.513Z" },
-    { url = "https://files.pythonhosted.org/packages/de/2b/6be96e2c16763262b197c200a1c05d831f1aec511ca7419c37da95c0ebe0/megatron_core-0.15.0rc6-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4bd4414f90afea99b491a1a944e50c128fbd9c307c6ca5d5c36921bcfdbbcde1", size = 2196824, upload-time = "2025-09-29T04:11:18.225Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/4e/98860a923a2dbc01a929488d09eb6ba1e2731c417cd01766aeb5dce1c666/megatron_core-0.15.0rc6-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:571764435836af6a2e74daec50834196abfbb6df9e09d3a6952f8e65700c8b9d", size = 2228557, upload-time = "2025-09-29T04:11:19.543Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/83/8d3011f6479d41f436e2bd631fe21e668a13dca0e9533cf59f6b28bc21ac/megatron_core-0.15.0rc6-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5b477724bcfa6e9720b0e6b6b47ab49dfbbb02ed9835c582df33b469b1a9fb63", size = 2217415, upload-time = "2025-09-29T04:11:21.009Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/44/323125fa5c5e56cf2368ce64dd2e6e6d4adc7b68976cfae24cd7706d9e36/megatron_core-0.15.0rc6-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d9496c6f65c14f3ad58745b25177a8449b4865e8051c7e2935569d6cbb015717", size = 2241334, upload-time = "2025-09-29T04:11:22.737Z" },
-    { url = "https://files.pythonhosted.org/packages/7c/84/268e922e844680505cec386f2cb3679c2594e5c5316fd84c209603571a85/megatron_core-0.15.0rc6-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cd952e57a9b73b0d3df506e55e2db9def7ea5f7b148c00d88bac3347e39c3751", size = 2216220, upload-time = "2025-09-29T04:11:24.43Z" },
-    { url = "https://files.pythonhosted.org/packages/1f/1a/802a425c3e1f821b94659095ae73fa7043249e3eb57f612c6de6e3af0740/megatron_core-0.15.0rc6-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4fd74c5fbe318273df3ecd21cf6cda7cce4c86ad438637e58cca39cd35e57aa4", size = 2242035, upload-time = "2025-09-29T04:11:25.637Z" },
+    { url = "https://files.pythonhosted.org/packages/74/8f/6f73b82f26a404cf8ffe798126b5d500f55707f93dce24b64e9b959a74c8/megatron_core-0.15.0rc7-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d8b4f72479e2b22b7c2aa36d08150f52a23e191929c70af3a44e01b325bc1c74", size = 2197760, upload-time = "2025-10-06T04:12:57.134Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/42/a687245d543d0ac8c1e231d15452d7183d539b462f05266a84f6dafaf95a/megatron_core-0.15.0rc7-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c6f39ac901e65845baf52ab3640fe5ada2acf3d10129d293e111c00de8a370bb", size = 2229123, upload-time = "2025-10-06T04:12:58.587Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/16/d00b30ef01e8bb994413e6de8441304287a2324815019417ff39f8926000/megatron_core-0.15.0rc7-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:93f5df4e9db7c5069f140871ff5b88ec9959f319808c4658b93e0916537c3fee", size = 2208990, upload-time = "2025-10-06T04:13:00.153Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/2e/fa6c6ec8cf46ae42d3321bba705bb6f3eaf9dcd1aa2c9558407737cf45c6/megatron_core-0.15.0rc7-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:15263268185f269443bfd43e5eee59032523dde0fba4c3f12f95ff69d9abe8a5", size = 2240717, upload-time = "2025-10-06T04:13:01.851Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/f7/ec443ad4d0561d5ca3939c3c9e0f669459b11534285bf9a319b0459c1222/megatron_core-0.15.0rc7-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:41f51bf220c2dda7feba0b021da29462bda97cf6c8bed39c02ae117b85745c9e", size = 2229592, upload-time = "2025-10-06T04:13:03.674Z" },
+    { url = "https://files.pythonhosted.org/packages/25/f2/bcedc42893f79452c49ef3e6a6c7e8832ac6c67119d2000912f02f0aa51a/megatron_core-0.15.0rc7-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:129c6cf752e021610b204d55c914918798d4b8cbf2d0e4d5a813556d8c7f9afd", size = 2253490, upload-time = "2025-10-06T04:13:05.257Z" },
+    { url = "https://files.pythonhosted.org/packages/de/ae/a28d206f4c14647202b1aa7b788edc72bfffe9741591248222f8e304f1ef/megatron_core-0.15.0rc7-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3d18d1ff46bc2369096d9ef28025be3f7af58793109d612a16cc38a84ac75a41", size = 2228376, upload-time = "2025-10-06T04:13:06.865Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/36/b0811463725260c886cef2923eb6aed0ad9263ab516938d8b23adad74c5a/megatron_core-0.15.0rc7-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b39eba51ce9e7e30fb03431aeb151718ada8e19ee07fc1937161a92985356315", size = 2254179, upload-time = "2025-10-06T04:13:08.47Z" },
 ]
 
 [package.optional-dependencies]
