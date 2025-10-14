@@ -184,14 +184,14 @@ markers = [
 concurrency = ["thread", "multiprocessing"]
 omit = [
     "/tmp/*",
-    "/workspace/tests/*",
-    "/workspace/*.py",
+    "/opt/Megatron-Bridge/tests/*",
+    "/opt/Megatron-Bridge/*.py",
     "*_ray.py",
 ]
 
 [tool.coverage.paths]
 source = [
     ".",
-    "/workspace/",
+    "/opt/Megatron-Bridge/",
     "/home/runner/work/Megatron-Bridge/Megatron-Bridge",
 ]
