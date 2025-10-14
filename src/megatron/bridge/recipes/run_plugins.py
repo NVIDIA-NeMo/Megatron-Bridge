@@ -606,15 +606,12 @@ class PerfEnvPlugin(Plugin):
         return vboost_cmd
 
     def _set_num_cuda_device_max_connections(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
-        import torch
-
         self.dp_size = self.num_gpus // (self.tp_size * self.cp_size * self.pp_size)
-        major, _ = torch.cuda.get_device_capability()
 
         cuda_device_max_connections = 8
         if self.deepep_enabled:
             cuda_device_max_connections = 32
-        if major > 9:
+        if self.gpu_sm100_or_newer:
             if (self.tp_size > 1 or self.cp_size > 1) and (self.dp_size > 1 or self.pp_size > 1):
                 """
                 We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
