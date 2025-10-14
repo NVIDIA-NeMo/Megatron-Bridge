@@ -251,7 +251,6 @@ def get_causal_lm_class_via_auto_map(
     config: PretrainedConfig,
 ) -> type | str | None:
     """Return CausalLM class via config.auto_map if available; otherwise None.
-
     If auto_map["AutoModelForCausalLM"] is present in the config, tries to return the dynamically loaded class.
     If dynamic loading fails (e.g., due to version incompatibilities), returns the class name as a string.
     Returns None when auto_map is absent.

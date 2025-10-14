@@ -54,7 +54,7 @@ class LlamaBridge(MegatronModelBridge):
         else:
             cls = LlamaModelProvider
 
-        # Extract kv_channels from head_dim if present (used by Nemotron models)
+        # Extract kv_channels from head_dim if present (used by Llama Nemotron models)
         kv_channels = getattr(hf_config, "head_dim", None)
 
         provider = cls(
