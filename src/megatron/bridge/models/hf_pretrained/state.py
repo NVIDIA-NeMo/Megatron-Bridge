@@ -708,21 +708,6 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # --------------------------------------------------------------
-        # Fast path: when strict=False, ignore the original checkpoint's
-        # sharding/index information entirely and simply dump everything
-        # we receive from the generator into a single `model.safetensors`.
-        # --------------------------------------------------------------
-        if not strict:
-            buffered_tensors = dict(generator)  # exhaust generator & collect
-            if buffered_tensors:
-                save_file(buffered_tensors, output_path / "model.safetensors")
-            return
-
-        # --------------------------------------------------------------
-        # strict=True path – preserve original sharding layout.
-        # --------------------------------------------------------------
-
         key_to_filename_map = self.key_to_filename_map
         all_expected_keys = set(key_to_filename_map.keys())
 

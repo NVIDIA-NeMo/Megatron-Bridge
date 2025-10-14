@@ -33,6 +33,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 

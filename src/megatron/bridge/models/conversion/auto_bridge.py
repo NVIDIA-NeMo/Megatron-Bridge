@@ -347,9 +347,7 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
         )
 
-    def save_hf_pretrained(
-        self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
-    ) -> None:
+    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
@@ -383,11 +381,9 @@ class AutoBridge(Generic[MegatronModelT]):
             # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path)
 
-        self.save_hf_weights(model, path, show_progress, strict)
+        self.save_hf_weights(model, path, show_progress)
 
-    def save_hf_weights(
-        self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
-    ) -> None:
+    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 
@@ -433,7 +429,7 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
+            self.hf_pretrained.state.source.save_generator(generator, path)
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
@@ -551,7 +547,6 @@ class AutoBridge(Generic[MegatronModelT]):
         cls,
         hf_model_id: str | Path,
         megatron_path: str | Path,
-        quantized: bool = True,
         **kwargs,
     ) -> None:
         """
@@ -591,10 +586,6 @@ class AutoBridge(Generic[MegatronModelT]):
         # Load the HuggingFace model
         bridge = cls.from_hf_pretrained(hf_model_id, **kwargs)
 
-        # Thread import quantization preference via the HF handle so downstream code can read it
-        if isinstance(bridge.hf_pretrained, object):
-            setattr(bridge.hf_pretrained, "import_quantized", bool(quantized))
-
         # Convert to Megatron model
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
@@ -606,8 +597,6 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_path: str | Path,
         hf_path: str | Path,
         show_progress: bool = True,
-        quantized: bool = False,
-        strict: bool = True,
     ) -> None:
         """
         Export a Megatron checkpoint to HuggingFace format.
@@ -651,11 +640,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
             # Save in HuggingFace format
-            self.export_quantized = quantized
-            # Thread export quantization preference via the HF handle so the bridge instance can read it
-            if isinstance(self.hf_pretrained, object):
-                setattr(self.hf_pretrained, "export_quantized", bool(quantized))
-            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress, strict=strict)
+            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
@@ -713,25 +698,19 @@ class AutoBridge(Generic[MegatronModelT]):
             load_weights: Method to load weights into existing models
         """
 
-        # Use a single bridge instance so any attributes we set (e.g. quantized) persist
-        bridge_impl = self._model_bridge
-
-        # Thread import quantized preference into the model bridge instance
-        import_quantized = bool(getattr(self.hf_pretrained, "import_quantized", True))
-        setattr(bridge_impl, "quantized", import_quantized)
-
-        provider: ModelProviderMixin = bridge_impl.provider_bridge(self.hf_pretrained)
+        provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
             # Skip weights initialization since we are going to load weights
             provider.perform_initialization = False
             if hf_path is None:
-                # Register hook on the same bridge instance to preserve attributes like `quantized`
-                provider.register_pre_wrap_hook(partial(bridge_impl.load_weights_hf_to_megatron, self.hf_pretrained))
+                provider.register_pre_wrap_hook(
+                    partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)
+                )
             else:
                 # Load from specified path
                 pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
-                provider.register_pre_wrap_hook(partial(bridge_impl.load_weights_hf_to_megatron, pre_trained))
+                provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
         return provider
 
