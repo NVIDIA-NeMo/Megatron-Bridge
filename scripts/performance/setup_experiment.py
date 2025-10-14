@@ -19,11 +19,11 @@ from omegaconf import OmegaConf
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.common import get_perf_matrix_overrides
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.common import get_perf_matrix_overrides
     from .utils.executors import slurm_executor
 
@@ -108,6 +108,11 @@ if __name__ == "__main__":
             nsys_gpu_metrics=args.profiling_gpu_metrics,
             nsys_trace=['cuda']))
 
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     executor = slurm_executor(
         args.gpu.lower(),
         args.account,
@@ -122,6 +127,7 @@ if __name__ == "__main__":
         hf_token=args.hf_token,
         nemo_home=args.nemo_home,
         wandb_key=args.wandb_key,
+        additional_slurm_params=additional_slurm_params,
     )
 
     if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200", "gb300"]:
