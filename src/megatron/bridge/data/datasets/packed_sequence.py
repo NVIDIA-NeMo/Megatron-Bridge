@@ -28,7 +28,9 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 logger = logging.getLogger(__name__)
 
 
-def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_seq_length: int, seed: int):
+def tokenize_dataset(
+    path: Path, tokenizer: MegatronTokenizer, max_seq_length: int, seed: int, dataset_kwargs: Optional[dict] = None
+):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
     and prepares it for further processing.
@@ -38,16 +40,19 @@ def tokenize_dataset(path: Path, tokenizer: MegatronTokenizer, max_seq_length: i
         tokenizer (TokenizerSpec): The tokenizer to use for tokenization.
         max_seq_length (int): Maximum sequence length for the tokens.
         seed (int): Random seed for shuffling the dataset (optional).
+        dataset_kwargs (Optional[dict]): Additional keyword arguments to pass to create_sft_dataset.
 
     Returns:
         np.ndarray: A NumPy array containing the tokenized data.
     """
+    dataset_kwargs = dataset_kwargs or {}
     dataset = create_sft_dataset(
         path=path,
         tokenizer=tokenizer,
         seq_length=max_seq_length,
         seed=seed,
         is_test=True,
+        **dataset_kwargs,
     )
     return np.array([dataset[i] for i in range(len(dataset))])
 
@@ -61,6 +66,7 @@ def prepare_packed_sequence_data(
     max_seq_length: int,
     seed: Optional[int] = 0,
     packing_algorithm: str = "first_fit_shuffle",
+    dataset_kwargs: Optional[dict] = None,
 ):
     """
     Prepares a packed sequence dataset from a given input file and saves it to an output file.
@@ -74,12 +80,14 @@ def prepare_packed_sequence_data(
         seed (Optional[int]): Random seed for shuffling (optional).
         packing_algorithm (str): The algorithm used for packing sequences
                 currently supports "first_fit_shuffle" and "first_fit_decreasing".
+        dataset_kwargs (Optional[dict]): Additional keyword arguments to pass to dataset creation.
 
     Returns:
         None: Saves the packed sequence data to the specified output path.
     """
     logger.info(f"Preparing packed sequence from {input_path}")
-    dataset = tokenize_dataset(input_path, tokenizer, max_seq_length, seed)
+    dataset_kwargs = dataset_kwargs or {}
+    dataset = tokenize_dataset(input_path, tokenizer, max_seq_length, seed, dataset_kwargs)
     sequences, histogram = create_hist(dataset, max_seq_length)
 
     assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)

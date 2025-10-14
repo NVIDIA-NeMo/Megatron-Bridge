@@ -61,6 +61,8 @@ class TransformerConfig(MCoreTransformerConfig):
         to compute derived fields based on the current field values. It can be
         called multiple times safely.
         """
+        if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
+            self.pipeline_dtype = self.params_dtype
         MCoreTransformerConfig.__post_init__(self)
 
 
@@ -101,4 +103,6 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         to compute derived fields based on the current field values. It can be
         called multiple times safely.
         """
+        if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
+            self.pipeline_dtype = self.params_dtype
         MCoreMLATransformerConfig.__post_init__(self)
