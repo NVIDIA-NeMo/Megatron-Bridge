@@ -61,7 +61,9 @@ def main():
             logger.info("Using token drop, disabling DeepEP")
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
-        pp, vp = (8, 4) if args.gpu.lower() in ["h100"] else (4, 8)
+        pp_vp_map = {"h100": (8, 4), "b200": (16, 1), "gb200": (4, 4)}
+        pp, vp = pp_vp_map[args.gpu.lower()] if args.gpu.lower() in pp_vp_map else (1, 1)
+        layout = "Et|(tt|)*30mL" if args.gpu.lower() in ["h100"] else None
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -69,7 +71,7 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
-            layout="Et|(tt|)*30mL",
+            layout=layout,
         )
 
         if enable_deepep:
@@ -87,8 +89,13 @@ def main():
             recipe.model.moe_shared_expert_overlap = True
         if args.gpu.lower() in ["h100"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
-        elif args.gpu.lower() in ["gb200"]:
-            recipe.model.recompute_modules = ["mla_up_proj", "mlp", "moe_act"]
+        if args.gpu.lower() == "b200":
+            recipe.model.recompute_modules = ["mla_up_proj"]
+        if args.gpu.lower() == "gb200":
+            if use_tokendrop:
+                recipe.model.recompute_modules = ["mla_up_proj"]
+            else:
+                recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         if args.gpu.lower() in ["gb200", "b200"]:
             recipe.comm_overlap.overlap_grad_reduce = True
         elif args.gpu.lower() in ["h100"]:
@@ -159,9 +166,31 @@ def main():
             recipe.model.use_transformer_engine_op_fuser = False
 
     if recipe.ddp.use_megatron_fsdp:
-        if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
-            recipe.ddp.fsdp_double_buffer = True
+        if args.model_name in ["llama3", "llama31"]:
+            if args.model_size in ["70b", "405b"]:
+                recipe.ddp.fsdp_double_buffer = True
+            if args.model_size in ["8b"] and args.gpu.lower() in ["h100"]:
+                recipe.ddp.nccl_ub = True
+            if args.model_size in ["8b", "70b"]:
+                recipe.model.gradient_accumulation_fusion = False
+        if args.model_name in ["llama3"] and args.model_size in ["70b"]:
+            recipe.ddp.suggested_communication_unit_size = 800000000
     recipe.model.apply_rope_fusion = True
+
+    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
+        recipe.dataset.num_workers = 0
+        recipe.dataset.pin_memory = False
+
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(args.num_gpus / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 
