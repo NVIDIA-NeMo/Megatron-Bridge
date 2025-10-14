@@ -33,7 +33,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
-from megatron.bridge.training.post_training.utils import ModelOptDistillConfig
+from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -1034,13 +1034,6 @@ class InProcessRestartConfig:
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
 
-@dataclass
-class ModelOptConfig:
-    """Configuration settings for Model Optimizer features."""
-
-    kd: Optional[ModelOptDistillConfig] = None
-
-
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -1059,7 +1052,7 @@ class ConfigContainer(Container):
     checkpoint: CheckpointConfig
     dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
     peft: Optional[PEFT] = None
-    modelopt: Optional[ModelOptConfig] = None
+    distill: Optional[ModelOptDistillConfig] = None
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None

@@ -25,11 +25,13 @@ model:
   context_parallel_size: 1
   sequence_parallel: true
 
-modelopt:
-  _target_: megatron.bridge.training.config.ModelOptConfig
-  kd:
-    _target_: megatron.bridge.training.config.ModelOptDistillConfig
-    teacher_path_or_id: "meta-llama/Llama-3.2-1B"
+distill:
+  _target_: megatron.bridge.training.post_training.distillation.ModelOptDistillConfig
+  logit_layers: ["output_layer", "output_layer"]
+  intermediate_layer_pairs: []
+  skip_lm_loss: true
+  kd_loss_scale: 1.0
+  logit_kl_temperature: 1.0
 
 train:
   train_iters: 10

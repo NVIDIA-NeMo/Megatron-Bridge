@@ -17,7 +17,7 @@ import inspect
 import logging
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
 import torch
 from megatron.core import parallel_state
@@ -36,6 +36,10 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
 logger = logging.getLogger(__name__)
@@ -289,6 +293,53 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                         )
 
         return model
+
+
+@dataclass
+class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
+    """Provider for Megatron Core GPT models in distillation mode."""
+
+    student_provider: "GPTModelProvider"
+    teacher_provider: "GPTModelProvider"
+    kd_config: Optional["ModelOptDistillConfig"] = None
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
+
+        Args:
+            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
+            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
+            vp_stage: Virtual pipeline stage
+
+        Returns:
+            MCoreGPTModel: Configured ModelOpt DistillationModel instance
+        """
+        import modelopt.torch.distill as mtd
+        import modelopt.torch.distill.plugins.megatron as mtd_mcore
+
+        if vp_stage is not None:
+            raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
+
+        student_model = self.student_provider.provide(pre_process, post_process, vp_stage)
+        teacher_model = self.teacher_provider.provide(pre_process, post_process, vp_stage)
+
+        kd_cfg = mtd_mcore.DistillationConfig(
+            logit_layers=self.kd_config.logit_layers,
+            intermediate_layer_pairs=self.kd_config.intermediate_layer_pairs,
+            skip_lm_loss=self.kd_config.skip_lm_loss,
+            kd_loss_scale=self.kd_config.kd_loss_scale,
+            logit_kl_temperature=self.kd_config.logit_kl_temperature,
+        )
+        kd_cfg = mtd_mcore.setup_distillation_config(kd_cfg, student_model.config, teacher_model.config)
+        modelopt_cfg = {
+            "teacher_model": teacher_model,
+            "criterion": kd_cfg.criterion,
+            "loss_balancer": kd_cfg.loss_balancer,
+        }
+        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
+        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
+
+        return kd_model
 
 
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
