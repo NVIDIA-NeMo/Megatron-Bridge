@@ -15,7 +15,7 @@
 import abc
 import os
 from pathlib import Path
-from typing import Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
 
 
 try:
@@ -116,6 +116,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         ]
         | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
+        mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -141,6 +142,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 If a list is provided, hooks will be executed in order.
             post_wrap_hook: A single callable to modify the model after it's wrapped. If provided,
                 this will override all hooks registered via `register_post_wrap_hook`.
+            mixed_precision_wrapper: A module wrapper (e.g., `Float16Module`) applied when fp16/bf16
+                is enabled. If None, no mixed precision wrapper is applied.
 
         Returns:
             A list containing the wrapped model instance.
@@ -187,6 +190,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             use_cpu_initialization=use_cpu_initialization,
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
+            mixed_precision_wrapper=mixed_precision_wrapper,
         )
 
         if final_post_wrap_hook:
@@ -406,6 +410,7 @@ class GetModelKwargs(TypedDict, total=False):
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
+        mixed_precision_wrapper: Module wrapper to apply for fp16/bf16. None to skip.
     """
 
     ddp_config: DistributedDataParallelConfig | None
@@ -427,6 +432,7 @@ class GetModelKwargs(TypedDict, total=False):
         | None
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
 
 
 class ModelParallelKwargs(TypedDict, total=False):
@@ -466,7 +472,7 @@ def get_model(
         list[Callable[[list[MegatronModule]], list[MegatronModule]]],
     ]
     | None = None,
-    wrap_cast_model_output_to_fp32: bool = True,
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -497,7 +503,8 @@ def get_model(
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
             hooks will be executed in order.
-        wrap_cast_model_output_to_fp32: Defer casting modules to fp16
+        mixed_precision_wrapper: Wrapper class/function applied when fp16/bf16 is enabled. Defaults
+            to Megatron-Core's `Float16Module`. If None, the wrapper is not applied.
 
     Returns:
         list[MegatronModule]: List of model modules. Contains multiple modules
@@ -515,6 +522,23 @@ def get_model(
             model = _create_model(model_provider, model_type)
     else:
         model = _create_model(model_provider, model_type)
+
+    if pre_wrap_hook:
+        if isinstance(pre_wrap_hook, list):
+            # Execute hooks in order
+            for hook in pre_wrap_hook:
+                if not callable(hook):
+                    raise RuntimeError("All elements in pre_wrap_hook list must be callable")
+                _model = hook(model)
+                if _model is not None:
+                    model = _model
+        else:
+            if not callable(pre_wrap_hook):
+                raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
+            _model = pre_wrap_hook(model)
+            if _model is not None:
+                model = _model
+
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
     for model_module in model:
@@ -536,24 +560,8 @@ def get_model(
         for model_module in model:
             model_module.cuda(torch.cuda.current_device())
 
-    if (model_config.fp16 or model_config.bf16) and wrap_cast_model_output_to_fp32:
-        model = [Float16Module(model_config, model_module) for model_module in model]
-
-    if pre_wrap_hook:
-        if isinstance(pre_wrap_hook, list):
-            # Execute hooks in order
-            for hook in pre_wrap_hook:
-                if not callable(hook):
-                    raise RuntimeError("All elements in pre_wrap_hook list must be callable")
-                _model = hook(model)
-                if _model is not None:
-                    model = _model
-        else:
-            if not callable(pre_wrap_hook):
-                raise RuntimeError("pre_wrap_hook must be a callable or a list of callables")
-            _model = pre_wrap_hook(model)
-            if _model is not None:
-                model = _model
+    if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
+        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)
