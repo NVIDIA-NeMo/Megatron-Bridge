@@ -47,7 +47,7 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
-DEFAULT_CONFIG_FILENAME: str = "nemotron_nano_v2_vl_pretrain_override_example.yaml"
+DEFAULT_CONFIG_FILENAME: str = "nemotron_nano_v2_vl_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
@@ -64,32 +64,19 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         "--config-file",
         type=str,
         default=str(DEFAULT_CONFIG_FILE_PATH),
-        help="Path to the YAML OmegaConf override file. Default: conf/nemotron_nano_v2_vl_pretrain_override_example.yaml",
+        help="Path to the YAML OmegaConf override file. Default: conf/nemotron_nano_v2_vl_override_example.yaml",
     )
-    parser.add_argument(
-        "--data-path",
-        type=str,
-        default=None,
-        help="Path to JSON/JSONL dataset (preloaded conversation or legacy messages format).",
-    )
-    parser.add_argument(
-        "--image-folder",
-        type=str,
-        default=None,
-        help="Optional root for resolving relative image/video paths in dataset records.",
-    )
-    parser.add_argument(
-        "--use-preloaded",
-        action="store_true",
-        help="Use preloaded dataset provider (enabled automatically when --data-path is set).",
-    )
-
     # Finetune-specific flags
     parser.add_argument(
         "--pretrained-checkpoint",
         type=str,
         required=True,
         help="Path to a Megatron-Bridge checkpoint directory or HuggingFace model name to load weights from.",
+    )
+    parser.add_argument(
+        "--peft",
+        action="store_true",
+        help="Use PEFT for finetuning.",
     )
 
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -110,18 +97,11 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Determine whether to use the preloaded dataset provider
-    use_preloaded_flag = bool(args.data_path) or bool(args.use_preloaded)
-
     from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import finetune_config
 
     cfg: ConfigContainer = finetune_config(
         pretrained_checkpoint=args.pretrained_checkpoint,
-        use_preloaded=use_preloaded_flag,
-        train_data_path=args.data_path,
-        valid_data_path=None,
-        test_data_path=None,
-        image_folder=args.image_folder,
+        peft=args.peft,
     )
 
     logger.info("Loaded base configuration for finetuning")
