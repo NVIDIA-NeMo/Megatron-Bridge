@@ -114,10 +114,6 @@ from megatron.bridge.models.nemotron import (
     NemotronBridge,
     NemotronModelProvider,
 )
-from megatron.bridge.models.olmoe import (
-    OlMoEBridge,
-    OlMoEModelProvider,
-)
 from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
@@ -132,6 +128,10 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronNano12Bv2Provider,
     NemotronNanoModelProvider9Bv2,
     NemotronNanoModelProvider12Bv2,
+)
+from megatron.bridge.models.olmoe import (
+    OlMoEBridge,
+    OlMoEModelProvider,
 )
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,

@@ -12,18 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge
 from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class TestMegatronOlMoEBridge:
@@ -112,6 +111,7 @@ class TestMegatronOlMoEBridge:
         """Create a mock OlmoeForCausalLM 1B-7B model."""
         try:
             from transformers import OlmoeForCausalLM
+
             mock_model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_model = Mock()
@@ -124,6 +124,7 @@ class TestMegatronOlMoEBridge:
         """Create a mock OlmoeForCausalLM custom model."""
         try:
             from transformers import OlmoeForCausalLM
+
             mock_model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_model = Mock()
@@ -139,6 +140,7 @@ class TestMegatronOlMoEBridge:
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
+
             mock_pretrained.model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_pretrained.model = Mock()
@@ -153,6 +155,7 @@ class TestMegatronOlMoEBridge:
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
+
             mock_pretrained.model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_pretrained.model = Mock()
@@ -305,6 +308,7 @@ class TestMegatronOlMoEBridge:
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
+
             mock_pretrained.model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_pretrained.model = Mock()
@@ -326,6 +330,7 @@ class TestMegatronOlMoEBridge:
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
+
             mock_pretrained.model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_pretrained.model = Mock()
@@ -347,6 +352,7 @@ class TestMegatronOlMoEBridge:
         mock_pretrained.generation_config = Mock()
         try:
             from transformers import OlmoeForCausalLM
+
             mock_pretrained.model = Mock(spec=OlmoeForCausalLM)
         except ImportError:
             mock_pretrained.model = Mock()
@@ -570,4 +576,3 @@ class TestOlMoEBridgeParameterMapping:
 
         # OLMoE can have separate embeddings and output layer
         assert mapping_registry is not None
-

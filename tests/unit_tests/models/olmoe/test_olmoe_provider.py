@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
+
 import torch
 import torch.nn.functional as F
+from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.olmoe.olmoe_provider import (
     OlMoEModelProvider,
-    olmoe_layer_spec,
     OLMoESelfAttention,
+    olmoe_layer_spec,
 )
-from megatron.core.transformer import ModuleSpec
 
 
 class TestOlMoEModelProvider:
@@ -100,7 +101,7 @@ class TestOlMoEModelProvider:
     def test_olmoe_model_provider_inheritance(self):
         """Test that OlMoEModelProvider properly inherits from GPTModelProvider."""
         from megatron.bridge.models.gpt_provider import GPTModelProvider
-        
+
         provider = OlMoEModelProvider()
         assert isinstance(provider, GPTModelProvider)
 
@@ -127,7 +128,7 @@ class TestOlMoEModelProvider:
     def test_olmoe_model_provider_dtype_configuration(self):
         """Test that OlMoEModelProvider dtype parameters are correctly configured."""
         provider = OlMoEModelProvider()
-        
+
         assert provider.autocast_dtype == torch.bfloat16
         assert provider.params_dtype == torch.float32
         assert provider.bf16 is False
@@ -138,7 +139,7 @@ class TestOlMoEModelProvider:
             params_dtype=torch.float16,
             bf16=True,
         )
-        
+
         assert provider_fp16.autocast_dtype == torch.float16
         assert provider_fp16.params_dtype == torch.float16
         assert provider_fp16.bf16 is True
@@ -151,18 +152,18 @@ class TestOlmoeLayerSpec:
         """Test that olmoe_layer_spec returns a ModuleSpec."""
         provider = OlMoEModelProvider()
         layer_spec = olmoe_layer_spec(provider)
-        
+
         assert isinstance(layer_spec, ModuleSpec)
 
     def test_olmoe_layer_spec_uses_custom_attention(self):
         """Test that olmoe_layer_spec configures custom OLMoE attention."""
         provider = OlMoEModelProvider()
         layer_spec = olmoe_layer_spec(provider)
-        
+
         # Verify that the layer spec has self_attention submodule
         assert hasattr(layer_spec, "submodules")
         assert hasattr(layer_spec.submodules, "self_attention")
-        
+
         # Verify that the custom OLMoESelfAttention is used
         assert layer_spec.submodules.self_attention.module == OLMoESelfAttention
 
@@ -170,13 +171,13 @@ class TestOlmoeLayerSpec:
         """Test that olmoe_layer_spec works with different provider configurations."""
         provider1 = OlMoEModelProvider(num_layers=16, hidden_size=2048)
         provider2 = OlMoEModelProvider(num_layers=32, hidden_size=4096)
-        
+
         layer_spec1 = olmoe_layer_spec(provider1)
         layer_spec2 = olmoe_layer_spec(provider2)
-        
+
         assert isinstance(layer_spec1, ModuleSpec)
         assert isinstance(layer_spec2, ModuleSpec)
-        
+
         # Both should use the same custom attention
         assert layer_spec1.submodules.self_attention.module == OLMoESelfAttention
         assert layer_spec2.submodules.self_attention.module == OLMoESelfAttention
@@ -187,10 +188,10 @@ class TestOLMoESelfAttention:
 
     def test_olmoe_self_attention_initialization(self):
         """Test that OLMoESelfAttention can be initialized."""
-        from megatron.core.transformer.transformer_config import TransformerConfig
         from megatron.core.transformer.attention import SelfAttentionSubmodules
         from megatron.core.transformer.enums import AttnMaskType
-        
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
         # Create a minimal config
         config = Mock(spec=TransformerConfig)
         config.num_attention_heads = 16
@@ -204,7 +205,7 @@ class TestOLMoESelfAttention:
         config.apply_query_key_layer_scaling = False
         config.attention_softmax_in_fp32 = False
         config.test_mode = False
-        
+
         # Create submodules mock
         submodules = Mock(spec=SelfAttentionSubmodules)
         submodules.linear_qkv = Mock()
@@ -212,7 +213,7 @@ class TestOLMoESelfAttention:
         submodules.linear_proj = Mock()
         submodules.q_layernorm = Mock()
         submodules.k_layernorm = Mock()
-        
+
         # This should not raise an exception
         try:
             attention = OLMoESelfAttention(
@@ -223,18 +224,19 @@ class TestOLMoESelfAttention:
             )
             # Verify it's an instance of the parent class
             from megatron.core.transformer.attention import SelfAttention as MCoreSelfAttention
+
             assert isinstance(attention, MCoreSelfAttention)
-        except Exception as e:
+        except Exception:
             # If there are missing dependencies or config issues, we can skip
             # but we should at least verify the class exists
             assert OLMoESelfAttention is not None
 
     def test_olmoe_self_attention_has_custom_layernorm(self):
         """Test that OLMoESelfAttention has custom q_layernorm and k_layernorm."""
-        from megatron.core.transformer.transformer_config import TransformerConfig
         from megatron.core.transformer.attention import SelfAttentionSubmodules
         from megatron.core.transformer.enums import AttnMaskType
-        
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
         # Create a minimal config
         config = Mock(spec=TransformerConfig)
         config.num_attention_heads = 16
@@ -248,7 +250,7 @@ class TestOLMoESelfAttention:
         config.apply_query_key_layer_scaling = False
         config.attention_softmax_in_fp32 = False
         config.test_mode = False
-        
+
         # Create submodules mock
         submodules = Mock(spec=SelfAttentionSubmodules)
         submodules.linear_qkv = Mock()
@@ -256,7 +258,7 @@ class TestOLMoESelfAttention:
         submodules.linear_proj = Mock()
         submodules.q_layernorm = Mock()
         submodules.k_layernorm = Mock()
-        
+
         try:
             attention = OLMoESelfAttention(
                 config=config,
@@ -264,7 +266,7 @@ class TestOLMoESelfAttention:
                 layer_number=1,
                 attn_mask_type=AttnMaskType.padding,
             )
-            
+
             # Verify that q_layernorm and k_layernorm exist
             assert hasattr(attention, "q_layernorm")
             assert hasattr(attention, "k_layernorm")
@@ -285,7 +287,7 @@ class TestOlMoEModelProviderIntegration:
     def test_olmoe_provider_layer_spec_integration(self):
         """Test that OlMoEModelProvider works with olmoe_layer_spec."""
         provider = OlMoEModelProvider()
-        
+
         # The transformer_layer_spec should be set to olmoe_layer_spec
         assert provider.transformer_layer_spec == olmoe_layer_spec
 
@@ -306,16 +308,14 @@ class TestOlMoEModelProviderIntegration:
         assert provider.num_moe_experts == 64
         assert provider.moe_router_topk == 8
         assert provider.moe_ffn_hidden_size == 1024
-        
+
         # Verify that attention parameters are set
         assert provider.num_attention_heads == 16
         assert provider.num_query_groups == 16
         assert provider.qk_layernorm is True
-        
+
         # Verify that the layer spec is callable or a ModuleSpec
-        assert callable(provider.transformer_layer_spec) or isinstance(
-            provider.transformer_layer_spec, ModuleSpec
-        )
+        assert callable(provider.transformer_layer_spec) or isinstance(provider.transformer_layer_spec, ModuleSpec)
 
     def test_olmoe_provider_with_different_expert_configurations(self):
         """Test OlMoEModelProvider with different expert configurations."""
@@ -324,7 +324,7 @@ class TestOlMoEModelProviderIntegration:
             {"num_moe_experts": 64, "moe_router_topk": 8},
             {"num_moe_experts": 128, "moe_router_topk": 16},
         ]
-        
+
         for config in configs:
             provider = OlMoEModelProvider(**config)
             assert provider.num_moe_experts == config["num_moe_experts"]
@@ -350,4 +350,3 @@ class TestOlMoEModelProviderIntegration:
         provider = OlMoEModelProvider()
         assert provider.position_embedding_type == "rope"
         assert provider.rotary_base == 10000.0
-

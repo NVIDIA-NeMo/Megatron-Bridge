@@ -72,22 +72,26 @@ class TestOlMoEConversion:
         # Create OLMoE config from the toy model config
         try:
             from transformers import OlmoeConfig, OlmoeForCausalLM
+
             config = OlmoeConfig(**HF_OLMOE_TOY_MODEL_CONFIG)
         except ImportError:
             # If OlmoeConfig is not available, use AutoConfig
             from transformers import AutoConfig
+
             config = AutoConfig.for_model(model_type="olmoe", **HF_OLMOE_TOY_MODEL_CONFIG)
-        
+
         config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
         # Create model with random weights and convert to bfloat16
         try:
             from transformers import OlmoeForCausalLM
+
             model = OlmoeForCausalLM(config)
         except ImportError:
             from transformers import AutoModelForCausalLM
+
             model = AutoModelForCausalLM.from_config(config)
-        
+
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
         # Debug: Check model dtype before saving
@@ -99,13 +103,15 @@ class TestOlMoEConversion:
         # Try to use OLMoE tokenizer if available, otherwise fall back to GPT2
         try:
             from transformers import AutoTokenizer
+
             tokenizer = AutoTokenizer.from_pretrained("allenai/OLMoE-1B-7B-0125")
         except Exception:
             # Fallback to a generic tokenizer
             from transformers import AutoTokenizer
+
             tokenizer = AutoTokenizer.from_pretrained("gpt2")
             tokenizer.pad_token = tokenizer.eos_token
-        
+
         tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory
@@ -163,17 +169,18 @@ class TestOlMoEConversion:
         # Try loading the model to verify it's valid
 
         from transformers import OlmoeForCausalLM
+
         model = OlmoeForCausalLM.from_pretrained(
             olmoe_toy_model_path,
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=False,  # Ensure full loading
         )
-       
 
         from transformers import AutoTokenizer
+
         tokenizer = AutoTokenizer.from_pretrained(olmoe_toy_model_path)
         print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
-       
+
         # Verify model structure
         assert hasattr(model, "model")
         assert hasattr(model.model, "layers")
@@ -181,7 +188,6 @@ class TestOlMoEConversion:
 
         print(f"SUCCESS: Toy model created and validated at {olmoe_toy_model_path}")
         print("Model weights are correctly in bfloat16 format")
-
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(

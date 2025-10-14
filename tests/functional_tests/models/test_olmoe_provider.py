@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 import pytest
 
@@ -41,4 +40,3 @@ class TestOlMoEModelProviderMapping:
 
         # Compare configs
         compare_provider_configs(converted_provider, predefined_provider, hf_model_id)
-

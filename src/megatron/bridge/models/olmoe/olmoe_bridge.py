@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import torch
 import logging
+
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import OlmoeForCausalLM
 
@@ -23,10 +24,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
+
 
 logger = logging.getLogger(__name__)
+
 
 @MegatronModelBridge.register_bridge(source=OlmoeForCausalLM, target=GPTModel)
 class OlMoEBridge(MegatronModelBridge):
@@ -67,11 +70,10 @@ class OlMoEBridge(MegatronModelBridge):
             bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             generation_config=hf_pretrained.generation_config,
-
         )
 
         return provider
-    
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
 
@@ -120,4 +122,3 @@ class OlMoEBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
-        
