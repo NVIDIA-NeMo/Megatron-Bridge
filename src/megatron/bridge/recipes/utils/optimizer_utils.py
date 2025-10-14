@@ -17,6 +17,51 @@ from typing import Optional
 from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 
 
+def distributed_muon_with_cosine_annealing(
+    precision: str = "bf16-mixed",
+    muon_momentum: float = 0.95,
+    muon_use_nesterov: bool = True,
+    muon_scale_mode: str = "spectral",
+    muon_fp32_matmul_prec: str = "medium",
+    muon_num_ns_steps: int = 5,
+    muon_tp_mode: str = "blockwise",
+
+    lr_warmup_iters: int = 2000,
+    lr_decay_iters: int = 2000,
+    weight_decay: float = 0.1,
+    max_lr: float = 1e-4,
+    min_lr: Optional[float] = None,
+    clip_grad: float = 1.0,
+) -> tuple[OptimizerConfig, SchedulerConfig]:
+    scheduler = SchedulerConfig(
+        start_weight_decay=0.033,
+        end_weight_decay=0.033,
+        weight_decay_incr_style="constant",
+        lr_decay_style="cosine",
+        lr_warmup_iters=lr_warmup_iters,
+        lr_warmup_init=0.0,
+        lr_decay_iters=lr_decay_iters,
+        override_opt_param_scheduler=True,
+    )
+    optimizer = OptimizerConfig(
+        optimizer="dist_muon",
+        lr=max_lr,
+        min_lr=min_lr,
+        weight_decay=weight_decay,
+        bf16=precision == "bf16-mixed",
+        fp16=precision == "16-mixed",
+        muon_momentum=muon_momentum,
+        muon_use_nesterov=muon_use_nesterov,
+        muon_scale_mode=muon_scale_mode,
+        muon_fp32_matmul_prec=muon_fp32_matmul_prec,
+        muon_num_ns_steps=muon_num_ns_steps,
+        muon_tp_mode=muon_tp_mode,
+        clip_grad=clip_grad,
+    )
+    return optimizer, scheduler
+
+
+
 def distributed_fused_adam_with_cosine_annealing(
     precision: str = "bf16-mixed",
     lr_warmup_iters: int = 2000,
