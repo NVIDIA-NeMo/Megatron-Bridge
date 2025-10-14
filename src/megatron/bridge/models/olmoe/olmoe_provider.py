@@ -21,6 +21,21 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_
 from megatron.core.transformer import ModuleSpec
 from typing import Union, Callable
 from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.attention import SelfAttention as MCoreSelfAttention
+from megatron.core.transformer.enums import AttnMaskType
+from megatron.core.transformer.attention import SelfAttentionSubmodules
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.spec_utils import build_module
+try:
+    import transformer_engine  # pylint: disable=unused-import
+
+    HAVE_TE = True
+    from megatron.core.extensions.transformer_engine import SplitAlongDim
+except ImportError:
+    HAVE_TE = False
+    SplitAlongDim = None
+
 
 def olmoe_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     layer_spec = default_layer_spec(config)
@@ -32,7 +47,6 @@ class OlMoEModelProvider(GPTModelProvider):
     """Base provider for OlMoE Models."""
 
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = olmoe_layer_spec
-    attention_backend: AttnBackend = AttnBackend.unfused
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True
@@ -48,7 +62,7 @@ class OlMoEModelProvider(GPTModelProvider):
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
 
-    #
+    # Model specific parameters
     num_layers: int = 16
     hidden_size: int = 2048
     ffn_hidden_size: int = 1024
@@ -74,23 +88,8 @@ class OlMoEModelProvider(GPTModelProvider):
     moe_router_score_function: str = "softmax"
     moe_permute_fusion: bool = True
     moe_router_dtype: str = "fp32"
-     # optimization
+    # Optimization
     persist_layer_norm: bool = True
-
-from megatron.core.transformer.attention import SelfAttention as MCoreSelfAttention
-from megatron.core.transformer.enums import AttnMaskType
-from megatron.core.transformer.attention import SelfAttentionSubmodules
-from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.transformer.spec_utils import build_module
-try:
-    import transformer_engine  # pylint: disable=unused-import
-
-    HAVE_TE = True
-    from megatron.core.extensions.transformer_engine import SplitAlongDim
-except ImportError:
-    HAVE_TE = False
-    SplitAlongDim = None
 
 
 class OLMoESelfAttention(MCoreSelfAttention):
@@ -113,6 +112,7 @@ class OLMoESelfAttention(MCoreSelfAttention):
             pg_collection=pg_collection,
         )
 
+        # Unlike Mcore QK Layernorm, OlMoE layernorm has hidden_size = hidden_size_per_attention_head * num_attention_heads
         self.q_layernorm = build_module(
             submodules.q_layernorm,
             hidden_size=self.hidden_size_per_attention_head * self.config.num_attention_heads, # Main difference between Mcore QK Layernorm

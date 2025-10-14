@@ -53,8 +53,7 @@ class OlMoEBridge(MegatronModelBridge):
             ffn_hidden_size=hf_config.intermediate_size,
             moe_ffn_hidden_size=hf_config.intermediate_size,
             seq_length=hf_config.max_position_embeddings,
-            # kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
-            # norm_topk_prob
+            kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
             num_attention_heads=hf_config.num_attention_heads,
             num_moe_experts=hf_config.num_experts,
             moe_router_topk=hf_config.num_experts_per_tok,
