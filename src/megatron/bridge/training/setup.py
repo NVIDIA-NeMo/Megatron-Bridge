@@ -246,11 +246,6 @@ def setup(
         print("------- Task Configuration -------")
         cfg.to_yaml()
         print("----------------------------------")
-    if get_rank_safe() == 0:
-        # Print final resolved/updated/overridden configs
-        print("------- Task Configuration -------")
-        cfg.to_yaml()
-        print("----------------------------------")
 
     return SetupOutput(
         state,
