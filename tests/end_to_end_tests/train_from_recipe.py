@@ -375,7 +375,6 @@ def setup_argument_parser():
     parser.add_argument(
         "--no-tensorboard", action="store_false", dest="tensorboard", help="Disable tensorboard logging"
     )
-    parser.set_defaults(tensorboard=True)
 
     # WandB configuration
     parser.add_argument("--wandb-project", type=str, help="WandB project name")
