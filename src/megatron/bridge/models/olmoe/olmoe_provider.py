@@ -59,8 +59,8 @@ class OlMoEModelProvider(GPTModelProvider):
     share_embeddings_and_output_weights: Optional[bool] = False
     layernorm_epsilon: float = 1e-5
     autocast_dtype: torch.dtype = torch.bfloat16
-    params_dtype: torch.dtype = torch.bfloat16
-    bf16: bool = True
+    params_dtype: torch.dtype = torch.float32
+    bf16: bool = False
 
     # Model specific parameters
     num_layers: int = 16
