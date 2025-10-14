@@ -80,12 +80,11 @@ if __name__ == "__main__":
     dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
     # Deep-merge so dtype-specific values override common
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
-    perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  #
+    perf_overrides = OmegaConf.to_container(merged_perf, resolve=True)  #
 
-    num_gpus_per_node = common_dict.get("num_gpus_per_node", args.gpus_per_node)
-    tp = common_dict.get("tp", recipe_dict.get("tp", 1))
-    cp = common_dict.get("cp", recipe_dict.get("cp", 1))
-    pp = common_dict.get("pp", recipe_dict.get("pp", 1))
+    tp = perf_overrides.get("tp", 1)
+    cp = perf_overrides.get("cp", 1)
+    pp = perf_overrides.get("pp", 1)
 
     enable_deepep = bool(args.gpu.lower() in ["h100"])
     plugins = (
