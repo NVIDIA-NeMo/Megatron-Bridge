@@ -298,7 +298,7 @@ mapping_registry = bridge.mapping_registry()
 print(mapping_registry.get_all_mappings())
 
 # Verify weight shapes
-for task in bridge.build_conversion_tasks(hf_model, meg_models):
+for task in bridge._build_conversion_tasks(hf_model, meg_models):
     print(f"{task.param_name}: {task.megatron_param.shape}")
 ```
 
