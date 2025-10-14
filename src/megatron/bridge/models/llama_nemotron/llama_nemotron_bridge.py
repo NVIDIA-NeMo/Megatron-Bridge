@@ -24,6 +24,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.llama.llama_provider import Llama31ModelProvider
+from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 
 
 @MegatronModelBridge.register_bridge(source="DeciLMForCausalLM", target=GPTModel)
@@ -59,9 +60,20 @@ class LlamaNemotronBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Llama31ModelProvider:
         hf_config = hf_pretrained.config
-
-        # Select appropriate Nemotron heterogeneous provider based on HF config
-        provider_class = self._select_heterogeneous_provider(hf_config)
+        # Validate heterogeneous DeciLM (NAS) config and select provider
+        if not (hasattr(hf_config, "block_configs") and hf_config.block_configs):
+            num_layers = getattr(hf_config, "num_hidden_layers", "unknown")
+            raise ValueError(
+                "LlamaNemotronBridge only handles heterogeneous models with block_configs. "
+                f"Model with {num_layers} layers and no block_configs should use LlamaBridge."
+            )
+        archs = set(getattr(hf_config, "architectures", []) or [])
+        auto_map = getattr(hf_config, "auto_map", {}) or {}
+        is_decilm = ("DeciLMForCausalLM" in archs) or (
+            auto_map.get("AutoModelForCausalLM", "").endswith("DeciLMForCausalLM")
+        )
+        if not is_decilm:
+            raise ValueError("Unsupported heterogeneous architecture for LlamaNemotronBridge; expected DeciLM.")
 
         # Calculate num_query_groups for heterogeneous models
         # For heterogeneous models, GQA is defined in each block config
@@ -101,40 +113,9 @@ class LlamaNemotronBridge(MegatronModelBridge):
             if hf_config.rope_scaling.get("rope_type") == "llama3":
                 provider_kwargs["scale_factor"] = hf_config.rope_scaling.get("factor", 8.0)
 
-        # Handle heterogeneous configurations
-        if hasattr(hf_config, "block_configs") and hf_config.block_configs:
-            # For heterogeneous models, pass the encoded JSON from the HF config
-            provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
-
-        provider = provider_class(**provider_kwargs)
+        provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
+        provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)
         return provider
-
-    def _select_heterogeneous_provider(self, hf_config) -> type:
-        """Select a heterogeneous Llama-Nemotron provider based on HF config.
-
-        Handles DeciLM-based NAS models (with block_configs). Homogeneous Nemotron
-        models are handled by the regular Llama bridge.
-        """
-        from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
-            LlamaNemotronHeterogeneousProvider,
-        )
-
-        # Only handle heterogeneous models (they have block_configs)
-        if hasattr(hf_config, "block_configs") and hf_config.block_configs:
-            # Prefer semantic detection over layer-count when available
-            archs = set(getattr(hf_config, "architectures", []) or [])
-            auto_map = getattr(hf_config, "auto_map", {}) or {}
-            is_decilm = ("DeciLMForCausalLM" in archs) or (
-                auto_map.get("AutoModelForCausalLM", "").endswith("DeciLMForCausalLM")
-            )
-            if is_decilm:
-                return LlamaNemotronHeterogeneousProvider
-
-        # This bridge should only be used for heterogeneous models
-        raise ValueError(
-            "LlamaNemotronBridge only handles heterogeneous models with block_configs. "
-            "Model with no block_configs should use LlamaBridge."
-        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
