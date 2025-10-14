@@ -13,7 +13,7 @@
 # limitations under the License.
 
 FROM nvcr.io/nvidia/pytorch:25.06-py3
-WORKDIR /workspace
+WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
@@ -29,3 +29,5 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
     bash docker/common/install.sh --base-image pytorch --use-uv && \
     uv cache prune --ci
+
+WORKDIR /workspace
