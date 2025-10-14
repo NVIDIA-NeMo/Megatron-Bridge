@@ -73,10 +73,10 @@ if __name__ == "__main__":
     if not preset:
         num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
         logger.debug(f"No preset found for {args.gpu}.{num_gpus_yaml_key} in perf_matrix")
-        exit()
 
     common = preset.get("common") or {}
-    compute_dtype = args.compute_dtype if args.compute_dtype == "bf16" else f"{args.compute_dtype}_{args.fp8_recipe}"
+    compute_dtype, fp8_recipe = args.compute_dtype.lower(), args.fp8_recipe.lower()
+    compute_dtype = compute_dtype if compute_dtype == "bf16" else f"{compute_dtype}_{fp8_recipe}"
     dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
     # Deep-merge so dtype-specific values override common
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
