@@ -68,23 +68,24 @@ if __name__ == "__main__":
         sys.exit(1)
 
     num_gpus_per_node = args.gpus_per_node
-    tp = 1
-    cp = 1
-    pp = 1
     yaml_overrides_omega = OmegaConf.load(config_filepath)
     preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
-    if preset:
-        common_dict = preset.get("common")
-        if args.compute_dtype.lower() == "fp8":
-            recipe_key = str(args.compute_dtype) + "_" + str(args.fp8_recipe)
-        else:
-            recipe_key = str(args.compute_dtype)
-        recipe_dict = preset.get(recipe_key)
+    if not preset:
+        num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
+        logger.debug(f"No preset found for {args.gpu}.{num_gpus_yaml_key} in perf_matrix")
+        exit()
 
-        num_gpus_per_node = common_dict.get("num_gpus_per_node", args.gpus_per_node)
-        tp = common_dict.get("tp", recipe_dict.get("tp", 1))
-        cp = common_dict.get("cp", recipe_dict.get("cp", 1))
-        pp = common_dict.get("pp", recipe_dict.get("pp", 1))
+    common = preset.get("common") or {}
+    compute_dtype = args.compute_dtype if args.compute_dtype == "bf16" else f"{args.compute_dtype}_{args.fp8_recipe}"
+    dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
+    # Deep-merge so dtype-specific values override common
+    merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
+    perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  #
+
+    num_gpus_per_node = common_dict.get("num_gpus_per_node", args.gpus_per_node)
+    tp = common_dict.get("tp", recipe_dict.get("tp", 1))
+    cp = common_dict.get("cp", recipe_dict.get("cp", 1))
+    pp = common_dict.get("pp", recipe_dict.get("pp", 1))
 
     enable_deepep = bool(args.gpu.lower() in ["h100"])
     plugins = (
