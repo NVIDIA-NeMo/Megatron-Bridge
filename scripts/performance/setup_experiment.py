@@ -86,7 +86,12 @@ if __name__ == "__main__":
     cp = perf_overrides.get("cp", 1)
     pp = perf_overrides.get("pp", 1)
 
-    enable_deepep = bool(args.gpu.lower() in ["h100"])
+    enable_deepep, a2a_overlap = False, False
+    if args.gpu.lower() in ["h100"]:
+        if args.model_name == "deepseek" and args.model_size == "v3":
+            enable_deepep = True
+            a2a_overlap = True
+
     plugins = (
         [
             PerfEnvPlugin(
@@ -99,7 +104,7 @@ if __name__ == "__main__":
                 pp_size=pp,
                 num_gpus=args.num_gpus,
                 deepep_enabled=enable_deepep,
-                a2a_overlap=args.gpu.lower() in ["h100"],
+                a2a_overlap=a2a_overlap,
             )
         ]
         if HAS_NEMO_RUN
