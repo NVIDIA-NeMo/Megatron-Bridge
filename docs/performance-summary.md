@@ -31,7 +31,7 @@ Performance is measured using:
 
 ## Performance Summary for Large Language Models
 
-Below are performance benchmarks for various large language models organized by release version. These results were obtained using performance recipes available [here](https://github.com/NVIDIA/Megatron-Bridge/tree/main/scripts/performance).
+Below are performance benchmarks for various large language models organized by release version. These results were obtained using performance recipes available [here](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance).
 
 The performance data includes:
 
@@ -47,12 +47,35 @@ The performance data includes:
 
 #### System: DGX-GB200
 
-*Performance tables will be added here*
+| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | GA | Tokens / sec / GPU | Model TFLOP / sec / GPU |
+|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-----------------------|-------------------------|
+| LLAMA3_8B | 8 | 128 | 2 | 8192 | 0 | 1 | 1 | 1 | n/a | 1 | 8 | 31357 (29925) | 1614 (1540) |
+| LLAMA3_70B | 64 | 128 | 2 | 8192 | 1 (0) | 1 (2) | 1 (4) | 1 | 1 (5) | 1 | 1 (16) | 3986 (3546) | 1791 (1593) |
+| LLAMA3.1_405B | 128 | 64 | 1 | 8192 | 1 (0) | 2 (4) | 1 (8) | 1 (2) | 1 (8) | 1 | 1 (32) | 729 (578) | 1840 (1458) |
+| DeepSeekV3 (tokendrop) | 256 | 2048 | 1 | 4096 | 0 | 1 | 4 (8) | 1 | 4 (2) | 64 | 32 (64) | 3454 (2835) | 899 (738) |
+| Qwen3_30B_a3B (tokendrop) | 8 | 512 | 4 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 16 | 22775 (23723) | 524 (546) |
+| Qwen3_235B_a22B (tokendrop) | 64 | 1024 | 1 | 4096 | 0 | 2 | 1 | 1 | 1 | 64 | 32 | 4452 (4416) | 659 (654) |
 
 #### System: DGX-B200
 
-*Performance tables will be added here*
+| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | GA | Tokens / sec / GPU | Model TFLOP / sec / GPU |
+|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-----------------------|-------------------------|
+| LLAMA3_8B | 8 | 128 | 2 | 8192 | 0 | 1 | 1 | 1 | n/a | 1 | 8 | 29994 (29388) | 1544 (1513) |
+| LLAMA3.1_405B | 128 | 64 | 1 | 8192 | 0 | 4 | 8 | 2 | 8 | 1 | 32 | 664 (622) | 1676 (1569) |
+| DeepSeekV3 (tokendrop) | 256 | 2048 | 1 | 4096 | 0 | 1 | 16 | 1 | 1 | 8 | 128 | 2265 (2159) | 589 (562) |
+| Qwen3_30B_a3B (tokendrop) | 8 | 512 | 1 | 4096 | 0 | 1 | 1 | 1 | 1 | 8 | 64 | 18066 | 416 |
+| Qwen3_235B_a22B (tokendrop) | 64 | 1024 | 1 | 4096 | 0 | 1 | 8 | 1 | 2 | 8 | 128 | 4104 (4275) | 607 (633) |
 
 #### System: DGX-H100
 
-*Performance tables will be added here*
+| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | PP | CP | VP | EP | GA | Tokens / sec / GPU | Model TFLOP / sec / GPU |
+|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-----------------------|-------------------------|
+| LLAMA3_8B | 8 | 128 | 1 | 8192 | 1 | 1 | 1 | 1 | n/a | 1 | 16 | 14079 | 725 |
+| LLAMA3_70B | 64 | 128 | 1 | 8192 | 0 | 4 | 8 | 1 | 5 | 1 | 64 | 1619 | 727 |
+| LLAMA3.1_405B | 1024 | 512 | 1 | 8192 | 0 | 8 | 8 | 2 | 8 | 1 | 64 | 302 | 763 |
+| DeepSeekV3 (dropless) | 1024 | 8192 | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 64 | 128 | 1297 | 338 (330) |
+| Qwen3_30B_a3B (tokendrop) | 16 | 512 | 2 | 4096 | 0 | 1 | 2 | 1 | 24 | 8 | 32 | 10494 | 241 |
+| Qwen3_235B_a22B (tokendrop) | 256 | 2048 | 1 | 4096 | 0 | 2 | 8 | 1 | 4 | 32 | 128 | 1204 | 178 |
+
+- The numbers in parentheses indicate the use of different quantization granularities: In case of Gb200 and B200 systems, 32×32 for both weights and activations. For H100 system, 128×128 for weights and 1×128 for activations, which match those used in the original DeepSeekV3 pre-training.
+- In token-dropless MoE trianing benchmarks, we force-balance the token distribution among experts.

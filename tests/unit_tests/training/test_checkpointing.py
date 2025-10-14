@@ -335,6 +335,7 @@ def save_checkpoint_fixtures():
     mock_cfg.checkpoint.save_rng = True
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_ckpt_type = "global"
+    mock_cfg.checkpoint.save_tokenizer_assets = False  # Disable for unit tests
 
     # Create nested mock attributes
     mock_cfg.optimizer = Mock()
@@ -343,6 +344,7 @@ def save_checkpoint_fixtures():
     mock_cfg.rng.data_parallel_random_init = False
     mock_cfg.dataset = Mock()
     mock_cfg.dataset.dataloader_save = None
+    mock_cfg.dataset.tokenizer = None  # No tokenizer in unit tests
     mock_cfg.to_yaml = Mock()  # Mock config YAML export
     mock_cfg.logger = Mock()
     mock_cfg.logger.log_progress = False

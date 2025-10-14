@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import re
 import warnings
 
 import torch
@@ -111,3 +112,19 @@ def print_rank_last(message: str) -> None:
             print(message, flush=True)
     else:
         print(message, flush=True)
+
+
+def extract_expert_number_from_param(param_name: str) -> int:
+    """Extract the expert number from a parameter name.
+    Args:
+        param_name: The parameter name to extract the expert number from.
+    Returns:
+        The expert number.
+    """
+    pattern = r"(?:experts\.|weight|bias)(\d+)"
+    match = re.search(pattern, param_name)
+    if not match:
+        raise ValueError(
+            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
+        )
+    return int(match.group(1))

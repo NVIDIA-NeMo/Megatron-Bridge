@@ -215,6 +215,7 @@ def main(args) -> None:
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -337,7 +338,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf_model_path",
         type=str,
-        default="Qwen/Qwen2.5-VL-3B-Instruct",
+        required=True,
         help="Path to the HuggingFace VL model.",
     )
     parser.add_argument(

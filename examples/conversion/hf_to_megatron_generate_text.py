@@ -134,6 +134,7 @@ def main(args) -> None:
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -245,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf_model_path",
         type=str,
-        default="meta-llama/Llama-3.2-1B",
+        required=True,
         help="Path to the HuggingFace model.",
     )
     parser.add_argument(

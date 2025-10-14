@@ -362,16 +362,25 @@ class SchedulerConfig:
     """Decay style for the annealing phase of WSD"""
 
     lr_decay_iters: Optional[int] = None
-    """number of iterations to decay learning rate over, If None defaults to `--train-iters`"""
+    """number of iterations to decay learning rate over, If None defaults to `train.train_iters`"""
+
+    lr_decay_samples: Optional[int] = None
+    """number of samples to decay learning rate over, If None defaults to `train.train_samples`"""
 
     lr_wsd_decay_iters: Optional[int] = None
     """number of iterations for the annealing phase in the wsd schedule"""
+
+    lr_wsd_decay_samples: Optional[int] = None
+    """number of samples for the annealing phase in the wsd schedule"""
 
     lr_warmup_fraction: Optional[float] = None
     """fraction of lr-warmup-(iters/samples) to use for warmup (as a float)"""
 
     lr_warmup_iters: int = 0
     """number of iterations to linearly warmup learning rate over."""
+
+    lr_warmup_samples: int = 0
+    """number of samples to linearly warmup learning rate over."""
 
     lr_warmup_init: float = 0.0
     """Initial value for learning rate warmup. The scheduler starts warmup from this value."""
@@ -402,7 +411,7 @@ class SchedulerConfig:
     wd_incr_steps: Optional[int] = field(init=False, default=None)
     wsd_decay_steps: Optional[int] = field(init=False, default=None)
 
-    def finalize(self):
+    def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
         if self.start_weight_decay is not None:
             assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
@@ -410,6 +419,28 @@ class SchedulerConfig:
 
         if self.override_opt_param_scheduler:
             assert not self.use_checkpoint_opt_param_scheduler, "both override and use-checkpoint are set."
+
+        # Validate mutual exclusivity between iteration-based and sample-based scheduler fields
+        has_iter_fields = (
+            self.lr_decay_iters is not None or self.lr_warmup_iters != 0 or self.lr_wsd_decay_iters is not None
+        )
+        has_sample_fields = (
+            self.lr_decay_samples is not None or self.lr_warmup_samples != 0 or self.lr_wsd_decay_samples is not None
+        )
+
+        assert not (has_iter_fields and has_sample_fields), (
+            f"Cannot mix iteration-based and sample-based scheduler fields. "
+            f"Found iteration fields: lr_decay_iters={self.lr_decay_iters}, lr_warmup_iters={self.lr_warmup_iters}, lr_wsd_decay_iters={self.lr_wsd_decay_iters}. "
+            f"Found sample fields: lr_decay_samples={self.lr_decay_samples}, lr_warmup_samples={self.lr_warmup_samples}, lr_wsd_decay_samples={self.lr_wsd_decay_samples}. "
+            f"Use either iteration fields OR sample fields, not both."
+        )
+
+        # Validate mutual exclusivity between lr_warmup_fraction and specific warmup fields
+        if self.lr_warmup_fraction is not None:
+            assert self.lr_warmup_iters == 0 and self.lr_warmup_samples == 0, (
+                f"Cannot specify lr_warmup_fraction={self.lr_warmup_fraction} with lr_warmup_iters={self.lr_warmup_iters} or lr_warmup_samples={self.lr_warmup_samples}. "
+                f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
+            )
 
 
 @dataclass(kw_only=True)
@@ -457,8 +488,12 @@ class TrainingConfig:
 
     train_iters: Optional[int] = None
     """Total number of iterations to train over all training runs.
-    Note that either train-iters or train-samples should be provided.
+    Note that either train_iters or train_samples should be provided.
     """
+
+    train_samples: Optional[int] = None
+    """Total number of samples to train over all training runs.
+    Note that either train_iters or train_samples should be provided."""
 
     exit_interval: Optional[int] = None
     """Exit the program after the iteration is divisible by this value."""
@@ -501,6 +536,21 @@ class TrainingConfig:
 
     skip_train: bool = False
     """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
+
+    def finalize(self) -> None:
+        """Validate training mode specification and calculate train_iters from train_samples if needed."""
+        has_train_iters = self.train_iters is not None
+        has_train_samples = self.train_samples is not None
+
+        assert has_train_iters or has_train_samples, "Either train_iters or train_samples must be provided"
+        assert not (has_train_iters and has_train_samples), "Cannot specify both train_iters and train_samples"
+        if has_train_samples:
+            assert self.train_samples > 0, "train_samples must be positive"
+            assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
+
+            # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
+            self.train_iters = self.train_samples // self.global_batch_size
+            print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
 
 
 @dataclass(kw_only=True)
@@ -618,6 +668,11 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
+    save_tokenizer_assets: bool = True
+    """Save tokenizer files to checkpoint directory. When enabled, saves all tokenizer artifacts
+    (vocab files, special tokens, tokenizer config) to make checkpoints self-contained and portable.
+    Set to False for performance-sensitive scenarios where tokenizer files are not needed."""
+
     replication: bool = False
     """If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks."""
 
@@ -653,6 +708,12 @@ class LoggerConfig:
 
     log_throughput: bool = False
     """If set, calculate and log throughput per GPU."""
+
+    log_throughput_to_tensorboard: bool = False
+    """Enable throughput logging to tensorboard."""
+
+    throughput_window_size: int = 100
+    """Number of batches to use for a rolling average of throughput."""
 
     log_progress: bool = False
     """If set, log progress (in terms of number of processed tokens and number of floating-point operations)
@@ -697,6 +758,18 @@ class LoggerConfig:
 
     log_memory_to_tensorboard: bool = False
     """Enable memory logging to tensorboard."""
+
+    memory_keys: dict[str, str] | None = None
+    """Names of memory statistics to log from `torch.cuda.memory_stats()`"""
+
+    log_l2_norm_grad_to_tensorboard: bool = False
+    """Enable gradients logging to tensorboard."""
+
+    log_runtime_to_tensorboard: bool = False
+    """Enable runtime metrics logging to tensorboard."""
+
+    runtime_time_unit: str = "hours"
+    """ Time unit to use for time logging. """
 
     log_world_size_to_tensorboard: bool = False
     """Enable world size logging to tensorboard."""
@@ -762,6 +835,10 @@ class ProfilingConfig:
 
     record_shapes: bool = False
     """Record shapes of tensors."""
+
+    nvtx_ranges: bool = False
+    """Enable NVTX range annotations for profiling. When enabled, inserts NVTX markers
+    to categorize execution in profiler output."""
 
     def finalize(self) -> None:
         """Validate profiling configuration."""
@@ -1030,6 +1107,8 @@ class ConfigContainer(Container):
             self.optimizer.finalize()
         if hasattr(self.model, "finalize"):
             self.model.finalize()
+
+        self.train.finalize()
         self.scheduler.finalize()
         self.checkpoint.finalize()
         if self.profiling is not None:
@@ -1102,18 +1181,11 @@ class ConfigContainer(Container):
                 # optimizer state in the CPU memory of DP rank 0.
                 assert self.checkpoint.ckpt_format == "torch_dist"
 
-        # Scheduler
-        if self.scheduler.lr_decay_iters is None:
-            self.scheduler.lr_decay_iters = self.train.train_iters
-        self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
-        self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
-        self.scheduler.wsd_decay_steps = None
-        if self.scheduler.lr_wsd_decay_iters is not None:
-            self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
-        if self.scheduler.lr_warmup_fraction is not None:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
-        else:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+        # Cross-validation between training and scheduler configs
+        self._validate_training_scheduler_compatibility()
+
+        # Calculate scheduler steps for both iteration-based and sample-based training
+        self._calculate_scheduler_steps()
 
         if self.model.context_parallel_size > 1:
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
@@ -1171,6 +1243,66 @@ class ConfigContainer(Container):
         validate_deepep(self.model)
 
         self._sync_and_validate_external_cuda_graph()
+
+    def _validate_training_scheduler_compatibility(self) -> None:
+        """Cross-validation between training and scheduler configs."""
+        has_train_samples = self.train.train_samples is not None
+
+        if has_train_samples:
+            # Sample-based training validation
+            assert self.scheduler.lr_decay_iters is None, (
+                "Use lr_decay_samples for sample-based training, not lr_decay_iters"
+            )
+            assert self.scheduler.lr_warmup_iters == 0, (
+                "Use lr_warmup_samples for sample-based training, not lr_warmup_iters"
+            )
+            assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_samples != 0), (
+                "Can only specify one of lr_warmup_fraction or lr_warmup_samples"
+            )
+        else:
+            # Iteration-based training validation
+            assert self.scheduler.lr_decay_samples is None, (
+                "Use lr_decay_iters for iteration-based training, not lr_decay_samples"
+            )
+            assert self.scheduler.lr_warmup_samples == 0, (
+                "Use lr_warmup_iters for iteration-based training, not lr_warmup_samples"
+            )
+            assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_iters != 0), (
+                "Can only specify one of lr_warmup_fraction or lr_warmup_iters"
+            )
+
+    def _calculate_scheduler_steps(self) -> None:
+        """Calculate scheduler steps for both iteration-based and sample-based training."""
+        is_sample_based = self.train.train_samples is not None
+
+        if is_sample_based:
+            if self.scheduler.lr_decay_samples is None:
+                self.scheduler.lr_decay_samples = self.train.train_samples
+            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_samples
+            self.scheduler.wd_incr_steps = self.train.train_samples
+
+            if self.scheduler.lr_wsd_decay_samples is not None:
+                self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_samples
+
+            # Warmup calculation for sample-based training
+            if self.scheduler.lr_warmup_fraction is not None:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
+            else:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_samples
+        else:
+            # Iteration-based training
+            if self.scheduler.lr_decay_iters is None:
+                self.scheduler.lr_decay_iters = self.train.train_iters
+            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
+            self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
+
+            if self.scheduler.lr_wsd_decay_iters is not None:
+                self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
+
+            if self.scheduler.lr_warmup_fraction is not None:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
+            else:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:

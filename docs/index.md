@@ -11,6 +11,7 @@ performance-summary.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
+megatron-lm-to-megatron-bridge.md
 ```
 
 ```{toctree}
