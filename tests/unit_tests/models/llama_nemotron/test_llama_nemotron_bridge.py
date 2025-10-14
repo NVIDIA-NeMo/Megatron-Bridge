@@ -27,6 +27,7 @@ from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
     Llama31NemotronNano8BProvider,
     Llama31NemotronUltra253BProvider,
     Llama33NemotronSuper49BProvider,
+    LlamaNemotronHeterogeneousProvider,
 )
 
 
@@ -157,8 +158,8 @@ class TestLlamaNemotronBridge:
         bridge = LlamaNemotronBridge()
         provider = bridge.provider_bridge(mock_pretrained_super)
 
-        # Verify that provider is of correct type
-        assert isinstance(provider, Llama33NemotronSuper49BProvider)
+        # Verify that provider is of correct type (generic heterogeneous provider)
+        assert isinstance(provider, LlamaNemotronHeterogeneousProvider)
 
         # Check that key configuration values are correctly mapped
         config = llama_nemotron_super_config_dict
