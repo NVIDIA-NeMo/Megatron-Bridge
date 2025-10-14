@@ -1020,9 +1020,7 @@ class TestPerfEnvPlugin:
 
     def test_cuda_max_connections_with_a2a_overlap_enabled(self):
         """Test that a2a_overlap prevents setting CUDA_DEVICE_MAX_CONNECTIONS to 1 on older GPUs."""
-        plugin = PerfEnvPlugin(
-            gpu_sm100_or_newer=False, a2a_overlap=True, tp_size=2, cp_size=1, pp_size=1, num_gpus=8
-        )
+        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, a2a_overlap=True, tp_size=2, cp_size=1, pp_size=1, num_gpus=8)
 
         # Create mock task and executor
         task = MagicMock(spec=run.Partial)
