@@ -316,8 +316,9 @@ class TestAutoBridgeIntegration:
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
     @patch("transformers.AutoConfig.from_pretrained")
+    @patch("transformers.dynamic_module_utils.get_class_from_dynamic_module")
     def test_from_pretrained_with_temp_dir(
-        self, mock_autoconfig, mock_pretrained, nemotronh_config_dict, nemotronh_config
+        self, mock_dynamic_util, mock_autoconfig, mock_pretrained, nemotronh_config_dict, nemotronh_config
     ):
         """Test AutoBridge.from_hf_pretrained with temporary directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -327,6 +328,11 @@ class TestAutoBridgeIntegration:
             # Mock the config loading
             config = nemotronh_config
             mock_autoconfig.return_value = config
+
+            # Mock the type from remote modeling file
+            mock_nemtronh_type = Mock()
+            mock_nemtronh_type.__name__ = "NemotronHForCausalLM"
+            mock_dynamic_util.return_value = mock_nemtronh_type
 
             # Mock the pretrained model
             mock_model = Mock(spec=PreTrainedCausalLM)
@@ -341,12 +347,16 @@ class TestAutoBridgeIntegration:
             assert isinstance(bridge, AutoBridge)
             assert bridge.hf_pretrained == mock_model
             mock_autoconfig.assert_called_once_with(temp_dir, trust_remote_code=False)
+            call_kwargs = mock_dynamic_util.call_args.kwargs
+            assert call_kwargs["class_reference"] == config_dict["auto_map"]["AutoModelForCausalLM"]
+            assert call_kwargs["pretrained_model_name_or_path"] == temp_dir
             mock_pretrained.assert_called_once_with(temp_dir)
 
     @patch("megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained")
     @patch("transformers.AutoConfig.from_pretrained")
+    @patch("transformers.dynamic_module_utils.get_class_from_dynamic_module")
     def test_from_pretrained_with_kwargs(
-        self, mock_autoconfig, mock_pretrained, nemotronh_config_dict, nemotronh_config
+        self, mock_dynamic_util, mock_autoconfig, mock_pretrained, nemotronh_config_dict, nemotronh_config
     ):
         """Test AutoBridge.from_hf_pretrained with various kwargs."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -356,6 +366,11 @@ class TestAutoBridgeIntegration:
             # Mock the config loading
             config = nemotronh_config
             mock_autoconfig.return_value = config
+
+            # Mock the type from remote modeling file
+            mock_nemtronh_type = Mock()
+            mock_nemtronh_type.__name__ = "NemotronHForCausalLM"
+            mock_dynamic_util.return_value = mock_nemtronh_type
 
             # Mock the pretrained model
             mock_model = Mock(spec=PreTrainedCausalLM)

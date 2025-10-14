@@ -239,7 +239,7 @@ def apply_args_to_config(config, args):
         config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
 
     # Logging configuration
-    config.logger.log_timers_to_tensorboard = True
+    config.logger.log_timers_to_tensorboard = args.tensorboard is True
 
     # WandB configuration
     if args.wandb_project:
@@ -369,6 +369,12 @@ def setup_argument_parser():
     parser.add_argument("--convergence", action="store_true", help="Enable convergence run", default=False)
     parser.add_argument("--nsys", action="store_true", help="Enable nsys profiling", default=False)
     parser.add_argument("--mem", action="store_true", help="Enable torch memory profiling", default=False)
+    parser.add_argument(
+        "--tensorboard", action="store_true", dest="tensorboard", help="Enable tensorboard logging", default=True
+    )
+    parser.add_argument(
+        "--no-tensorboard", action="store_false", dest="tensorboard", help="Disable tensorboard logging"
+    )
 
     # WandB configuration
     parser.add_argument("--wandb-project", type=str, help="WandB project name")

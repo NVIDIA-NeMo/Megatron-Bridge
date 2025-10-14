@@ -116,13 +116,10 @@ def print_rank_last(message: str) -> None:
 
 def extract_expert_number_from_param(param_name: str) -> int:
     """Extract the expert number from a parameter name.
-
     Args:
         param_name: The parameter name to extract the expert number from.
-
     Returns:
         The expert number.
-
     """
     pattern = r"(?:experts\.|weight|bias)(\d+)"
     match = re.search(pattern, param_name)
