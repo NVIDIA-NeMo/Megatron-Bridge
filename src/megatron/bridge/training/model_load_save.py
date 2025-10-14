@@ -157,13 +157,8 @@ def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
 
 def load_model_config(
     checkpoint_path: str,
-    model_type: Optional[Literal["gpt", "mamba"]] = None,
-    return_state_dict: bool = False,
-    use_cpu_init: bool = True,
-    skip_temp_dist_context: Optional[bool] = None,
-    mp_overrides: Optional[ModelParallelKwargs] = None,
-) -> Union[Any, dict[str, torch.Tensor]]:
-    """Load a Megatron model from a distributed checkpoint.
+) -> tuple[TransformerConfig, Optional[argparse.Namespace]]:
+    """Returns the model config saved in the checkpoint.
 
     Supports checkpoints saved with either Megatron Bridge or MegatronLM.
 
@@ -250,23 +245,6 @@ def build_and_load_model(
     if has_modelopt_state(checkpoint_path):
         if hasattr(model_cfg, "restore_modelopt_state"):
             model_cfg.restore_modelopt_state = True
-
-    # If in single GPU environment, reset additional parallel settings
-    model_cfg.tensor_model_parallel_size = 1
-    model_cfg.pipeline_model_parallel_size = 1
-    model_cfg.context_parallel_size = 1
-    model_cfg.expert_model_parallel_size = 1
-    model_cfg.expert_tensor_parallel_size = 1
-    model_cfg.moe_extended_tp = False
-    model_cfg.sequence_parallel = False
-    model_cfg.virtual_pipeline_model_parallel_size = None
-    model_cfg.hierarchical_context_parallel_sizes = None
-
-    # Apply model-parallel overrides if provided
-    if mp_overrides:
-        for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and value is not None:
-                setattr(model_cfg, key, value)
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""

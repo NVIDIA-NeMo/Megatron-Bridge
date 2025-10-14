@@ -241,7 +241,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
             kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
         if self.attention_backend == AttnBackend.local:
-            if hasattr(transformer_layer_spec, 'submodules'):
+            if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
         with model_init_device_context():
             model = MCoreGPTModel(

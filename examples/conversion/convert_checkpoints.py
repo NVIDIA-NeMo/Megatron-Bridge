@@ -88,7 +88,6 @@ def import_hf_to_megatron(
     torch_dtype: Optional[str] = None,
     device_map: Optional[str] = None,
     trust_remote_code: bool = False,
-    quantized: bool = True,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -121,7 +120,6 @@ def import_hf_to_megatron(
     AutoBridge.import_ckpt(
         hf_model_id=hf_model,
         megatron_path=megatron_path,
-        quantized=quantized,
         **kwargs,
     )
 
@@ -143,8 +141,6 @@ def export_megatron_to_hf(
     megatron_path: str,
     hf_path: str,
     show_progress: bool = True,
-    quantized: bool = False,
-    strict: bool = False,
 ) -> None:
     """
     Export a Megatron checkpoint to HuggingFace format.
@@ -153,7 +149,6 @@ def export_megatron_to_hf(
         megatron_path: Directory path where the Megatron checkpoint is stored
         hf_path: Directory path where the HuggingFace model will be saved
         show_progress: Display progress bar during weight export
-        quantized: Export quantized model
     """
     print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
 
@@ -180,7 +175,7 @@ def export_megatron_to_hf(
 
     # For demonstration, we'll create a bridge from a known config
     # This would typically be extracted from the checkpoint metadata
-    bridge = AutoBridge.from_hf_pretrained(hf_model, quantized=quantized)
+    bridge = AutoBridge.from_hf_pretrained(hf_model)
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
@@ -188,8 +183,6 @@ def export_megatron_to_hf(
         megatron_path=megatron_path,
         hf_path=hf_path,
         show_progress=show_progress,
-        quantized=quantized,
-        strict=strict,
     )
 
     print(f"✅ Successfully exported model to: {hf_path}")
@@ -228,7 +221,7 @@ def main():
     import_parser.add_argument("--torch-dtype", choices=["float32", "float16", "bfloat16"], help="Model precision")
     import_parser.add_argument("--device-map", help='Device placement strategy (e.g., "auto", "cuda:0")')
     import_parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
-    import_parser.add_argument("--import-unquantized", action="store_true", help="Import unquantized model")
+
     # Export subcommand (Megatron -> HF)
     export_parser = subparsers.add_parser("export", help="Export Megatron checkpoint to HuggingFace format")
     export_parser.add_argument("--hf-model", required=True, help="HuggingFace model ID or path to model directory")
@@ -239,8 +232,7 @@ def main():
         "--hf-path", required=True, help="Directory path where the HuggingFace model will be saved"
     )
     export_parser.add_argument("--no-progress", action="store_true", help="Disable progress bar during export")
-    export_parser.add_argument("--export-quantized", action="store_true", help="Export quantized model")
-    export_parser.add_argument("--not-strict", action="store_true", help="Allow exported ckpt to differ from input hf ckpt. Useful when the input checkpoint is quantized.")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -254,7 +246,6 @@ def main():
             torch_dtype=args.torch_dtype,
             device_map=args.device_map,
             trust_remote_code=args.trust_remote_code,
-            quantized=not args.import_unquantized,
         )
 
     elif args.command == "export":
@@ -263,8 +254,6 @@ def main():
             megatron_path=args.megatron_path,
             hf_path=args.hf_path,
             show_progress=not args.no_progress,
-            quantized=args.export_quantized,
-            strict=not args.not_strict,
         )
     else:
         raise RuntimeError(f"Unknown command: {args.command}")

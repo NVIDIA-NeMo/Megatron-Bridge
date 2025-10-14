@@ -366,9 +366,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             for task in tasks:
                 yield task
 
-
-    def modify_loaded_hf_weight(self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        """ Load weights from HuggingFace state dict.
+    def modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Load weights from HuggingFace state dict.
         This function can be overridden by subclasses to preprocess the HF weights before conversion, such as renaming
         certain parameters to avoid mapping conflicts, or dequantize the weights.
 
@@ -388,9 +389,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             hf_weights = {k: hf_state_dict[v] for k, v in hf_param.items()}
         return hf_weights
 
-
     def modify_converted_hf_weight(self, converted_weights_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """ Modify the converted weights after conversion. By default, no modification is done.
+        """Modify the converted weights after conversion. By default, no modification is done.
         This function can be overridden by subclasses to postprocess the converted weights, such as merging the
         weights of multiple experts or quantizing the weights.
 
@@ -401,7 +401,6 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             The modified weights dictionary.
         """
         return converted_weights_dict
-
 
     def load_weights_hf_to_megatron(
         self, hf_pretrained: HFPreTrained, megatron_model: Union[MegatronModel, List[MegatronModel]]
@@ -618,7 +617,9 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         embeddings_are_tied = model_config.share_embeddings_and_output_weights
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
-            converted_weights_dict = self.modify_converted_hf_weight(task, converted_weights_dict)  # dict will be none except for one expert;
+            converted_weights_dict = self.modify_converted_hf_weight(
+                task, converted_weights_dict
+            )  # dict will be none except for one expert;
             # All ranks get the full tensor
             for hf_name, tensor in converted_weights_dict.items():
                 final_tensor = tensor.cpu() if cpu else tensor
@@ -864,9 +865,13 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                             logger.warning(f"WARNING: Can't find {mapping.hf_param} in hf_keys")
                             continue
                     else:
-                        missing_params = [hf_param for hf_param in mapping.hf_param.values() if hf_param not in hf_keys]
+                        missing_params = [
+                            hf_param for hf_param in mapping.hf_param.values() if hf_param not in hf_keys
+                        ]
                         if missing_params:
-                            logger.warning(f"WARNING: Can't find the following HF parameters in hf_keys: {missing_params}")
+                            logger.warning(
+                                f"WARNING: Can't find the following HF parameters in hf_keys: {missing_params}"
+                            )
                             continue
 
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)

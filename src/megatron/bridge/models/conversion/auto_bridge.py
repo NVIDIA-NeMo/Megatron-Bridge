@@ -347,7 +347,9 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
         )
 
-    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
+    def save_hf_pretrained(
+        self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
+    ) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
@@ -383,7 +385,9 @@ class AutoBridge(Generic[MegatronModelT]):
 
         self.save_hf_weights(model, path, show_progress, strict)
 
-    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
+    def save_hf_weights(
+        self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
+    ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 

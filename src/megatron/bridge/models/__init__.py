@@ -54,6 +54,12 @@ from megatron.bridge.models.glm import (
     GLM45ModelProvider355B,
     GLMMoEModelProvider,
 )
+from megatron.bridge.models.gpt_oss import (
+    GPTOSSBridge,
+    GPTOSSProvider,
+    GPTOSSProvider20B,
+    GPTOSSProvider120B,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
     CodeLlamaModelProvider7B,
@@ -76,12 +82,6 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider1B,
     Llama32ModelProvider3B,
     LlamaModelProvider,
-)
-from megatron.bridge.models.gpt_oss import (
-    GPTOSSProvider,
-    GPTOSSProvider20B,
-    GPTOSSProvider120B,
-    GPTOSSBridge,
 )
 from megatron.bridge.models.mamba.mamba_provider import (
     MambaModelProvider,
