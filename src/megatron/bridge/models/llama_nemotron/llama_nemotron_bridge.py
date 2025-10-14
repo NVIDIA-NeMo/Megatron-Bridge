@@ -39,8 +39,9 @@ class LlamaNemotronBridge(MegatronModelBridge):
     2. They have heterogeneous block configurations (different layers have different specs)
     3. They require trust_remote_code=True to load from HuggingFace
 
-    Supported models:
+    Supported models (examples):
     - nvidia/Llama-3_3-Nemotron-Super-49B-v1 (80 layers, 8192 hidden)
+    - nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 (updated v1.5 release)
     - nvidia/Llama-3_1-Nemotron-Ultra-253B-v1 (162 layers, 16384 hidden)
 
     Homogeneous Llama-Nemotron models (Nano/70B) use standard LlamaForCausalLM
@@ -50,7 +51,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         >>> from megatron.bridge import AutoBridge
         >>> # DeciLMForCausalLM models will automatically use this bridge
         >>> bridge = AutoBridge.from_hf_pretrained(
-        ...     "nvidia/Llama-3_3-Nemotron-Super-49B-v1",
+        ...     "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
         ...     trust_remote_code=True
         ... )
         >>> provider = bridge.to_megatron_provider()
@@ -59,8 +60,8 @@ class LlamaNemotronBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Llama31ModelProvider:
         hf_config = hf_pretrained.config
 
-        # Detect model variant based on configuration
-        provider_class = self._detect_nemotron_variant(hf_config)
+        # Select appropriate Nemotron heterogeneous provider based on HF config
+        provider_class = self._select_heterogeneous_provider(hf_config)
 
         # Calculate num_query_groups for heterogeneous models
         # For heterogeneous models, GQA is defined in each block config
@@ -108,30 +109,31 @@ class LlamaNemotronBridge(MegatronModelBridge):
         provider = provider_class(**provider_kwargs)
         return provider
 
-    def _detect_nemotron_variant(self, hf_config) -> type:
-        """Detect which heterogeneous Llama-Nemotron variant based on model configuration.
+    def _select_heterogeneous_provider(self, hf_config) -> type:
+        """Select a heterogeneous Llama-Nemotron provider based on HF config.
 
-        This method only handles heterogeneous models since homogeneous Nemotron models
-        are handled by the regular LlamaBridge.
+        Handles DeciLM-based NAS models (with block_configs). Homogeneous Nemotron
+        models are handled by the regular Llama bridge.
         """
         from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
-            Llama31NemotronUltra253BProvider,
-            Llama33NemotronSuper49BProvider,
+            LlamaNemotronHeterogeneousProvider,
         )
-
-        num_layers = hf_config.num_hidden_layers
 
         # Only handle heterogeneous models (they have block_configs)
         if hasattr(hf_config, "block_configs") and hf_config.block_configs:
-            if num_layers == 80:
-                return Llama33NemotronSuper49BProvider
-            elif num_layers == 162:
-                return Llama31NemotronUltra253BProvider
+            # Prefer semantic detection over layer-count when available
+            archs = set(getattr(hf_config, "architectures", []) or [])
+            auto_map = getattr(hf_config, "auto_map", {}) or {}
+            is_decilm = ("DeciLMForCausalLM" in archs) or (
+                auto_map.get("AutoModelForCausalLM", "").endswith("DeciLMForCausalLM")
+            )
+            if is_decilm:
+                return LlamaNemotronHeterogeneousProvider
 
         # This bridge should only be used for heterogeneous models
         raise ValueError(
-            f"LlamaNemotronBridge only handles heterogeneous models with block_configs. "
-            f"Model with {num_layers} layers and no block_configs should use LlamaBridge."
+            "LlamaNemotronBridge only handles heterogeneous models with block_configs. "
+            "Model with no block_configs should use LlamaBridge."
         )
 
     def mapping_registry(self) -> MegatronMappingRegistry:

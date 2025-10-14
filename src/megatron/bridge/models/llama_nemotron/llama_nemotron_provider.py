@@ -23,13 +23,10 @@ from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import get
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.llama.llama_provider import (
+    Llama31ModelProvider,
     Llama31ModelProvider8B,
     Llama31ModelProvider70B,
     Llama31ModelProvider405B,
-)
-from megatron.bridge.models.llama_nemotron.llama_nemotron_config import (
-    LLAMA_31_NEMOTRON_ULTRA_253B_HETEROGENEOUS_CONFIG,
-    LLAMA_33_NEMOTRON_SUPER_49B_HETEROGENEOUS_CONFIG,
 )
 from megatron.bridge.models.transformer_config import HeterogeneousTransformerConfig
 
@@ -105,7 +102,7 @@ class Llama33NemotronSuper49BProvider(Llama31ModelProvider70B, HeterogeneousTran
     autocast_dtype: torch.dtype = torch.bfloat16
 
     heterogeneous_layers_config_path: str = ""
-    heterogeneous_layers_config_encoded_json: str = LLAMA_33_NEMOTRON_SUPER_49B_HETEROGENEOUS_CONFIG
+    heterogeneous_layers_config_encoded_json: str = ""
     transformer_layer_spec: Union[ModuleSpec, Callable] = heterogeneous_layer_spec
 
 
@@ -133,5 +130,26 @@ class Llama31NemotronUltra253BProvider(Llama31ModelProvider405B, HeterogeneousTr
 
     # Heterogeneous configuration fields
     heterogeneous_layers_config_path: str = ""
-    heterogeneous_layers_config_encoded_json: str = LLAMA_31_NEMOTRON_ULTRA_253B_HETEROGENEOUS_CONFIG
+    heterogeneous_layers_config_encoded_json: str = ""
+    transformer_layer_spec: Union[ModuleSpec, Callable] = heterogeneous_layer_spec
+
+
+@dataclass
+class LlamaNemotronHeterogeneousProvider(Llama31ModelProvider, HeterogeneousTransformerConfig):
+    """
+    Generic provider for heterogeneous (NAS) Llama-Nemotron models using DeciLMForCausalLM.
+
+    Sizes and all architectural details are driven directly from the HF config
+    provided at runtime via kwargs (num_layers, hidden_size, heads, kv_channels, etc.).
+    """
+
+    # Data type settings to match HF models (BF16)
+    bf16: bool = True
+    fp16: bool = False
+    params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
+
+    # Heterogeneous configuration fields
+    heterogeneous_layers_config_path: str = ""
+    heterogeneous_layers_config_encoded_json: str = ""
     transformer_layer_spec: Union[ModuleSpec, Callable] = heterogeneous_layer_spec

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -129,12 +130,8 @@ class TestLlamaNemotronBridge:
         # Add missing attributes that the bridge expects
         mock_config.head_dim = 128  # Set actual value, not Mock
 
-        # Use the real heterogeneous config for Super 49B
-        from megatron.bridge.models.llama_nemotron.llama_nemotron_config import (
-            LLAMA_33_NEMOTRON_SUPER_49B_HETEROGENEOUS_CONFIG,
-        )
-
-        mock_config.to_json_string = Mock(return_value=LLAMA_33_NEMOTRON_SUPER_49B_HETEROGENEOUS_CONFIG)
+        # Serialize the heterogeneous config from the provided dict for the bridge to consume
+        mock_config.to_json_string = Mock(return_value=json.dumps(llama_nemotron_super_config_dict))
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_config
