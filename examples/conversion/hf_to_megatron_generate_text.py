@@ -42,11 +42,10 @@ class SingleBatchIterator:
     Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask):
+    def __init__(self, input_ids, position_ids):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
-            attention_mask=attention_mask,
         )
         self._yielded = False
 
@@ -170,7 +169,6 @@ def main(args) -> None:
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     generated_ids = input_ids.clone()
 
     stop_tokens = [tokenizer.eos_token_id]
@@ -181,7 +179,7 @@ def main(args) -> None:
             print_rank_0(f"Generation step {step}")
 
             fwd_bwd_function = get_forward_backward_func()
-            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask)
+            iterator = SingleBatchIterator(input_ids, position_ids)
 
             output = fwd_bwd_function(
                 forward_step_func=text_forward_step,
@@ -227,7 +225,6 @@ def main(args) -> None:
                 .unsqueeze(0)
                 .expand_as(input_ids)
             )
-            attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
 
             # If the generated token is the end of sequence token, stop generating
             if next_token_ids.item() in stop_tokens:
