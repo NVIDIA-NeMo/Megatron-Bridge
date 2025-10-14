@@ -28,7 +28,7 @@ from megatron.core.num_microbatches_calculator import (
     init_num_microbatches_calculator,
 )
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
-from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
+from megatron.core.utils import configure_nvtx_profiling, get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
@@ -71,6 +71,10 @@ def initialize_megatron(
     rerun_state_machine_config = cfg.rerun_state_machine
     train_config = cfg.train
     use_inprocess_restart = cfg.inprocess_restart is not None and cfg.inprocess_restart.enabled
+
+    # Configure NVTX profiling if requested
+    if cfg.profiling is not None and cfg.profiling.nvtx_ranges:
+        configure_nvtx_profiling(enabled=True)
 
     # Prep for checkpoint conversion.
     # if args.ckpt_convert_format is not None:

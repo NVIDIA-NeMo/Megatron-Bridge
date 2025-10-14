@@ -22,11 +22,15 @@ from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config as llama3_8b_pretrain_config
-from megatron.bridge.recipes.llama.llama3_70b import pretrain_config as llama3_70b_pretrain_config
-from megatron.bridge.recipes.llama.llama31_405b import pretrain_config as llama31_405b_pretrain_config
-from megatron.bridge.recipes.qwen.qwen3_30b_a3b import pretrain_config as qwen3_30b_a3b_pretrain_config
-from megatron.bridge.recipes.qwen.qwen3_235b_a22b import pretrain_config as qwen3_235b_a22b_pretrain_config
+from megatron.bridge.recipes.llama import (
+    llama3_8b_pretrain_config,
+    llama3_70b_pretrain_config,
+    llama31_405b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen import (
+    qwen3_30b_a3b_pretrain_config,
+    qwen3_235b_a22b_pretrain_config,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -162,6 +166,8 @@ def main():
     if recipe.ddp.use_megatron_fsdp:
         if args.model_name in ["llama3", "llama31"] and args.model_size in ["70b", "405b"]:
             recipe.ddp.fsdp_double_buffer = True
+        if args.model_name in ["llama3"] and args.model_size in ["70b"]:
+            recipe.ddp.suggested_communication_unit_size = 800000000
     recipe.model.apply_rope_fusion = True
 
     pretrain(config=recipe, forward_step_func=forward_step)

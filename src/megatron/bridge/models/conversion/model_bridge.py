@@ -214,7 +214,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
             # The bridge is typically not instantiated directly
             # Instead, use AutoBridge or AutoBridge which handle this
-            bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+            bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             provider = bridge.to_megatron_provider()
 
     Note:
@@ -633,7 +633,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         if "lm_head.weight" in expected_keys:
-                            yield HFWeightTuple("lm_head.weight", final_tensor)
+                            yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
                     # This should not happen when embeddings are tied - assert error
                     raise ValueError(

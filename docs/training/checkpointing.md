@@ -34,6 +34,7 @@ Megatron Bridge uses Megatron Core's distributed checkpointing system, which is 
 | `save_interval` | `Optional[int]` | `None` | Number of iterations between persistent checkpoint saves |
 | `save_optim` | `bool` | `True` | Whether to save optimizer state |
 | `save_rng` | `bool` | `True` | Whether to save random number generator state |
+| `save_tokenizer_assets` | `bool` | `True` | Whether to save tokenizer files (vocab, config, special tokens) to checkpoint |
 
 ### Asynchronous Saving
 
@@ -95,6 +96,7 @@ The checkpoint includes the following components when using the `torch_dist` che
 - **Model parameters and optimizer states**: Stored across `.distcp` files to support distributed training.
 - **Training state**: Captures the current iteration count, number of consumed samples, and the state of the learning rate scheduler.
 - **Configuration**: Serialized as a YAML file (`run_config.yaml`) containing the complete `ConfigContainer`.
+- **Tokenizer files**: All tokenizer artifacts (vocabulary, special tokens, config) for self-contained checkpoints.
 - **Dataloader states**: Ensures deterministic resumption of data iteration.
 - **Metadata**: Used for validating and correctly loading the checkpoint.
 
@@ -114,11 +116,48 @@ checkpoint_dir/
 │   ├── metadata.json                         # MCore dist ckpt metadata
 │   ├── run_config.yaml                       # Serialized ConfigContainer
 │   ├── train_state.pt                        # Number of steps, consumed samples, etc
+│   ├── tokenizer/                            # Tokenizer files (saved by default)
+│   │   ├── tokenizer.json                   # Full tokenizer vocabulary
+│   │   ├── tokenizer_config.json            # Tokenizer configuration
+│   │   ├── special_tokens_map.json          # Special token definitions
+│   │   └── ...                              # Other tokenizer artifacts
 │   ├── dataloader_state/                     # Data iterator states
 │   │   ├── train_dataloader_dprank000.pt    # DP rank 0 dataloader state
 │   │   ├── train_dataloader_dprank001.pt    # DP rank 1 dataloader state
 │   │   ├── train_dataloader_dprank002.pt    # DP rank 2 dataloader state
 │   │   └── ...                              # One file per DP rank
+```
+
+### Tokenizer Assets
+
+By default, Megatron Bridge saves all tokenizer files to the checkpoint directory, making checkpoints self-contained and portable. This is particularly important for:
+- **Inference and evaluation**: Direct access to tokenizer for computing logprobs
+- **Portability**: No dependency on original tokenizer file locations
+- **Reproducibility**: Exact tokenizer state is preserved
+
+The tokenizer files saved depend on the tokenizer type:
+- **HuggingFace tokenizers**: `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, and vocab files
+- **SentencePiece tokenizers**: `tokenizer.model` file
+- **GPT2 BPE tokenizers**: `vocab.json` and `merges.txt`
+- **BERT tokenizers**: `vocab.txt`
+- **Tiktoken tokenizers**: `tokenizer.json`
+
+To disable tokenizer asset saving for performance-sensitive scenarios:
+
+```python
+from megatron.bridge.training.config import CheckpointConfig
+
+checkpoint = CheckpointConfig(
+    save_tokenizer_assets=False,  # Skip tokenizer file saving
+    ...
+)
+```
+
+Or in YAML:
+
+```yaml
+checkpoint:
+  save_tokenizer_assets: false
 ```
 
 ## Local Checkpointing

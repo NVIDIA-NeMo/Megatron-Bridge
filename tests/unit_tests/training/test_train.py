@@ -24,6 +24,7 @@ from megatron.bridge.training.train import (
     checkpoint_and_decide_exit,
     should_disable_forward_pre_hook,
 )
+from megatron.bridge.training.utils.train_utils import maybe_inject_state
 
 
 class TestMxfp8ParamBufferCopy:
@@ -149,6 +150,30 @@ class TestShouldDisableForwardPreHook:
             use_megatron_fsdp=True, use_distributed_optimizer=True, overlap_param_gather=True
         )
         assert result is False
+
+    def test_callable_class_state_injection_integration(self):
+        """Integration test ensuring state injection works with functors in training context."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.state_seen = None
+
+            def __call__(self, state, data_iterator, model, return_schedule_plan=False):
+                self.state_seen = state
+                return "ok"
+
+        mock_state = Mock()
+        functor = ForwardFunctor()
+
+        wrapped = maybe_inject_state(functor, mock_state)
+        assert callable(wrapped)
+
+        data_iterator = Mock()
+        model = Mock()
+        result = wrapped(data_iterator, model, return_schedule_plan=True)
+
+        assert result == "ok"
+        assert functor.state_seen is mock_state
 
     def test_keep_enabled_without_distributed_optimizer(self):
         """Test that pre-hook stays enabled when not using distributed optimizer."""

@@ -12,17 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 import unittest.mock as mock
+from dataclasses import dataclass
 from functools import partial
 
+import numpy as np
 import pytest
 import torch
 
+from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
-    check_forward_step_func_num_args,
     maybe_inject_state,
+    needs_global_state_injection,
+    prepare_forward_step_func,
+    report_l2_norm_grad,
+    report_memory,
+    report_runtime,
+    report_throughput,
     training_log,
 )
+
+
+@dataclass
+class MockTrainState:
+    step: int = None
+    consumed_train_samples: int = None
+
+
+@dataclass
+class MockTrainConfig:
+    global_batch_size: int = None
+    micro_batch_size: int = None
+
+
+@dataclass
+class MockParam:
+    requires_grad: bool = True
+    main_grad: float = None
+
+
+class MockModelChunk:
+    def __init__(self, layer_name, param):
+        self.layer_name = layer_name
+        self.param = param
+
+    def named_parameters(self):
+        yield self.layer_name, self.param
 
 
 class TestTrainingLog:
@@ -137,6 +173,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Assertions
@@ -198,6 +236,8 @@ class TestTrainingLog:
             num_zeros_in_grad=None,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Assertions
@@ -260,6 +300,8 @@ class TestTrainingLog:
             num_zeros_in_grad=None,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Assertions
@@ -270,8 +312,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_tensorboard_logging_interval(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -286,6 +334,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -308,6 +359,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify tensorboard logging was called
@@ -365,6 +418,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Memory reporting should disable the flag
@@ -380,8 +435,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_moe_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_track_moe,
         mock_print_rank_last,
         mock_is_last_rank,
@@ -397,6 +458,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -424,6 +488,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify MoE tracking was called
@@ -438,8 +504,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.MTPLossLoggingHelper")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_mtp_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_mtp_helper,
         mock_print_rank_last,
         mock_is_last_rank,
@@ -455,6 +527,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -477,6 +552,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify MTP tracking was called
@@ -534,6 +611,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Check that the log string includes decoupled learning rate
@@ -589,6 +668,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify energy monitoring was called
@@ -616,8 +697,14 @@ class TestTrainingLog:
     @mock.patch("torch.cuda.memory._snapshot")
     @mock.patch("builtins.open")
     @mock.patch("pickle.dump")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_profiling_memory_snapshot(
         self,
+        mock_report_runtime,
+        mock_report_throughput,
+        mock_report_l2_norm_grad,
         mock_pickle_dump,
         mock_open,
         mock_memory_snapshot,
@@ -635,6 +722,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -666,6 +756,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify memory snapshot was taken and saved
@@ -678,8 +770,14 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_wandb_specific_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_print_rank_last,
         mock_is_last_rank,
         mock_get_world_size,
@@ -694,6 +792,9 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
@@ -716,6 +817,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify WandB logging was called for various metrics
@@ -778,6 +881,8 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         assert result is False
@@ -790,9 +895,17 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.is_last_rank")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     @mock.patch("torch.cuda.memory_stats")
     def test_memory_tensorboard_logging(
         self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_report_memory,
         mock_memory_stats,
         mock_print_rank_last,
         mock_is_last_rank,
@@ -808,16 +921,19 @@ class TestTrainingLog:
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
         mock_get_microbatches.return_value = 8
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
         mock_is_last_rank.return_value = True
 
         mock_memory_stats.return_value = {
-            "reserved_bytes.all.current": 2048000000,
-            "allocated_bytes.all.current": 1536000000,
-            "allocated_bytes.all.peak": 1792000000,
-            "allocation.all.current": 5000,
+            "mem-reserved-gigabytes": 2.048,
+            "mem-allocated-gigabytes": 1.536000000,
+            "mem-max-allocated-gigabytes": 1.792,
+            "mem-allocated-count": 5000,
         }
 
         # Enable memory logging
@@ -840,112 +956,185 @@ class TestTrainingLog:
             num_zeros_in_grad=0,
             config=mock_config,
             global_state=mock_global_state,
+            history_wct=None,
+            model=None,
         )
 
         # Verify memory stats were logged to tensorboard
         writer = mock_global_state.tensorboard_logger
-        writer.add_scalar.assert_any_call("mem-reserved-bytes", 2048000000, 10)
-        writer.add_scalar.assert_any_call("mem-allocated-bytes", 1536000000, 10)
-        writer.add_scalar.assert_any_call("mem-max-allocated-bytes", 1792000000, 10)
-        writer.add_scalar.assert_any_call("mem-allocated-count", 5000, 10)
+        writer.add_scalar.assert_any_call("memory/mem-reserved-gigabytes", 2.048, 10)
+        writer.add_scalar.assert_any_call("memory/mem-allocated-gigabytes", 1.536, 10)
+        writer.add_scalar.assert_any_call("memory/mem-max-allocated-gigabytes", 1.792, 10)
+        writer.add_scalar.assert_any_call("memory/mem-allocated-count", 5000, 10)
+
+    def test_report_memory(self):
+        """Test memory metrics."""
+        memory_report = report_memory(memory_keys=None)
+        assert len(memory_report) == 10
+
+        memory_keys = {
+            "reserved_bytes.all.current": "mem-reserved-bytes",
+            "reserved_bytes.all.peak": "mem-max-reserved-bytes",
+        }
+        expected_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
+        memory_report = report_memory(memory_keys=memory_keys)
+        assert list(memory_report.keys()) == expected_keys
+
+    def test_report_runtime(self):
+        """Test runtime metrics."""
+        start_time = time.time()
+
+        step = 100
+        consumed_train_samples = 1000
+        seq_length = 2048
+        train_iters = 1000
+
+        train_state = MockTrainState(step=step, consumed_train_samples=consumed_train_samples)
+        runtime_report = report_runtime(
+            train_state=train_state,
+            start_time=start_time,
+            seq_length=seq_length,
+            train_iters=train_iters,
+        )
+
+        assert runtime_report["time/tokens"] == consumed_train_samples * seq_length
+        assert runtime_report["time/samples"] == consumed_train_samples
+
+    def test_report_throughput(self):
+        """Test throughput metrics."""
+        global_batch_size = 64
+        micro_batch_size = 4
+        iteration = 100
+        seq_length = 4096
+        history_wct = [0.9, 1.7, 2.9, 4.2, 5.9]
+        window_size = len(history_wct)
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+
+        throughput_report = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        assert throughput_report["throughput/tokens_per_sec"] == 209715.2
+        assert throughput_report["throughput/batches_per_sec"] == 0.8
+        assert throughput_report["throughput/micro_batch_size"] == 4
+        assert throughput_report["throughput/device/samples_per_sec"] == 51.2
+
+    def test_l2_norm_grad(self):
+        """Test l2 norm grad metrics."""
+        num_chunks = 10
+        layer_name = "layer"
+        model = []
+        # generate mock model
+        for i in range(num_chunks):
+            chunk_name = f"{layer_name}_{i}"
+            main_grad = torch.tensor(i).float()
+            param = MockParam(main_grad=main_grad)
+            model_chunk = MockModelChunk(chunk_name, param)
+            model.append(model_chunk)
+
+        l2_norm_report = report_l2_norm_grad(model)
+        assert np.round(l2_norm_report["l2_norm/grad/global"], 2) == 74.92
+        assert l2_norm_report["l2_norm/grad/layer_2"] == 2.0
+        assert l2_norm_report["l2_norm/grad/layer_9"] == 9.0
 
 
-class TestCheckForwardStepFuncNumArgs:
-    """Test suite for the check_forward_step_func_num_args function."""
+class TestNeedsGlobalStateInjection:
+    """Test suite for the needs_global_state_injection function."""
 
-    def test_two_args_function(self):
-        """Test function with 2 arguments."""
+    def test_function_with_globalstate_type_hint_needs_injection(self):
+        """Test function with GlobalState type hint needs injection."""
+        from megatron.bridge.training.state import GlobalState
 
-        def forward_step_func_2_args(data_iterator, model):
+        def forward_step_func(state: GlobalState, data_iterator, model):
             return None
 
-        result = check_forward_step_func_num_args(forward_step_func_2_args)
-        assert result == 2
+        result = needs_global_state_injection(forward_step_func)
+        assert result is True
 
-    def test_three_args_function(self):
-        """Test function with 3 arguments."""
+    def test_function_with_string_globalstate_annotation_needs_injection(self):
+        """Test function with string GlobalState annotation needs injection."""
 
-        def forward_step_func_3_args(data_iterator, model, return_schedule_plan=False):
+        def forward_step_func(state: "GlobalState", data_iterator, model):
             return None
 
-        result = check_forward_step_func_num_args(forward_step_func_3_args)
-        assert result == 3
+        result = needs_global_state_injection(forward_step_func)
+        assert result is True
 
-    def test_four_args_function(self):
-        """Test function with 4 arguments."""
+    def test_function_with_state_name_needs_injection(self):
+        """Test function with 'state' parameter name needs injection."""
 
-        def forward_step_func_4_args(state, data_iterator, model, return_schedule_plan=False):
+        def forward_step_func(state, data_iterator, model):
             return None
 
-        result = check_forward_step_func_num_args(forward_step_func_4_args)
-        assert result == 4
+        result = needs_global_state_injection(forward_step_func)
+        assert result is True
 
-    def test_one_arg_function_raises_assertion_error(self):
-        """Test function with 1 argument raises AssertionError."""
+    def test_function_with_global_state_name_needs_injection(self):
+        """Test function with 'global_state' parameter name needs injection."""
 
-        def forward_step_func_1_arg(data_iterator):
+        def forward_step_func(global_state, data_iterator, model):
             return None
 
-        with pytest.raises(AssertionError) as exc_info:
-            check_forward_step_func_num_args(forward_step_func_1_arg)
+        result = needs_global_state_injection(forward_step_func)
+        assert result is True
 
-        error_message = str(exc_info.value)
-        assert "forward_step_func has 1 arguments" in error_message
-        assert "Only the following signatures are supported" in error_message
-        assert "2 args:" in error_message
-        assert "3 args:" in error_message
-        assert "4 args:" in error_message
+    def test_function_without_state_no_injection(self):
+        """Test function without state parameter doesn't need injection."""
 
-    def test_five_args_function_raises_assertion_error(self):
-        """Test function with 5 arguments raises AssertionError."""
-
-        def forward_step_func_5_args(state, data_iterator, model, return_schedule_plan, extra_arg):
+        def forward_step_func(data_iterator, model, return_schedule_plan=False):
             return None
 
-        with pytest.raises(AssertionError) as exc_info:
-            check_forward_step_func_num_args(forward_step_func_5_args)
+        result = needs_global_state_injection(forward_step_func)
+        assert result is False
 
-        error_message = str(exc_info.value)
-        assert "forward_step_func has 5 arguments" in error_message
-        assert "Only the following signatures are supported" in error_message
+    def test_lambda_function_with_state_name(self):
+        """Test lambda function with state parameter name."""
+        forward_step_func = lambda state, data_iterator, model: None
 
-    def test_zero_args_function_raises_assertion_error(self):
-        """Test function with 0 arguments raises AssertionError."""
+        result = needs_global_state_injection(forward_step_func)
+        assert result is True
 
-        def forward_step_func_0_args():
-            return None
-
-        with pytest.raises(AssertionError) as exc_info:
-            check_forward_step_func_num_args(forward_step_func_0_args)
-
-        error_message = str(exc_info.value)
-        assert "forward_step_func has 0 arguments" in error_message
-
-    def test_lambda_function_two_args(self):
-        """Test lambda function with 2 arguments."""
+    def test_lambda_function_without_state(self):
+        """Test lambda function without state parameter."""
         forward_step_func = lambda data_iterator, model: None
 
-        result = check_forward_step_func_num_args(forward_step_func)
-        assert result == 2
+        result = needs_global_state_injection(forward_step_func)
+        assert result is False
 
-    def test_lambda_function_four_args(self):
-        """Test lambda function with 4 arguments."""
-        forward_step_func = lambda state, data_iterator, model, return_schedule_plan=False: None
+    def test_callable_class_with_globalstate_type_hint(self):
+        """Test callable class with GlobalState type hint."""
+        from megatron.bridge.training.state import GlobalState
 
-        result = check_forward_step_func_num_args(forward_step_func)
-        assert result == 4
+        class ForwardFunctor:
+            def __call__(self, state: GlobalState, data_iterator, model):
+                return None
 
-    def test_partial_function(self):
-        """Test partial function (should count remaining parameters)."""
+        result = needs_global_state_injection(ForwardFunctor())
+        assert result is True
 
-        def original_func(state, data_iterator, model, return_schedule_plan=False):
-            return None
+    def test_callable_class_with_state_name(self):
+        """Test callable class with state parameter name."""
 
-        # Create partial function with state bound
-        partial_func = partial(original_func, mock.MagicMock())
+        class ForwardFunctor:
+            def __call__(self, state, data_iterator, model, return_schedule_plan=False):
+                return None
 
-        result = check_forward_step_func_num_args(partial_func)
-        assert result == 3  # 4 original args - 1 bound arg = 3 remaining
+        result = needs_global_state_injection(ForwardFunctor())
+        assert result is True
+
+    def test_callable_class_without_state(self):
+        """Test callable class without state parameter."""
+
+        class ForwardFunctor:
+            def __call__(self, data_iterator, model, return_schedule_plan=False):
+                return None
+
+        result = needs_global_state_injection(ForwardFunctor())
+        assert result is False
 
 
 class TestMaybeInjectState:
@@ -981,7 +1170,7 @@ class TestMaybeInjectState:
         mock_state = mock.MagicMock()
         mock_state.name = "test_state"
 
-        result_func = maybe_inject_state(forward_step_func_4_args, mock_state, num_fw_args=4)
+        result_func = maybe_inject_state(forward_step_func_4_args, mock_state, needs_injection=True)
 
         # Result should be a partial function
         assert isinstance(result_func, partial)
@@ -1022,7 +1211,7 @@ class TestMaybeInjectState:
 
         mock_state = mock.MagicMock()
 
-        result_func = maybe_inject_state(forward_step_func_3_args, mock_state, num_fw_args=3)
+        result_func = maybe_inject_state(forward_step_func_3_args, mock_state, needs_injection=False)
 
         # Result should be the original function
         assert result_func is forward_step_func_3_args
@@ -1035,7 +1224,7 @@ class TestMaybeInjectState:
 
         mock_state = mock.MagicMock()
 
-        result_func = maybe_inject_state(forward_step_func_2_args, mock_state, num_fw_args=2)
+        result_func = maybe_inject_state(forward_step_func_2_args, mock_state, needs_injection=False)
 
         # Result should be the original function
         assert result_func is forward_step_func_2_args
@@ -1055,3 +1244,153 @@ class TestMaybeInjectState:
 
         # Should return original partial since it has 2 remaining args
         assert result_func is partial_func
+
+    def test_callable_class_four_args_injects_state(self):
+        """Test state injection for callable class with 4 arguments."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.seen_state = None
+
+            def __call__(self, state, data_iterator, model, return_schedule_plan=False):
+                self.seen_state = state
+                return "called"
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(functor, mock_state)
+
+        assert isinstance(result_func, partial)
+
+        mock_data_iterator = mock.MagicMock()
+        mock_model = mock.MagicMock()
+        result = result_func(mock_data_iterator, mock_model, return_schedule_plan=True)
+
+        assert result == "called"
+        assert functor.seen_state is mock_state
+
+    def test_callable_class_three_args_no_injection(self):
+        """Test callable class with 3 arguments does not inject state."""
+
+        class ForwardFunctor:
+            def __call__(self, data_iterator, model, return_schedule_plan=False):
+                return "no state"
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+
+        result_func = maybe_inject_state(functor, mock_state)
+
+        assert result_func is functor
+        assert not isinstance(result_func, partial)
+
+
+class TestPrepareForwardStepFunc:
+    """Tests for prepare_forward_step_func convenience function."""
+
+    def test_prepare_with_state_parameter_injects(self):
+        """Test prepare_forward_step_func with function that needs state injection."""
+
+        def forward_with_state(state: GlobalState, data_iterator, model):
+            return state.train_state.step
+
+        mock_state = mock.MagicMock()
+        mock_state.train_state.step = 42
+
+        result = prepare_forward_step_func(forward_with_state, mock_state)
+
+        # Should be wrapped
+        assert isinstance(result, partial)
+        # Should work correctly
+        assert result(None, None) == 42
+
+    def test_prepare_without_state_parameter_returns_original(self):
+        """Test prepare_forward_step_func with function that doesn't need state injection."""
+
+        def forward_no_state(data_iterator, model):
+            return "no state needed"
+
+        mock_state = mock.MagicMock()
+
+        result = prepare_forward_step_func(forward_no_state, mock_state)
+
+        # Should return original function
+        assert result is forward_no_state
+        assert not isinstance(result, partial)
+
+    def test_prepare_with_functor_needing_state(self):
+        """Test prepare_forward_step_func with functor that needs state injection."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.call_count = 0
+
+            def __call__(self, state: GlobalState, data_iterator, model):
+                self.call_count += 1
+                return state.train_state.step + self.call_count
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+        mock_state.train_state.step = 10
+
+        result = prepare_forward_step_func(functor, mock_state)
+
+        # Should be wrapped
+        assert isinstance(result, partial)
+
+        # Call multiple times - verify functor's internal state still works
+        assert result(None, None) == 11  # step=10 + call_count=1
+        assert result(None, None) == 12  # step=10 + call_count=2
+        assert functor.call_count == 2
+
+    def test_prepare_with_functor_not_needing_state(self):
+        """Test prepare_forward_step_func with functor that doesn't need state."""
+
+        class ForwardFunctor:
+            def __init__(self):
+                self.call_count = 0
+
+            def __call__(self, data_iterator, model):
+                self.call_count += 1
+                return self.call_count
+
+        functor = ForwardFunctor()
+        mock_state = mock.MagicMock()
+
+        result = prepare_forward_step_func(functor, mock_state)
+
+        # Should return original functor
+        assert result is functor
+        assert not isinstance(result, partial)
+
+        # Functor should still work
+        assert result(None, None) == 1
+        assert result(None, None) == 2
+
+    def test_prepare_sees_state_mutations(self):
+        """Test that prepared function sees mutations to GlobalState."""
+
+        def forward_with_state(state: GlobalState, data_iterator, model):
+            return state.train_state.step
+
+        mock_state = mock.MagicMock()
+        mock_state.train_state.step = 10
+
+        # Prepare once
+        wrapped = prepare_forward_step_func(forward_with_state, mock_state)
+
+        # Call with initial state
+        assert wrapped(None, None) == 10
+
+        # Mutate state (simulates training loop incrementing step)
+        mock_state.train_state.step = 20
+
+        # Call again - should see mutated value
+        assert wrapped(None, None) == 20
+
+        # Further mutation
+        mock_state.train_state.step = 100
+
+        # Still sees current value
+        assert wrapped(None, None) == 100

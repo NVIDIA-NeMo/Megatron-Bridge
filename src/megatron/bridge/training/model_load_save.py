@@ -245,6 +245,11 @@ def build_and_load_model(
     )
     from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
     from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
+    from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
+
+    if has_modelopt_state(checkpoint_path):
+        if hasattr(model_cfg, "restore_modelopt_state"):
+            model_cfg.restore_modelopt_state = True
 
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
@@ -303,6 +308,13 @@ def build_and_load_model(
                 model = _call_model_provider(model_cfg)
         else:
             model = _call_model_provider(model_cfg)
+
+        if getattr(model_cfg, "restore_modelopt_state", False):
+            from megatron.bridge.training.post_training.checkpointing import (
+                load_modelopt_state,
+            )
+
+            load_modelopt_state(model, checkpoint_path)
 
         maybe_state_dict = _load_model_weights_from_checkpoint(
             checkpoint_path, model, return_state_dict=return_state_dict
@@ -404,7 +416,7 @@ def save_megatron_model(
         >>> save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
-        ...     hf_tokenizer_path="meta-llama/Llama-3-8B"
+        ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
         ... )
 
     Note:
@@ -463,6 +475,22 @@ def save_megatron_model(
         opt_param_scheduler=None,
         num_floating_point_operations_so_far=0,
     )
+
+    # Save tokenizer files separately if tokenizer config is provided
+    if tokenizer_config is not None:
+        from megatron.bridge.training.checkpointing import (
+            get_checkpoint_name,
+            save_tokenizer_assets,
+        )
+
+        # Build the tokenizer
+        tokenizer = build_tokenizer(tokenizer_config)
+
+        # Get the checkpoint name for step 0
+        checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
+
+        # Save tokenizer files
+        save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name)
 
 
 def dtype_from_str(dtype: str) -> torch.dtype:
