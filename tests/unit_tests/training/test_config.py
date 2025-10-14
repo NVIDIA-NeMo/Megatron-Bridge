@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -70,6 +71,19 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     }
     defaults.update(kwargs)
     return GPTModelProvider(**defaults)
+
+
+def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
+    """Creates an instance of DeepSeekModelProvider for testing."""
+    defaults = {
+        "num_layers": 1,
+        "hidden_size": 128,
+        "num_attention_heads": 4,
+        "seq_length": 512,
+        "apply_rope_fusion": False,
+    }
+    defaults.update(kwargs)
+    return DeepSeekModelProvider(**defaults)
 
 
 def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
@@ -971,9 +985,14 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_default_pipeline_dtype(self, monkeypatch):
-        """Test pipeline_dtype is automatically set if None and PP enabled."""
-        gpt_model_cfg1 = create_test_gpt_config(params_dtype=torch.bfloat16, pipeline_model_parallel_size=2)
+    @pytest.mark.parametrize("model_factory", [create_test_gpt_config, create_test_deepseek_config])
+    def test_default_pipeline_dtype(self, model_factory, monkeypatch):
+        """
+        Test pipeline_dtype is automatically set if None and PP enabled.
+        Test for both GPT and Deepseek to test both TransformerConfig types.
+        """
+
+        gpt_model_cfg1 = model_factory(params_dtype=torch.bfloat16, pipeline_model_parallel_size=2)
 
         container1, og_ws, cfg_mod = create_test_config_container(
             world_size_override=2,
@@ -987,7 +1006,7 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
         # Do not change if already set
-        gpt_model_cfg2 = create_test_gpt_config(
+        gpt_model_cfg2 = model_factory(
             params_dtype=torch.bfloat16, pipeline_dtype=torch.float32, pipeline_model_parallel_size=2
         )
 
@@ -1003,7 +1022,7 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
         # Do not change if no PP
-        gpt_model_cfg3 = create_test_gpt_config(params_dtype=torch.bfloat16, pipeline_model_parallel_size=1)
+        gpt_model_cfg3 = model_factory(params_dtype=torch.bfloat16, pipeline_model_parallel_size=1)
 
         container3, og_ws, cfg_mod = create_test_config_container(
             world_size_override=2,
