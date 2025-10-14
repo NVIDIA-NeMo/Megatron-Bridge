@@ -29,7 +29,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_
 
 
 try:
-    import transformer_engine  # pylint: disable=unused-import
+    import transformer_engine  # type: ignore  # noqa: F401
 
     HAVE_TE = True
     from megatron.core.extensions.transformer_engine import SplitAlongDim
@@ -39,6 +39,7 @@ except ImportError:
 
 
 def olmoe_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Layer spec for OlMoE models."""
     layer_spec = default_layer_spec(config)
     layer_spec.submodules.self_attention.module = OLMoESelfAttention
     return layer_spec
@@ -95,6 +96,8 @@ class OlMoEModelProvider(GPTModelProvider):
 
 
 class OLMoESelfAttention(MCoreSelfAttention):
+    """Custom self-attention module for OlMoE models."""
+
     def __init__(
         self,
         config: TransformerConfig,
