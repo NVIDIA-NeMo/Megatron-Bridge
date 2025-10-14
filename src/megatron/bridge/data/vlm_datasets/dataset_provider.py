@@ -1,7 +1,7 @@
 """
 Dataset types and providers for conversation-style VLM datasets.
 """
-
+raise NotImplementedError("This module is deprecated. Use hf_provider.py instead.")
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 

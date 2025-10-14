@@ -28,6 +28,8 @@ from .hf_dataset_makers import (
     make_cv17_dataset,
     make_medpix_dataset,
     make_rdr_dataset,
+    make_raven_dataset,
+    make_llava_video_178k_dataset,
 )
 from .hf_provider import HFDatasetConversationProvider
 from .mock_provider import MockVLMConversationProvider
@@ -40,6 +42,8 @@ __all__ = [
     "make_cord_v2_dataset",
     "make_medpix_dataset",
     "make_cv17_dataset",
+    "make_raven_dataset",
+    "make_llava_video_178k_dataset",
     # Dataset types/providers
     "VLMConversationDataset",
     "HFDatasetConversationProvider",

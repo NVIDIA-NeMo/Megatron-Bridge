@@ -2,7 +2,7 @@
 Built-in maker functions that transform HuggingFace datasets into
 conversation-style examples consumable by VLM processors.
 """
-
+raise NotImplementedError("This module is deprecated. Use hf_provider.py instead.")
 import json
 import random
 from typing import Any, Dict, List

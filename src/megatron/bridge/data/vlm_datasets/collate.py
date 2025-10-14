@@ -272,15 +272,40 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_token=None) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Nano V2 VL model."""
     skipped_tokens = extract_skipped_token_ids(processor)
+    is_video = hasattr(examples[0]["conversation"][0]["content"][0], "video")
+    if is_video:
+        from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import maybe_path_or_url_to_data_urls, pil_image_from_base64
+        breakpoint()
+        video_path = examples[0]["conversation"][0]["content"][0]["video"]
+        video_fps = 1
+        video_nframe = 8
+        video_nframe_max = -1
 
-    batch = processor.apply_chat_template(
-        [example["conversation"] for example in examples],
-        tokenize=True,
-        padding=processor.tokenizer.pad_token is not None,
-        truncation=True,
-        return_tensors="pt",
-        return_dict=True,
-    )
+        # Get frames and metadata
+        image_urls, metadata = maybe_path_or_url_to_data_urls(
+            video_path,
+            fps=max(0, int(video_fps)),
+            nframe=max(0, int(video_nframe)),
+            nframe_max=int(video_nframe_max),
+        )
+        frames = [pil_image_from_base64(image_url) for image_url in image_urls]
+        videos = [frames] * len(examples)
+        prompt = processor.apply_chat_template([example["conversation"] for example in examples], tokenize=False)
+        batch = processor(
+            text=[prompt],
+            videos=videos,
+            videos_kwargs={'video_metadata': metadata},
+            return_tensors="pt",
+        )
+    else:
+        batch = processor.apply_chat_template(
+            [example["conversation"] for example in examples],
+            tokenize=True,
+            padding=processor.tokenizer.pad_token is not None,
+            truncation=True,
+            return_tensors="pt",
+            return_dict=True,
+        )
     loss_mask = [
         create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
         for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]

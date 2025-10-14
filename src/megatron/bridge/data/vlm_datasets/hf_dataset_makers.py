@@ -111,6 +111,158 @@ def make_medpix_dataset(
     return [format(example) for example in dataset]
 
 
+def make_raven_dataset(
+    path_or_dataset: str = "HuggingFaceM4/the_cauldron",
+    subset: str = "raven",
+    split: str = "train",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess the Raven subset from the Cauldron dataset.
+
+    This subset follows the IDEFICS-style layout where each sample contains:
+    - ``images``: a (possibly empty) list of PIL images
+    - ``texts``: a list of conversation dictionaries. For Raven, ``texts[0]``
+      is a *single* turn stored as a dictionary with two keys::
+
+          {"user": "<question>", "assistant": "<answer>"}
+
+      Only the first element is used.  The ``user`` string is taken as the
+      user prompt, and ``assistant`` is the ground-truth answer.
+
+    Conversation building policy:
+    1. All images are placed at the beginning of the user turn followed by the
+       textual prompt.
+    2. The assistant turn contains the answer text.
+
+    Examples missing either images or the required fields are filtered out.
+    """
+    dataset = load_dataset(path_or_dataset, subset, split=split)
+
+    def format(example):
+        images = example.get("images", [])
+        texts = example.get("texts", [])
+        if not images or not texts or not isinstance(texts[0], dict):
+            return None
+
+        user_prompt = texts[0].get("user")
+        assistant_answer = texts[0].get("assistant")
+        if user_prompt is None or assistant_answer is None:
+            return None
+
+        user_content: List[Dict[str, Any]] = [
+            {"type": "image", "image": img} for img in images
+        ]
+        user_content.append({"type": "text", "text": user_prompt})
+
+        assistant_content = [{"type": "text", "text": assistant_answer}]
+
+        return {
+            "conversation": [
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": assistant_content},
+            ]
+        }
+
+    formatted = (format(example) for example in dataset)
+    # Filter out any None values from malformed rows.
+    return [ex for ex in formatted if ex is not None]
+
+
+def make_llava_video_178k_dataset(
+    path_or_dataset: str = "lmms-lab/LLaVA-Video-178K",
+    subset: str = "0_30_s_academic_v0_1",
+    split: str = "open_ended",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess a subset of the *LLaVA-Video-178K* dataset.
+
+    Each row contains:
+    - ``video``: path or URL to the MP4 file.
+    - ``conversations``: a **two-turn** list::
+
+          [{"from": "human", "value": "<image>\n<question>"},
+           {"from": "gpt",   "value": "<answer>"}]
+
+      We map this schema to our internal multimodal conversation format:
+
+      User turn  →  [video, user prompt]
+      Assistant  →  answer text
+
+    Args:
+        path_or_dataset: HF dataset path or local cache dir.
+        subset: one of the dataset's 19 directory-style subsets.
+        split: one of ``caption``, ``open_ended`` (default), ``multi_choice``.
+
+    Returns:
+        A list of dicts each containing a ``conversation`` field ready for
+        downstream VLM processors.
+    """
+    if split == "train":
+        split = "open_ended"
+    dataset = load_dataset(path_or_dataset, subset, split=split)
+
+    from functools import lru_cache
+    from huggingface_hub import hf_hub_download
+    from pathlib import Path
+
+    cache_probe = None
+    if dataset.cache_files:
+        cache_probe = Path(dataset.cache_files[0]["filename"]).resolve()
+    @lru_cache(maxsize=None)
+    def _resolve_video(rel_path: str) -> str:
+        """Return absolute path for a dataset-relative video, downloading if necessary."""
+        # 1) Try local cache heuristic
+        if cache_probe is not None:
+            for parent in cache_probe.parents:
+                cand = parent / rel_path
+                if cand.exists():
+                    return str(cand)
+        # 2) Fallback: attempt to fetch from hub (if the file is actually present there)
+        try:
+            return hf_hub_download(path_or_dataset, filename=rel_path, repo_type="dataset")
+        except Exception:
+            # Give back the relative path; downstream loader may handle or raise.
+            return rel_path
+
+    def clean_prompt(val: str) -> str:
+        # Remove placeholder tokens such as <image> or <video>
+        val = val.replace("<image>", "").replace("<video>", "").strip()
+        return val.lstrip("\n").rstrip()
+
+    def format(example):
+        video = example.get("video")
+        convs = example.get("conversations", [])
+        if video in (None, "") or not convs:
+            return None
+
+        conversation: List[Dict[str, Any]] = []
+
+        first_human_handled = False
+        for turn in convs:
+            role = turn.get("from")
+            value = turn.get("value", "")
+            if not value:
+                continue
+            if role == "human":
+                content: List[Dict[str, Any]] = []
+                if not first_human_handled:
+                    abs_path = _resolve_video(video)
+                    content.append({"type": "video", "video": f"file://{abs_path}"})
+                    first_human_handled = True
+                content.append({"type": "text", "text": clean_prompt(value)})
+                conversation.append({"role": "user", "content": content})
+            elif role == "gpt":
+                conversation.append({"role": "assistant", "content": [{"type": "text", "text": value.strip()}]})
+
+        if not conversation:
+            return None
+
+        return {"conversation": conversation}
+
+    formatted = (format(ex) for ex in dataset)
+    return [ex for ex in formatted if ex is not None]
+
+
 def make_cv17_dataset(
     path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed", split: str = "train", **kwargs
 ) -> List[Dict[str, Any]]:
