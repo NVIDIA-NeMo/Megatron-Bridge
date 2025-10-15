@@ -296,14 +296,14 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
 
 @dataclass
-class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
+class GPTDistillationProvider(GPTModelProvider):
     """Provider for Megatron Core GPT models in distillation mode."""
 
-    student: "GPTModelProvider"
-    teacher: "GPTModelProvider"
+    teacher: Optional["GPTModelProvider"] = None
     kd_config: Optional["ModelOptDistillConfig"] = None
 
     def __post_init__(self):
+        assert self.teacher is not None, "Teacher model must be provided."
         shared_attrs = [
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
@@ -312,7 +312,7 @@ class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
             "pipeline_dtype",
         ]
         for attr in shared_attrs:
-            if getattr(self.student, attr) != getattr(self.teacher, attr):
+            if getattr(self, attr) != getattr(self.teacher, attr):
                 raise ValueError(f"Student and teacher providers must have the same {attr}.")
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
@@ -332,7 +332,7 @@ class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
         if vp_stage is not None:
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
 
-        student_model = self.student.provide(pre_process, post_process, vp_stage)
+        student_model = super().provide(pre_process, post_process, vp_stage)
         teacher_model = self.teacher.provide(pre_process, post_process, vp_stage)
 
         kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
@@ -345,6 +345,12 @@ class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
         mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
 
         return kd_model
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        # Mirror to teacher if it has that attribute
+        if hasattr(self.teacher, name):
+            setattr(self.teacher, name, value)
 
 
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:

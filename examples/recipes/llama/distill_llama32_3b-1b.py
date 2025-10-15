@@ -29,13 +29,13 @@ Examples:
 
     Using CLI overrides:
         $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
-        model.student.tensor_model_parallel_size=4 \
+        model.tensor_model_parallel_size=4 \
         model.teacher.tensor_model_parallel_size=4 \
         train.train_iters=100000
 
     Combining YAML and CLI overrides (CLI takes precedence):
         $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file conf/my_config.yaml \
-        model.student.pipeline_dtype=torch.float16 \
+        model.pipeline_dtype=torch.float16 \
         model.teacher.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
 
@@ -67,6 +67,7 @@ from megatron.bridge.models.gpt_provider import GPTDistillationProvider
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config, llama32_3b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.distill import distill
+from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -117,7 +118,7 @@ def main() -> None:
     5. Starts Megatron distillation with the final merged configuration
 
     The config.model structure contains student and teacher model providers:
-    - config.model.student: The Llama3.2-1B student model configuration
+    - config.model: The Llama3.2-1B student model configuration
     - config.model.teacher: The Llama3.2-3B teacher model configuration
     - config.model.kd_config: Knowledge distillation-specific settings
 
@@ -133,8 +134,8 @@ def main() -> None:
 
         # Multiple overrides for distributed training
         torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
-            model.student.tensor_model_parallel_size=4 \
-            model.student.pipeline_model_parallel_size=2 \
+            model.tensor_model_parallel_size=4 \
+            model.pipeline_model_parallel_size=2 \
             model.teacher.tensor_model_parallel_size=4 \
             model.teacher.pipeline_model_parallel_size=2 \
             train.global_batch_size=512
@@ -146,11 +147,9 @@ def main() -> None:
 
     # Load base configurations as recipes and wrap provider for distillation mode
     cfg: ConfigContainer = llama32_1b_pretrain_config()
-    cfg.model = GPTDistillationProvider(
-        student=cfg.model,
-        teacher=llama32_3b_pretrain_config().model,
-        kd_config=None,  # Can modify via YAML overrides
-    )
+    cfg.model.__class__ = GPTDistillationProvider
+    cfg.model.teacher = llama32_3b_pretrain_config().model
+    cfg.model.kd_config = ModelOptDistillConfig()
     logger.info("Loaded base student and teacher configurations")
 
     # Print configuration on rank 0

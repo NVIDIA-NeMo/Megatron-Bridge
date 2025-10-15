@@ -19,13 +19,17 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
-  student:  &student_config
+  seq_length: 4096
+  tensor_model_parallel_size: 2
+  pipeline_model_parallel_size: 1
+  context_parallel_size: 1
+  sequence_parallel: true
+  teacher:
     seq_length: 4096
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
     context_parallel_size: 1
     sequence_parallel: true
-  teacher: *student_config
   kd_config:
     logit_layers: ["output_layer", "output_layer"]
     intermediate_layer_pairs: []
