@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 from megatron.core.dist_checkpointing.mapping import ShardedTensor
 
-from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.peft.lora.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from megatron.bridge.peft.utils import ParallelLinearAdapter
 from tests.unit_tests.peft.test_utils import MockModelParallelConfig
 

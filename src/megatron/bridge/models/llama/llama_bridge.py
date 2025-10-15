@@ -62,6 +62,7 @@ class LlamaBridge(MegatronModelBridge):
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
             num_query_groups=hf_config.num_key_value_heads,
+            kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
             seq_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
             gated_linear_unit=True,

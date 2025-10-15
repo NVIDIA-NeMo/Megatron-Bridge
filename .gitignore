@@ -182,3 +182,6 @@ slurm*.out
 
 # UV package manager
 .uv/
+
+# For examples
+outputs/
