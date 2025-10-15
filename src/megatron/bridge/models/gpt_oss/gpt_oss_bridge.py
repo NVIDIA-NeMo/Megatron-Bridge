@@ -14,7 +14,7 @@
 
 import logging
 import math
-from typing import Dict, Mapping, Union
+from typing import Dict, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -216,8 +216,8 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
     MLPDownProj for expert weights GPT-OSS models.
     """
 
-    def __init__(self, megatron_param: str, hf_param: str):
-        super().__init__(megatron_param, hf_param)
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+        super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
@@ -244,8 +244,8 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     MLPGateUpProj for expert weights GPT-OSS models.
     """
 
-    def __init__(self, megatron_param: str, hf_param: str):
-        super().__init__(megatron_param, hf_param)
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
+        super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
 
     @staticmethod
