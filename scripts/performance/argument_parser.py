@@ -146,6 +146,71 @@ def parse_cli_args():
         action="store_true",
     )
     parser.add_argument(
+        "-tp",
+        "--tensor_parallel_size",
+        type=int,
+        help="Intra-layer model parallelism. Splits tensors across GPU ranks.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-pp",
+        "--pipeline_parallel_size",
+        type=int,
+        help="Inter-layer model parallelism. Splits transformer layers across GPU ranks.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-cp",
+        "--context_parallel_size",
+        type=int,
+        help="Splits network input along sequence dimension across GPU ranks.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-vp",
+        "--virtual_pipeline_parallel_size",
+        type=int,
+        help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-ep",
+        "--expert_parallel_size",
+        type=int,
+        help="Distributes Moe Experts across sub data parallel dimension.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-et",
+        "--expert_tensor_parallel_size",
+        type=lambda x: int(x) if x is not None else None,
+        nargs="?",
+        const=None,
+        help="Intra-layer tensor model parallelsm for expert layer. Splits tensors across GPU ranks.\
+            Use -et/--expert_tensor_parallel_size <space> for None or -et/--expert_tensor_parallel_size <int>",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-mb",
+        "--micro_batch_size",
+        type=int,
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-gb",
+        "--global_batch_size",
+        type=int,
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "-ng",
         "--num_gpus",
         type=int,
