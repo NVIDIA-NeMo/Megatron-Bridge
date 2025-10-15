@@ -89,8 +89,8 @@ jobs:
         run: |
           docker run \
           --rm \
-          -v $(pwd):/workspace \
-          -w /workspace \
+          -v $(pwd):/opt/Megatron-Bridge \
+          -w /opt/Megatron-Bridge \
           -e GH_TOKEN=${{ secrets.PAT }} \
           megatron-bridge \
           bash -c 'uv lock --upgrade'

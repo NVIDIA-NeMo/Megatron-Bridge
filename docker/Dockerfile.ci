@@ -30,4 +30,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     bash docker/common/install.sh --base-image pytorch --use-uv && \
     uv cache prune --ci
 
-WORKDIR /workspace
+WORKDIR /opt/Megatron-Bridge
