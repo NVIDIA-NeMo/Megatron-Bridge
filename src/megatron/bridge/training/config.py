@@ -1056,9 +1056,10 @@ class ConfigContainer(Container):
             model_cfg.tensor_model_parallel_size
             * model_cfg.pipeline_model_parallel_size
             * model_cfg.context_parallel_size
+            * model_cfg.expert_model_parallel_size
         )
         assert world_size % total_model_size == 0, f"""
-        world size ({world_size}) is not divisible by total_model_size ({model_cfg.tensor_model_parallel_size=} * {model_cfg.pipeline_model_parallel_size=} * {model_cfg.context_parallel_size=})
+        world size ({world_size}) is not divisible by total_model_size ({model_cfg.tensor_model_parallel_size=} * {model_cfg.pipeline_model_parallel_size=} * {model_cfg.context_parallel_size=} * {model_cfg.expert_model_parallel_size=})
         """
         return world_size // total_model_size
 
