@@ -172,6 +172,7 @@ def make_llava_video_178k_dataset(
     path_or_dataset: str = "lmms-lab/LLaVA-Video-178K",
     subset: str = "0_30_s_academic_v0_1",
     split: str = "open_ended",
+    video_path: str = ...,
     **kwargs,
 ) -> List[Dict[str, Any]]:
     """Load and preprocess a subset of the *LLaVA-Video-178K* dataset.
@@ -200,7 +201,7 @@ def make_llava_video_178k_dataset(
     if split == "train":
         split = "open_ended"
     dataset = load_dataset(path_or_dataset, subset, split=split)
-
+    # TODO @liding
     from functools import lru_cache
     from huggingface_hub import hf_hub_download
     from pathlib import Path
@@ -210,6 +211,7 @@ def make_llava_video_178k_dataset(
         cache_probe = Path(dataset.cache_files[0]["filename"]).resolve()
     @lru_cache(maxsize=None)
     def _resolve_video(rel_path: str) -> str:
+        # TODO
         """Return absolute path for a dataset-relative video, downloading if necessary."""
         # 1) Try local cache heuristic
         if cache_probe is not None:

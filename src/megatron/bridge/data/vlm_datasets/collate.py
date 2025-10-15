@@ -271,6 +271,7 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
 def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_token=None) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Nano V2 VL model."""
+    # TODO @liding
     skipped_tokens = extract_skipped_token_ids(processor)
     is_video = hasattr(examples[0]["conversation"][0]["content"][0], "video")
     if is_video:
@@ -289,11 +290,10 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
             nframe_max=int(video_nframe_max),
         )
         frames = [pil_image_from_base64(image_url) for image_url in image_urls]
-        videos = [frames] * len(examples)
         prompt = processor.apply_chat_template([example["conversation"] for example in examples], tokenize=False)
         batch = processor(
             text=[prompt],
-            videos=videos,
+            videos=frames,
             videos_kwargs={'video_metadata': metadata},
             return_tensors="pt",
         )
