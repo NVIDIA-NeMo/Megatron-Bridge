@@ -299,9 +299,20 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
     """Provider for Megatron Core GPT models in distillation mode."""
 
-    student_provider: "GPTModelProvider"
-    teacher_provider: "GPTModelProvider"
+    student: "GPTModelProvider"
+    teacher: "GPTModelProvider"
     kd_config: Optional["ModelOptDistillConfig"] = None
+
+    def __post_init__(self):
+        shared_attrs = [
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+            "seq_length",
+        ]
+        for attr in shared_attrs:
+            if getattr(self.student, attr) != getattr(self.teacher, attr):
+                raise ValueError(f"Student and teacher providers must have the same {attr}.")
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
@@ -320,17 +331,10 @@ class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
         if vp_stage is not None:
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
 
-        student_model = self.student_provider.provide(pre_process, post_process, vp_stage)
-        teacher_model = self.teacher_provider.provide(pre_process, post_process, vp_stage)
+        student_model = self.student.provide(pre_process, post_process, vp_stage)
+        teacher_model = self.teacher.provide(pre_process, post_process, vp_stage)
 
-        kd_cfg = mtd_mcore.DistillationConfig(
-            logit_layers=self.kd_config.logit_layers,
-            intermediate_layer_pairs=self.kd_config.intermediate_layer_pairs,
-            skip_lm_loss=self.kd_config.skip_lm_loss,
-            kd_loss_scale=self.kd_config.kd_loss_scale,
-            logit_kl_temperature=self.kd_config.logit_kl_temperature,
-        )
-        kd_cfg = mtd_mcore.setup_distillation_config(kd_cfg, student_model.config, teacher_model.config)
+        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
         modelopt_cfg = {
             "teacher_model": teacher_model,
             "criterion": kd_cfg.criterion,

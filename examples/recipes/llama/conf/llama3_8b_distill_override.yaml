@@ -19,19 +19,19 @@
 # Top-level ConfigContainer fields are dataclasses themselves
 
 model:
-  seq_length: 4096
-  tensor_model_parallel_size: 2
-  pipeline_model_parallel_size: 1
-  context_parallel_size: 1
-  sequence_parallel: true
-
-distill:
-  _target_: megatron.bridge.training.post_training.distillation.ModelOptDistillConfig
-  logit_layers: ["output_layer", "output_layer"]
-  intermediate_layer_pairs: []
-  skip_lm_loss: true
-  kd_loss_scale: 1.0
-  logit_kl_temperature: 1.0
+  student:  &student_config
+    seq_length: 4096
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: true
+  teacher: *student_config
+  kd_config:
+    logit_layers: ["output_layer", "output_layer"]
+    intermediate_layer_pairs: []
+    skip_lm_loss: true
+    kd_loss_scale: 1.0
+    logit_kl_temperature: 1.0
 
 train:
   train_iters: 10

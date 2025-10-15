@@ -15,7 +15,6 @@
 from megatron.bridge.models.gpt_provider import GPTDistillationProvider
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step_modelopt
-from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.utils.decorators import experimental_fn
 
@@ -33,8 +32,6 @@ def distill(
         This is an experimental API and is subject to change in backwards
         incompatible ways without notice.
     """
-    assert isinstance(config.distill, ModelOptDistillConfig), "Distillation requires a ModelOptDistillConfig"
     assert isinstance(config.model, GPTDistillationProvider), "Distillation requires a GPTDistillationProvider"
 
-    config.model.kd_config = config.distill
     return pretrain(config, forward_step_modelopt)

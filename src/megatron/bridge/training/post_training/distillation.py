@@ -12,33 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 from typing import Callable
 
 import modelopt.torch.distill as mtd
+import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer import MegatronModule
 
 
-@dataclass
-class ModelOptDistillConfig:
+class ModelOptDistillConfig(mtd_mcore.DistillationConfig):
     """Configuration settings for Model Optimizer distillation."""
 
-    logit_layers: tuple[str, str] = ("output_layer", "output_layer")
-    """Layer names to use for logit distillation."""
-
-    intermediate_layer_pairs: list[tuple[str, ...]] = field(default_factory=list)
-    """Layer names to use for intermediate distillation."""
-
-    skip_lm_loss: bool = True
-    """Whether to skip the original LM loss computation."""
-
-    kd_loss_scale: float = 1.0
-    """Scale for weighing the KD loss, if original LM loss is not skipped."""
-
-    logit_kl_temperature: float = 1.0
-    """Temperature for the logit KL divergence."""
+    pass
 
 
 def loss_func_kd(

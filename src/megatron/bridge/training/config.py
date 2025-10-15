@@ -33,7 +33,6 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
-from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -1051,12 +1050,11 @@ class ConfigContainer(Container):
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
     dist: DistributedInitConfig = field(default_factory=DistributedInitConfig)
-    peft: Optional[PEFT] = None
-    distill: Optional[ModelOptDistillConfig] = None
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
     profiling: Optional[ProfilingConfig] = None
+    peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
