@@ -791,7 +791,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
 
-        # TODO(yuya): Fix for VPP, the vp stage need to passed in for stage checks
+        # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
         if (model_config.share_embeddings_and_output_weights and model_config.pipeline_model_parallel_size > 1) and (
             parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
         ):
