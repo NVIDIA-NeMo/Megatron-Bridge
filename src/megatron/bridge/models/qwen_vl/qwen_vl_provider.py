@@ -20,8 +20,10 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionC
 
 from megatron.bridge.models import (
     Qwen2ModelProvider,
+    Qwen3MoEModelProvider,
 )
 
+from . import Qwen3VLModel
 from .modeling_qwen25_vl import Qwen25VLModel
 
 
@@ -64,6 +66,59 @@ class Qwen25VLModelProvider(Qwen2ModelProvider):
         model = Qwen25VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
         # Apply freeze options if any are enabled
+        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
+            model.freeze(
+                freeze_language_model=self.freeze_language_model,
+                freeze_vision_model=self.freeze_vision_model,
+                freeze_vision_projection=self.freeze_vision_projection,
+            )
+
+        return model
+
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+# =============================================================================
+# Qwen 3 VL (MoE) Model Provider
+# =============================================================================
+
+
+@dataclass
+class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
+    """
+    Provider for Qwen3-VL MoE models. Extends `Qwen3MoEModelProvider` and
+    applies VL-specific defaults and token ids.
+    """
+
+    # VL models shouldn't scatter embeddings across sequence parallel regions because
+    # the vision embeddings are going to be inserted into the language embeddings.
+    scatter_embedding_sequence_parallel: bool = False
+    position_embedding_type: str = "mrope"
+    # Default taken from provided HF config example (24, 20, 20)
+    mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
+
+    # Vision configuration is passed through Qwen2.5 vision config until a Qwen3-VL
+    # specific vision config is added upstream.
+    vision_config: Qwen2_5_VLVisionConfig = field(default_factory=Qwen2_5_VLVisionConfig)
+
+    # Token IDs (aligned to Qwen3-VL HF configs)
+    bos_token_id: int = 151643
+    eos_token_id: int = 151645
+    vision_start_token_id: int = 151652
+    vision_end_token_id: int = 151653
+    vision_token_id: int = 151654
+    image_token_id: int = 151655
+    video_token_id: int = 151656
+
+    # Optional freezing knobs
+    freeze_language_model: bool = False
+    freeze_vision_model: bool = False
+    freeze_vision_projection: bool = False
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        model = Qwen3VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(
                 freeze_language_model=self.freeze_language_model,
