@@ -213,7 +213,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
             # The bridge is typically not instantiated directly
             # Instead, use AutoBridge or AutoBridge which handle this
-            bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+            bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             provider = bridge.to_megatron_provider()
 
     Note:

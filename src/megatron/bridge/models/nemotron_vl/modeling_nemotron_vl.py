@@ -57,10 +57,6 @@ class NemotronVLModel(MegatronModule):
         if llava_model is not None:
             super().__init__(config=config or llava_model.config)
             self.llava_model = llava_model
-
-            # Convenience aliases for freeze(), etc.
-            self.language_model = getattr(llava_model, "decoder", None)
-            self.visual = getattr(llava_model, "encoder", None)
             return
 
         # ------------------------------------------------------------------
@@ -74,8 +70,6 @@ class NemotronVLModel(MegatronModule):
         self.pre_process = bool(pre_process)
         self.post_process = bool(post_process)
         self.vp_stage = vp_stage
-
-        self.visual = None  # Vision encoder placeholder
 
         # Fallback: build just the language model using provider API
         self.language_model = config.provide_language_model(
@@ -115,18 +109,21 @@ class NemotronVLModel(MegatronModule):
         """Freeze selected sub-modules by turning off ``requires_grad``."""
 
         modules: list[torch.nn.Module] = []
+        module_names: list[str] = []
 
-        if freeze_language_model and hasattr(self, "language_model"):
-            modules.append(self.language_model)
+        if freeze_language_model:
+            modules.append(self.llava_model.language_model)
+            module_names.append("language_model")
 
-        if freeze_vision_model and self.visual is not None:
-            modules.append(self.visual)
+        if freeze_vision_model:
+            modules.append(self.llava_model.vision_model)
+            module_names.append("vision_model")
 
-        # In the stub we do not have a separate vision projection.  Keep the
-        # parameter for API compatibility.
-        if freeze_vision_projection and self.visual is not None:
-            modules.append(self.visual)
+        if freeze_vision_projection:
+            modules.append(self.llava_model.vision_projection)
+            module_names.append("vision_projection")
 
-        for module in modules:
-            for param in module.parameters():
+        for module_name, module in zip(module_names, modules):
+            for name, param in module.named_parameters():
+                print(f"Freezing {module_name}.{name}")
                 param.requires_grad = False

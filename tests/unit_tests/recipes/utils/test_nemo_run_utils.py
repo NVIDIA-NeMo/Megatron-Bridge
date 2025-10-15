@@ -246,11 +246,22 @@ class TestPrepareConfigForNemoRun:
 
     def test_with_real_gpt_config(self):
         """Test with a real GPTConfig to ensure compatibility."""
-        # Import actual configs for realistic testing
-        from megatron.bridge.recipes.llama.llama3_8b import model_config
+        # Import actual configs for realistic testing, but avoid HF downloads by mocking AutoBridge
+        from unittest import mock as _mock
 
-        # Get a real model config
-        model_cfg = model_config()
+        from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config as pretrain_config
+
+        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+
+            class _DummyBridge:
+                def to_megatron_provider(self, load_weights: bool = False):
+                    from megatron.bridge.models.llama.llama_provider import Llama3ModelProvider
+
+                    return Llama3ModelProvider()
+
+            mock_from.return_value = _DummyBridge()
+            # Get a real model config (provider) without contacting HF
+            model_cfg = pretrain_config().model
 
         # Create a minimal ConfigContainer with required fields
         config = ConfigContainer(

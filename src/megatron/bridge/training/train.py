@@ -46,6 +46,13 @@ from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
     safe_shutdown_nvrx_straggler_manager,
 )
+from megatron.bridge.training.profiling import (
+    TNvtxContext,
+    handle_profiling_step,
+    handle_profiling_stop,
+    initialize_pytorch_profiler,
+    should_profile_rank,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
@@ -169,20 +176,12 @@ def train(
     eval_iterations = 0
 
     prof = None
+    nsys_nvtx_context = None  # NVTX context for nsys profiling
     prof_config = config.profiling
-    if prof_config and torch.distributed.get_rank() in prof_config.profile_ranks and prof_config.use_pytorch_profiler:
-        prof = torch.profiler.profile(
-            schedule=torch.profiler.schedule(
-                wait=max(prof_config.profile_step_start - 1, 0),
-                warmup=1 if prof_config.profile_step_start > 0 else 0,
-                active=prof_config.profile_step_end - prof_config.profile_step_start,
-                repeat=1,
-            ),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(config.logger.tensorboard_dir),
-            record_shapes=prof_config.record_shapes,
-            with_stack=True,
-        )
-        prof.start()
+    if prof_config and should_profile_rank(prof_config, torch.distributed.get_rank()):
+        if prof_config.use_pytorch_profiler:
+            prof = initialize_pytorch_profiler(prof_config, config.logger.tensorboard_dir)
+            prof.start()
 
     start_iteration = global_state.train_state.step
     # Megatron FSDP and FSDP2 does not have this hook
@@ -224,13 +223,15 @@ def train(
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
-        if prof_config and torch.distributed.get_rank() in prof_config.profile_ranks:
-            if prof_config.use_pytorch_profiler:
-                prof.step()
-            if prof_config.use_nsys_profiler:
-                if global_state.train_state.step == prof_config.profile_step_start:
-                    torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStart())
-                    torch.autograd.profiler.emit_nvtx(record_shapes=prof_config.record_shapes).__enter__()
+        # Handle profiling for this step
+        nvtx_ctx = handle_profiling_step(
+            prof_config,
+            global_state.train_state.step,
+            torch.distributed.get_rank(),
+            prof,
+        )
+        if nvtx_ctx is not None:
+            nsys_nvtx_context = nvtx_ctx
 
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
@@ -415,6 +416,7 @@ def train(
             prof,
             config,
             should_toggle_forward_pre_hook,
+            nsys_nvtx_context,
         )
 
         # Checkpoint and decide whether to exit.
@@ -602,6 +604,7 @@ def post_training_step_callbacks(
     prof: Optional[torch.profiler.profile],
     config: ConfigContainer,
     should_toggle_forward_pre_hook: bool,
+    nsys_nvtx_context: Optional[TNvtxContext] = None,
 ) -> None:
     """Run all post-training-step functions (e.g., FT heartbeats, GC).
 
@@ -613,6 +616,7 @@ def post_training_step_callbacks(
         prof: PyTorch profiler instance
         config: Configuration container
         should_toggle_forward_pre_hook: Whether to toggle forward pre-hook
+        nsys_nvtx_context: NVTX context for nsys profiling (if active)
     """
     train_config = config.train
 
@@ -645,16 +649,13 @@ def post_training_step_callbacks(
             enable_forward_pre_hook(model)
 
     # Profiling.
-    if (
-        config.profiling
-        and iteration == config.profiling.profile_step_end
-        and torch.distributed.get_rank() in config.profiling.profile_ranks
-    ):
-        if config.profiling.use_pytorch_profiler:
-            assert prof is not None
-            prof.stop()
-        if config.profiling.use_nsys_profiler:
-            torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStop())
+    handle_profiling_stop(
+        config.profiling,
+        iteration,
+        torch.distributed.get_rank(),
+        prof,
+        nsys_nvtx_context,
+    )
 
     # Manual garbage collection.
     if train_config.manual_gc:

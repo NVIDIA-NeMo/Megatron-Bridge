@@ -1,3 +1,17 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Provider for datasets preloaded from JSON/JSONL files into conversation schema.
 """
@@ -7,28 +21,34 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from transformers import AutoProcessor
 
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-from .dataset_provider import VLMConversationDataset
+
+from .conversation_dataset import VLMConversationDataset
 
 
-def _split_text_by_placeholders(text: str, image_paths: List[str], video_paths: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def _split_text_by_placeholders(
+    text: str, image_paths: List[str], video_paths: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
     """
-    Convert a legacy string containing "<image>"/"<video>" markers into a structured
-    content list understood by HF processors: [{'type': 'image'|'video'|'text', ...}, ...].
+    Split legacy text containing "<image>"/"<video>" markers into an alternating
+    sequence of text and media parts, preserving the original order and spacing.
     """
     parts: List[Dict[str, Any]] = []
     img_idx = 0
     vid_idx = 0
-    cursor = 0
+
+    last_end = 0
     for match in re.finditer(r"<image>|<video>", text):
-        if match.start() > cursor:
-            segment = text[cursor:match.start()]
-            if segment:
-                parts.append({"type": "text", "text": segment})
+        # Preceding text (if any)
+        if match.start() > last_end:
+            seg = text[last_end : match.start()]
+            if seg:
+                parts.append({"type": "text", "text": seg})
+
         token = match.group(0)
         if token == "<image>":
             if img_idx >= len(image_paths):
@@ -42,10 +62,11 @@ def _split_text_by_placeholders(text: str, image_paths: List[str], video_paths: 
             else:
                 parts.append({"type": "video", "video": video_paths[vid_idx]})
             vid_idx += 1
-        cursor = match.end()
-    # Remainder
-    if cursor < len(text):
-        tail = text[cursor:]
+        last_end = match.end()
+
+    # Trailing text (if any)
+    if last_end < len(text):
+        tail = text[last_end:]
         if tail:
             parts.append({"type": "text", "text": tail})
     return parts
@@ -109,6 +130,14 @@ def _record_to_conversation(record: Dict[str, Any], image_folder: Optional[str])
             content_str = msg.get("content", "")
 
         content_list = _split_text_by_placeholders(content_str, images, videos)
+        if content_list:
+            # Reorder to media-first followed by a single combined text segment to
+            # match typical VLM chat templates (media before text)
+            media_parts = [p for p in content_list if p.get("type") in ("image", "video")]
+            text_parts = [p.get("text", "") for p in content_list if p.get("type") == "text" and p.get("text")]
+            if text_parts:
+                media_parts.append({"type": "text", "text": "".join(text_parts)})
+            content_list = media_parts
         if not content_list:
             content_list = [{"type": "text", "text": content_str}]
         conversation.append({"role": role, "content": content_list})
@@ -143,7 +172,7 @@ def _load_preloaded_examples(path: str) -> List[Dict[str, Any]]:
 
 
 @dataclass(kw_only=True)
-class PreloadedQwen25VLConversationProvider(DatasetProvider):
+class PreloadedVLMConversationProvider(DatasetProvider):
     """DatasetProvider that builds VLM conversation datasets from preloaded JSON/JSONL files.
 
     The provider converts legacy Qwen2/VL style records with '<image>'/'<video>' markers
@@ -163,9 +192,6 @@ class PreloadedQwen25VLConversationProvider(DatasetProvider):
 
     # Optional image/video root to resolve relative paths
     image_folder: Optional[str] = None
-
-    # Token or token-ids marking start of response for loss masking when supported
-    start_of_response_token: Optional[Union[str, List[int]]] = None
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
     skip_getting_attention_mask_from_dataset: bool = True
@@ -192,7 +218,6 @@ class PreloadedQwen25VLConversationProvider(DatasetProvider):
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,
-            start_of_response_token=self.start_of_response_token,
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
@@ -201,5 +226,3 @@ class PreloadedQwen25VLConversationProvider(DatasetProvider):
         valid_ds = self._build_split_dataset(self.valid_data_path, context.valid_samples, processor)
         test_ds = self._build_split_dataset(self.test_data_path, context.test_samples, processor)
         return train_ds, valid_ds, test_ds
-
-

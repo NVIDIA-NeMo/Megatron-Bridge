@@ -177,24 +177,6 @@ def forward_step(
 
     timers("batch-generator").stop()
 
-    img_start_token_id = 131073  # tokenizer.convert_tokens_to_ids("<img>")
-    img_end_token_id = 131074  # tokenizer.convert_tokens_to_ids("</img>")
-
-    adjusted_batch = adjust_image_tokens(
-        {
-            "input_ids": input_ids,
-            "position_ids": position_ids,
-            "labels": labels,
-            "loss_mask": loss_mask,
-        },
-        num_patches,
-        img_start_token_id,
-        img_end_token_id,
-    )
-    input_ids = adjusted_batch["input_ids"]
-    position_ids = adjusted_batch["position_ids"]
-    labels = adjusted_batch["labels"]
-    loss_mask = adjusted_batch["loss_mask"]
     forward_args = {
         "images": images,
         "input_ids": input_ids,

@@ -25,7 +25,7 @@ Examples:
 
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 pretrain_nemotron_nano_v2_vl.py --config-file conf/nemotron_nano_v2_vl_pretrain_override_example.yaml
+        $ torchrun --nproc_per_node=8 pretrain_nemotron_nano_v2_vl.py --config-file conf/nemotron_nano_v2_vl_override_example.yaml
 
     CLI overrides:
         $ torchrun --nproc_per_node=8 pretrain_nemotron_nano_v2_vl.py model.tensor_model_parallel_size=4 train.train_iters=100000
@@ -56,7 +56,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
-DEFAULT_CONFIG_FILENAME: str = "nemotron_nano_v2_vl_pretrain_override_example.yaml"
+DEFAULT_CONFIG_FILENAME: str = "nemotron_nano_v2_vl_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
@@ -69,7 +69,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         "--config-file",
         type=str,
         default=str(DEFAULT_CONFIG_FILE_PATH),
-        help="Path to the YAML OmegaConf override file. Default: conf/nemotron_nano_v2_vl_pretrain_override_example.yaml",
+        help="Path to the YAML OmegaConf override file. Default: conf/nemotron_nano_v2_vl_override_example.yaml",
     )
     parser.add_argument(
         "--data-path",
@@ -110,15 +110,6 @@ def main() -> None:
         image_folder=args.image_folder,
     )
 
-    DEBUG = False
-    #### TODO TEMP
-    if DEBUG:
-        cfg.model.tensor_model_parallel_size = 1
-        cfg.model.num_layers = 3
-        cfg.model.hybrid_override_pattern = "M*-"
-    else:
-        cfg.model.tensor_model_parallel_size = 4
-
 
     logger.info("Loaded base configuration")
 
@@ -146,6 +137,14 @@ def main() -> None:
         logger.info("--- Final Merged Configuration ---")
         cfg.print_yaml()
         logger.info("----------------------------------")
+
+    DEBUG = False
+    if DEBUG:
+        cfg.model.tensor_model_parallel_size = 1
+        cfg.model.num_layers = 3
+        cfg.model.hybrid_override_pattern = "M*-"
+        cfg.dataset.num_workers = 0
+        cfg.train.train_iters = 10
 
     pretrain(config=cfg, forward_step_func=forward_step)
 

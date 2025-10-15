@@ -35,6 +35,8 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
+from src.megatron.bridge.peft.lora import LoRA
+
 
 def pretrain_config(
     dir: Optional[str] = None,
@@ -49,8 +51,9 @@ def pretrain_config(
     mock: bool = False,
     use_preloaded: bool = False,
     image_folder: Optional[str] = None,
+    dataset_maker_name: str = "make_cord_v2_dataset",
     # Model configuration
-    tensor_parallelism: int = 2,
+    tensor_parallelism: int = 4,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_parallelism: Optional[int] = None,
@@ -108,7 +111,7 @@ def pretrain_config(
     dataset_cfg = HFDatasetConversationProvider(
         sequence_length=seq_length,
         hf_processor_path=tokenizer_model,
-        maker_name="make_rdr_dataset",
+        maker_name=dataset_maker_name,
         # Dataloader config parameters
         num_workers=2,
         dataloader_type="single",
@@ -167,6 +170,7 @@ def pretrain_config(
 def finetune_config(
     *,
     pretrained_checkpoint: str,
+    peft: bool,
     save_checkpoint_dir: Optional[str] = None,
     **pretrain_kwargs,
 ) -> ConfigContainer:
@@ -211,5 +215,10 @@ def finetune_config(
         fully_parallel_save=cfg.checkpoint.fully_parallel_save,
         save_interval=cfg.checkpoint.save_interval,
     )
+    if peft:
+        cfg.peft = LoRA()
+        cfg.optimizer.lr = 1e-4
+        cfg.optimizer.min_lr = 1e-5
+        cfg.model.tensor_model_parallel_size = 2
 
     return cfg

@@ -21,15 +21,19 @@ Public API re-exports:
 - Collate fns: model-specific batch builders
 """
 
-from .makers import (
+from .collate import COLLATE_FNS, default_collate_fn, phi4_mm_collate_fn, qwen2_5_collate_fn
+from .conversation_dataset import VLMConversationDataset
+from .hf_dataset_makers import (
     make_cord_v2_dataset,
     make_cv17_dataset,
     make_medpix_dataset,
     make_rdr_dataset,
+    make_raven_dataset,
+    make_llava_video_178k_dataset,
 )
-from .dataset_provider import VLMConversationDataset, HFDatasetConversationProvider
-from .preloaded_provider import PreloadedQwen25VLConversationProvider
-from .collate import COLLATE_FNS, default_collate_fn, qwen2_5_collate_fn, phi4_mm_collate_fn
+from .hf_provider import HFDatasetConversationProvider
+from .mock_provider import MockVLMConversationProvider
+from .preloaded_provider import PreloadedVLMConversationProvider
 
 
 __all__ = [
@@ -38,10 +42,13 @@ __all__ = [
     "make_cord_v2_dataset",
     "make_medpix_dataset",
     "make_cv17_dataset",
+    "make_raven_dataset",
+    "make_llava_video_178k_dataset",
     # Dataset types/providers
     "VLMConversationDataset",
     "HFDatasetConversationProvider",
-    "PreloadedQwen25VLConversationProvider",
+    "PreloadedVLMConversationProvider",
+    "MockVLMConversationProvider",
     # Collation utilities
     "COLLATE_FNS",
     "default_collate_fn",

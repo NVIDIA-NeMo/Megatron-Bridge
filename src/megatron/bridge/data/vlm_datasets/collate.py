@@ -1,14 +1,31 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Collation utilities for building VLM training batches from conversation examples.
 """
 
-from PIL import Image  # noqa: F401  # may be used downstream by processors
-import torch.nn.functional as F
-
+import warnings
 import torch
+import torch.nn.functional as F
+from PIL import Image  # noqa: F401  # may be used downstream by processors
+
+from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
 from .token_utils import extract_skipped_token_ids
-
+from ..datasets.utils import IGNORE_INDEX
+from ...models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 
 # Local message used when optional qwen_vl_utils dependency is missing
 MISSING_QWEN_VL_UTILS_MSG = (
@@ -22,53 +39,6 @@ try:
     HAVE_QWEN_VL_UTILS = True
 except ImportError:
     HAVE_QWEN_VL_UTILS = False
-
-
-def create_loss_mask_with_start_of_response_token(input_ids, processor, start_of_response_token=None):
-    r"""
-    Create loss mask by finding start of turn token positions, similar to squad.py approach.
-
-    Args:
-        input_ids: List or tensor of token IDs for a single example
-        processor: Processor/tokenizer to convert token string to ID
-        start_of_response_token: String token that marks the start of turns (e.g., "<start_of_turn>model\n")
-
-    Returns:
-        loss_mask: List of 0/1 flags where 0 = masked (prompt), 1 = unmasked (response)
-    """
-
-    def find_sequence_in_list(input_ids, target_sequence):
-        """Find the starting index of target_sequence in input_ids"""
-        if not target_sequence:
-            return -1
-        for i in range(len(input_ids) - len(target_sequence) + 1):
-            if input_ids[i : i + len(target_sequence)] == target_sequence:
-                return i
-        return -1
-
-    tokenizer = getattr(processor, "tokenizer", processor)
-    input_ids = input_ids.tolist()
-
-    if start_of_response_token is None:
-        return [1] * len(input_ids)
-
-    if isinstance(start_of_response_token, str):
-        start_of_response_token_ids = tokenizer(start_of_response_token, add_special_tokens=False)["input_ids"]
-        first_occurrence = find_sequence_in_list(input_ids, start_of_response_token_ids)
-        response_start = first_occurrence if first_occurrence >= 0 else 0
-    else:
-        response_start = 0
-
-    pad_token_id = getattr(tokenizer, "pad_token_id", 0)
-    if pad_token_id is None:
-        pad_token_id = 0
-    loss_mask = [0] * response_start + [1] * (len(input_ids) - response_start)
-
-    for i, token_id in enumerate(input_ids):
-        if token_id == pad_token_id:
-            loss_mask[i] = 0
-
-    return loss_mask
 
 
 def _gather_assistant_text_segments(example: dict) -> list[str]:
@@ -95,7 +65,9 @@ def _gather_assistant_text_segments(example: dict) -> list[str]:
     return texts
 
 
-def create_multiturn_loss_mask_by_search(example: dict, input_ids, processor, skipped_tokens: torch.Tensor) -> list[int]:
+def create_multiturn_loss_mask_by_search(
+    example: dict, input_ids, processor, skipped_tokens: torch.Tensor
+) -> list[int]:
     """Tokenizer-agnostic masking via substring search of assistant texts.
 
     - Tokenize full conversation with processor already done -> input_ids
@@ -109,7 +81,7 @@ def create_multiturn_loss_mask_by_search(example: dict, input_ids, processor, sk
 
     def try_mark(span_text: str, start_from: int) -> int:
         """Tokenize a span and mark its occurrence if found. Returns new search start index."""
-        variants = [span_text, span_text + "\n"]
+        variants = [span_text, span_text + "\n", span_text.strip(), span_text.strip() + "\n"]
         for text in variants:
             span_tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
             if not span_tokens:
@@ -125,6 +97,11 @@ def create_multiturn_loss_mask_by_search(example: dict, input_ids, processor, sk
     search_start = 0
     for asst_text in _gather_assistant_text_segments(example):
         search_start = try_mark(asst_text, search_start)
+
+    if sum(mask) == 0:
+        warnings.warn(f"*"*100)
+        warnings.warn(f"All tokens are masked for example:\n{example}.")
+        warnings.warn(f"*"*100)
 
     # Ensure pad/skipped tokens are masked
     ids_t = torch.tensor(ids)
@@ -177,9 +154,7 @@ def phi4_mm_collate_fn(examples, processor):
     return batch
 
 
-def qwen2_5_collate_fn(
-    examples: list, processor, start_of_response_token: str = "<|im_start|>assistant\n"
-) -> dict[str, torch.Tensor]:
+def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
@@ -213,6 +188,8 @@ def qwen2_5_collate_fn(
             images=images_with,
             padding=True,
             return_tensors="pt",
+            min_pixels=200704,  # 256*28*28
+            max_pixels=1003520,  # 1280*28*28
         )
 
     if idx_without:
@@ -279,21 +256,74 @@ def qwen2_5_collate_fn(
     # Enforce label masking to match shifted loss_mask
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
     batch["loss_mask"] = loss_mask_t
+    # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
+    visual_inputs = Qwen2_5_VLVisualInputs(
+        pixel_values=batch.get("pixel_values"),
+        image_grid_thw=batch.get("image_grid_thw"),
+    )
+    if "pixel_values" in batch:
+        del batch["pixel_values"]
+    if "image_grid_thw" in batch:
+        del batch["image_grid_thw"]
+    batch["visual_inputs"] = visual_inputs
     return batch
 
 
 def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_token=None) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Nano V2 VL model."""
+    # TODO @liding
     skipped_tokens = extract_skipped_token_ids(processor)
+    is_video = hasattr(examples[0]["conversation"][0]["content"][0], "video")
+    if is_video:
+        from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import maybe_path_or_url_to_data_urls, pil_image_from_base64
+        breakpoint()
+        video_path = examples[0]["conversation"][0]["content"][0]["video"]
+        video_fps = 1
+        video_nframe = 8
+        video_nframe_max = -1
 
-    batch = processor.apply_chat_template(
-        [example["conversation"] for example in examples],
-        tokenize=True,
-        padding=processor.tokenizer.pad_token is not None,
-        truncation=True,
-        return_tensors="pt",
-        return_dict=True,
+        # Get frames and metadata
+        image_urls, metadata = maybe_path_or_url_to_data_urls(
+            video_path,
+            fps=max(0, int(video_fps)),
+            nframe=max(0, int(video_nframe)),
+            nframe_max=int(video_nframe_max),
+        )
+        frames = [pil_image_from_base64(image_url) for image_url in image_urls]
+        prompt = processor.apply_chat_template([example["conversation"] for example in examples], tokenize=False)
+        batch = processor(
+            text=[prompt],
+            videos=frames,
+            videos_kwargs={'video_metadata': metadata},
+            return_tensors="pt",
+        )
+    else:
+        batch = processor.apply_chat_template(
+            [example["conversation"] for example in examples],
+            tokenize=True,
+            padding=processor.tokenizer.pad_token is not None,
+            truncation=True,
+            return_tensors="pt",
+            return_dict=True,
+        )
+    loss_mask = [
+        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
+        for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]
+    ]
+
+    img_start_token_id = 131073  # tokenizer.convert_tokens_to_ids("<img>")
+    img_end_token_id = 131074  # tokenizer.convert_tokens_to_ids("</img>")
+    adjusted_batch = adjust_image_tokens(
+        {
+            "input_ids": batch["input_ids"],
+            "loss_mask": torch.tensor(loss_mask),
+        },
+        batch["num_patches"],
+        img_start_token_id,
+        img_end_token_id,
     )
+    batch["input_ids"] = adjusted_batch["input_ids"]
+    loss_mask = adjusted_batch["loss_mask"]
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
@@ -302,18 +332,16 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
         )
 
     batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
+    # roll label by 1 and fill last token with IGNORE_INDEX
     labels = batch["input_ids"].clone()[:, 1:]
-    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-    labels[torch.isin(labels, skipped_tokens)] = -100
+    labels = torch.cat([labels, IGNORE_INDEX * torch.ones_like(labels[:, :1])], dim=1)
+    labels[torch.isin(labels, skipped_tokens)] = IGNORE_INDEX
     batch["labels"] = labels
-    loss_masks = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]
-    ]
-    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
+
+    loss_mask_t = torch.tensor(loss_mask, dtype=torch.float, device=batch["input_ids"].device)
     # Shift loss mask to align with next-token labels timeline
     loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
+    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
     return batch
 
@@ -354,6 +382,16 @@ def default_collate_fn(examples: list, processor, start_of_response_token=None) 
     loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
     batch["loss_mask"] = loss_mask_t
+    # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
+    visual_inputs = Qwen2_5_VLVisualInputs(
+        pixel_values=batch.get("pixel_values"),
+        image_grid_thw=batch.get("image_grid_thw"),
+    )
+    if "pixel_values" in batch:
+        del batch["pixel_values"]
+    if "image_grid_thw" in batch:
+        del batch["image_grid_thw"]
+    batch["visual_inputs"] = visual_inputs
     return batch
 
 
@@ -363,5 +401,3 @@ COLLATE_FNS = {
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "default": default_collate_fn,
 }
-
-

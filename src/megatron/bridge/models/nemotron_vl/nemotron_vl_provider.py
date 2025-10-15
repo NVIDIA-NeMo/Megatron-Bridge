@@ -39,7 +39,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
     # For VL models we do *not* scatter embeddings across the sequence
     # parallel region because we need to splice vision embeddings later.
     scatter_embedding_sequence_parallel: bool = False
-    calculate_per_token_loss: bool = True
     attention_softmax_in_fp32: bool = True
 
     vision_model_type: str = "radio"
