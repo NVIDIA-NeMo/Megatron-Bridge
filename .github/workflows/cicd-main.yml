@@ -101,6 +101,7 @@ jobs:
   cicd-functional-tests:
     strategy:
       fail-fast: false
+      max-parallel: ${{ vars.JOB_CONCURRENCY }}
       matrix:
         include:
           - script: L2_Launch_training
