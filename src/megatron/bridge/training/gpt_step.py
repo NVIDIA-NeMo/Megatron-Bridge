@@ -126,7 +126,7 @@ def get_batch(
 
 def _forward_step_common(
     state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
-) -> tuple[tuple[torch.Tensor, ...], torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Forward training step.
 
     Args:
@@ -136,7 +136,7 @@ def _forward_step_common(
         return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
 
     Returns:
-        tuple containing the output tensor and the loss function
+        tuple containing the output tensor and loss mask
     """
     timers = state.timers
     straggler_timer = state.straggler_timer

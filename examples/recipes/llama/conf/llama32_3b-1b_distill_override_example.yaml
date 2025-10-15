@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ scheduler:
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
-  save: "./distill_llama3_8b"
+  save: "./distill_llama32_3b-1b"
 
 dist:
   use_megatron_fsdp: false
@@ -75,3 +75,4 @@ profiling:
   use_pytorch_profiler: true
   profile_ranks: [0, 1]
   record_shapes: true
+

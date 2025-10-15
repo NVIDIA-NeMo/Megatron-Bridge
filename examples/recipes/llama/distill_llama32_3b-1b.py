@@ -14,28 +14,33 @@
 # limitations under the License.
 
 """
-Llama3 8B Pretraining Script with YAML and CLI Configuration Overrides.
+Llama3.2 Knowledge Distillation Script with YAML and CLI Configuration Overrides.
 
-This script provides an example of distilling Llama3 8B using Megatron-Bridge with support for
+This script provides an example of knowledge distillation using a Llama3.2-3B teacher model
+to distill knowledge into a Llama3.2-1B student model using Megatron-Bridge with support for
 both YAML configuration files and command-line overrides using Hydra-style syntax.
 
 Examples:
     Basic usage with default configuration:
-        $ torchrun --nproc_per_node=8 distill_llama3_8b.py
+        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 distill_llama3_8b.py --config-file my_custom_config.yaml
+        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file my_custom_config.yaml
 
-    Using CLI overrides only:
-        $ torchrun --nproc_per_node=8 distill_llama3_8b.py model.tensor_model_parallel_size=4 train.train_iters=100000
+    Using CLI overrides:
+        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
+        model.student.tensor_model_parallel_size=4 \
+        model.teacher.tensor_model_parallel_size=4 \
+        train.train_iters=100000
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 distill_llama3_8b.py --config-file conf/my_config.yaml \
-        model.pipeline_dtype=torch.float16 \
+        $ torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file conf/my_config.yaml \
+        model.student.pipeline_dtype=torch.float16 \
+        model.teacher.pipeline_dtype=torch.float16 \
         train.global_batch_size=512
 
 Configuration Precedence:
-    1. Base configuration from pretrain_config() recipe
+    1. Base configuration from student and teacher pretrain_config() recipes
     2. YAML overrides from --config-file (if provided)
     3. CLI overrides (highest precedence)
 
@@ -74,24 +79,24 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 # Define paths relative to this script's location
-# Assumes this script (pretrain_llama3_8b.py) is in Megatron-Bridge/examples/recipes/llama/
+# Assumes this script (distill_llama32_3b-1b.py) is in Megatron-Bridge/examples/recipes/llama/
 # and the config is in a 'conf' subdirectory.
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
-DEFAULT_CONFIG_FILENAME: str = "llama3_8b_distill_override.yaml"
+DEFAULT_CONFIG_FILENAME: str = "llama32_3b-1b_distill_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command line arguments, separating known script args from OmegaConf overrides."""
     parser = argparse.ArgumentParser(
-        description="Distill Llama3 8B model using Megatron-Bridge with YAML and CLI overrides",
+        description="Knowledge distillation with Llama3.2 using Megatron-Bridge with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--config-file",
         type=str,
         default=str(DEFAULT_CONFIG_FILE_PATH),
-        help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_distill_override.yaml",
+        help="Path to the YAML OmegaConf override file. Default: conf/llama32_3b-1b_distill_override_example.yaml",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
@@ -102,33 +107,41 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 def main() -> None:
     """
-    Entry point for the Llama3 8B distillation script.
+    Entry point for the Llama3.2 knowledge distillation script.
 
     This function orchestrates the complete configuration workflow:
-    1. Loads the base configuration from existing pretrain recipes
-    2. Applies YAML overrides from --config-file (if exists)
-    3. Applies CLI overrides using Hydra-style syntax
-    4. Starts Megatron distillation with the final merged configuration
+    1. Loads the base student configuration (Llama3.2-1B) and teacher configuration (Llama3.2-3B)
+    2. Wraps both in a GPTDistillationProvider to create a unified distillation model
+    3. Applies YAML overrides from --config-file (if exists)
+    4. Applies CLI overrides using Hydra-style syntax
+    5. Starts Megatron distillation with the final merged configuration
+
+    The config.model structure contains student and teacher model providers:
+    - config.model.student: The Llama3.2-1B student model configuration
+    - config.model.teacher: The Llama3.2-3B teacher model configuration
+    - config.model.kd_config: Knowledge distillation-specific settings
 
     Configuration merging preserves callable fields (like activation functions)
     and handles type conversions automatically.
 
     Examples of CLI usage:
         # Use default config with custom learning rate
-        torchrun --nproc_per_node=8 distill_llama3_8b.py optimizer.lr=0.0002
+        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py optimizer.lr=0.0002
 
         # Custom config file with additional overrides
-        torchrun --nproc_per_node=8 distill_llama3_8b.py --config-file my_config.yaml train.train_iters=50000
+        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py --config-file my_config.yaml train.train_iters=50000
 
         # Multiple overrides for distributed training
-        torchrun --nproc_per_node=8 distill_llama3_8b.py \
-            model.tensor_model_parallel_size=4 \
-            model.pipeline_model_parallel_size=2 \
+        torchrun --nproc_per_node=8 distill_llama32_3b-1b.py \
+            model.student.tensor_model_parallel_size=4 \
+            model.student.pipeline_model_parallel_size=2 \
+            model.teacher.tensor_model_parallel_size=4 \
+            model.teacher.pipeline_model_parallel_size=2 \
             train.global_batch_size=512
     """
     args, cli_overrides = parse_cli_args()
 
-    logger.info("Megatron-Bridge Llama3 8B Distillation Script with YAML & CLI Overrides")
+    logger.info("Megatron-Bridge Llama3.2 3B-1B Distillation Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
 
     # Load base configurations as recipes and wrap provider for distillation mode
@@ -138,7 +151,7 @@ def main() -> None:
         teacher=llama32_3b_pretrain_config().model,
         kd_config=None,  # Can modify via YAML overrides
     )
-    logger.info("Loaded base configuration")
+    logger.info("Loaded base student and teacher configurations")
 
     # Print configuration on rank 0
     if get_rank_safe() == 0:

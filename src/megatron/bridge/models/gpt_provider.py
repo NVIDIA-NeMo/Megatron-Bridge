@@ -309,6 +309,7 @@ class GPTDistillationProvider(ModelProviderMixin[MCoreGPTModel]):
             "pipeline_model_parallel_size",
             "context_parallel_size",
             "seq_length",
+            "pipeline_dtype",
         ]
         for attr in shared_attrs:
             if getattr(self.student, attr) != getattr(self.teacher, attr):
