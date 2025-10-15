@@ -66,7 +66,8 @@ def main():
         if args.gpu.lower() in ["gb300"]:
             pp, vp = (4, 4)
         elif args.gpu.lower() in ["gb200"]:
-            pp, vp = (4, 1) if args.num_gpus == 128 else (4, 1)
+            # VP=4 does not work in 128 GPUs
+            pp, vp = (4, 1) if args.num_gpus == 128 else (4, 4)
         elif args.gpu.lower() in ["b200"]:
             pp, vp = (16, 1)
         elif args.gpu.lower() in ["h100"]:
