@@ -69,5 +69,7 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     if args.virtual_pipeline_parallel_size: preset["common"]["vp"] = args.virtual_pipeline_parallel_size
     if args.expert_parallel_size: preset["common"]["ep"] = args.expert_parallel_size
     if args.expert_tensor_parallel_size: preset["common"]["etp"] = args.expert_tensor_parallel_size
+    if args.micro_batch_size: preset["common"]["mbs"] = args.micro_batch_size
+    if args.global_batch_size: preset["common"]["gbs"] = args.global_batch_size
 
     return preset
