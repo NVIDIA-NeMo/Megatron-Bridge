@@ -107,7 +107,8 @@ jobs:
           - script: L2_Launch_training
           - script: L2_Launch_converter
           - script: L2_Launch_models
-          - script: L2_Launch_recipes_llama
+          - script: L2_Launch_recipes_llama_1b
+          - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data

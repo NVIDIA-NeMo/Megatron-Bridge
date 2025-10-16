@@ -17,9 +17,6 @@
 import pytest
 
 from megatron.bridge.recipes.llama import (
-    llama32_1b_pretrain_config as llama32_1b_config,
-)
-from megatron.bridge.recipes.llama import (
     llama32_3b_pretrain_config as llama32_3b_config,
 )
 from tests.functional_tests.recipes.utils import run_pretrain_config_override_test, run_pretrain_recipe_test
@@ -27,7 +24,6 @@ from tests.functional_tests.recipes.utils import run_pretrain_config_override_te
 
 LLAMA_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides)
-    (llama32_1b_config, "llama32_1b", {}),  # Small model, use recipe defaults
     (llama32_3b_config, "llama32_3b", {}),  # Small model, use recipe defaults
 ]
 
