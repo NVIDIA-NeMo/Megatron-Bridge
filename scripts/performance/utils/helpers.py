@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from omegaconf import OmegaConf
 
@@ -89,7 +89,7 @@ def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
             logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
 
-def get_precision_config(compute_dtype: str, fp8_recipe: str):
+def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
         if fp8_recipe == "ds":

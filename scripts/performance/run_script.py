@@ -20,6 +20,7 @@ import torch
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
+from configs.llama3.llama3_8b_llm_pretrain import llama3_8b_h100_bf16_config, llama3_8b_h100_fp8_config
 
 from megatron.bridge.recipes.deepseek import deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama import (
@@ -53,6 +54,9 @@ def main():
 
     if args.model_name == "llama3" and args.model_size == "8b":
         recipe = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
+        if args.gpu.lower() == "h100":
+            cfg_str = f"llama3_8b_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
+            recipe = globals()[cfg_str]()
     elif args.model_name == "llama3" and args.model_size == "70b":
         recipe = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "llama31" and args.model_size == "405b":
@@ -174,9 +178,7 @@ def main():
         if args.model_name in ["llama3", "llama31"]:
             if args.model_size in ["70b", "405b"]:
                 recipe.ddp.fsdp_double_buffer = True
-            if args.model_size in ["8b"] and args.gpu.lower() in ["h100"]:
-                recipe.ddp.nccl_ub = True
-            if args.model_size in ["8b", "70b"]:
+            if args.model_size in ["70b"]:
                 recipe.model.gradient_accumulation_fusion = False
         if args.model_name in ["llama3"] and args.model_size in ["70b"]:
             recipe.ddp.suggested_communication_unit_size = 800000000
