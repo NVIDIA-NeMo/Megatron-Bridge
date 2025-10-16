@@ -171,6 +171,8 @@ def apply_args_to_config(config, args):
         config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     if args.save_dir:
         config.checkpoint.save = args.save_dir
+    if args.load_dir:
+        config.checkpoint.load = args.load_dir
     if args.save_interval:
         config.checkpoint.save_interval = args.save_interval
     if args.async_save:
@@ -334,6 +336,7 @@ def setup_argument_parser():
     # Checkpointing
     parser.add_argument("--pretrained-checkpoint", type=str, help="Path to pretrained checkpoint")
     parser.add_argument("--save-dir", type=str, help="Directory to save checkpoints")
+    parser.add_argument("--load-dir", type=str, help="Directory to load checkpoints")
     parser.add_argument("--save-interval", type=int, help="Number of iterations between checkpoint saves")
     parser.add_argument("--async-save", action="store_true", help="Enable async checkpoint saving", default=False)
 

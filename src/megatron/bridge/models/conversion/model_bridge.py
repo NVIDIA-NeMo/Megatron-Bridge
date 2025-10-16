@@ -791,7 +791,11 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if hasattr(unwrapped_model, "language_model"):
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        if model_config.share_embeddings_and_output_weights and model_config.pipeline_model_parallel_size > 1:
+
+        # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
+        if (model_config.share_embeddings_and_output_weights and model_config.pipeline_model_parallel_size > 1) and (
+            parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage()
+        ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
             embd_group = parallel_state.get_embedding_group()
             embd_group_ranks = torch.distributed.get_process_group_ranks(embd_group)
