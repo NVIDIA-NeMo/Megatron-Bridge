@@ -98,7 +98,7 @@ class TestDataFineTuningDataset:
         dataset, _ = get_dataset(ensure_test_data, packed_train_data_path=npy_path)
         train_path_packed = dataset.train_path_packed
 
-        assert train_path_packed == PosixPath(npy_path)
+        assert PosixPath(train_path_packed) == PosixPath(npy_path)
 
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
