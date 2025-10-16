@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Union
+from typing import Callable
 
 import torch
 
@@ -87,8 +87,9 @@ class Llama33NemotronSuper49BProvider(Llama31ModelProvider70B, HeterogeneousTran
     Maps to: nvidia/Llama-3_3-Nemotron-Super-49B-v1
     Based on Llama31Config70B with heterogeneous architecture and kv_channels=128
 
-    CRITICAL MRO: Llama31ModelProvider70B must come first to ensure proper
-    provider functionality, then HeterogeneousTransformerConfig for heterogeneous support.
+    Developer Note:
+        For MRO, Llama31ModelProvider70B must come first to ensure proper provider functionality,
+        then HeterogeneousTransformerConfig for heterogeneous support.
     """
 
     hidden_size: int = 8192
@@ -101,9 +102,9 @@ class Llama33NemotronSuper49BProvider(Llama31ModelProvider70B, HeterogeneousTran
     params_dtype: torch.dtype = torch.bfloat16
     autocast_dtype: torch.dtype = torch.bfloat16
 
-    heterogeneous_layers_config_path: str = ""
+    heterogeneous_layers_config_path: str | None = None
     heterogeneous_layers_config_encoded_json: str = ""
-    transformer_layer_spec: Union[ModuleSpec, Callable] = heterogeneous_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable = heterogeneous_layer_spec
 
 
 @dataclass
@@ -113,8 +114,9 @@ class Llama31NemotronUltra253BProvider(Llama31ModelProvider405B, HeterogeneousTr
     Maps to: nvidia/Llama-3_1-Nemotron-Ultra-253B-v1
     Based on Llama31Config405B with heterogeneous architecture and kv_channels=128
 
-    CRITICAL MRO: Llama31ModelProvider must come first to ensure proper
-    provider functionality, then HeterogeneousTransformerConfig for heterogeneous support.
+    Developer Note:
+        For MRO, Llama31ModelProvider405B must come first to ensure proper provider functionality,
+        then HeterogeneousTransformerConfig for heterogeneous support.
     """
 
     # Override base config for Ultra model specifics
@@ -129,9 +131,9 @@ class Llama31NemotronUltra253BProvider(Llama31ModelProvider405B, HeterogeneousTr
     autocast_dtype: torch.dtype = torch.bfloat16
 
     # Heterogeneous configuration fields
-    heterogeneous_layers_config_path: str = ""
+    heterogeneous_layers_config_path: str | None = None
     heterogeneous_layers_config_encoded_json: str = ""
-    transformer_layer_spec: Union[ModuleSpec, Callable] = heterogeneous_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable = heterogeneous_layer_spec
 
 
 @dataclass
@@ -150,6 +152,6 @@ class LlamaNemotronHeterogeneousProvider(Llama31ModelProvider, HeterogeneousTran
     autocast_dtype: torch.dtype = torch.bfloat16
 
     # Heterogeneous configuration fields
-    heterogeneous_layers_config_path: str = ""
+    heterogeneous_layers_config_path: str | None = None
     heterogeneous_layers_config_encoded_json: str = ""
-    transformer_layer_spec: Union[ModuleSpec, Callable] = heterogeneous_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable = heterogeneous_layer_spec

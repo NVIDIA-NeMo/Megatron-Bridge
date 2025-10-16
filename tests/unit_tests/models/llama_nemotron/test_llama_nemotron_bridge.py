@@ -242,6 +242,24 @@ class TestLlamaNemotronSpecificProviders:
     def test_super_49b_config(self):
         """Test Llama3.3-Nemotron-Super-49B provider configuration."""
         provider = Llama33NemotronSuper49BProvider()
+        # Provide minimal heterogeneous config JSON to avoid file access
+        provider.heterogeneous_layers_config_encoded_json = json.dumps(
+            {
+                "block_configs": [
+                    {
+                        "attention": {"n_heads_in_group": 8, "no_op": False},
+                        "ffn": {"ffn_mult": 2.625, "no_op": False},
+                    }
+                ],
+                "rope_scaling": {
+                    "factor": 8.0,
+                    "low_freq_factor": 1.0,
+                    "high_freq_factor": 4.0,
+                    "original_max_position_embeddings": 8192,
+                    "rope_type": "llama3",
+                },
+            }
+        )
         provider.finalize()
 
         assert provider.hidden_size == 8192
@@ -261,8 +279,24 @@ class TestLlamaNemotronSpecificProviders:
     def test_ultra_253b_config(self):
         """Test Llama3.1-Nemotron-Ultra-253B provider configuration."""
         provider = Llama31NemotronUltra253BProvider()
-
-        # Call finalize to process heterogeneous configuration
+        # Provide minimal heterogeneous config JSON to avoid file access
+        provider.heterogeneous_layers_config_encoded_json = json.dumps(
+            {
+                "block_configs": [
+                    {
+                        "attention": {"n_heads_in_group": 16, "no_op": False},
+                        "ffn": {"ffn_mult": 1.0, "no_op": False},
+                    }
+                ],
+                "rope_scaling": {
+                    "factor": 16.0,
+                    "low_freq_factor": 1.0,
+                    "high_freq_factor": 4.0,
+                    "original_max_position_embeddings": 8192,
+                    "rope_type": "llama3",
+                },
+            }
+        )
         provider.finalize()
 
         assert provider.hidden_size == 16384
