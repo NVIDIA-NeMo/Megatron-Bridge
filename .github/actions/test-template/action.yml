@@ -269,7 +269,14 @@ runs:
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
-          timeout $(( ${{ inputs.timeout }} * 60 ))m bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh
+          
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
+
+          if [[ "$EXIT_CODE" -eq 124 ]]; then
+            echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
+          fi
+
+          exit $EXIT_CODE
         '
 
         RUN_TEST_EOF
