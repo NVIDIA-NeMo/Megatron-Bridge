@@ -56,7 +56,7 @@ jobs:
           CHANGELOG=$(echo "$CHANGELOG" | sed '/^[[:blank:]]*#/s/#/###/')
 
           # Build release notes starting with version header
-          RELEASE_NOTES="## NVIDIA Nemo Run $RELEASE_VERSION"
+          RELEASE_NOTES="## NVIDIA Megatron-Bridge $RELEASE_VERSION"
 
           # Add custom content if provided
           if [ -n "$MAIN_CONTENT" ]; then
