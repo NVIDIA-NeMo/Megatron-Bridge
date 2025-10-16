@@ -114,7 +114,13 @@ def main():
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     # Load and merge YAML overrides if a config file is provided
     yaml_overrides_omega = None
-    if args.config_file:
+    skip_config_file = False
+    # Use dataclass configs instead of YAML overrides for deepseek v3 on H100, GB200 and B200, and llama3 8b on H100
+    if args.model_name == "deepseek" and args.model_size == "v3":
+        skip_config_file = True
+    elif args.model_name == "llama3" and args.model_size == "8b" and args.gpu.lower() == "h100":
+        skip_config_file = True
+    if args.config_file and not skip_config_file:
         logger.debug(f"Loading YAML overrides from: {args.config_file}")
         if not os.path.exists(args.config_file):
             logger.error(f"Override YAML file not found: {args.config_file}")
@@ -139,7 +145,6 @@ def main():
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
 
-    # Apply GPU/precision-specific performance overrides from perf_matrix, if present
     if yaml_overrides_omega is not None:
         apply_perf_matrix_overrides(yaml_overrides_omega, recipe, args, excluded_fields)
     recipe.model.gradient_accumulation_fusion = True

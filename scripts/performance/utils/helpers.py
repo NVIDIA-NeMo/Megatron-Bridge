@@ -63,6 +63,19 @@ COMM_OVERLAP_CONFIG_MAP = {
     },
 }
 
+def set_basic_perf_overrides(recipe: Any) -> None:
+    recipe.train.train_iters = 100
+    recipe.train.eval_iters = 0
+
+    recipe.checkpoint.save = None
+
+    recipe.logger.log_interval = 1
+    recipe.logger.tensorboard_dir = None
+
+    recipe.ddp.check_for_nan_in_grad = False
+    recipe.ddp.check_for_large_grads = False
+
+    recipe.rerun_state_machine.check_for_nan_in_loss = False
 
 def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the mcore fsdp overrides from the performance matrix."""

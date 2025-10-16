@@ -2,8 +2,9 @@ import logging
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-from scripts.performance.utils.helpers import get_precision_config, set_megatron_fsdp_overrides, moe_a2a_1f1b_overrides
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
+
+from scripts.performance.utils.helpers import (get_precision_config, moe_a2a_1f1b_overrides, set_basic_perf_overrides)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ def deepseek_v3_gb200_bf16_config(
         layout=None,
     )
 
+    set_basic_perf_overrides(cfg)
+
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
@@ -40,6 +43,12 @@ def deepseek_v3_gb200_bf16_config(
     cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -79,6 +88,8 @@ def deepseek_v3_gb200_fp8_config(
         layout=None,
     )
 
+    set_basic_perf_overrides(cfg)
+
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
@@ -91,6 +102,12 @@ def deepseek_v3_gb200_fp8_config(
     cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -129,6 +146,8 @@ def deepseek_v3_b200_bf16_config(
         layout=None,
     )
 
+    set_basic_perf_overrides(cfg)
+
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
     cfg.model.context_parallel_size = 1
@@ -141,6 +160,12 @@ def deepseek_v3_b200_bf16_config(
     cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -177,6 +202,8 @@ def deepseek_v3_b200_fp8_config(
         layout=None,
     )
 
+    set_basic_perf_overrides(cfg)
+
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
     cfg.model.context_parallel_size = 1
@@ -189,6 +216,12 @@ def deepseek_v3_b200_fp8_config(
     cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -224,6 +257,8 @@ def deepseek_v3_h100_bf16_config(
         layout="Et|(tt|)*30mL",
     )
 
+    set_basic_perf_overrides(cfg)
+
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
@@ -236,6 +271,12 @@ def deepseek_v3_h100_bf16_config(
     cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     if enable_deepep:
         cfg.model.moe_router_force_load_balancing = True
@@ -271,6 +312,8 @@ def deepseek_v3_h100_fp8_config(
         layout=None,
     )
 
+    set_basic_perf_overrides(cfg)
+
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
@@ -283,6 +326,12 @@ def deepseek_v3_h100_fp8_config(
     cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
+
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    
 
     if enable_deepep:
         cfg.model.moe_router_force_load_balancing = True
