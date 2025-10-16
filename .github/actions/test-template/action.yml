@@ -280,15 +280,8 @@ runs:
         echo "::endgroup::"
 
     - name: Run main script
-      uses: nick-fields/retry@v3
-      id: run-main-script
-      with:
-        timeout_seconds: ${{ steps.create.outputs.timeout_in_seconds }}
-        max_attempts: 3
-        shell: bash
-        retry_on: timeout
-        command: /bin/bash job.sh
-        on_retry_command: /bin/bash retry_job.sh
+      shell: bash
+      run: /bin/bash job.sh
 
     - name: Check result
       id: check
