@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Note: This file is being copy from megatron/bridge/recipes/run_plugins.py.
+Note: This file is a copy from megatron/bridge/recipes/run_plugins.py.
       This is being cloned to not require installing Megatron-Bridge to run the perf scripts.
 
 
