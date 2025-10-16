@@ -134,6 +134,18 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
+def moe_a2a_1f1b_overrides(recipe: Any, perf_overrides: Any) -> None:
+    a2a_1f1b = perf_overrides.get("a2a_1f1b", False)
+    if a2a_1f1b:
+        recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+        recipe.comm_overlap.delay_wgrad_compute = True
+        recipe.model.moe_shared_expert_overlap = False
+    else:
+        recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
+        recipe.comm_overlap.delay_wgrad_compute = False
+        recipe.model.moe_shared_expert_overlap = True
+
+    return recipe
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
     """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""

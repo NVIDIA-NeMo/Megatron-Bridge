@@ -21,8 +21,15 @@ from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
 from configs.llama3.llama3_8b_llm_pretrain import llama3_8b_h100_bf16_config, llama3_8b_h100_fp8_config
-
-from megatron.bridge.recipes.deepseek import deepseek_v3_pretrain_config
+from configs.deepseek.deepseek_v3_llm_pretrain import (
+    deepseek_v3_gb200_bf16_config, 
+    deepseek_v3_gb200_fp8_config, 
+    deepseek_v3_h100_bf16_config, 
+    deepseek_v3_h100_fp8_config,
+    deepseek_v3_b200_bf16_config,
+    deepseek_v3_b200_fp8_config,
+)
+from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama import (
     llama3_8b_pretrain_config,
     llama3_70b_pretrain_config,
@@ -56,7 +63,7 @@ def main():
         recipe = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
         if args.gpu.lower() == "h100":
             cfg_str = f"llama3_8b_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
-            recipe = globals()[cfg_str]()
+            recipe = globals()[cfg_str](args.fp8_recipe)
     elif args.model_name == "llama3" and args.model_size == "70b":
         recipe = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "llama31" and args.model_size == "405b":
@@ -69,46 +76,14 @@ def main():
             enable_deepep = False
             logger.info("Using token drop, disabling DeepEP")
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
-
-        pp_vp_map = {"h100": (8, 4), "b200": (16, 1), "gb200": (4, 4)}
-        pp, vp = pp_vp_map[args.gpu.lower()] if args.gpu.lower() in pp_vp_map else (1, 1)
-        layout = "Et|(tt|)*30mL" if args.gpu.lower() in ["h100"] else None
-        recipe = deepseek_v3_pretrain_config(
-            mock=True,
-            precision_config=precision_config,
-            # NOTE: IMPORTANT: PLEASE SET PP-VP size here to correctly set the pp-vp layout
-            pipeline_parallelism=pp,
-            virtual_pipeline_parallelism=vp,
+        
+        cfg_str = f"deepseek_v3_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
+        recipe = globals()[cfg_str](
+            fp8_recipe=args.fp8_recipe,
+            use_tokendrop=use_tokendrop,
             enable_deepep=enable_deepep,
-            layout=layout,
+            a2a_1f1b=A2A_1F1B,
         )
-
-        if enable_deepep:
-            recipe.model.moe_router_force_load_balancing = True
-        if use_tokendrop:
-            recipe.model = apply_moe_token_drop(recipe.model)
-
-        if A2A_1F1B:
-            recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
-            recipe.comm_overlap.delay_wgrad_compute = True
-            recipe.model.moe_shared_expert_overlap = False
-        else:
-            recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
-            recipe.comm_overlap.delay_wgrad_compute = False
-            recipe.model.moe_shared_expert_overlap = True
-        if args.gpu.lower() in ["h100"]:
-            recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
-        if args.gpu.lower() == "b200":
-            recipe.model.recompute_modules = ["mla_up_proj"]
-        if args.gpu.lower() == "gb200":
-            if use_tokendrop:
-                recipe.model.recompute_modules = ["mla_up_proj"]
-            else:
-                recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
-        if args.gpu.lower() in ["gb200", "b200"]:
-            recipe.comm_overlap.overlap_grad_reduce = True
-        elif args.gpu.lower() in ["h100"]:
-            recipe.comm_overlap.overlap_grad_reduce = False
     elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
         recipe = qwen3_30b_a3b_pretrain_config(
             mock=True,

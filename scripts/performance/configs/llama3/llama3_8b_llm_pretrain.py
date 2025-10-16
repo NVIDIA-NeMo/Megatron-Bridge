@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def llama3_8b_h100_bf16_config() -> ConfigContainer:
+def llama3_8b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
     """H100, 8xGPU, BF16 baseline config."""
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
@@ -28,10 +28,6 @@ def llama3_8b_h100_bf16_config() -> ConfigContainer:
 
 def llama3_8b_h100_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """H100, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
-    if fp8_recipe != "cs":
-        logger.warning(f"{fp8_recipe=} is not supported for H100 System. Using FP8-CS configs instead.")
-        fp8_recipe = "cs"
-
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     cfg.model.tensor_model_parallel_size = 1
