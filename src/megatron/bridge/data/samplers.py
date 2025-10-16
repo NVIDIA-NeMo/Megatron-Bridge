@@ -250,18 +250,29 @@ class MegatronPretrainingBatchSampler:
         self._global_batch_size_on_this_data_parallel_rank = self._num_micro_batches * self.micro_batch_size
 
     def __len__(self) -> int:
-        """Return the number of batches this sampler will yield."""
+        """Return the number of microbatches this sampler will yield.
+
+        Since we yield one microbatch per global batch × num_micro_batches,
+        multiply by num_micro_batches to get the total number of yields.
+        """
         num_available_samples = self.total_samples - self.consumed_samples % self.total_samples
         if self.drop_last:
-            return num_available_samples // self._global_batch_size
+            num_global_batches = num_available_samples // self._global_batch_size
         else:
-            return (num_available_samples + self._global_batch_size - 1) // self._global_batch_size
+            num_global_batches = (num_available_samples + self._global_batch_size - 1) // self._global_batch_size
+
+        # Each global batch yields num_micro_batches microbatches
+        return num_global_batches * self._num_micro_batches
 
     def __iter__(self) -> Iterator[list[int]]:
-        """Yields lists of indices for each batch assigned to this rank.
+        """Yields lists of indices for each microbatch assigned to this rank.
 
         Accumulates a full global batch, then distributes indices in interleaved fashion
-        to data parallel ranks. Rank i gets indices [i, i+dp_size, i+2*dp_size, ...].
+        to data parallel ranks, yielding one microbatch at a time for megatron-core compatibility.
+
+        This ensures all samples in a global batch can be padded to the same max length
+        (important for variable-length finetuning) while being compatible with megatron-core's
+        microbatch loop that calls next() multiple times per training step.
         """
         batch = []
         # Last batch will be dropped if drop_last is True
@@ -269,7 +280,7 @@ class MegatronPretrainingBatchSampler:
             batch.append(idx)
             if len(batch) == self._global_batch_size:
                 # Distribute indices in interleaved fashion across ranks
-                indices = [
+                all_indices = [
                     batch[i]
                     for i in range(
                         self.data_parallel_rank,
@@ -277,18 +288,30 @@ class MegatronPretrainingBatchSampler:
                         self.data_parallel_size,
                     )
                 ]
-                assert len(indices) == self._global_batch_size_on_this_data_parallel_rank
-                yield indices
+                assert len(all_indices) == self._global_batch_size_on_this_data_parallel_rank
+
+                # Yield one microbatch at a time
+                for microbatch_idx in range(self._num_micro_batches):
+                    start = microbatch_idx * self.micro_batch_size
+                    end = start + self.micro_batch_size
+                    yield all_indices[start:end]
+
                 batch = []
 
         # Check the last partial batch and see if drop_last is set
         if len(batch) > 0 and not self.drop_last:
             # Distribute partial batch in interleaved fashion
-            indices = [batch[i] for i in range(self.data_parallel_rank, len(batch), self.data_parallel_size)]
+            all_indices = [batch[i] for i in range(self.data_parallel_rank, len(batch), self.data_parallel_size)]
             if self.pad_samples_to_global_batch_size:
-                num_pad = self._global_batch_size // self.data_parallel_size - len(indices)
-                indices = indices + [-1] * num_pad
-            yield indices
+                num_pad = self._global_batch_size // self.data_parallel_size - len(all_indices)
+                all_indices = all_indices + [-1] * num_pad
+
+            # Yield one microbatch at a time
+            for microbatch_idx in range(self._num_micro_batches):
+                start = microbatch_idx * self.micro_batch_size
+                end = start + self.micro_batch_size
+                if start < len(all_indices):
+                    yield all_indices[start:end]
 
 
 class RandomSeedDataset(Dataset):
