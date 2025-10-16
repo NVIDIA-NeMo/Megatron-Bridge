@@ -110,6 +110,7 @@ jobs:
           - script: L2_Launch_recipes_llama
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
+          - script: L2_Launch_data
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
