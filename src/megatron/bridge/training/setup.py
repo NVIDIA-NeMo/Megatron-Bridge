@@ -196,6 +196,11 @@ def setup(
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
     else:
+        # Validate the supplied pretrained checkpoint path when PEFT is not used.
+        if cfg.checkpoint.pretrained_checkpoint is not None and not checkpoint_exists(cfg.checkpoint.pretrained_checkpoint):
+            raise ValueError(
+                f"Invalid pretrained checkpoint directory found: {cfg.checkpoint.pretrained_checkpoint}"
+            )
         should_load_checkpoint = (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)) or (cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint))
 
     if should_load_checkpoint:
