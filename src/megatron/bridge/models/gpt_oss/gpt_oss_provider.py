@@ -27,6 +27,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 try:
     from megatron.core.fusions.fused_bias_geglu import quick_gelu
 except ImportError:
+    # TODO(yuya): remove backup path once versioning issue solved
     # Fallback if fused_bias_geglu is not available
     quick_gelu = torch.nn.functional.gelu
 
