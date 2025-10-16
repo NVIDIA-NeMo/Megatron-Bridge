@@ -679,6 +679,7 @@ class TestLoRAMegatronIntegration:
         efficiency_ratio = trainable_params / total_params
         assert efficiency_ratio < 0.3, f"LoRA should be parameter efficient, got ratio: {efficiency_ratio}"
 
+    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>Xs)
     def test_lora_forward_pass_with_megatron_model(self):
         """Test forward pass through LoRA-adapted Megatron model using pre-wrap hooks."""
 

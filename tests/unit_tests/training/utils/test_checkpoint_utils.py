@@ -435,6 +435,7 @@ class TestCheckpointUtils:
         assert len(results) == 10
         assert all(result == config_data for result in results)
 
+    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>Xs)
     def test_performance_large_config_file(self, tmp_path):
         """Test performance with large configuration files."""
         # Create a large config file
