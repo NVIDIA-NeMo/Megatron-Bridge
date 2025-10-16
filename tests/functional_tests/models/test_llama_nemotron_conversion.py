@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from safetensors.torch import save_file
 from transformers import AutoTokenizer, LlamaConfig, LlamaForCausalLM
 
 
@@ -271,3 +272,184 @@ class TestLlamaNemotronConversion:
         except Exception as e:
             print(f"Error during Llama-Nemotron {test_name} conversion test: {e}")
             raise
+
+
+class TestLlamaNemotronHeterogeneousRoundtrip:
+    """
+    Multi-GPU roundtrip tests for a tiny heterogeneous (DeciLM) Nemotron config.
+    Uses the existing hf_megatron_roundtrip_multi_gpu.py script.
+    """
+
+    @pytest.fixture(scope="class")
+    def hetero_nemotron_toy_model_path(self, tmp_path_factory):
+        """
+        Create a minimal heterogeneous DeciLM-style HF directory with random weights.
+        Includes a simple tokenizer (GPT-2) if available; otherwise writes minimal config.
+        """
+        temp_dir = tmp_path_factory.mktemp("hetero_llama_nemotron_toy_model")
+        model_dir = temp_dir / "hetero_llama_nemotron_toy"
+        model_dir.mkdir(exist_ok=True)
+
+        # Tiny heterogeneous config
+        L = 2
+        H = 128
+        A = 8
+        D = 16  # head_dim so that A*D == H
+        F = 256  # intermediate size
+        V = 1024  # small vocab
+        G = A // 2  # num_query_groups from n_heads_in_group=2
+
+        block_configs = [
+            {"attention": {"n_heads_in_group": 2, "no_op": False}, "ffn": {"ffn_mult": 2.0, "no_op": False}},
+            {"attention": {"n_heads_in_group": None, "no_op": True}, "ffn": {"ffn_mult": 1.0, "no_op": False}},
+        ]
+
+        config_dict = {
+            "architectures": ["DeciLMForCausalLM"],
+            "auto_map": {"AutoModelForCausalLM": "modeling_decilm.DeciLMForCausalLM"},
+            "hidden_size": H,
+            "num_attention_heads": A,
+            "num_hidden_layers": L,
+            "max_position_embeddings": 128,
+            "head_dim": D,
+            "initializer_range": 0.02,
+            "rms_norm_eps": 1e-5,
+            "vocab_size": V,
+            "tie_word_embeddings": False,
+            "torch_dtype": "bfloat16",
+            "rope_theta": 500000.0,
+            "rope_scaling": {
+                "factor": 8.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+                "rope_type": "llama3",
+            },
+            "intermediate_size": F,
+            "block_configs": block_configs,
+        }
+
+        # Write config.json
+        with open(model_dir / "config.json", "w") as f:
+            json.dump(config_dict, f, indent=2)
+
+        # Attempt to save a tokenizer for artifact saving in the roundtrip script
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            tokenizer.save_pretrained(model_dir)
+        except Exception as e:
+            print(f"Warning: Could not download tokenizer, writing minimal tokenizer_config.json: {e}")
+            tokenizer_config = {
+                "tokenizer_class": "GPT2Tokenizer",
+                "vocab_size": 50257,
+                "bos_token": "<s>",
+                "eos_token": "</s>",
+                "pad_token": "</s>",
+                "unk_token": "<unk>",
+            }
+            with open(model_dir / "tokenizer_config.json", "w") as f:
+                json.dump(tokenizer_config, f, indent=2)
+
+        # Create random safetensors matching the keys expected by the bridge exporter
+        state = {}
+
+        # Embeddings and output
+        state["model.embed_tokens.weight"] = torch.randn(V, H, dtype=torch.bfloat16)
+        state["lm_head.weight"] = torch.randn(V, H, dtype=torch.bfloat16)
+        state["model.norm.weight"] = torch.randn(H, dtype=torch.bfloat16)
+
+        # Per-layer weights
+        for i in range(L):
+            prefix = f"model.layers.{i}"
+            state[f"{prefix}.input_layernorm.weight"] = torch.randn(H, dtype=torch.bfloat16)
+            state[f"{prefix}.post_attention_layernorm.weight"] = torch.randn(H, dtype=torch.bfloat16)
+
+            # Attention projections
+            # q out_features = A * D == H; k/v out_features = G * D
+            state[f"{prefix}.self_attn.q_proj.weight"] = torch.randn(A * D, H, dtype=torch.bfloat16)
+            state[f"{prefix}.self_attn.k_proj.weight"] = torch.randn(G * D, H, dtype=torch.bfloat16)
+            state[f"{prefix}.self_attn.v_proj.weight"] = torch.randn(G * D, H, dtype=torch.bfloat16)
+            state[f"{prefix}.self_attn.o_proj.weight"] = torch.randn(H, H, dtype=torch.bfloat16)
+
+            # MLP projections
+            state[f"{prefix}.mlp.gate_proj.weight"] = torch.randn(F, H, dtype=torch.bfloat16)
+            state[f"{prefix}.mlp.up_proj.weight"] = torch.randn(F, H, dtype=torch.bfloat16)
+            state[f"{prefix}.mlp.down_proj.weight"] = torch.randn(H, F, dtype=torch.bfloat16)
+
+        # Save single-shard safetensors
+        save_file(state, model_dir / "model.safetensors")
+
+        return str(model_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "tp,pp,test_name",
+        [
+            (2, 1, "TP"),
+            (1, 2, "PP"),
+        ],
+    )
+    def test_hetero_llama_nemotron_conversion_parallelism(
+        self, hetero_nemotron_toy_model_path, tmp_path, tp, pp, test_name
+    ):
+        """
+        Validate TP/PP roundtrip on tiny heterogeneous config via the existing multi-GPU script.
+        """
+        # Create output dir
+        test_output_dir = tmp_path / f"hetero_llama_nemotron_{test_name}"
+        test_output_dir.mkdir(exist_ok=True)
+
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/tmp/workspace/.coverage",
+            "--source=/tmp/workspace/",
+            "--parallel-mode",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "--hf-model-id",
+            hetero_nemotron_toy_model_path,
+            "--output-dir",
+            str(test_output_dir),
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+
+        if result.returncode != 0:
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            assert False, f"Hetero Llama-Nemotron {test_name} conversion failed with return code {result.returncode}"
+
+        # Verify output directory exists and contains expected files
+        model_name = Path(hetero_nemotron_toy_model_path).name
+        converted_model_dir = test_output_dir / model_name
+        assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
+
+        config_file = converted_model_dir / "config.json"
+        assert config_file.exists(), f"config.json not found in converted model at {config_file}"
+
+        weights_file_safetensors = converted_model_dir / "model.safetensors"
+        weights_found = weights_file_safetensors.exists()
+        if not weights_found:
+            shards_st = list(converted_model_dir.glob("model-*-of-*.safetensors"))
+            weights_found = len(shards_st) > 0
+        if not weights_found:
+            print(f"Warning: No safetensors weights found in converted model at {converted_model_dir}.")
+
+        with open(config_file) as f:
+            saved_config = json.load(f)
+
+        # Basic sanity checks against hetero config
+        assert saved_config["hidden_size"] == 128
+        assert saved_config["num_attention_heads"] == 8
+        assert saved_config["num_hidden_layers"] == 2
+        assert saved_config.get("rope_scaling", {}).get("rope_type") == "llama3"
