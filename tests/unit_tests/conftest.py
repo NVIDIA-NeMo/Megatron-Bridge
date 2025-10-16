@@ -40,13 +40,6 @@ def cleanup_local_folder():
         rmtree("./nemo_experiments", ignore_errors=True)
 
 
-@pytest.mark.timeout(0.001)
-@pytest.fixture(autouse=True, scope="function")
-def impose_timeout():
-    """Impose a timeout of 0.1 seconds to the test"""
-    yield
-
-
 @pytest.fixture(scope="function", autouse=True)
 def disable_msc():
     """Disable MSC for the tests."""
