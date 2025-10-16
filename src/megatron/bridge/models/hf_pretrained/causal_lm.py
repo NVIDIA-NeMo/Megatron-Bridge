@@ -143,6 +143,10 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         self.torch_dtype = torch_dtype
         self.trust_remote_code = trust_remote_code
         super().__init__(**kwargs)
+        
+        # Store the original source path for custom modeling file preservation
+        if model_name_or_path and trust_remote_code:
+            self._original_source_path = model_name_or_path
 
     def _load_model(self) -> CausalLMType:
         """Load the model."""
