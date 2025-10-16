@@ -141,10 +141,7 @@ class PreemptionPlugin(Plugin):
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            # Enable exit signal handler in training config
-            if self.enable_exit_handler and hasattr(task, "config"):
-                task.config.train.exit_signal_handler = self.enable_exit_handler
-                task.config.train.exit_signal_handler_for_dataloader = self.enable_exit_handler_for_data_loader
+            raise NotImplementedError("PreemptionPlugin is only supported for run.Script tasks")
 
         # Apply signal configuration for both task types when using SlurmExecutor
         if isinstance(executor, SlurmExecutor):
@@ -228,20 +225,7 @@ class FaultTolerancePlugin(Plugin):
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            # For run.Partial, modify the task config directly
-            # Configure fault tolerance in task config
-            if not hasattr(task.config, "ft") or task.config.ft is None:
-                from megatron.bridge.training.config import FaultToleranceConfig
-
-                task.config.ft = FaultToleranceConfig()
-
-            task.config.ft.enable_ft_package = self.enable_ft_package
-            task.config.ft.calc_ft_timeouts = self.calc_ft_timeouts
-
-            # Check if nsys profiling is enabled and warn if so
-            if hasattr(task.config, "profiling") and task.config.profiling and task.config.profiling.use_nsys_profiler:
-                logger.warning("Warning: Nsys not supported with the FaultTolerancePlugin.")
-                task.config.profiling.use_nsys_profiler = False
+            raise NotImplementedError("FaultTolerancePlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -333,18 +317,8 @@ class NsysPlugin(Plugin):
 
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
-        elif isinstance(task, Partial):
-            # For run.Partial, modify the task config directly
-            if not hasattr(task.config, "profiling") or task.config.profiling is None:
-                from megatron.bridge.training.config import ProfilingConfig
-
-                task.config.profiling = ProfilingConfig()
-
-            task.config.profiling.use_nsys_profiler = True
-            task.config.profiling.profile_step_start = self.profile_step_start
-            task.config.profiling.profile_step_end = self.profile_step_end
-            task.config.profiling.profile_ranks = self.profile_ranks or [0]
-            task.config.profiling.record_shapes = self.record_shapes
+        else:
+            raise NotImplementedError("NsysPlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -425,20 +399,7 @@ class PyTorchProfilerPlugin(Plugin):
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            # For run.Partial, modify the task config directly
-            # Configure profiling in task config
-            if not hasattr(task.config, "profiling") or task.config.profiling is None:
-                from megatron.bridge.training.config import ProfilingConfig
-
-                task.config.profiling = ProfilingConfig()
-
-            task.config.profiling.use_pytorch_profiler = True
-            task.config.profiling.profile_step_start = self.profile_step_start
-            task.config.profiling.profile_step_end = self.profile_step_end
-            task.config.profiling.profile_ranks = self.profile_ranks or [0]
-            task.config.profiling.record_memory_history = self.record_memory_history
-            task.config.profiling.memory_snapshot_path = self.memory_snapshot_path
-            task.config.profiling.record_shapes = self.record_shapes
+            raise NotImplementedError("NsysPlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -516,15 +477,7 @@ class WandbPlugin(Plugin):
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             else:
-                # For run.Partial, modify the task config directly
-                if hasattr(task, "config"):
-                    # Use provided name or fall back to experiment name
-                    exp_name = self.name or task.config.logger.wandb_exp_name
-
-                    task.config.logger.wandb_project = self.project
-                    task.config.logger.wandb_entity = self.entity
-                    task.config.logger.wandb_exp_name = exp_name
-                    task.config.logger.wandb_save_dir = self.save_dir
+                raise NotImplementedError("WandbPlugin is only supported for run.Script tasks")
         else:
             logger.warning(
                 f"Warning: The {self.__class__.__name__} will have no effect as WANDB_API_KEY environment variable is not set."
@@ -668,9 +621,7 @@ class PerfEnvPlugin(Plugin):
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             elif hasattr(task, "config"):
-                # For run.Partial, modify the task config directly
-                task.config.train.manual_gc = True
-                task.config.train.manual_gc_interval = self.manual_gc_interval
+                raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
         # Improve perf by steering power to tensor cores, may not work on all systems
         if self.enable_vboost and isinstance(executor, SlurmExecutor):
