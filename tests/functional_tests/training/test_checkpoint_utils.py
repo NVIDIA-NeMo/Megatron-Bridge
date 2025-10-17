@@ -6,7 +6,7 @@ import yaml
 from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 
 
-def test_performance_large_config_file(self, tmp_path):
+def test_performance_large_config_file(tmp_path):
     """Test performance with large configuration files."""
     # Create a large config file
     large_config = {
