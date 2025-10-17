@@ -430,6 +430,12 @@ class ParallelLinearAdapter(nn.Module):
         model_parallel_config.sequence_parallel = False  # SP is irrelevant for the lora linear layer
         self.config = model_parallel_config
 
+        # Ensure adapter parameters are initialized when creating adapter layers.
+        # In some flows (e.g., after import), perform_initialization may be False to skip heavy init.
+        _prev_perform_initialization = getattr(model_parallel_config, "perform_initialization", True)
+        if hasattr(model_parallel_config, "perform_initialization"):
+            model_parallel_config.perform_initialization = True
+
         if input_is_parallel:
             self.linear_in = RowParallelLinear(
                 in_features,
