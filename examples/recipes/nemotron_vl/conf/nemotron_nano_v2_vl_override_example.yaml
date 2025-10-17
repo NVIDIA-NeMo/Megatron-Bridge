@@ -35,7 +35,7 @@ scheduler:
 
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
-  save: /lustre/fs1/portfolios/coreai/users/chcui/exp/mbridge/nemotron_nano_v2_vl/1014_llava_video_178k
+  save: ???
   save_interval: 200
 
 dist:
@@ -44,14 +44,14 @@ dist:
 
 logger:
   log_interval: 1
-  wandb_project: mbridge-llava_video_178k
+  wandb_project: mbridge-raven
   wandb_exp_name: nano_v2_vl_finetuning
   wandb_entity: nvidia
-  wandb_save_dir: /lustre/fs1/portfolios/coreai/users/chcui/exp/mbridge/nemotron_nano_v2_vl
+  wandb_save_dir: ???
 
 dataset:
   sequence_length: 4096
-  maker_name: make_llava_video_178k_dataset
+  maker_name: make_raven_dataset
 
 rng:
   seed: 42

@@ -41,6 +41,7 @@ from src.megatron.bridge.peft.lora import VLMLoRA
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "nemotron_nano_v2_vl_pretrain",
+    hf_model_path: str = "nvidia/nemotron-nano-12b-v2-vl",
     # Dataset configuration
     data_paths: Optional[List[str]] = None,
     data_args_path: Optional[str] = None,
@@ -72,14 +73,12 @@ def pretrain_config(
     # Precision and comm overlap
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
-    # Tokenizer
-    tokenizer_model: str = "/lustre/fs1/portfolios/coreai/users/chcui/pretrained_models/vlm-hf-code/nano_vl_v2",
     # Freeze options
     freeze_language_model: bool = False,
     freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
     # Checkpointing
-    save_interval: Optional[int] = 500,
+    save_interval: Optional[int] = 200,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Nemotron Nano V2 VL.
@@ -93,7 +92,7 @@ def pretrain_config(
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     # Build provider via AutoBridge and set parallel/seq params here
-    bridge = AutoBridge.from_hf_pretrained("/lustre/fs1/portfolios/coreai/users/chcui/pretrained_models/vlm-hf-code/nano_vl_v2", trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
     model_cfg.tensor_model_parallel_size = tensor_parallelism
     model_cfg.pipeline_model_parallel_size = pipeline_parallelism
@@ -113,7 +112,7 @@ def pretrain_config(
     # Use HF-based VLM conversation dataset provider
     dataset_cfg = HFDatasetConversationProvider(
         sequence_length=seq_length,
-        hf_processor_path=tokenizer_model,
+        hf_processor_path=hf_model_path,
         maker_name=dataset_maker_name,
         # Dataloader config parameters
         num_workers=2,

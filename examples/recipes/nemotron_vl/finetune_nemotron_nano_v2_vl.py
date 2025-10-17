@@ -68,6 +68,12 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         default=str(DEFAULT_CONFIG_FILE_PATH),
         help="Path to the YAML OmegaConf override file. Default: conf/nemotron_nano_v2_vl_override_example.yaml",
     )
+    parser.add_argument(
+        "--hf-model-path",
+        type=str,
+        default="nvidia/nemotron-nano-12b-v2-vl",
+        help="Path to the HuggingFace model to load weights from. Default: nvidia/nemotron-nano-12b-v2-vl",
+    )
     # Finetune-specific flags
     parser.add_argument(
         "--pretrained-checkpoint",
@@ -108,6 +114,7 @@ def main() -> None:
     from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import finetune_config
 
     cfg: ConfigContainer = finetune_config(
+        hf_model_path=args.hf_model_path,
         pretrained_checkpoint=args.pretrained_checkpoint,
         lora_on_language_model=args.lora_on_language_model,
         lora_on_vision_model=args.lora_on_vision_model,
