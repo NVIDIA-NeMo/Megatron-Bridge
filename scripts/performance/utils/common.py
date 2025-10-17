@@ -62,7 +62,7 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
         preset = gpu_block.get(num_gpus_yaml_key)
         scaling_factor = preset["common"]["gbs"] / default_num_gpus
         preset["common"]["gbs"] = int(args.num_gpus * scaling_factor)
-    
+
     if args.tensor_parallel_size: preset["common"]["tp"] = args.tensor_parallel_size
     if args.pipeline_parallel_size: preset["common"]["pp"] = args.pipeline_parallel_size
     if args.context_parallel_size: preset["common"]["cp"] = args.context_parallel_size

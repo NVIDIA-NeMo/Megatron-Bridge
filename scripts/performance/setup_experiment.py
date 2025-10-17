@@ -158,7 +158,7 @@ if __name__ == "__main__":
         str(config_filepath),
     ]
     # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
+    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop", "micro_batch_size", "global_batch_size", "tensor_parallel_size", "pipeline_parallel_size", "virtual_pipeline_parallel_size", "context_parallel_size", "expert_parallel_size", "expert_tensor_parallel_size"]
     for arg_name in args_to_forward:
         if hasattr(args, arg_name):
             arg_value = getattr(args, arg_name)

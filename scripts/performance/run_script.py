@@ -44,7 +44,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 def main():
     """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
-
+    
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
 
     if args.model_name == "llama3" and args.model_size == "8b":
