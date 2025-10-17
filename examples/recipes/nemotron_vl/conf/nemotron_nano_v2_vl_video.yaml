@@ -1,0 +1,60 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Example override file for Nemotron Nano V2 VL
+
+model:
+  seq_length: 8192
+  freeze_language_model: False
+  freeze_vision_model: False
+  freeze_vision_projection: False
+  tensor_model_parallel_size: 8
+
+train:
+  train_iters: 300
+  global_batch_size: 16
+  micro_batch_size: 1
+  eval_iters: 0
+
+optimizer:
+  lr: 2e-6
+  min_lr: 2e-7
+
+scheduler:
+  lr_warmup_iters: 20
+
+checkpoint:
+  save_interval: 50
+
+dist:
+  use_megatron_fsdp: false
+  use_torch_fsdp2: false
+
+logger:
+  log_interval: 1
+  wandb_project: mbridge-llava_video_178k
+  wandb_exp_name: nano_v2_vl_finetuning_video
+  wandb_entity: nvidia
+
+dataset:
+  sequence_length: 8192
+  maker_name: make_llava_video_178k_dataset
+
+rng:
+  seed: 42
+
+ddp:
+  grad_reduce_in_fp32: true
+
+

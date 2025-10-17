@@ -32,6 +32,7 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
+import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.nemotron_nano_v2_vl_step import forward_step
@@ -43,6 +44,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     parse_hydra_overrides,
 )
 from megatron.bridge.utils.common_utils import get_rank_safe
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -86,6 +88,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
 
 
 def main() -> None:
+    """Main function to finetune Nemotron Nano V2 VL."""
     args, cli_overrides = parse_cli_args()
 
     logger.info("Megatron-Bridge Nemotron Nano V2 VL Finetuning Script with YAML & CLI Overrides")
@@ -133,6 +136,9 @@ def main() -> None:
         logger.info("--------------------------------------------")
 
     finetune(config=cfg, forward_step_func=forward_step)
+
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":

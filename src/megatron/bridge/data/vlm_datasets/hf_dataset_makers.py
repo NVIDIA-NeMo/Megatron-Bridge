@@ -16,12 +16,14 @@
 Built-in maker functions that transform HuggingFace datasets into
 conversation-style examples consumable by VLM processors.
 """
-
 import json
 import random
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from datasets import load_dataset
+
+from megatron.bridge.utils.path_utils import resolve_path
 
 from .token_utils import json2token
 
@@ -169,10 +171,10 @@ def make_raven_dataset(
 
 
 def make_llava_video_178k_dataset(
+    video_root_path: str,
     path_or_dataset: str = "lmms-lab/LLaVA-Video-178K",
-    subset: str = "0_30_s_academic_v0_1",
+    subset: str = "0_30_s_nextqa",
     split: str = "open_ended",
-    video_path: str = ...,
     **kwargs,
 ) -> List[Dict[str, Any]]:
     """Load and preprocess a subset of the *LLaVA-Video-178K* dataset.
@@ -201,30 +203,8 @@ def make_llava_video_178k_dataset(
     if split == "train":
         split = "open_ended"
     dataset = load_dataset(path_or_dataset, subset, split=split)
-    # TODO @liding
-    from functools import lru_cache
-    from huggingface_hub import hf_hub_download
-    from pathlib import Path
-
-    cache_probe = None
-    if dataset.cache_files:
-        cache_probe = Path(dataset.cache_files[0]["filename"]).resolve()
-    @lru_cache(maxsize=None)
-    def _resolve_video(rel_path: str) -> str:
-        # TODO
-        """Return absolute path for a dataset-relative video, downloading if necessary."""
-        # 1) Try local cache heuristic
-        if cache_probe is not None:
-            for parent in cache_probe.parents:
-                cand = parent / rel_path
-                if cand.exists():
-                    return str(cand)
-        # 2) Fallback: attempt to fetch from hub (if the file is actually present there)
-        try:
-            return hf_hub_download(path_or_dataset, filename=rel_path, repo_type="dataset")
-        except Exception:
-            # Give back the relative path; downstream loader may handle or raise.
-            return rel_path
+    # FIXME: right now we assume the video files are pre-downloaded and stored in the video_root_path
+    # we need to modify this to download the video files from the hub if they are not present in the video_root_path
 
     def clean_prompt(val: str) -> str:
         # Remove placeholder tokens such as <image> or <video>
@@ -248,8 +228,8 @@ def make_llava_video_178k_dataset(
             if role == "human":
                 content: List[Dict[str, Any]] = []
                 if not first_human_handled:
-                    abs_path = _resolve_video(video)
-                    content.append({"type": "video", "video": f"file://{abs_path}"})
+                    abs_path = resolve_path(Path(video_root_path) / video)
+                    content.append({"type": "video", "path": str(abs_path)})
                     first_human_handled = True
                 content.append({"type": "text", "text": clean_prompt(value)})
                 conversation.append({"role": "user", "content": content})

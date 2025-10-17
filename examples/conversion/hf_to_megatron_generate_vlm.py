@@ -206,8 +206,8 @@ def process_video_inputs(processor, video_path: Optional[str], prompt: str):
     """
     from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import maybe_path_or_url_to_data_urls, pil_image_from_base64
 
-    video_fps = 1
-    video_nframe = 8
+    video_fps = -1
+    video_nframe = 10
     video_nframe_max = -1
 
     # Get frames and metadata
