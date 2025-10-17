@@ -26,17 +26,11 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     "google/gemma-3-1b-pt": Gemma3ModelProvider1B,
 }
 
-ROOT_PATH: str = "/home/TestData/megatron_bridge/hf_home"
-
-HF_MODEL_ID_PATH_TO_MODEL_PROVIDER = {
-    hf_model_id: provider_class for hf_model_id, provider_class in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()
-}
-
 
 class TestGemma3ModelProviderMapping:
     """Test that bridge provider configs are equivalent to predefined provider configs."""
 
-    @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_PATH_TO_MODEL_PROVIDER.items()))
+    @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()))
     def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
         """Test that bridge converted provider config matches predefined provider config."""
         # Create bridge from HF model

@@ -95,6 +95,12 @@ class FinetuningDatasetBuilder:
         if self.packed_sequence_size > 0:
             from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
 
+            # Guard: require source jsonl files to exist. Unit tests expect KeyError here.
+            if not (self.train_path.exists() and self.validation_path.exists()):
+                raise KeyError(
+                    f"Required dataset files missing for packing: train={self.train_path}, val={self.validation_path}"
+                )
+
             if not self.train_path_packed.is_file():
                 print_rank_0(f"Preparing packed training data at {self.train_path_packed}")
                 prepare_packed_sequence_data(
