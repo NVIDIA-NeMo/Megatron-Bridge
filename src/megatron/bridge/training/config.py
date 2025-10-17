@@ -1076,33 +1076,6 @@ class ConfigContainer(Container):
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
-    def _sync_and_validate_external_cuda_graph(self) -> None:
-        """Sync necessary configs for external CUDA Graphs and and validates it."""
-
-        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
-        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
-            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
-
-        # Validate external_cg
-        if self.model.enable_cuda_graph or self.model.external_cuda_graph:
-            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
-                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
-            )
-            if self.model.transformer_impl == "transformer_engine" and not (
-                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
-            ):
-                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
-                warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
-
-        if self.model.external_cuda_graph:
-            assert "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", ""), (
-                "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
-                "The training may crash with illegal memory access."
-            )
-            assert self.model.recompute_granularity != "full", (
-                "recompute_granularity must not be full when CUDA Graphs are enabled."
-            )
-
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1253,7 +1226,9 @@ class ConfigContainer(Container):
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
 
-        self._sync_and_validate_external_cuda_graph()
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""
