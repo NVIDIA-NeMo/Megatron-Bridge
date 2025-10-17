@@ -23,6 +23,14 @@ bridge-tech-details.md
 ```
 
 ```{toctree}
+:caption: Supported Models
+:hidden:
+
+models/llm/index.md
+models/vlm/index.md
+```
+
+```{toctree}
 :caption: Training and Customization
 :hidden:
 
