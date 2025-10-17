@@ -27,7 +27,7 @@ import sys
 project = "Megatron Bridge"
 copyright = "2025, NVIDIA Corporation"
 author = "NVIDIA Corporation"
-release = "0.1.0"
+release = "latest"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -54,6 +54,7 @@ myst_enable_extensions = [
     "deflist",  # Supports definition lists with term: definition format
     "fieldlist",  # Enables field lists for metadata like :author: Name
     "tasklist",  # Adds support for GitHub-style task lists with [ ] and [x]
+    "attrs_block",  # Enables setting attributes on block elements using {#id .class key=val}
 ]
 myst_heading_anchors = 5  # Generates anchor links for headings up to level 5
 
