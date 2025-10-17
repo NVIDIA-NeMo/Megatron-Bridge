@@ -117,7 +117,7 @@ from megatron.bridge.training.config import (
 from megatron.bridge.models import Llama3ModelProvider8B  # Direct equivalent to Llama3Config8B
 from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.training.config import SchedulerConfig
-from megatron.bridge.training import pretrain
+from megatron.bridge.training.pretrain import pretrain
 # Use the provided GPT forward step
 from megatron.bridge.training.gpt_step import forward_step
 
