@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import json
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -75,6 +78,9 @@ class TestDeepSeekConversion:
 
         # Save model and config
         model.save_pretrained(model_dir, safe_serialization=True)
+        model.save_pretrained(model_dir, safe_serialization=True)
+        modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
+        shutil.copy(modeling_filepath, model_dir)
 
         # Ensure config.json exists with expected keys
         config_path = model_dir / "config.json"

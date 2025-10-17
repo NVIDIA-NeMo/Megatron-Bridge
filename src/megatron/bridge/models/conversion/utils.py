@@ -253,31 +253,31 @@ def get_causal_lm_class_via_auto_map(
     """Return CausalLM class via config.auto_map if available; otherwise None.
 
     If auto_map["AutoModelForCausalLM"] is present in the config, returns the dynamically loaded class.
-    Returns None when auto_map is absent or loading fails. Does not download weights.
+    Returns None if auto_map is not set. Does not download weights.
     """
     auto_map = getattr(config, "auto_map", None)
     if auto_map and "AutoModelForCausalLM" in auto_map:
         auto_map_class = auto_map["AutoModelForCausalLM"]
         repo_id = model_name_or_path or getattr(config, "_name_or_path", None)
         if not repo_id:
-            return None
-        try:
-            from transformers.dynamic_module_utils import get_class_from_dynamic_module
-
-            return get_class_from_dynamic_module(
-                class_reference=auto_map_class,
-                pretrained_model_name_or_path=repo_id,
-                cache_dir=None,
-                force_download=False,
-                resume_download=True,
-                proxies=None,
-                use_auth_token=None,
-                revision=None,
-                local_files_only=False,
-                repo_id=repo_id,
+            raise ValueError(
+                "auto_map is set on the config, but no repository identifier was provided "
+                "(neither model_name_or_path nor config._name_or_path)."
             )
-        except Exception:
-            return None
+        from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+        return get_class_from_dynamic_module(
+            class_reference=auto_map_class,
+            pretrained_model_name_or_path=repo_id,
+            cache_dir=None,
+            force_download=False,
+            resume_download=True,
+            proxies=None,
+            use_auth_token=None,
+            revision=None,
+            local_files_only=False,
+            repo_id=repo_id,
+        )
 
     return None
 
