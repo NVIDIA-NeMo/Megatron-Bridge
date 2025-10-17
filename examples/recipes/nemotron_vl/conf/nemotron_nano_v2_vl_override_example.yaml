@@ -36,7 +36,7 @@ scheduler:
 checkpoint:
   # Directory to save to. If null, no checkpoint will be saved.
   save: /lustre/fs1/portfolios/coreai/users/chcui/exp/mbridge/nemotron_nano_v2_vl/1014_llava_video_178k
-  save_interval: 100
+  save_interval: 200
 
 dist:
   use_megatron_fsdp: false
