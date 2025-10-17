@@ -165,17 +165,16 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     account_for_loss_in_pipeline_split: bool = False
 
     # Fusions
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
+    masked_softmax_fusion: bool = True
     cross_entropy_loss_fusion: bool = True  # Generally beneficial, no specific dependencies
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     bias_activation_fusion: bool = False  # Disabled by default as it can interfere with certain architectures
     persist_layer_norm: bool = False
-    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
     # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
-
     restore_modelopt_state: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:

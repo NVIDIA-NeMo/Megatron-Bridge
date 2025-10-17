@@ -51,9 +51,9 @@ class LlamaModelProvider(GPTModelProvider):
     share_embeddings_and_output_weights: bool = False
     # Fusions
     bias_activation_fusion: bool = True
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
-    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+    masked_softmax_fusion: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
     use_transformer_engine_op_fuser: Optional[bool] = None
 
@@ -123,9 +123,9 @@ class Llama3ModelProvider(LlamaModelProvider):
     gated_linear_unit: bool = True
     # Fusions
     bias_activation_fusion: bool = True
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
-    bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+    masked_softmax_fusion: bool = True
+    bias_dropout_fusion: bool = True
+    apply_rope_fusion: bool = True
     share_embeddings_and_output_weights: bool = False
     position_embedding_type: str = "rope"
     rotary_percent: float = 1.0
