@@ -70,6 +70,14 @@ def run_pretrain_recipe_test(
         config.model.seq_length = test_seq_length
         config.dataset.sequence_length = test_seq_length
 
+        # Keep dataloader light-weight for CI
+        if hasattr(config.dataset, "pin_memory"):
+            config.dataset.pin_memory = False
+        if hasattr(config.dataset, "num_workers"):
+            config.dataset.num_workers = 0
+        if hasattr(config.dataset, "persistent_workers"):
+            config.dataset.persistent_workers = False
+
         train_samples_needed = config.train.train_iters * config.train.global_batch_size
         eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
         test_samples_needed = 100  # Minimal test samples
@@ -84,11 +92,20 @@ def run_pretrain_recipe_test(
         config.dataset.split = [train_split, valid_split, test_split]
 
         if tensor_parallelism is not None:
-            config.model.tensor_model_parallel_size = tensor_parallelism
+            if hasattr(config.model, "tensor_model_parallel_size"):
+                config.model.tensor_model_parallel_size = tensor_parallelism
+            else:
+                setattr(config.model, "tensor_parallelism", tensor_parallelism)
         if pipeline_parallelism is not None:
-            config.model.pipeline_model_parallel_size = pipeline_parallelism
+            if hasattr(config.model, "pipeline_model_parallel_size"):
+                config.model.pipeline_model_parallel_size = pipeline_parallelism
+            else:
+                setattr(config.model, "pipeline_parallelism", pipeline_parallelism)
         if expert_parallelism is not None:
-            config.model.expert_model_parallel_size = expert_parallelism
+            if hasattr(config.model, "expert_model_parallel_size"):
+                config.model.expert_model_parallel_size = expert_parallelism
+            else:
+                setattr(config.model, "expert_parallelism", expert_parallelism)
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
@@ -123,3 +140,68 @@ def run_pretrain_config_override_test(config_func: Callable):
 
     assert config.train.train_iters == 50000
     assert config.scheduler.lr_decay_iters == config.train.train_iters
+
+
+def run_pretrain_vl_recipe_test(
+    config_func: Callable,
+    recipe_name: str,
+    tmp_path: Path,
+    tensor_parallelism: Optional[int] = None,
+    pipeline_parallelism: Optional[int] = None,
+):
+    """
+    VLM variant of run_pretrain_recipe_test that uses the VLM forward step.
+
+    Mirrors the llama/qwen functional test utility but routes through
+    megatron.bridge.training.vlm_step.forward_step.
+    """
+    # Import locally to avoid loading VLM stack for non-VL tests
+    from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+
+    initialize_distributed()
+    shared_base_dir = broadcast_path(tmp_path)
+
+    try:
+        # Note: qwen_vl recipe config functions do not support 'mock' kwarg
+        config: ConfigContainer = config_func(
+            dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", dataset_type="mock"
+        )
+        config.train.train_iters = 2
+        config.train.eval_interval = 1
+        config.train.eval_iters = 1
+        config.scheduler.lr_warmup_iters = 1
+        test_seq_length = 1024
+        config.model.seq_length = test_seq_length
+        config.dataset.sequence_length = test_seq_length
+
+        # Disable pin-memory and worker persistence in tests to avoid
+        # pin-memory device mismatches under torchrun+pytest environments.
+        config.dataset.pin_memory = False
+        config.dataset.num_workers = 0
+        config.dataset.persistent_workers = False
+
+        train_samples_needed = config.train.train_iters * config.train.global_batch_size
+        eval_samples_needed = config.train.eval_iters * config.train.global_batch_size
+        test_samples_needed = 8
+
+        total_samples = train_samples_needed + eval_samples_needed + test_samples_needed
+
+        # Set dataset split ratios for minimal dataset
+        train_split = train_samples_needed / total_samples
+        valid_split = eval_samples_needed / total_samples
+        test_split = test_samples_needed / total_samples
+
+        config.dataset.split = [train_split, valid_split, test_split]
+
+        if tensor_parallelism is not None:
+            config.model.tensor_parallelism = tensor_parallelism
+        if pipeline_parallelism is not None:
+            config.model.pipeline_parallelism = pipeline_parallelism
+
+        pretrain(config, vlm_forward_step)
+
+        # Basic verification that training completed successfully
+        verify_checkpoint_files(config.checkpoint.save, config.train.train_iters)
+
+    finally:
+        clear_directories(tmp_path)
