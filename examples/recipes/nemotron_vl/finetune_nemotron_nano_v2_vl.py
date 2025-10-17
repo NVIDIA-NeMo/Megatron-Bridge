@@ -76,12 +76,12 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         help="Path to a Megatron-Bridge checkpoint directory or HuggingFace model name to load weights from.",
     )
     parser.add_argument(
-        "--peft-on-language-model",
+        "--lora-on-language-model",
         action="store_true",
         help="Use PEFT for finetuning on the language model.",
     )
     parser.add_argument(
-        "--peft-on-vision-model",
+        "--lora-on-vision-model",
         action="store_true",
         help="Use PEFT for finetuning on the vision model.",
     )
@@ -109,8 +109,8 @@ def main() -> None:
 
     cfg: ConfigContainer = finetune_config(
         pretrained_checkpoint=args.pretrained_checkpoint,
-        peft_on_language_model=args.peft_on_language_model,
-        peft_on_vision_model=args.peft_on_vision_model,
+        lora_on_language_model=args.lora_on_language_model,
+        lora_on_vision_model=args.lora_on_vision_model,
     )
 
     logger.info("Loaded base configuration for finetuning")

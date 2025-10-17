@@ -173,8 +173,8 @@ def pretrain_config(
 def finetune_config(
     *,
     pretrained_checkpoint: str,
-    peft_on_language_model: bool = False,
-    peft_on_vision_model: bool = False,
+    lora_on_language_model: bool = False,
+    lora_on_vision_model: bool = False,
     save_checkpoint_dir: Optional[str] = None,
     **pretrain_kwargs,
 ) -> ConfigContainer:
@@ -192,9 +192,9 @@ def finetune_config(
     save_checkpoint_dir: str | None, default ``run_output_dir / "checkpoints"``
         Directory where new checkpoints will be saved / resumed from.  If not
         provided, we reuse the default path chosen by *pretrain_config*.
-    peft_on_language_model: bool = True
+    lora_on_language_model: bool = True
         Whether to apply PEFT to the language model.
-    peft_on_vision_model: bool = True
+    lora_on_vision_model: bool = True
         Whether to apply PEFT to the vision model.
     **pretrain_kwargs: Any
         Additional keyword arguments are forwarded verbatim to
@@ -223,8 +223,8 @@ def finetune_config(
         fully_parallel_save=cfg.checkpoint.fully_parallel_save,
         save_interval=cfg.checkpoint.save_interval,
     )
-    if peft_on_language_model:
-        if peft_on_vision_model:
+    if lora_on_language_model:
+        if lora_on_vision_model:
             cfg.peft = VLMLoRA(
                 target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
                 dim=16,
