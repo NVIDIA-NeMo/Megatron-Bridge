@@ -21,7 +21,7 @@ from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
 
-from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
+from megatron.bridge.recipes.deepseek import deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama import (
     llama3_8b_pretrain_config,
     llama3_70b_pretrain_config,
