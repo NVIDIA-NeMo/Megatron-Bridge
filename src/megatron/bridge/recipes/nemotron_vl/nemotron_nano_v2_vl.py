@@ -35,7 +35,7 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
-from src.megatron.bridge.peft.lora import LoRA
+from src.megatron.bridge.peft.lora import VLMLoRA
 
 
 def pretrain_config(
@@ -78,6 +78,8 @@ def pretrain_config(
     freeze_language_model: bool = False,
     freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
+    # Checkpointing
+    save_interval: Optional[int] = 500,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Nemotron Nano V2 VL.
@@ -154,7 +156,7 @@ def pretrain_config(
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
-            save_interval=500,
+            save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",
@@ -171,7 +173,8 @@ def pretrain_config(
 def finetune_config(
     *,
     pretrained_checkpoint: str,
-    peft: bool,
+    peft_on_language_model: bool = False,
+    peft_on_vision_model: bool = False,
     save_checkpoint_dir: Optional[str] = None,
     **pretrain_kwargs,
 ) -> ConfigContainer:
@@ -189,6 +192,10 @@ def finetune_config(
     save_checkpoint_dir: str | None, default ``run_output_dir / "checkpoints"``
         Directory where new checkpoints will be saved / resumed from.  If not
         provided, we reuse the default path chosen by *pretrain_config*.
+    peft_on_language_model: bool = True
+        Whether to apply PEFT to the language model.
+    peft_on_vision_model: bool = True
+        Whether to apply PEFT to the vision model.
     **pretrain_kwargs: Any
         Additional keyword arguments are forwarded verbatim to
         :func:`pretrain_config` to customise the base recipe (e.g. batch size,
@@ -216,10 +223,29 @@ def finetune_config(
         fully_parallel_save=cfg.checkpoint.fully_parallel_save,
         save_interval=cfg.checkpoint.save_interval,
     )
-    if peft:
-        cfg.peft = LoRA()
-        cfg.optimizer.lr = 1e-4
-        cfg.optimizer.min_lr = 1e-5
-        cfg.model.tensor_model_parallel_size = 2
+    if peft_on_language_model:
+        if peft_on_vision_model:
+            cfg.peft = VLMLoRA(
+                target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+                dim=16,
+                alpha=32,
+            )
+        else:
+            cfg.peft = VLMLoRA(
+                target_modules=[
+                    "*language_model*.linear_qkv", 
+                    "*language_model*.linear_proj", 
+                    "*language_model*.linear_fc1", 
+                    "*language_model*.linear_fc2"
+                ],
+                dim=16,
+                alpha=32,
+                freeze_vision_model=False,
+                freeze_vision_projection=False,
+            )
+            
+        cfg.optimizer.lr = 5e-5
+        cfg.optimizer.min_lr = 5e-6
+        cfg.model.tensor_model_parallel_size = 1
 
     return cfg
