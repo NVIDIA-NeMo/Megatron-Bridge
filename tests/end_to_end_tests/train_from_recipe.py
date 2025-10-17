@@ -171,6 +171,8 @@ def apply_args_to_config(config, args):
         config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     if args.save_dir:
         config.checkpoint.save = args.save_dir
+    if args.load_dir:
+        config.checkpoint.load = args.load_dir
     if args.save_interval:
         config.checkpoint.save_interval = args.save_interval
     if args.async_save:
