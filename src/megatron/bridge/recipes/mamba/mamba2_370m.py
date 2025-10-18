@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import Optional, Union
 
 import torch
 
@@ -37,8 +36,8 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 def model_config(
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
+    pipeline_parallelism_dtype: torch.dtype | None = None,
+    virtual_pipeline_parallelism: int | None  = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
 ) -> MambaModelProvider370M:
@@ -67,21 +66,21 @@ def model_config(
 
 
 def pretrain_config(
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[list[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[list[str]] = None,
-    valid_data_path: Optional[list[str]] = None,
-    test_data_path: Optional[list[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
+    pipeline_parallelism_dtype: torch.dtype | None = None,
+    virtual_pipeline_parallelism: int | None  = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
     # Training hyperparameters
@@ -92,28 +91,28 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None  = None,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Mamba 370M model.
 
     Args:
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
+        dir (str | None): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
+        data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
+        data_args_path (str | None): Path to file containing data arguments.
+        train_data_path (list[str] | None): List of training data paths.
+        valid_data_path (list[str] | None): List of validation data paths.
+        test_data_path (list[str] | None): List of test data paths.
+        per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
         tensor_parallelism (int): Degree of tensor model parallelism.
         pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
+        pipeline_parallelism_dtype (torch.dtype | None): Data type for pipeline parallelism.
+        virtual_pipeline_parallelism (int | None ): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism to be passed to model_config.
         sequence_parallelism (bool): Whether to use sequence parallelism.
         train_iters (int): Total number of training iterations.
@@ -123,9 +122,9 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations for learning rate decay.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration for the model.
+        lr_decay_iters (int | None ): Number of iterations for learning rate decay.
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration for the model.
 
     Returns:
         ConfigContainer: Configuration for pre-training.

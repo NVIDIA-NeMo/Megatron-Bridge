@@ -16,7 +16,7 @@ import os
 import time
 import types
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
@@ -93,7 +93,7 @@ class TrainState(Stateful):
 class FaultToleranceState:
     """Dataclass to hold state specific to fault tolerance mechanisms."""
 
-    ft_state_path: Optional[str] = None
+    ft_state_path: str | None = None
     is_persistent_chkpt_loaded: bool = False
     is_async_chkpt_enabled: bool = False
     is_calculating_timeouts: bool = False
@@ -119,30 +119,30 @@ class GlobalState:
             return
         self._initialized = True
 
-        self._cfg: Optional[ConfigContainer] = None
-        self._tokenizer: Optional[Any] = None
-        self._tensorboard_logger: Optional[SummaryWriter] = None
-        self._wandb_logger: Optional[Any] = None
-        self._timers: Optional[Timers] = None
-        self._train_state: Optional[TrainState] = None
-        self.rank_monitor_client: Optional[Any] = None
-        self._signal_handler: Optional[DistributedSignalHandler] = None
+        self._cfg: ConfigContainer | None = None
+        self._tokenizer: Any | None = None
+        self._tensorboard_logger: SummaryWriter | None  = None
+        self._wandb_logger: Any | None = None
+        self._timers: Timers | None = None
+        self._train_state: TrainState | None = None
+        self.rank_monitor_client: Any | None = None
+        self._signal_handler: DistributedSignalHandler | None = None
         self.start_time: float = time.time()
-        self._ft_state: Optional[FaultToleranceState] = None
-        self._straggler_timer: Optional[StragglerDetector] = None
-        self._async_calls_queue: Optional[AsyncCallsQueue] = None
-        self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
+        self._ft_state: FaultToleranceState | None = None
+        self._straggler_timer: StragglerDetector | None = None
+        self._async_calls_queue: AsyncCallsQueue | None = None
+        self._nvrx_straggler_manager: NVRxStragglerDetectionManager | None = None
         self._nvrx_straggler_created: bool = False
-        self._energy_monitor: Optional[EnergyMonitor] = None
+        self._energy_monitor: EnergyMonitor | None = None
         self._energy_monitor_created: bool = False
 
     @property
-    def cfg(self) -> Optional[ConfigContainer]:
+    def cfg(self) -> ConfigContainer | None:
         """The main configuration container object."""
         return self._cfg
 
     @cfg.setter
-    def cfg(self, value: Optional[ConfigContainer]) -> None:
+    def cfg(self, value: ConfigContainer | None) -> None:
         """Sets the configuration container and initializes the signal handler.
 
         Args:
@@ -165,7 +165,7 @@ class GlobalState:
         return self._tokenizer
 
     @property
-    def tensorboard_logger(self) -> Optional[SummaryWriter]:
+    def tensorboard_logger(self) -> SummaryWriter | None:
         """The TensorBoard SummaryWriter instance, lazily initialized for rank N-1."""
         if self._tensorboard_logger is None:
             if self.cfg.logger.tensorboard_dir and get_rank_safe() == (get_world_size_safe() - 1):
@@ -181,7 +181,7 @@ class GlobalState:
         return self._tensorboard_logger
 
     @property
-    def wandb_logger(self) -> Optional[Any]:
+    def wandb_logger(self) -> Any | None:
         """The Weights & Biases logger instance, lazily initialized for rank N-1."""
         if self._wandb_logger is None:
             if self.cfg.logger.wandb_project and get_rank_safe() == (get_world_size_safe() - 1):
@@ -270,12 +270,12 @@ class GlobalState:
             self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
     @property
-    def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
+    def async_calls_queue(self) -> AsyncCallsQueue | None:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
     @property
-    def nvrx_straggler_manager(self) -> Optional[NVRxStragglerDetectionManager]:
+    def nvrx_straggler_manager(self) -> NVRxStragglerDetectionManager | None:
         """The NVRx straggler detection manager, if enabled."""
         if (
             not self._nvrx_straggler_created
@@ -288,7 +288,7 @@ class GlobalState:
         return self._nvrx_straggler_manager
 
     @property
-    def energy_monitor(self) -> Optional[EnergyMonitor]:
+    def energy_monitor(self) -> EnergyMonitor | None:
         """The EnergyMonitor instance for tracking energy consumption."""
         if (
             not self._energy_monitor_created

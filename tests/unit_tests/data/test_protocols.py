@@ -15,7 +15,7 @@
 """Unit tests for the custom dataset provider protocol."""
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -75,7 +75,7 @@ class TestDatasetProvider:
 
             def build_datasets(
                 self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            ) -> Tuple[Any | None, Any | None, Any | None]:
                 # Mock dataset objects
                 train_ds = MagicMock()
                 train_ds.name = "train"
@@ -126,7 +126,7 @@ class TestDatasetProvider:
 
             def build_datasets(
                 self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            ) -> Tuple[Any | None, Any | None, Any | None]:
                 train_ds = MagicMock()
                 train_ds.name = "train"
                 return train_ds, None, None
@@ -170,7 +170,7 @@ class TestDatasetProviderIntegration:
 
             def build_datasets(
                 self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            ) -> Tuple[Any | None, Any | None, Any | None]:
                 train_ds = MagicMock()
                 train_ds.context = context
                 train_ds.config = self
@@ -225,7 +225,7 @@ class TestDatasetProviderIntegration:
 
             def build_datasets(
                 self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            ) -> Tuple[Any | None, Any | None, Any | None]:
                 # Store the context for verification
                 self._last_context = context
                 return MagicMock(), MagicMock(), MagicMock()
@@ -258,7 +258,7 @@ class TestDatasetProviderIntegration:
 
             def build_datasets(
                 self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            ) -> Tuple[Any | None, Any | None, Any | None]:
                 self._last_context = context
                 return MagicMock(), MagicMock(), MagicMock()
 

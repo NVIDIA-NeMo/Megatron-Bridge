@@ -5,7 +5,7 @@
 import base64
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from megatron.bridge.training.tokenizers.bert_tokenization import FullTokenizer as FullBertTokenizer
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -774,7 +774,7 @@ class _Llama2Tokenizer(_SentencePieceTokenizer):
         return None
 
 
-def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[bytes, int]:
+def reload_mergeable_ranks(path: str, max_vocab: int | None = None) -> Dict[bytes, int]:
     """
     Reloads a tokenizer vocabulary from a JSON file (NeMo format) and converts it
     into the mergeable ranks format required by Tiktoken.
@@ -782,7 +782,7 @@ def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[b
     "rank", "token_bytes" (base64 encoded), and "token_str" keys.
     Args:
         path (str): Path to the JSON vocabulary file.
-        max_vocab (Optional[int], optional): If provided, truncates the vocabulary
+        max_vocab (int | None, optional): If provided, truncates the vocabulary
                                            to this maximum size. Defaults to None.
     Returns:
         Dict[bytes, int]: A dictionary mapping token bytes to their ranks.
@@ -823,9 +823,9 @@ class CustomTikTokenizer(MegatronTokenizer):
     Args:
         path (str): Path to the JSON vocabulary file (NeMo format).
         pattern (str): The regex pattern string for Tiktoken.
-        vocab_size (Optional[int]): The target vocabulary size. If None, defaults to 2^17.
+        vocab_size (int | None): The target vocabulary size. If None, defaults to 2^17.
         num_special_tokens (int): The total number of special tokens to reserve.
-        special_tokens (Optional[List[str]]): A list of initial special token strings.
+        special_tokens (List[str] | None): A list of initial special token strings.
                                             Must include "<unk>", "<s>", "</s>".
                                             If shorter than `num_special_tokens`,
                                             it will be padded with "<SPECIAL_id>".
@@ -835,9 +835,9 @@ class CustomTikTokenizer(MegatronTokenizer):
         self,
         path: str,
         pattern: str,
-        vocab_size: Optional[int],
+        vocab_size: int | None,
         num_special_tokens: int,
-        special_tokens: Optional[List[str]],
+        special_tokens: List[str] | None,
     ):
         super().__init__(
             path,

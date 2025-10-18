@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -35,13 +35,13 @@ class MixedPrecisionConfig:
     fp32: bool = False
     fp16: bool = False
     bf16: bool = False
-    params_dtype: Optional[torch.dtype] = None
-    pipeline_dtype: Optional[torch.dtype] = None
-    autocast_dtype: Optional[torch.dtype] = None
+    params_dtype: torch.dtype | None = None
+    pipeline_dtype: torch.dtype | None = None
+    autocast_dtype: torch.dtype | None = None
     autocast_enabled: bool = False
     grad_reduce_in_fp32: bool = True
     # fp8 related
-    fp8: Optional[str] = None
+    fp8: str | None = None
     fp8_recipe: str = (
         "tensorwise"  # "tensorwise", "delayed", "mxfp8" (for Blackwell only), "blockwise" (for Hopper only)
     )
@@ -52,14 +52,14 @@ class MixedPrecisionConfig:
     fp8_wgrad: bool = True
     fp8_dot_product_attention: bool = False
     fp8_multi_head_attention: bool = False
-    fp8_param: Optional[bool] = None
+    fp8_param: bool | None = None
     fp8_param_gather: bool = False
     # fp4 related
-    fp4: Optional[str] = None
+    fp4: str | None = None
     fp4_recipe: str = "nvfp4"
     # FP16 Loss scaling
-    loss_scale: Optional[float] = None
-    initial_loss_scale: Optional[float] = 4294967296  # 2**32
+    loss_scale: float | None = None
+    initial_loss_scale: float | None = 4294967296  # 2**32
     min_loss_scale: float = 1.0
     loss_scale_window: float = 1000
     hysteresis: int = 2
@@ -100,8 +100,8 @@ class MixedPrecisionConfig:
     def setup(
         self,
         model_config: GPTModelProvider | T5ModelProvider,
-        optimizer_config: Optional[OptimizerConfig] = None,
-        ddp_config: Optional[DistributedDataParallelConfig] = None,
+        optimizer_config: OptimizerConfig | None = None,
+        ddp_config: DistributedDataParallelConfig | None = None,
     ) -> None:
         """Apply mixed precision configs to model, optimizer, and DDP configs.
 
