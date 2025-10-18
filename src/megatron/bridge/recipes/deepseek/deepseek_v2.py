@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
+from typing import List
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -41,30 +41,30 @@ class DeepSeekCommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: List[str] | None
+    data_args_path: str | None
+    train_data_path: List[str] | None
+    valid_data_path: List[str] | None
+    test_data_path: List[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_parallelism: int
     pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
+    pipeline_parallelism_dtype: torch.dtype | None
+    virtual_pipeline_parallelism: int | None
     context_parallelism: int
-    expert_parallelism: Optional[int]
+    expert_parallelism: int | None
     sequence_parallelism: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
     # Recompute configuration
-    recompute_granularity: Optional[str]
-    recompute_method: Optional[str]
-    recompute_num_layers: Optional[int]
+    recompute_granularity: str | None
+    recompute_method: str | None
+    recompute_num_layers: int | None
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -73,13 +73,13 @@ class DeepSeekCommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
 
 
 def deepseek_v2_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> ConfigContainer:
@@ -122,30 +122,30 @@ def deepseek_v2_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> 
 
 def _deepseek_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: List[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: List[str] | None = None,
+    valid_data_path: List[str] | None = None,
+    test_data_path: List[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
+    pipeline_parallelism_dtype: torch.dtype | None = torch.bfloat16,
+    virtual_pipeline_parallelism: int | None = None,
     context_parallelism: int = 1,
-    expert_parallelism: Optional[int] = None,
+    expert_parallelism: int | None = None,
     sequence_parallelism: bool = False,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
-    recompute_granularity: Optional[str] = None,
-    recompute_method: Optional[str] = None,
-    recompute_num_layers: Optional[int] = None,
+    recompute_granularity: str | None = None,
+    recompute_method: str | None = None,
+    recompute_num_layers: int | None = None,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 512,
@@ -154,13 +154,13 @@ def _deepseek_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 2000,
     save_interval: int = 2000,
     use_null_tokenizer: bool = True,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for DeepSeek V2/V2-Lite models using a given HuggingFace path.

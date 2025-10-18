@@ -14,7 +14,6 @@
 
 import logging
 from dataclasses import asdict, dataclass, fields
-from typing import Optional
 
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
@@ -379,20 +378,20 @@ class CommOverlapConfig:
     """
 
     tp_comm_overlap: bool
-    tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
-    tp_comm_bootstrap_backend: Optional[str] = None
-    overlap_p2p_comm: Optional[bool] = None
-    batch_p2p_comm: Optional[bool] = None
-    overlap_grad_reduce: Optional[bool] = None
-    overlap_param_gather: Optional[bool] = None
-    overlap_param_gather_with_optimizer_step: Optional[bool] = None
-    align_param_gather: Optional[bool] = None
-    bucket_size: Optional[int] = None
-    defer_embedding_wgrad_compute: Optional[bool] = None
-    wgrad_deferral_limit: Optional[int] = None
-    data_parallel_size: Optional[int] = None
-    overlap_moe_expert_parallel_comm: Optional[bool] = None
-    delay_wgrad_compute: Optional[bool] = None
+    tp_comm_overlap_cfg: TransformerLayerTPOverlapCfg |None = None
+    tp_comm_bootstrap_backend: str | None = None
+    overlap_p2p_comm: bool | None = None
+    batch_p2p_comm: bool | None = None
+    overlap_grad_reduce: bool | None = None
+    overlap_param_gather: bool | None = None
+    overlap_param_gather_with_optimizer_step: bool | None = None
+    align_param_gather: bool | None = None
+    bucket_size: int | None = None
+    defer_embedding_wgrad_compute: bool | None = None
+    wgrad_deferral_limit: int | None = None
+    data_parallel_size: int | None = None
+    overlap_moe_expert_parallel_comm: bool | None = None
+    delay_wgrad_compute: bool | None = None
 
     def finalize(self):
         # Don't recreate the user_comm_overlap_cfg if the post init is re-run

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import argparse
-from typing import Optional
 
 import megatron.core.parallel_state as mpu
 import torch
@@ -74,10 +73,10 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
 
 def _gpt_provider(
     args: argparse.Namespace,
-    config: Optional[TransformerConfig] = None,
+    config: TransformerConfig | None = None,
     pre_process: bool = True,
     post_process: bool = True,
-    vp_stage: Optional[int] = None,
+    vp_stage: int | None = None,
 ) -> GPTModel:
     """Provide the GPTModel exactly as done by MLM using an argparse args object.
 
@@ -136,10 +135,10 @@ def _gpt_provider(
 
 def _mamba_provider(
     args: argparse.Namespace,
-    config: Optional[TransformerConfig] = None,
+    config: TransformerConfig | None = None,
     pre_process: bool = True,
     post_process: bool = True,
-    vp_stage: Optional[int] = None,
+    vp_stage: int | None = None,
 ) -> MambaModel:
     """Provide the MambaModel exactly as done by MLM using an argparse args object.
 

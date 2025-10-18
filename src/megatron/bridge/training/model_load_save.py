@@ -18,7 +18,7 @@ import os
 import socket
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Literal, Optional, Union
+from typing import Any, Generator, Literal
 
 import torch
 import torch.distributed as dist
@@ -157,7 +157,7 @@ def load_tokenizer(checkpoint_path: str) -> MegatronTokenizer:
 
 def load_model_config(
     checkpoint_path: str,
-) -> tuple[TransformerConfig, Optional[argparse.Namespace]]:
+) -> tuple[TransformerConfig, argparse.Namespace] | None:
     """Returns the model config saved in the checkpoint.
 
     Supports checkpoints saved with either Megatron Bridge or MegatronLM.
@@ -204,11 +204,11 @@ def load_model_config(
 def build_and_load_model(
     checkpoint_path: str,
     model_cfg: TransformerConfig,
-    model_type: Optional[Literal["gpt", "mamba"]] = None,
-    megatron_args: Optional[argparse.Namespace] = None,
+    model_type: Literal["gpt", "mamba"] None = None,
+    megatron_args: argparse.Namespace | None = None,
     return_state_dict: bool = False,
     use_cpu_init: bool = False,
-    skip_temp_dist_context: Optional[bool] = None,
+    skip_temp_dist_context: bool | None = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
 
@@ -315,11 +315,11 @@ def build_and_load_model(
 
 def load_megatron_model(
     checkpoint_path: str,
-    model_type: Optional[Literal["gpt", "mamba"]] = None,
+    model_type: Literal["gpt", "mamba"] | None = None,
     return_state_dict: bool = False,
     use_cpu_init: bool = False,
-    skip_temp_dist_context: Optional[bool] = None,
-    mp_overrides: Optional[ModelParallelKwargs] = None,
+    skip_temp_dist_context: bool | None = None,
+    mp_overrides: ModelParallelKwargs | None = None,
 ) -> Union[Any, dict[str, torch.Tensor]]:
     """Load a Megatron model from a distributed checkpoint.
 
@@ -370,7 +370,7 @@ def save_megatron_model(
     model: list[MegatronModule],
     path: Union[str, Path],
     ckpt_format: str = "torch_dist",
-    hf_tokenizer_path: Optional[Union[str, Path]] = None,
+    hf_tokenizer_path: str | Path | None = None,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 

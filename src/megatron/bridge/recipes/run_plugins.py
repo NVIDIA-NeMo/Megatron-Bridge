@@ -50,7 +50,7 @@ If no converter is provided, the plugin will use the default hydra-style convert
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Union
 
 from megatron.bridge.utils.import_utils import MISSING_NEMO_RUN_MSG
 
@@ -110,7 +110,7 @@ class PreemptionPlugin(Plugin):
                              This is only supported for ``run.SlurmExecutor``.
         enable_exit_handler (bool): Whether to enable the exit signal handler in training config.
         enable_exit_handler_for_data_loader (bool): Whether to enable the exit signal handler for data loader.
-        script_args_converter_fn (Optional[Callable]): A function that takes PreemptionPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes PreemptionPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
@@ -118,7 +118,7 @@ class PreemptionPlugin(Plugin):
     preempt_time: int = 60
     enable_exit_handler: bool = True
     enable_exit_handler_for_data_loader: bool = False
-    script_args_converter_fn: Optional[Callable[[PreemptionPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[PreemptionPluginScriptArgs], List[str]] | None = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
@@ -187,7 +187,7 @@ class FaultTolerancePlugin(Plugin):
             that a rank is not alive. This is the max timeout for the initial heartbeat. Default is 1800.
         rank_heartbeat_timeout (int): This is the timeout for subsequent hearbeats after the initial heartbeat.
             Default is 300.
-        script_args_converter_fn (Optional[Callable]): A function that takes FaultTolerancePluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes FaultTolerancePluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
@@ -198,7 +198,7 @@ class FaultTolerancePlugin(Plugin):
     num_job_retries_on_failure: int = 2
     initial_rank_heartbeat_timeout: int = 1800
     rank_heartbeat_timeout: int = 300
-    script_args_converter_fn: Optional[Callable[[FaultTolerancePluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[FaultTolerancePluginScriptArgs], List[str]] | None = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
@@ -277,24 +277,24 @@ class NsysPlugin(Plugin):
     Args:
         profile_step_start (int): The step at which to start the nsys profiling.
         profile_step_end (int): The step at which to end the nsys profiling.
-        profile_ranks (Optional[list[int]]): The ranks on which to run the nsys profiling. If not specified,
+        profile_ranks (list[int] | None): The ranks on which to run the nsys profiling. If not specified,
             profiling will be run on rank 0.
-        nsys_trace (Optional[list[str]]): The events to trace during profiling. If not specified,
+        nsys_trace (list[str] | None): The events to trace during profiling. If not specified,
             'nvtx' and 'cuda' events will be traced.
         record_shapes (bool): Whether to record tensor shapes. Default is False.
         nsys_gpu_metrics (bool): Whether to enable GPU metrics collection. Default is False.
-        script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: Optional[list[int]] = None
-    nsys_trace: Optional[list[str]] = None
+    profile_ranks: list[int] | None = None
+    nsys_trace: list[str] | None = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
-    script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[NsysPluginScriptArgs], List[str]] | None = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
@@ -383,23 +383,23 @@ class PyTorchProfilerPlugin(Plugin):
     Args:
         profile_step_start (int): The step at which to start profiling.
         profile_step_end (int): The step at which to end profiling.
-        profile_ranks (Optional[list[int]]): The ranks on which to run the profiling. If not specified,
+        profile_ranks (list[int] | None): The ranks on which to run the profiling. If not specified,
             profiling will be run on rank 0.
         record_memory_history (bool): Whether to record memory history. Default is False.
         memory_snapshot_path (str): Path to save memory snapshots. Default is "snapshot.pickle".
         record_shapes (bool): Whether to record tensor shapes. Default is False.
-        script_args_converter_fn (Optional[Callable]): A function that takes PyTorchProfilerPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes PyTorchProfilerPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: Optional[list[int]] = None
+    profile_ranks: list[int] | None = None
     record_memory_history: bool = False
     memory_snapshot_path: str = "snapshot.pickle"
     record_shapes: bool = False
-    script_args_converter_fn: Optional[Callable[[PyTorchProfilerPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[PyTorchProfilerPluginScriptArgs], List[str]] | None = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
@@ -446,8 +446,8 @@ class WandbPluginScriptArgs:
     """Arguments for WandbPlugin to pass to run.Script."""
 
     project: str
-    entity: Optional[str]
-    name: Optional[str]
+    entity: str | None
+    name: str | None
     save_dir: str
 
 
@@ -474,22 +474,22 @@ class WandbPlugin(Plugin):
 
     Args:
         project (str): The Weights & Biases project name.
-        name (Optional[str]): The name for the Weights & Biases run. If not provided, uses experiment name.
-        entity (Optional[str]): The Weights & Biases entity name.
+        name (str | None): The name for the Weights & Biases run. If not provided, uses experiment name.
+        entity (str | None): The Weights & Biases entity name.
         save_dir (str): Directory to save wandb logs. Default is "/nemo_run/wandb".
         log_task_config (bool, optional): Whether to log the task configuration to wandb.
             Defaults to True.
-        script_args_converter_fn (Optional[Callable]): A function that takes WandbPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes WandbPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
 
     project: str
-    name: Optional[str] = None
-    entity: Optional[str] = None
+    name: str | None = None
+    entity: str | None = None
     save_dir: str = "/nemo_run/wandb"
     log_task_config: bool = True
-    script_args_converter_fn: Optional[Callable[[WandbPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[WandbPluginScriptArgs], List[str]] | None = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
@@ -558,14 +558,14 @@ class PerfEnvPlugin(Plugin):
         layernorm_sm_margin (int): The SM margin for TransformerEngine Layernorm.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
-        nccl_pp_comm_chunksize (Optional[int]): Chunk size for P2P communications.
+        nccl_pp_comm_chunksize (int | None): Chunk size for P2P communications.
         gpu_sm100_or_newer (bool): Whether GPU is SM100 or newer architecture.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
         cp_size (int): Context parallelism size. Default is 1.
         pp_size (int): Pipeline parallelism size. Default is 1.
-        script_args_converter_fn (Optional[Callable]): A function that takes PerfEnvPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes PerfEnvPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
@@ -573,14 +573,14 @@ class PerfEnvPlugin(Plugin):
     enable_layernorm_sm_margin: bool = True
     layernorm_sm_margin: int = 16
     enable_vboost: bool = False
-    nccl_pp_comm_chunksize: Optional[int] = None
+    nccl_pp_comm_chunksize: int | None = None
     gpu_sm100_or_newer: bool = False
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int = 1
     cp_size: int = 1
     pp_size: int = 1
-    script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[PerfEnvPluginScriptArgs], List[str]] | None = None
     num_gpus: int = 8
     deepep_enabled: bool = False
     a2a_overlap: bool = False

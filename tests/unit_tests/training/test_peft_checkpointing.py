@@ -15,7 +15,6 @@
 import datetime
 import os
 from dataclasses import dataclass
-from typing import Optional, Union
 from unittest.mock import Mock, patch
 
 import megatron.core.parallel_state as parallel_state
@@ -51,11 +50,11 @@ class MockPEFT(PEFT):
             "layer3.adapters.lora_B",
         }
 
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(self, module: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
         """Transform method that returns the module unchanged for testing."""
         return module
 
-    def adapter_key_filter(self, key: Union[str, tuple]) -> bool:
+    def adapter_key_filter(self, key: str | tuple) -> bool:
         """Filter function that only allows adapter parameters."""
         if isinstance(key, tuple):
             return key[1].requires_grad

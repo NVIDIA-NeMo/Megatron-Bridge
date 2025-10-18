@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional, Union
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -201,17 +201,17 @@ def create_test_nvrx_straggler_config(**kwargs: Any) -> NVRxStragglerDetectionCo
 
 def create_test_config_container(
     world_size_override: int,
-    model_config: Union[GPTModelProvider, T5ModelProvider],
-    train_config: Optional[TrainingConfig] = None,
-    optimizer_config: Optional[OptimizerConfig] = None,
-    scheduler_config: Optional[SchedulerConfig] = None,
-    dataset_config_override: Optional[Union[GPTDatasetConfig, FinetuningDatasetConfig]] = None,
-    logger_config: Optional[LoggerConfig] = None,
-    tokenizer_config: Optional[TokenizerConfig] = None,
-    checkpoint_config: Optional[CheckpointConfig] = None,
-    dist_config: Optional[DistributedInitConfig] = None,
-    profiling_config: Optional[ProfilingConfig] = None,
-    ddp_config: Optional[DistributedDataParallelConfig] = None,
+    model_config: GPTModelProvider | T5ModelProvider,
+    train_config: TrainingConfig | None = None,
+    optimizer_config: OptimizerConfig | None= None,
+    scheduler_config: SchedulerConfig | None= None,
+    dataset_config_override: GPTDatasetConfig | FinetuningDatasetConfig | None= None,
+    logger_config: LoggerConfig | None= None,
+    tokenizer_config: TokenizerConfig | None = None,
+    checkpoint_config: CheckpointConfig | None= None,
+    dist_config: DistributedInitConfig | None = None,
+    profiling_config: ProfilingConfig | None = None,
+    ddp_config: DistributedDataParallelConfig | None = None,
 ):
     """
     Helper to create a ConfigContainer with specified or default test configurations.

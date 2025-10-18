@@ -16,7 +16,7 @@
 
 import inspect
 from functools import partial
-from typing import Iterable, Optional
+from typing import Iterable
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
@@ -121,7 +121,7 @@ class StatefulForwardFunctor:
 
         return loss_tensor, loss_function
 
-    def get_average_loss(self) -> Optional[float]:
+    def get_average_loss(self) -> float | None:
         """Return average loss across all calls."""
         if not self.loss_history:
             return None

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional, Union
+from typing import Callable
 
 import torch.nn as nn
 from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_megatron_optimizer
@@ -25,10 +25,10 @@ from megatron.bridge.training.config import SchedulerConfig
 def setup_optimizer(
     optimizer_config: OptimizerConfig,
     scheduler_config: SchedulerConfig,
-    model: Union[MegatronModule, list[MegatronModule]],
+    model: MegatronModule | list[MegatronModule],
     use_gloo_process_groups: bool = False,
-    no_weight_decay_cond: Optional[Callable[[str, nn.Parameter], bool]] = None,
-    scale_lr_cond: Optional[Callable[[str, nn.Parameter], bool]] = None,
+    no_weight_decay_cond: Callable[[str, nn.Parameter | None, bool]] = None,
+    scale_lr_cond: Callable[[str, nn.Parameter | None, bool]] = None,
     lr_mult: float = 1.0,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.

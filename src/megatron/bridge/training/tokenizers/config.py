@@ -13,27 +13,26 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 
 @dataclass
 class TokenizerConfig:
     """Configuration settings for the tokenizer."""
 
-    vocab_size: Optional[int] = None
+    vocab_size: int | None = None
     """Size of vocab before EOD or padding."""
 
-    vocab_file: Optional[str] = None
+    vocab_file: str | None = None
     """Path to the vocab file."""
 
-    merge_file: Optional[str] = None
+    merge_file: str | None = None
     """Path to the BPE merge file."""
 
     vocab_extra_ids: int = 0
     """Number of additional vocabulary tokens. They are used for span masking in the T5 model"""
 
-    tokenizer_type: Optional[
-        Literal[
+    tokenizer_type:Literal[
             "BertWordPieceLowerCase",
             "BertWordPieceCase",
             "GPT2BPETokenizer",
@@ -44,25 +43,24 @@ class TokenizerConfig:
             "TikTokenizer",
             "MultimodalTokenizer",
             "NullTokenizer",
-        ]
-    ] = None
+        ] | None = None
     """What type of tokenizer to use."""
 
-    tokenizer_model: Optional[str] = None
+    tokenizer_model: str | None = None
     """Sentencepiece tokenizer model."""
 
-    tiktoken_pattern: Optional[str] = None
+    tiktoken_pattern: str | None = None
     """Which tiktoken pattern to use. Options: [v1, v2]"""
 
     tiktoken_num_special_tokens: int = 1000
     """Number of special tokens in tiktoken tokenizer"""
 
-    tiktoken_special_tokens: Optional[list[str]] = None
+    tiktoken_special_tokens: list[str] | None = None
     """List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]"""
 
-    tokenizer_prompt_format: Optional[str] = None
-    special_tokens: Optional[list[str]] = None
-    image_tag_type: Optional[str] = None
+    tokenizer_prompt_format: str | None = None
+    special_tokens: list[str] | None = None
+    image_tag_type: str | None = None
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
