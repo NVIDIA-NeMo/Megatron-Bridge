@@ -522,16 +522,31 @@ def train_step(
             overlap_param_gather=cfg.ddp.overlap_param_gather,
         )
 
+        # Handle finetuning vs pretraining data consumption
+        seq_length = model_config.seq_length  # Default for pretraining
+        forward_backward_data_iterator = data_iterator  # Default for pretraining
+
+        if cfg.dataset.dataloader_type == "batch":
+            # Finetuning path to support variable-length sequences
+            from megatron.bridge.data.finetuning import prepare_finetuning_batch
+
+            forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+                data_iterator=data_iterator,
+                num_microbatches=get_num_microbatches(),
+                default_seq_length=model_config.seq_length,
+                seq_key="tokens",
+            )
+
         # Forward pass.
         forward_backward_func = get_forward_backward_func()
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
-            data_iterator=data_iterator,
+            data_iterator=forward_backward_data_iterator,
             model=model,
             num_microbatches=get_num_microbatches(),
-            seq_length=model_config.seq_length,
+            seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
+            decoder_seq_length=seq_length,
             forward_only=False,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
@@ -1074,14 +1089,20 @@ def _dummy_train_step(
         global_state: Global state containing configuration
         train_data_iterator: Iterator over training data
     """
+    cfg = global_state.cfg
     num_microbatches = get_num_microbatches()
     rerun_state_machine = get_rerun_state_machine()
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
-        for _ in range(num_microbatches):
-            if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
-                if train_data_iterator is not None:
+        if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+            if train_data_iterator is not None:
+                if cfg.dataset.dataloader_type == "batch":
+                    # Finetuning: Consume global batch once
                     _ = next(train_data_iterator)
+                else:
+                    # Pretrain: Consume microbatches one at a time
+                    for _ in range(num_microbatches):
+                        _ = next(train_data_iterator)
 
 
 def _handle_mxfp8_param_buffer_copy(

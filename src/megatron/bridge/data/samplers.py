@@ -250,10 +250,10 @@ class MegatronPretrainingBatchSampler:
         self._global_batch_size_on_this_data_parallel_rank = self._num_micro_batches * self.micro_batch_size
 
     def __len__(self) -> int:
-        """Return the number of microbatches this sampler will yield.
+        """Return the number of batches this sampler will yield.
 
-        Since we yield one microbatch per global batch × num_micro_batches,
-        multiply by num_micro_batches to get the total number of yields.
+        Since we now yield the full global batch at once (not split into microbatches),
+        this returns the number of global batches.
         """
         num_available_samples = self.total_samples - self.consumed_samples % self.total_samples
         if self.drop_last:
@@ -261,18 +261,21 @@ class MegatronPretrainingBatchSampler:
         else:
             num_global_batches = (num_available_samples + self._global_batch_size - 1) // self._global_batch_size
 
-        # Each global batch yields num_micro_batches microbatches
-        return num_global_batches * self._num_micro_batches
+        # Each call to __iter__ yields one global batch
+        return num_global_batches
 
     def __iter__(self) -> Iterator[list[int]]:
-        """Yields lists of indices for each microbatch assigned to this rank.
+        """Yields lists of indices for the full global batch assigned to this rank.
 
         Accumulates a full global batch, then distributes indices in interleaved fashion
-        to data parallel ranks, yielding one microbatch at a time for megatron-core compatibility.
+        to data parallel ranks, yielding ALL indices for this rank at once. This allows
+        the DataLoader's collate_fn to receive the full global batch and determine optimal
+        padding across all samples before the training loop splits into microbatches.
 
-        This ensures all samples in a global batch can be padded to the same max length
-        (important for variable-length finetuning) while being compatible with megatron-core's
-        microbatch loop that calls next() multiple times per training step.
+        This is essential for variable-length finetuning where we need to:
+        1. Compute max_length across the entire global batch
+        2. Pad all samples to the same length
+        3. Then split into microbatches with consistent sequence length
         """
         batch = []
         # Last batch will be dropped if drop_last is True
@@ -290,11 +293,9 @@ class MegatronPretrainingBatchSampler:
                 ]
                 assert len(all_indices) == self._global_batch_size_on_this_data_parallel_rank
 
-                # Yield one microbatch at a time
-                for microbatch_idx in range(self._num_micro_batches):
-                    start = microbatch_idx * self.micro_batch_size
-                    end = start + self.micro_batch_size
-                    yield all_indices[start:end]
+                # Yield ALL indices at once (not split into microbatches)
+                # The training loop will handle splitting after collation
+                yield all_indices
 
                 batch = []
 
@@ -306,12 +307,8 @@ class MegatronPretrainingBatchSampler:
                 num_pad = self._global_batch_size // self.data_parallel_size - len(all_indices)
                 all_indices = all_indices + [-1] * num_pad
 
-            # Yield one microbatch at a time
-            for microbatch_idx in range(self._num_micro_batches):
-                start = microbatch_idx * self.micro_batch_size
-                end = start + self.micro_batch_size
-                if start < len(all_indices):
-                    yield all_indices[start:end]
+            # Yield ALL indices at once
+            yield all_indices
 
 
 class RandomSeedDataset(Dataset):
