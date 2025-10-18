@@ -1002,6 +1002,114 @@ class TestPerfEnvPlugin:
         # Verify hydra-style args are NOT present
         assert "train.manual_gc=true" not in task.args
 
+    def test_cuda_max_connections_with_deepep_enabled(self):
+        """Test that deepep_enabled sets CUDA_DEVICE_MAX_CONNECTIONS to 32."""
+        plugin = PerfEnvPlugin(deepep_enabled=True, tp_size=1, cp_size=1, pp_size=1, num_gpus=8)
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Partial)
+        task.config = prepare_config_for_nemo_run(create_test_config())
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"
+        assert plugin.dp_size == 8
+
+    def test_cuda_max_connections_with_a2a_overlap_enabled(self):
+        """Test that a2a_overlap prevents setting CUDA_DEVICE_MAX_CONNECTIONS to 1 on older GPUs."""
+        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, a2a_overlap=True, tp_size=2, cp_size=1, pp_size=1, num_gpus=8)
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Partial)
+        task.config = prepare_config_for_nemo_run(create_test_config())
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+        assert plugin.dp_size == 4
+
+    def test_cuda_max_connections_without_a2a_overlap_older_gpu(self):
+        """Test that without a2a_overlap, CUDA_DEVICE_MAX_CONNECTIONS is set to 1 on older GPUs with TP."""
+        plugin = PerfEnvPlugin(
+            gpu_sm100_or_newer=False, a2a_overlap=False, tp_size=4, cp_size=1, pp_size=1, num_gpus=8
+        )
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Partial)
+        task.config = prepare_config_for_nemo_run(create_test_config())
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "1"
+        assert plugin.dp_size == 2
+
+    def test_cuda_max_connections_sm100_with_multiple_parallelisms(self):
+        """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with both TP/CP and DP/PP."""
+        plugin = PerfEnvPlugin(
+            gpu_sm100_or_newer=True, tp_size=2, cp_size=2, pp_size=2, num_gpus=16, deepep_enabled=False
+        )
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Partial)
+        task.config = prepare_config_for_nemo_run(create_test_config())
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert plugin.dp_size == 2
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"
+
+    def test_cuda_max_connections_sm100_with_tp_only(self):
+        """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with only TP (no DP or PP)."""
+        plugin = PerfEnvPlugin(gpu_sm100_or_newer=True, tp_size=8, cp_size=1, pp_size=1, num_gpus=8)
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Partial)
+        task.config = prepare_config_for_nemo_run(create_test_config())
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert plugin.dp_size == 1
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+
+    def test_cuda_max_connections_default_case(self):
+        """Test CUDA_DEVICE_MAX_CONNECTIONS defaults to 8 when no special conditions apply."""
+        plugin = PerfEnvPlugin(
+            gpu_sm100_or_newer=False,
+            deepep_enabled=False,
+            tp_size=1,
+            cp_size=1,
+            pp_size=1,
+            num_gpus=8,
+            a2a_overlap=False,
+        )
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Partial)
+        task.config = prepare_config_for_nemo_run(create_test_config())
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert plugin.dp_size == 8
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 class TestPluginIntegration:

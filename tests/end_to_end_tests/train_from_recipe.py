@@ -260,10 +260,10 @@ def apply_args_to_config(config, args):
         # Checkpoint configuration for convergence
         if args.max_steps <= 100:
             # Short convergence runs - save at the end
-            config.checkpoint.save_interval = args.max_steps
+            config.checkpoint.save_interval = args.save_interval or args.max_steps
         else:
-            # Long convergence runs - save every 1000 steps
-            config.checkpoint.save_interval = 1000
+            # Long convergence runs - save every save_interval steps
+            config.checkpoint.save_interval = args.save_interval or 1000
 
         # Validation configuration for convergence
         if args.max_steps <= 100:

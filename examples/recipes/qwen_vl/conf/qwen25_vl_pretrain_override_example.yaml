@@ -1,0 +1,53 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Example override file for Qwen2.5-VL
+
+model:
+  seq_length: 4096
+
+train:
+  train_iters: 20
+  global_batch_size: 8
+  micro_batch_size: 1
+  eval_iters: 5
+
+optimizer:
+  lr: 0.00025
+  min_lr: 0.000025
+
+scheduler:
+  lr_warmup_iters: 10
+
+checkpoint:
+  # Directory to save to. If null, no checkpoint will be saved.
+  save: null
+
+dist:
+  use_megatron_fsdp: false
+  use_torch_fsdp2: false
+
+logger:
+  log_interval: 1
+
+dataset:
+  sequence_length: 4096
+
+rng:
+  seed: 42
+
+ddp:
+  grad_reduce_in_fp32: true
+
+

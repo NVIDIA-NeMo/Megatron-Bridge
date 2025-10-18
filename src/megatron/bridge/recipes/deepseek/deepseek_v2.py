@@ -16,8 +16,9 @@ import os
 from typing import List, Optional, Union
 
 import torch
+from typing_extensions import TypedDict, Unpack
 
-from megatron.bridge.models.deepseek import DeepSeekV2ModelProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -35,51 +36,92 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def model_config(
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 4,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 32,
-    sequence_parallelism: bool = False,
-    recompute_granularity: str = "full",
-    recompute_method: str = "uniform",
-    recompute_num_layers: int = 1,
-) -> DeepSeekV2ModelProvider:
+class DeepSeekCommonKwargs(TypedDict, total=False):
+    """Typed options accepted by DeepSeek V2/V2-Lite recipe helper functions."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+    # Dataset configuration
+    data_paths: Optional[List[str]]
+    data_args_path: Optional[str]
+    train_data_path: Optional[List[str]]
+    valid_data_path: Optional[List[str]]
+    test_data_path: Optional[List[str]]
+    per_split_data_args_path: Optional[str]
+    mock: bool
+    # Model configuration
+    tensor_parallelism: int
+    pipeline_parallelism: int
+    pipeline_parallelism_dtype: Optional[torch.dtype]
+    virtual_pipeline_parallelism: Optional[int]
+    context_parallelism: int
+    expert_parallelism: Optional[int]
+    sequence_parallelism: bool
+    use_megatron_fsdp: bool
+    check_for_nan_in_grad: bool
+    # Recompute configuration
+    recompute_granularity: Optional[str]
+    recompute_method: Optional[str]
+    recompute_num_layers: Optional[int]
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    seq_length: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    eval_interval: int
+    save_interval: int
+    use_null_tokenizer: bool
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+
+
+def deepseek_v2_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for DeepSeek-V2-Lite.
+
+    See `_deepseek_common` for the full list of parameters.
     """
-    Configure the DeepSeek-V2 (236B) model.
+    recommended_kwargs: DeepSeekCommonKwargs = {
+        "hf_path": "deepseek-ai/DeepSeek-V2-Lite",
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 1,
+        "expert_parallelism": 8,
+        # Match old defaults
+        "pipeline_parallelism_dtype": None,
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1,
+    }
+    combined_kwargs: DeepSeekCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _deepseek_common(**combined_kwargs)
 
-    Args:
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        expert_parallelism (int): Degree of expert model parallelism for MoE.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-        recompute_granularity (str): Granularity of activation recomputation.
-        recompute_method (str): Method for activation recomputation.
-        recompute_num_layers (int): Number of layers to recompute.
 
-    Returns:
-        DeepSeekV2ModelProvider: Configuration for the DeepSeek-V2 model.
+def deepseek_v2_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for DeepSeek-V2.
+
+    See `_deepseek_common` for the full list of parameters.
     """
-    return DeepSeekV2ModelProvider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        expert_model_parallel_size=expert_parallelism,
-        sequence_parallel=sequence_parallelism,
-        recompute_granularity=recompute_granularity,
-        recompute_method=recompute_method,
-        recompute_num_layers=recompute_num_layers,
-    )
+    recommended_kwargs: DeepSeekCommonKwargs = {
+        "hf_path": "deepseek-ai/DeepSeek-V2",
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 4,
+        "expert_parallelism": 32,
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1,
+    }
+    combined_kwargs: DeepSeekCommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _deepseek_common(**combined_kwargs)
 
 
-def pretrain_config(
+def _deepseek_common(
+    hf_path: str,
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -92,13 +134,18 @@ def pretrain_config(
     mock: bool = False,
     # Model configuration
     tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 4,
+    pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    expert_parallelism: int = 32,
+    expert_parallelism: Optional[int] = None,
     sequence_parallelism: bool = False,
     use_megatron_fsdp: bool = False,
+    check_for_nan_in_grad: bool = True,
+    # Recompute configuration
+    recompute_granularity: Optional[str] = None,
+    recompute_method: Optional[str] = None,
+    recompute_num_layers: Optional[int] = None,
     # Training hyperparameters
     train_iters: int = 1_000_000,
     global_batch_size: int = 512,
@@ -108,48 +155,15 @@ def pretrain_config(
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
     lr_decay_iters: Optional[int] = None,
+    eval_interval: int = 2000,
+    save_interval: int = 2000,
+    use_null_tokenizer: bool = True,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
-    # Recompute settings
-    recompute_granularity: str = "full",
-    recompute_method: str = "uniform",
-    recompute_num_layers: int = 1,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for DeepSeek-V2 (236B) model.
-
-    Args:
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        expert_parallelism (int): Degree of expert model parallelism for MoE.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int) Number of warmup iterations for the learning rate.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        recompute_granularity (str): Granularity of activation recomputation.
-        recompute_method (str): Method for activation recomputation.
-        recompute_num_layers (int): Number of layers to recompute.
-
-    Returns:
-        ConfigContainer: Configuration for pre-training.
+    Create a pre-training configuration for DeepSeek V2/V2-Lite models using a given HuggingFace path.
     """
     base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
     run_output_dir = os.path.join(base_output_dir, name)
@@ -160,18 +174,22 @@ def pretrain_config(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
 
-    model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        expert_parallelism=expert_parallelism,
-        sequence_parallelism=sequence_parallelism,
-        recompute_granularity=recompute_granularity,
-        recompute_method=recompute_method,
-        recompute_num_layers=recompute_num_layers,
-    )
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_parallelism
+    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
+    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    model_cfg.context_parallel_size = context_parallelism
+    if expert_parallelism is not None:
+        model_cfg.expert_model_parallel_size = expert_parallelism
+    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.seq_length = seq_length
+    model_cfg.rotary_base = float(model_cfg.rotary_base)
+
+    model_cfg.recompute_granularity = recompute_granularity
+    model_cfg.recompute_method = recompute_method
+    model_cfg.recompute_num_layers = recompute_num_layers
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -184,12 +202,11 @@ def pretrain_config(
         min_lr=min_lr,
     )
 
-    # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=2000,
+            eval_interval=eval_interval,
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
@@ -200,13 +217,13 @@ def pretrain_config(
         optimizer=opt_config,
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
+            check_for_nan_in_grad=check_for_nan_in_grad,
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             average_in_collective=True,
             use_distributed_optimizer=True,
-            use_megatron_fsdp=use_megatron_fsdp,  # need use_distributed_optimizer=True
+            use_megatron_fsdp=use_megatron_fsdp,
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
@@ -218,16 +235,23 @@ def pretrain_config(
             blend=blend,
             blend_per_split=blend_per_split,
             split=split,
-            # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
             num_workers=8,
             skip_getting_attention_mask_from_dataset=True,
         ),
-        logger=LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir, log_timers_to_tensorboard=True),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        logger=LoggerConfig(
+            log_interval=10,
+            tensorboard_dir=tensorboard_dir,
+            log_timers_to_tensorboard=True,
+        ),
+        tokenizer=TokenizerConfig(
+            tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
+            tokenizer_model=hf_path if not use_null_tokenizer else None,
+            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
+        ),
         checkpoint=CheckpointConfig(
-            save_interval=2000,
+            save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",

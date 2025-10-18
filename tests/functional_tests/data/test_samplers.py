@@ -185,10 +185,17 @@ class TestMegatronPretrainingBatchSampler:
         assert sampler.data_parallel_size == 2
 
     def test_batch_sampler_length(self):
-        """Test length calculation for batch sampler."""
+        """Test length calculation for batch sampler.
+
+        After the fix, batch sampler yields microbatches one at a time,
+        so length = num_global_batches × num_micro_batches.
+        """
         from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
 
         # With drop_last=True
+        # num_global_batches = 100 // 16 = 6
+        # num_micro_batches = 16 // (4 * 2) = 2
+        # total yields = 6 * 2 = 12
         sampler = MegatronPretrainingBatchSampler(
             total_samples=100,
             consumed_samples=0,
@@ -198,9 +205,11 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_size=2,
             drop_last=True,
         )
-        assert len(sampler) == 100 // 16  # 6 batches
+        assert len(sampler) == 12  # 6 global batches × 2 microbatches each
 
         # With drop_last=False
+        # num_global_batches = ceil(100 / 16) = 7
+        # total yields = 7 * 2 = 14
         sampler = MegatronPretrainingBatchSampler(
             total_samples=100,
             consumed_samples=0,
@@ -210,10 +219,16 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_size=2,
             drop_last=False,
         )
-        assert len(sampler) == (100 + 15) // 16  # 7 batches (includes partial)
+        assert len(sampler) == 14  # 7 global batches × 2 microbatches each
 
     def test_batch_sampler_interleaved_distribution(self):
-        """Test that indices are distributed in interleaved fashion across ranks."""
+        """Test that indices are distributed in interleaved fashion across ranks.
+
+        With the fix, batch sampler yields microbatches one at a time. Since:
+        - global_batch_size=8, micro_batch_size=4, dp_size=2
+        - num_micro_batches = 8 // (4*2) = 1 per rank per global batch
+        Each global batch yields 1 microbatch per rank.
+        """
         from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
 
         # Simulate rank 0
@@ -242,15 +257,15 @@ class TestMegatronPretrainingBatchSampler:
         rank0_batches = list(sampler_rank0)
         rank1_batches = list(sampler_rank1)
 
-        # Should have 2 batches each (16 samples / 8 global_batch_size)
+        # 2 global batches (16 / 8) × 1 microbatch each = 2 yields per rank
         assert len(rank0_batches) == 2
         assert len(rank1_batches) == 2
 
-        # First batch: rank 0 gets [0, 2, 4, 6], rank 1 gets [1, 3, 5, 7]
+        # First microbatch: rank 0 gets [0, 2, 4, 6], rank 1 gets [1, 3, 5, 7]
         assert rank0_batches[0] == [0, 2, 4, 6]
         assert rank1_batches[0] == [1, 3, 5, 7]
 
-        # Second batch: rank 0 gets [8, 10, 12, 14], rank 1 gets [9, 11, 13, 15]
+        # Second microbatch: rank 0 gets [8, 10, 12, 14], rank 1 gets [9, 11, 13, 15]
         assert rank0_batches[1] == [8, 10, 12, 14]
         assert rank1_batches[1] == [9, 11, 13, 15]
 
@@ -273,7 +288,12 @@ class TestMegatronPretrainingBatchSampler:
         assert batches[0] == [16, 18, 20, 22]
 
     def test_batch_sampler_incomplete_batch_drop_last_true(self):
-        """Test that incomplete batch is dropped when drop_last=True."""
+        """Test that incomplete batch is dropped when drop_last=True.
+
+        With microbatch-by-microbatch yielding:
+        - 1 global batch (16 samples) yields 2 microbatches of 4 samples each
+        - Last 4 samples dropped
+        """
         from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
 
         sampler = MegatronPretrainingBatchSampler(
@@ -287,12 +307,19 @@ class TestMegatronPretrainingBatchSampler:
         )
 
         batches = list(sampler)
-        # Should only have 1 complete batch (16 samples), last 4 dropped
-        assert len(batches) == 1
-        assert len(batches[0]) == 8  # 8 samples per rank
+        # 1 global batch × 2 microbatches = 2 yields, each with 4 samples
+        assert len(batches) == 2
+        assert len(batches[0]) == 4
+        assert len(batches[1]) == 4
 
     def test_batch_sampler_incomplete_batch_drop_last_false(self):
-        """Test that incomplete batch is kept when drop_last=False."""
+        """Test that incomplete batch is kept when drop_last=False.
+
+        With microbatch-by-microbatch yielding:
+        - First global batch (16 samples) → 2 microbatches of 4 samples each
+        - Second global batch (4 samples) → 1 microbatch (partial)
+        Total: 3 yields
+        """
         from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
 
         sampler = MegatronPretrainingBatchSampler(
@@ -307,13 +334,20 @@ class TestMegatronPretrainingBatchSampler:
         )
 
         batches = list(sampler)
-        # Should have 2 batches: 1 complete + 1 partial
-        assert len(batches) == 2
-        assert batches[0] == [0, 2, 4, 6, 8, 10, 12, 14]
-        assert batches[1] == [16, 18]  # Partial batch, no padding
+        # First global batch yields 2 microbatches, second yields 1 partial = 3 total
+        assert len(batches) == 3
+        assert batches[0] == [0, 2, 4, 6]  # First microbatch
+        assert batches[1] == [8, 10, 12, 14]  # Second microbatch
+        assert batches[2] == [16, 18]  # Partial microbatch from second global batch
 
     def test_batch_sampler_incomplete_batch_with_padding(self):
-        """Test that incomplete batch is padded when pad_samples_to_global_batch_size=True."""
+        """Test that incomplete batch is padded when pad_samples_to_global_batch_size=True.
+
+        With padding and microbatch-by-microbatch yielding:
+        - First global batch (16 samples) → 2 microbatches
+        - Second global batch (4 samples, padded to 16) → 2 microbatches (with padding)
+        Total: 4 yields
+        """
         from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
 
         sampler = MegatronPretrainingBatchSampler(
@@ -328,9 +362,14 @@ class TestMegatronPretrainingBatchSampler:
         )
 
         batches = list(sampler)
-        # Should have 2 batches, second one padded
-        assert len(batches) == 2
-        assert batches[1] == [16, 18, -1, -1, -1, -1, -1, -1]  # Padded with -1
+        # First global batch: 2 microbatches, second global batch (padded): 2 microbatches = 4 total
+        assert len(batches) == 4
+        # First global batch microbatches
+        assert batches[0] == [0, 2, 4, 6]
+        assert batches[1] == [8, 10, 12, 14]
+        # Second global batch microbatches (with padding)
+        assert batches[2] == [16, 18, -1, -1]
+        assert batches[3] == [-1, -1, -1, -1]
 
     def test_batch_sampler_global_batch_size_validation(self):
         """Test that invalid global_batch_size raises error."""
@@ -351,7 +390,11 @@ class TestMegatronPretrainingBatchSampler:
             )
 
     def test_batch_sampler_multiple_data_parallel_ranks(self):
-        """Test with multiple data parallel ranks."""
+        """Test with multiple data parallel ranks.
+
+        With microbatch-by-microbatch yielding, each rank gets multiple yields,
+        but all indices should still appear exactly once across all ranks.
+        """
         from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
 
         dp_size = 4
@@ -359,6 +402,8 @@ class TestMegatronPretrainingBatchSampler:
         samplers = []
 
         # Create samplers for all ranks
+        # num_micro_batches = 16 // (4*4) = 1
+        # 2 global batches × 1 microbatch = 2 yields per rank
         for rank in range(dp_size):
             sampler = MegatronPretrainingBatchSampler(
                 total_samples=32,
@@ -449,6 +494,6 @@ class TestBatchDataloaderIntegration:
                 micro_batch_size=4,
                 num_workers=0,
                 data_sharding=False,
-                global_batch_size=None,  # Missing!
+                global_batch_size=None,
                 drop_last=True,
             )
