@@ -1,4 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+#!/bin/bash
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
-CUDA_VISIBLE_DEVICES="0,1" coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
-    --timeout=0.5 \
-    -o log_cli=true \
-    -o log_cli_level=INFO \
-    --disable-warnings \
-    -vs tests/unit_tests -m "not pleasefixme"
+export CUDA_VISIBLE_DEVICES="0,1"
+
+# Run recipe functional tests on 2 GPUs
+# This script tests recipe configurations with their default settings to ensure
+# they can run basic training without crashes
+python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/recipes/test_llama_recipes_pretrain_1b.py
+coverage combine -q

@@ -90,7 +90,7 @@ class TestDataFineTuningDataset:
         dataset, path = get_dataset(ensure_test_data)
         default_pack_path = dataset.default_pack_path
 
-        assert default_pack_path == PosixPath(f"{path}/packed/null")
+        assert PosixPath(default_pack_path) == PosixPath(f"{path}/packed/null")
 
     def test_train_path_packed(self, ensure_test_data):
         npy_path = f"{ensure_test_data}/datasets/finetune/test.npy"
@@ -98,12 +98,14 @@ class TestDataFineTuningDataset:
         dataset, _ = get_dataset(ensure_test_data, packed_train_data_path=npy_path)
         train_path_packed = dataset.train_path_packed
 
-        assert train_path_packed == PosixPath(npy_path)
+        assert PosixPath(train_path_packed) == PosixPath(npy_path)
 
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
 
-        assert train_path_packed == PosixPath(f"{ensure_test_data}/datasets/finetune/packed/null/training_1.npy")
+        assert PosixPath(train_path_packed) == PosixPath(
+            f"{ensure_test_data}/datasets/finetune/packed/null/training_1.npy"
+        )
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
 
@@ -116,12 +118,12 @@ class TestDataFineTuningDataset:
         dataset, _ = get_dataset(ensure_test_data, packed_val_data_path=npy_path)
         validation_path_packed = dataset.validation_path_packed
 
-        assert validation_path_packed == PosixPath(npy_path)
+        assert PosixPath(validation_path_packed) == PosixPath(npy_path)
 
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert validation_path_packed == PosixPath(
+        assert PosixPath(validation_path_packed) == PosixPath(
             f"{ensure_test_data}/datasets/finetune/packed/null/validation_1.npy"
         )
 
