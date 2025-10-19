@@ -18,14 +18,10 @@ from typing import List, Optional, Union
 import torch
 from typing_extensions import TypedDict, Unpack
 
-from megatron.bridge.data.vlm_datasets import (
-    HFDatasetConversationProvider,
-    MockVLMConversationProvider,
-    PreloadedVLMConversationProvider,
-)
-from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.gemma3_vl.gemma3_vl_dataset import MockGemma3VLDatasetProvider
+from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -84,8 +80,8 @@ class Gemma3VLCommonKwargs(TypedDict, total=False):
     freeze_vision_projection: bool
 
 
-def gemma3_vl_4b_pretrain_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Gemma3-VL 4B Instruct.
+def gemma3_vl_4b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Gemma3-VL 4B Instruct.
 
     See `_gemma3_vl_common` for the full list of parameters.
     """
@@ -98,8 +94,8 @@ def gemma3_vl_4b_pretrain_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) ->
     return _gemma3_vl_common(**combined_kwargs)
 
 
-def gemma3_vl_12b_pretrain_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Gemma3-VL 12B Instruct.
+def gemma3_vl_12b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Gemma3-VL 12B Instruct.
 
     See `_gemma3_vl_common` for the full list of parameters.
     """
@@ -112,8 +108,8 @@ def gemma3_vl_12b_pretrain_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -
     return _gemma3_vl_common(**combined_kwargs)
 
 
-def gemma3_vl_27b_pretrain_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Gemma3-VL 27B Instruct.
+def gemma3_vl_27b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Gemma3-VL 27B Instruct.
 
     See `_gemma3_vl_common` for the full list of parameters.
     """
@@ -130,7 +126,7 @@ def gemma3_vl_27b_pretrain_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -
 def _gemma3_vl_common(
     hf_path: str,
     dir: Optional[str] = None,
-    name: str = "gemma3_vl_pretrain",
+    name: str = "gemma3_vl_finetune",
     # Dataset configuration
     train_data_path: Optional[List[str]] = None,
     valid_data_path: Optional[List[str]] = None,
@@ -166,7 +162,7 @@ def _gemma3_vl_common(
     freeze_vision_projection: bool = False,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for Gemma3-VL models using a given HuggingFace path.
+    Create a fine-tuning configuration for Gemma3-VL models using a given HuggingFace path.
 
     The dataset pipeline is based on the Gemma3-VL architecture. To train multimodal tokens,
     ensure your preprocessed data includes appropriate image placeholders.
@@ -219,6 +215,20 @@ def _gemma3_vl_common(
             sequence_length=seq_length,
             hf_processor_path=_processor_model,
             maker_name="make_cord_v2_dataset",
+            num_workers=2,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+        )
+    elif _dataset_choice == "preloaded":
+        dataset_cfg = PreloadedVLMConversationProvider(
+            sequence_length=seq_length,
+            hf_processor_path=_processor_model,
+            train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
+            valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,
+            test_data_path=test_data_path[0] if isinstance(test_data_path, list) else test_data_path,
+            image_folder=image_folder,
             num_workers=2,
             dataloader_type="single",
             data_sharding=True,
