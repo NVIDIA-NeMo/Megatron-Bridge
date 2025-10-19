@@ -41,4 +41,3 @@ class TestGemma3Recipes:
     def test_pretrain_config_override_after_instantiation(self, config_func, recipe_name, parallelism_overrides):
         """Functional test for overriding Gemma3 recipes from CLI"""
         run_pretrain_config_override_test(config_func)
-

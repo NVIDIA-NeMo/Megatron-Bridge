@@ -67,7 +67,7 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     """Fake model configuration for testing."""
-    
+
     def __init__(self):
         # Set default attributes that recipes might set
         self.tensor_model_parallel_size = 1
@@ -80,19 +80,19 @@ class _FakeModelCfg:
         self.freeze_language_model = False
         self.freeze_vision_model = False
         self.freeze_vision_projection = False
-    
+
     def finalize(self):
         return None
 
 
 class _FakeAutoBridge:
     """Fake AutoBridge for testing."""
-    
+
     @staticmethod
     def from_hf_pretrained(hf_path: str):
         """Mock from_hf_pretrained method."""
         return _FakeAutoBridge()
-    
+
     def to_megatron_provider(self, load_weights: bool = False):
         """Return a fake model config."""
         return _FakeModelCfg()
@@ -137,7 +137,7 @@ def test_each_gemma3_vl_recipe_builds_config(recipe_func: Callable, monkeypatch:
     # Verify parallelism settings
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-    
+
     # Verify freeze settings are set
     assert hasattr(cfg.model, "freeze_language_model")
     assert hasattr(cfg.model, "freeze_vision_model")
@@ -152,7 +152,7 @@ def test_gemma3_vl_dataset_type_selection(dataset_type: str, monkeypatch: pytest
 
     overrides = _safe_overrides_for("gemma3_vl_4b_finetune_config")
     overrides["dataset_type"] = dataset_type
-    
+
     # For preloaded, we need to provide data paths
     if dataset_type == "preloaded":
         overrides["train_data_path"] = ["/fake/train.json"]
@@ -163,8 +163,8 @@ def test_gemma3_vl_dataset_type_selection(dataset_type: str, monkeypatch: pytest
     cfg = _gemma3_vl_module.gemma3_vl_4b_finetune_config(**overrides)
 
     # Check that appropriate dataset provider is used
-    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
     from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
     from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 
     if dataset_type == "mock":
@@ -195,7 +195,7 @@ def test_gemma3_vl_freeze_options(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_27b_pipeline_dtype(monkeypatch: pytest.MonkeyPatch):
     """Test that 27B model sets pipeline_parallelism_dtype correctly."""
     import torch
-    
+
     # Monkeypatch AutoBridge
     monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
@@ -205,4 +205,3 @@ def test_gemma3_vl_27b_pipeline_dtype(monkeypatch: pytest.MonkeyPatch):
 
     # The 27B model should set pipeline_dtype to bfloat16 by default
     assert cfg.model.pipeline_dtype == torch.bfloat16
-

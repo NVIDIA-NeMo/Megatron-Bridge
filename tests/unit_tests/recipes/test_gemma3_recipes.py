@@ -67,7 +67,7 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     """Fake model configuration for testing."""
-    
+
     def __init__(self):
         # Set default attributes that recipes might set
         self.tensor_model_parallel_size = 1
@@ -79,7 +79,7 @@ class _FakeModelCfg:
         self.seq_length = 64
         self.account_for_embedding_in_pipeline_split = False
         self.account_for_loss_in_pipeline_split = False
-    
+
     def finalize(self):
         return None
 
@@ -108,12 +108,12 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
     """Test that each Gemma3 recipe function builds a valid configuration."""
     # Monkeypatch the provider classes to return fake model configs
     from megatron.bridge.models.gemma import gemma3_provider
-    
+
     # Create a fake provider class that returns a fake model config
     class FakeProvider(_FakeModelCfg):
         def __init__(self, *args, **kwargs):
             super().__init__()
-    
+
     # Monkeypatch all provider classes
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider1B", FakeProvider)
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider4B", FakeProvider)
@@ -131,4 +131,3 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-

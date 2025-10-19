@@ -24,7 +24,11 @@ from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
 GEMMA3_VL_FINETUNE_RECIPES = [
     # Small model, only use 2 layers
-    (gemma3_vl_4b_finetune_config, "gemma3_vl_4b", {"tensor_parallelism": 1, "pipeline_parallelism": 1, "num_layers": 2}),
+    (
+        gemma3_vl_4b_finetune_config,
+        "gemma3_vl_4b",
+        {"tensor_parallelism": 1, "pipeline_parallelism": 1, "num_layers": 2},
+    ),
 ]
 
 
@@ -36,4 +40,3 @@ class TestGemma3VLRecipes:
     def test_gemma3_vl_finetune_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
         """Functional test for Gemma3-VL recipes with appropriate parallelism configurations."""
         run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
-

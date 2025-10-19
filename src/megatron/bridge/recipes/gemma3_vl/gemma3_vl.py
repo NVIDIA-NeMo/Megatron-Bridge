@@ -18,10 +18,10 @@ from typing import List, Optional, Union
 import torch
 from typing_extensions import TypedDict, Unpack
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
-from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -236,7 +236,9 @@ def _gemma3_vl_common(
             persistent_workers=False,
         )
     else:
-        raise ValueError(f"Unsupported dataset_type '{_dataset_choice}'. Currently only 'mock' is supported for Gemma3-VL.")
+        raise ValueError(
+            f"Unsupported dataset_type '{_dataset_choice}'. Currently only 'mock' is supported for Gemma3-VL."
+        )
 
     cfg = ConfigContainer(
         model=model_cfg,
@@ -282,4 +284,3 @@ def _gemma3_vl_common(
     )
 
     return cfg
-
