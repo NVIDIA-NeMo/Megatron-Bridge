@@ -90,7 +90,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests
-          timeout: 30
+          timeout: 15
           is_unit_test: "true"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -101,16 +101,17 @@ jobs:
   cicd-functional-tests:
     strategy:
       fail-fast: false
+      max-parallel: 5
       matrix:
         include:
           - script: L2_Launch_training
-            timeout: 60
           - script: L2_Launch_converter
-            timeout: 20
           - script: L2_Launch_models
-            timeout: 60
-          - script: L2_Launch_recipes
-            timeout: 60
+          - script: L2_Launch_recipes_llama_1b
+          - script: L2_Launch_recipes_llama_3b
+          - script: L2_Launch_recipes_mamba
+          - script: L2_Launch_recipes_qwen
+          - script: L2_Launch_data
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
@@ -131,7 +132,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
-          timeout: ${{ matrix.timeout }}
+          timeout: 30
           is_unit_test: "false"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}

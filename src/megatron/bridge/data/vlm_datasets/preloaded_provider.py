@@ -21,13 +21,12 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from transformers import AutoProcessor
 
+from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-
-from .conversation_dataset import VLMConversationDataset
 
 
 def _split_text_by_placeholders(
@@ -195,6 +194,9 @@ class PreloadedVLMConversationProvider(DatasetProvider):
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
     skip_getting_attention_mask_from_dataset: bool = True
+
+    # Default dataloader type for VLM providers
+    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
 
     def _build_split_dataset(
         self,

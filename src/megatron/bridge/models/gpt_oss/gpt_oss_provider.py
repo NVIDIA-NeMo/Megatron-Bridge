@@ -17,12 +17,19 @@ from dataclasses import dataclass
 from typing import Callable, List, Literal, Optional, Tuple, Union
 
 import torch
-from megatron.core.fusions.fused_bias_geglu import quick_gelu
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+try:
+    from megatron.core.fusions.fused_bias_geglu import quick_gelu
+except ImportError:
+    # TODO(yuya): remove backup path once versioning issue solved
+    # Fallback if fused_bias_geglu is not available
+    quick_gelu = torch.nn.functional.gelu
 
 
 logger = logging.getLogger(__name__)

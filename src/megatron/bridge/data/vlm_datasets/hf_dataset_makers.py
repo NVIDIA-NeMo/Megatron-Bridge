@@ -23,7 +23,7 @@ from typing import Any, Dict, List
 
 from datasets import load_dataset
 
-from .token_utils import json2token
+from megatron.bridge.data.vlm_datasets.token_utils import json2token
 
 
 def make_rdr_dataset(

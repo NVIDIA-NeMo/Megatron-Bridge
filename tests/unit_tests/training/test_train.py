@@ -20,7 +20,9 @@ from unittest.mock import Mock, patch
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.train import (
+    _dummy_train_step,
     _handle_mxfp8_param_buffer_copy,
+    _should_skip_and_handle_iteration,
     checkpoint_and_decide_exit,
     should_disable_forward_pre_hook,
 )
@@ -785,3 +787,277 @@ class TestCheckpointAndDecideExit:
         assert save_call_args[0][0] == state  # state argument
         assert save_call_args[0][1] == args["model"]  # model argument
         assert "train_data_iterator" in save_call_args[1]
+
+
+class TestIterationSkipping:
+    """Unit tests for iteration skipping functionality."""
+
+    def _create_mock_global_state(self, step=0, iterations_to_skip=None, micro_batch_size=4):
+        """Helper method to create a mock global state."""
+        mock_state = Mock()
+        mock_state.train_state.step = step
+        mock_state.train_state.consumed_train_samples = 0
+        mock_state.train_state.skipped_train_samples = 0
+
+        # Mock configuration
+        mock_state.cfg.train.iterations_to_skip = iterations_to_skip or []
+        mock_state.cfg.train.micro_batch_size = micro_batch_size
+
+        return mock_state
+
+    @patch("megatron.bridge.training.train._dummy_train_step")
+    @patch("megatron.bridge.training.train.parallel_state.get_data_parallel_world_size", return_value=2)
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
+    def test_should_skip_iteration_when_step_in_skip_list(
+        self, mock_get_microbatches, mock_get_dp_world_size, mock_dummy_step
+    ):
+        """Test that iteration is skipped when step is in iterations_to_skip list."""
+        # Setup
+        global_state = self._create_mock_global_state(step=5, iterations_to_skip=[3, 5, 10])
+        train_data_iterator = Mock()
+
+        # Call function
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+
+        # Verify
+        assert result is True
+        mock_dummy_step.assert_called_once_with(global_state, train_data_iterator)
+
+        # Verify state updates
+        assert global_state.train_state.step == 6  # incremented
+        expected_batch_size = 2 * 4 * 4  # dp_world_size * micro_batch_size * num_microbatches
+        assert global_state.train_state.consumed_train_samples == expected_batch_size
+        assert global_state.train_state.skipped_train_samples == expected_batch_size
+
+    @patch("megatron.bridge.training.train._dummy_train_step")
+    def test_should_not_skip_iteration_when_step_not_in_skip_list(self, mock_dummy_step):
+        """Test that iteration is not skipped when step is not in iterations_to_skip list."""
+        # Setup
+        global_state = self._create_mock_global_state(step=7, iterations_to_skip=[3, 5, 10])
+        train_data_iterator = Mock()
+
+        # Call function
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+
+        # Verify
+        assert result is False
+        mock_dummy_step.assert_not_called()
+
+        # Verify state not modified
+        assert global_state.train_state.step == 7  # unchanged
+        assert global_state.train_state.consumed_train_samples == 0  # unchanged
+        assert global_state.train_state.skipped_train_samples == 0  # unchanged
+
+    @patch("megatron.bridge.training.train._dummy_train_step")
+    def test_should_not_skip_when_skip_list_empty(self, mock_dummy_step):
+        """Test that iteration is not skipped when iterations_to_skip list is empty."""
+        # Setup
+        global_state = self._create_mock_global_state(step=5, iterations_to_skip=[])
+        train_data_iterator = Mock()
+
+        # Call function
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+
+        # Verify
+        assert result is False
+        mock_dummy_step.assert_not_called()
+
+    @patch("megatron.bridge.training.train._dummy_train_step")
+    @patch("megatron.bridge.training.train.parallel_state.get_data_parallel_world_size", return_value=8)
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
+    def test_batch_size_calculation_with_different_parallelism(
+        self, mock_get_microbatches, mock_get_dp_world_size, mock_dummy_step
+    ):
+        """Test batch size calculation with different parallelism settings."""
+        # Setup
+        global_state = self._create_mock_global_state(step=10, iterations_to_skip=[10], micro_batch_size=8)
+        train_data_iterator = Mock()
+
+        # Call function
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+
+        # Verify
+        assert result is True
+        expected_batch_size = 8 * 8 * 2  # dp_world_size * micro_batch_size * num_microbatches = 128
+        assert global_state.train_state.consumed_train_samples == expected_batch_size
+        assert global_state.train_state.skipped_train_samples == expected_batch_size
+
+
+class TestDummyTrainStep:
+    """Unit tests for _dummy_train_step functionality."""
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=3)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    def test_dummy_train_step_advances_iterator_on_first_stage(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step advances iterator on first pipeline stage."""
+        # Setup
+        mock_rerun_machine = Mock()
+        mock_rerun_machine.should_run_forward_backward.side_effect = [True, False]  # Run once then stop
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+
+        # Create a mock iterator that tracks next() calls
+        train_data_iterator = Mock()
+        train_data_iterator.__iter__ = Mock(return_value=train_data_iterator)
+        train_data_iterator.__next__ = Mock(return_value={})
+
+        # Call function
+        _dummy_train_step(global_state, train_data_iterator)
+
+        # Verify next() was called correct number of times (num_microbatches)
+        assert train_data_iterator.__next__.call_count == 3
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=3)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=False)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=True)
+    def test_dummy_train_step_advances_iterator_on_last_stage(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step advances iterator on last pipeline stage."""
+        # Setup
+        mock_rerun_machine = Mock()
+        mock_rerun_machine.should_run_forward_backward.side_effect = [True, False]
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+
+        # Create a mock iterator that tracks next() calls
+        train_data_iterator = Mock()
+        train_data_iterator.__iter__ = Mock(return_value=train_data_iterator)
+        train_data_iterator.__next__ = Mock(return_value={})
+
+        # Call function
+        _dummy_train_step(global_state, train_data_iterator)
+
+        # Verify next() was called correct number of times
+        assert train_data_iterator.__next__.call_count == 3
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=3)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=False)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    def test_dummy_train_step_does_not_advance_iterator_on_middle_stage(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step does not advance iterator on middle pipeline stages."""
+        # Setup
+        mock_rerun_machine = Mock()
+        mock_rerun_machine.should_run_forward_backward.side_effect = [True, False]
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+
+        # Create a mock iterator that tracks next() calls
+        train_data_iterator = Mock()
+        train_data_iterator.__iter__ = Mock(return_value=train_data_iterator)
+        train_data_iterator.__next__ = Mock(return_value={})
+
+        # Call function
+        _dummy_train_step(global_state, train_data_iterator)
+
+        # Verify next() was NOT called
+        train_data_iterator.__next__.assert_not_called()
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    def test_dummy_train_step_handles_multiple_rerun_cycles(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step handles multiple rerun state machine cycles."""
+        # Setup
+        mock_rerun_machine = Mock()
+        # Simulate two cycles of forward/backward before stopping
+        mock_rerun_machine.should_run_forward_backward.side_effect = [True, True, False]
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+
+        # Create a mock iterator that tracks next() calls
+        train_data_iterator = Mock()
+        train_data_iterator.__iter__ = Mock(return_value=train_data_iterator)
+        train_data_iterator.__next__ = Mock(return_value={})
+
+        # Call function
+        _dummy_train_step(global_state, train_data_iterator)
+
+        # Verify next() was called 2 cycles * 2 microbatches = 4 times
+        assert train_data_iterator.__next__.call_count == 4
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=1)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    def test_dummy_train_step_no_rerun_cycles(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step handles case where no rerun cycles are needed."""
+        # Setup
+        mock_rerun_machine = Mock()
+        mock_rerun_machine.should_run_forward_backward.return_value = False  # No cycles needed
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+
+        # Create a mock iterator that tracks next() calls
+        train_data_iterator = Mock()
+        train_data_iterator.__iter__ = Mock(return_value=train_data_iterator)
+        train_data_iterator.__next__ = Mock(return_value={})
+
+        # Call function
+        _dummy_train_step(global_state, train_data_iterator)
+
+        # Verify next() was not called at all
+        train_data_iterator.__next__.assert_not_called()
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=0)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    def test_dummy_train_step_zero_microbatches(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step handles zero microbatches correctly."""
+        # Setup
+        mock_rerun_machine = Mock()
+        mock_rerun_machine.should_run_forward_backward.side_effect = [True, False]
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+
+        # Create a mock iterator that tracks next() calls
+        train_data_iterator = Mock()
+        train_data_iterator.__iter__ = Mock(return_value=train_data_iterator)
+        train_data_iterator.__next__ = Mock(return_value={})
+
+        # Call function
+        _dummy_train_step(global_state, train_data_iterator)
+
+        # Verify next() was not called when num_microbatches is 0
+        train_data_iterator.__next__.assert_not_called()
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    def test_dummy_train_step_handles_none_iterator(
+        self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
+    ):
+        """Test that dummy_train_step handles None data iterator correctly."""
+        # Setup
+        mock_rerun_machine = Mock()
+        mock_rerun_machine.should_run_forward_backward.side_effect = [True, False]
+        mock_get_rerun_machine.return_value = mock_rerun_machine
+
+        global_state = Mock()
+        train_data_iterator = None  # None iterator
+
+        # Call function - should not raise an error
+        _dummy_train_step(global_state, train_data_iterator)

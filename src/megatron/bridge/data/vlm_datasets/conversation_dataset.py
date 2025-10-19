@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import torch
 
-from .collate import COLLATE_FNS
+from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 
 
 class VLMConversationDataset(torch.utils.data.Dataset):

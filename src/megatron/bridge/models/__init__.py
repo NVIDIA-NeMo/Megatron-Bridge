@@ -93,6 +93,14 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
+from megatron.bridge.models.llama_nemotron import (
+    Llama31Nemotron70BProvider,
+    Llama31NemotronNano8BProvider,
+    Llama31NemotronUltra253BProvider,
+    Llama33NemotronSuper49BProvider,
+    LlamaNemotronBridge,
+    LlamaNemotronHeterogeneousProvider,
+)
 from megatron.bridge.models.mamba.mamba_provider import (
     MambaModelProvider,
     MambaModelProvider1P3B,
@@ -138,6 +146,10 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronNano12Bv2Provider,
     NemotronNanoModelProvider9Bv2,
     NemotronNanoModelProvider12Bv2,
+)
+from megatron.bridge.models.olmoe import (
+    OlMoEBridge,
+    OlMoEModelProvider,
 )
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
@@ -226,8 +238,15 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "LlamaNemotronHeterogeneousProvider",
+    "Llama31NemotronNano8BProvider",
+    "Llama31Nemotron70BProvider",
+    "Llama31NemotronUltra253BProvider",
+    "Llama33NemotronSuper49BProvider",
     "MistralModelProvider",
     "MistralSmall3ModelProvider24B",
+    "OlMoEBridge",
+    "OlMoEModelProvider",
     "Qwen2ModelProvider",
     "Qwen2ModelProvider500M",
     "Qwen2ModelProvider1P5B",

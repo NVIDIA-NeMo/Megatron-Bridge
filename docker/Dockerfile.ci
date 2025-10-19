@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM ubuntu:24.04
-WORKDIR /workspace
+FROM nvcr.io/nvidia/pytorch:25.06-py3
+WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
@@ -27,5 +27,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     rm -f /etc/apt/apt.conf.d/docker-clean && \
-    bash docker/common/install.sh --base-image ubuntu --use-uv && \
+    bash docker/common/install.sh --base-image pytorch --use-uv && \
     uv cache prune --ci
+
+WORKDIR /opt/Megatron-Bridge

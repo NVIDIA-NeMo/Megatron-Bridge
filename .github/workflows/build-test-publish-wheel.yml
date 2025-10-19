@@ -29,6 +29,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
@@ -38,7 +42,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.48.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.65.1
     with:
       dry-run: true
       python-package: megatron.bridge
@@ -48,8 +52,10 @@ jobs:
       has-src-dir: true
       skip-test-wheel: true
       custom-container: nvcr.io/nvidia/pytorch:25.05-py3
-      runner: linux-amd64-cpu16
+      runner: self-hosted-nemo
       no-build-isolation: true
+      submodules: recursive
+      container-options: "--gpus all --runtime=nvidia"
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}

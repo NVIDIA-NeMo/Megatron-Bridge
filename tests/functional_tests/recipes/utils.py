@@ -34,6 +34,7 @@ def run_pretrain_recipe_test(
     tmp_path: Path,
     tensor_parallelism: Optional[int] = None,
     pipeline_parallelism: Optional[int] = None,
+    expert_parallelism: Optional[int] = None,
     model_overrides: Optional[dict] = None,
 ):
     """
@@ -51,6 +52,8 @@ def run_pretrain_recipe_test(
         tmp_path: Temporary directory for test outputs
         tensor_parallelism: Override tensor parallelism (None = use recipe default)
         pipeline_parallelism: Override pipeline parallelism (None = use recipe default)
+        expert_parallelism: Override expert parallelism (None = use recipe default)
+        model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
     shared_base_dir = broadcast_path(tmp_path)
@@ -98,11 +101,16 @@ def run_pretrain_recipe_test(
                 config.model.pipeline_model_parallel_size = pipeline_parallelism
             else:
                 setattr(config.model, "pipeline_parallelism", pipeline_parallelism)
+        if expert_parallelism is not None:
+            if hasattr(config.model, "expert_model_parallel_size"):
+                config.model.expert_model_parallel_size = expert_parallelism
+            else:
+                setattr(config.model, "expert_parallelism", expert_parallelism)
 
-        # Apply any model-level overrides (e.g., shrink layer/expert counts for CI)
+        # Apply any model-specific overrides provided by the caller
         if model_overrides:
-            for key, value in model_overrides.items():
-                setattr(config.model, key, value)
+            for attribute_name, attribute_value in model_overrides.items():
+                setattr(config.model, attribute_name, attribute_value)
 
         pretrain(config, forward_step)
 

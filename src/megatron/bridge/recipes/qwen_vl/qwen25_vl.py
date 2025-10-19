@@ -80,10 +80,12 @@ class Qwen25VLCommonKwargs(TypedDict, total=False):
     freeze_language_model: bool
     freeze_vision_model: bool
     freeze_vision_projection: bool
+    # Checkpoint options
+    pretrained_checkpoint: Optional[str]
 
 
-def qwen25_vl_3b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen2.5-VL 3B Instruct.
+def qwen25_vl_3b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen2.5-VL 3B Instruct.
 
     See `_qwen25_vl_common` for the full list of parameters.
     """
@@ -96,8 +98,8 @@ def qwen25_vl_3b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) ->
     return _qwen25_vl_common(**combined_kwargs)
 
 
-def qwen25_vl_7b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen2.5-VL 7B Instruct.
+def qwen25_vl_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen2.5-VL 7B Instruct.
 
     See `_qwen25_vl_common` for the full list of parameters.
     """
@@ -110,8 +112,8 @@ def qwen25_vl_7b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) ->
     return _qwen25_vl_common(**combined_kwargs)
 
 
-def qwen25_vl_32b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen2.5-VL 32B Instruct.
+def qwen25_vl_32b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen2.5-VL 32B Instruct.
 
     See `_qwen25_vl_common` for the full list of parameters.
     """
@@ -125,8 +127,8 @@ def qwen25_vl_32b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
     return _qwen25_vl_common(**combined_kwargs)
 
 
-def qwen25_vl_72b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Qwen2.5-VL 72B Instruct.
+def qwen25_vl_72b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
+    """Return a fine-tuning config for Qwen2.5-VL 72B Instruct.
 
     See `_qwen25_vl_common` for the full list of parameters.
     """
@@ -143,7 +145,8 @@ def qwen25_vl_72b_pretrain_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
 def _qwen25_vl_common(
     hf_path: str,
     dir: Optional[str] = None,
-    name: str = "qwen25_vl_pretrain",
+    name: str = "qwen25_vl_finetune",
+    pretrained_checkpoint: Optional[str] = None,
     # Dataset configuration
     train_data_path: Optional[List[str]] = None,
     valid_data_path: Optional[List[str]] = None,
@@ -179,7 +182,7 @@ def _qwen25_vl_common(
     freeze_vision_projection: bool = False,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for Qwen2.5-VL models using a given HuggingFace path.
+    Create a fine-tuning configuration for Qwen2.5-VL models using a given HuggingFace path.
 
     The dataset pipeline is conversation-based. To train multimodal tokens, ensure your
     preprocessed data includes placeholders (e.g., <image>) as needed.
@@ -288,6 +291,7 @@ def _qwen25_vl_common(
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
+            pretrained_checkpoint=pretrained_checkpoint,
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,

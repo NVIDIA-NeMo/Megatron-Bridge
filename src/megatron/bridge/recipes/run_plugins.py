@@ -581,6 +581,9 @@ class PerfEnvPlugin(Plugin):
     cp_size: int = 1
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
+    num_gpus: int = 8
+    deepep_enabled: bool = False
+    a2a_overlap: bool = False
 
     def get_vboost_srun_cmd(self, nodes, job_dir):
         """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
@@ -602,19 +605,41 @@ class PerfEnvPlugin(Plugin):
 
         return vboost_cmd
 
+    def _set_num_cuda_device_max_connections(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        self.dp_size = self.num_gpus // (self.tp_size * self.cp_size * self.pp_size)
+
+        cuda_device_max_connections = 8
+        if self.deepep_enabled:
+            cuda_device_max_connections = 32
+        if self.gpu_sm100_or_newer:
+            if (self.tp_size > 1 or self.cp_size > 1) and (self.dp_size > 1 or self.pp_size > 1):
+                """
+                We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
+                of the default device connection of 8.
+                """
+                cuda_device_max_connections = 32
+        else:
+            # Hopper or earlier generation GPUs
+            if (self.tp_size > 1 or self.cp_size > 1) and not self.a2a_overlap:
+                """
+                Set the device connection to 1 to enforce kernel queuing order from host to execution order on GPU.
+                This is needed to schedule a communication kernel before the overlapping persistent GEMM kernel.
+                Otherwise, communication kernel will be pushed to the end of the GEMM kernel, failing to overlap the
+                kernels.
+                """
+                cuda_device_max_connections = 1
+
+        executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
+        logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
 
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
-        # Environment variables work for both task types
-
         # Force program order kernel launch for TP, CP overlap
-        if self.gpu_sm100_or_newer and (self.tp_size > 1 or self.cp_size > 1):
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
-        elif (not self.gpu_sm100_or_newer) and (self.tp_size > 1 or self.cp_size > 1):
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
+        self._set_num_cuda_device_max_connections(task, executor)
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
         if self.enable_layernorm_sm_margin:

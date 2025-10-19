@@ -17,20 +17,19 @@ Provider that builds conversation datasets from HuggingFace datasets.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import torch
 from transformers import AutoProcessor
 
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-
-from .conversation_dataset import VLMConversationDataset
-from .hf_dataset_makers import (
+from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
+from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_cord_v2_dataset,
     make_cv17_dataset,
     make_medpix_dataset,
     make_rdr_dataset,
 )
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
@@ -63,6 +62,7 @@ class HFDatasetConversationProvider(DatasetProvider):
     skip_getting_attention_mask_from_dataset: bool = True
 
     # DataloaderConfig fields are inherited (num_workers, dataloader_type, etc.)
+    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
 
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         registry: Dict[str, Callable[..., List[Dict[str, Any]]]] = {
