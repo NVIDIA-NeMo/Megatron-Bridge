@@ -310,7 +310,7 @@ class TestSLURMFallback:
         assert get_rank_safe() == 5
 
     @patch("torch.distributed.is_initialized", return_value=False)
-    @patch.dict(os.environ, {"RANK": "3", "SLURM_PROCID": "5"})
+    @patch.dict(os.environ, {"RANK": "3", "SLURM_PROCID": "5"}, clear=True)
     def test_get_rank_safe_rank_priority(self, mock_is_initialized):
         """Test RANK takes priority over SLURM_PROCID."""
         assert get_rank_safe() == 3
@@ -322,7 +322,7 @@ class TestSLURMFallback:
         assert get_world_size_safe() == 8
 
     @patch("torch.distributed.is_initialized", return_value=False)
-    @patch.dict(os.environ, {"WORLD_SIZE": "4", "SLURM_NTASKS": "8"})
+    @patch.dict(os.environ, {"WORLD_SIZE": "4", "SLURM_NTASKS": "8"}, clear=True)
     def test_get_world_size_safe_world_size_priority(self, mock_is_initialized):
         """Test WORLD_SIZE takes priority over SLURM_NTASKS."""
         assert get_world_size_safe() == 4
@@ -332,7 +332,7 @@ class TestSLURMFallback:
         """Test get_local_rank_preinit uses SLURM_LOCALID when LOCAL_RANK not set."""
         assert get_local_rank_preinit() == 3
 
-    @patch.dict(os.environ, {"LOCAL_RANK": "1", "SLURM_LOCALID": "3"})
+    @patch.dict(os.environ, {"LOCAL_RANK": "1", "SLURM_LOCALID": "3"}, clear=True)
     def test_get_local_rank_preinit_local_rank_priority(self):
         """Test LOCAL_RANK takes priority over SLURM_LOCALID."""
         assert get_local_rank_preinit() == 1
@@ -352,7 +352,7 @@ class TestSLURMFallback:
         """Test parsing bracket list SLURM_NODELIST."""
         assert get_master_addr_safe() == "node001"
 
-    @patch.dict(os.environ, {"MASTER_ADDR": "custom.host", "SLURM_NODELIST": "node001"})
+    @patch.dict(os.environ, {"MASTER_ADDR": "custom.host", "SLURM_NODELIST": "node001"}, clear=True)
     def test_get_master_addr_safe_priority(self):
         """Test MASTER_ADDR takes priority over SLURM_NODELIST."""
         assert get_master_addr_safe() == "custom.host"
@@ -362,7 +362,7 @@ class TestSLURMFallback:
         """Test default port for SLURM jobs."""
         assert get_master_port_safe() == 29500
 
-    @patch.dict(os.environ, {"MASTER_PORT": "30000", "SLURM_NTASKS": "8"})
+    @patch.dict(os.environ, {"MASTER_PORT": "30000", "SLURM_NTASKS": "8"}, clear=True)
     def test_get_master_port_safe_priority(self):
         """Test MASTER_PORT takes priority over SLURM default."""
         assert get_master_port_safe() == 30000
