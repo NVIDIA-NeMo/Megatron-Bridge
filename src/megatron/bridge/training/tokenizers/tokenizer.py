@@ -21,6 +21,37 @@ except ImportError:
     from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizerCore
 
 
+def _compute_space_sensitive(tokenizer_instance: "MegatronTokenizer", default: bool = True) -> bool:
+    """
+    Determine if a tokenizer is space-sensitive.
+
+    A tokenizer is space-sensitive if tokenizing "x y" produces different token sequences
+    than concatenating tokenize("x") + tokenize("y"). This affects how prompt templates
+    handle spaces in the dataset preprocessing pipeline.
+
+    Args:
+        tokenizer_instance: Tokenizer instance with a `tokenize` method
+        default: Fallback value if computation fails (True for SentencePiece, False for others)
+
+    Returns:
+        bool: True if the tokenizer is space-sensitive, False otherwise
+
+    Example:
+        # A space-sensitive tokenizer (e.g., many BPE tokenizers):
+        # tokenize("x y") -> [87, 331]
+        # tokenize("x") + tokenize("y") -> [87, 379]  # Different!
+
+        # A non-space-sensitive tokenizer would produce the same result
+    """
+    try:
+        test_tokens_with_space = tokenizer_instance.tokenize("x y")
+        test_tokens_concat = tokenizer_instance.tokenize("x") + tokenizer_instance.tokenize("y")
+        return test_tokens_with_space != test_tokens_concat
+    except Exception:
+        # If tokenization fails for any reason, use the default
+        return default
+
+
 class MegatronTokenizer(MegatronTokenizerCore):
     """Base tokenizer class, extending the MegatronTokenizer from megatron core.
 
@@ -180,10 +211,7 @@ class _HuggingFaceTokenizer(MegatronTokenizer):
         self._inv_vocab = {token_id: token for token, token_id in self._vocab.items()}
 
         # Compute space_sensitive attribute for template handling in datasets
-        # Tests if tokenizing "x y" produces different results than tokenizing "x" + "y"
-        test_tokens_with_space = self.tokenize("x y")
-        test_tokens_concat = self.tokenize("x") + self.tokenize("y")
-        self.space_sensitive = test_tokens_with_space != test_tokens_concat
+        self.space_sensitive = _compute_space_sensitive(self, default=False)
 
     @property
     def vocab_size(self):
@@ -537,15 +565,8 @@ class _SentencePieceTokenizer(MegatronTokenizer):
             self._t5_tokens += [t]
 
         # Compute space_sensitive attribute for template handling in datasets
-        # SentencePiece tokenizers are typically space-sensitive
-        # Tests if tokenizing "x y" produces different results than tokenizing "x" + "y"
-        try:
-            test_tokens_with_space = self.tokenize("x y")
-            test_tokens_concat = self.tokenize("x") + self.tokenize("y")
-            self.space_sensitive = test_tokens_with_space != test_tokens_concat
-        except Exception:
-            # If tokenization fails for any reason, default to True for SentencePiece
-            self.space_sensitive = True
+        # SentencePiece tokenizers are typically space-sensitive (default=True)
+        self.space_sensitive = _compute_space_sensitive(self, default=True)
 
     @property
     def vocab_size(self):

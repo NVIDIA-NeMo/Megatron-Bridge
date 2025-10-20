@@ -1206,6 +1206,53 @@ class TestBackwardCompatibilityLossMask:
             assert "loss_mask" in result
 
 
+class TestComputeSpaceSensitiveHelper:
+    """Test the _compute_space_sensitive helper function."""
+
+    def test_compute_space_sensitive_detects_difference(self):
+        """Test that _compute_space_sensitive returns True when tokenization differs."""
+        from megatron.bridge.training.tokenizers.tokenizer import _compute_space_sensitive
+
+        mock_tokenizer = MagicMock()
+        # Mock space-sensitive behavior
+        mock_tokenizer.tokenize.side_effect = lambda text: (
+            [1, 2, 3] if text == "x y" else [1] if text == "x" else [2] if text == "y" else []
+        )
+
+        result = _compute_space_sensitive(mock_tokenizer, default=False)
+
+        assert result is True  # Should detect difference
+
+    def test_compute_space_sensitive_no_difference(self):
+        """Test that _compute_space_sensitive returns False when tokenization is same."""
+        from megatron.bridge.training.tokenizers.tokenizer import _compute_space_sensitive
+
+        mock_tokenizer = MagicMock()
+        # Mock non-space-sensitive behavior (same result)
+        mock_tokenizer.tokenize.side_effect = lambda text: (
+            [1, 2] if text == "x y" else [1] if text == "x" else [2] if text == "y" else []
+        )
+
+        result = _compute_space_sensitive(mock_tokenizer, default=True)
+
+        assert result is False  # Should detect no difference
+
+    def test_compute_space_sensitive_fallback_on_exception(self):
+        """Test that _compute_space_sensitive returns default when tokenize raises exception."""
+        from megatron.bridge.training.tokenizers.tokenizer import _compute_space_sensitive
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.tokenize.side_effect = Exception("Tokenization failed")
+
+        # Test with default=True
+        result_true = _compute_space_sensitive(mock_tokenizer, default=True)
+        assert result_true is True
+
+        # Test with default=False
+        result_false = _compute_space_sensitive(mock_tokenizer, default=False)
+        assert result_false is False
+
+
 class TestSpaceSensitiveComputation:
     """Test space_sensitive attribute computation in tokenizers."""
 
