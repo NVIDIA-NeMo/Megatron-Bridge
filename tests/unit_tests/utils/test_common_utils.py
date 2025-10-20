@@ -22,6 +22,8 @@ import pytest
 
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
+    get_master_addr_safe,
+    get_master_port_safe,
     get_rank_safe,
     get_world_size_safe,
     is_last_rank,
@@ -296,3 +298,103 @@ class TestIntegration:
                 assert get_rank_safe() == 2
                 assert get_world_size_safe() == 4
                 assert get_local_rank_preinit() == 1
+
+
+class TestSLURMFallback:
+    """Test SLURM environment variable fallback."""
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch.dict(os.environ, {"SLURM_PROCID": "5", "SLURM_NTASKS": "8"}, clear=True)
+    def test_get_rank_safe_slurm_fallback(self, mock_is_initialized):
+        """Test get_rank_safe uses SLURM_PROCID when RANK not set."""
+        assert get_rank_safe() == 5
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch.dict(os.environ, {"RANK": "3", "SLURM_PROCID": "5"})
+    def test_get_rank_safe_rank_priority(self, mock_is_initialized):
+        """Test RANK takes priority over SLURM_PROCID."""
+        assert get_rank_safe() == 3
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch.dict(os.environ, {"SLURM_NTASKS": "8"}, clear=True)
+    def test_get_world_size_safe_slurm_fallback(self, mock_is_initialized):
+        """Test get_world_size_safe uses SLURM_NTASKS when WORLD_SIZE not set."""
+        assert get_world_size_safe() == 8
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch.dict(os.environ, {"WORLD_SIZE": "4", "SLURM_NTASKS": "8"})
+    def test_get_world_size_safe_world_size_priority(self, mock_is_initialized):
+        """Test WORLD_SIZE takes priority over SLURM_NTASKS."""
+        assert get_world_size_safe() == 4
+
+    @patch.dict(os.environ, {"SLURM_LOCALID": "3", "SLURM_NTASKS": "8"}, clear=True)
+    def test_get_local_rank_preinit_slurm_fallback(self):
+        """Test get_local_rank_preinit uses SLURM_LOCALID when LOCAL_RANK not set."""
+        assert get_local_rank_preinit() == 3
+
+    @patch.dict(os.environ, {"LOCAL_RANK": "1", "SLURM_LOCALID": "3"})
+    def test_get_local_rank_preinit_local_rank_priority(self):
+        """Test LOCAL_RANK takes priority over SLURM_LOCALID."""
+        assert get_local_rank_preinit() == 1
+
+    @patch.dict(os.environ, {"SLURM_NODELIST": "node001,node002", "SLURM_NTASKS": "2"}, clear=True)
+    def test_get_master_addr_safe_simple_list(self):
+        """Test parsing simple comma-separated SLURM_NODELIST."""
+        assert get_master_addr_safe() == "node001"
+
+    @patch.dict(os.environ, {"SLURM_NODELIST": "node[001-004]", "SLURM_NTASKS": "4"}, clear=True)
+    def test_get_master_addr_safe_bracket_range(self):
+        """Test parsing bracket range SLURM_NODELIST."""
+        assert get_master_addr_safe() == "node001"
+
+    @patch.dict(os.environ, {"SLURM_NODELIST": "node[001,003,005]", "SLURM_NTASKS": "3"}, clear=True)
+    def test_get_master_addr_safe_bracket_list(self):
+        """Test parsing bracket list SLURM_NODELIST."""
+        assert get_master_addr_safe() == "node001"
+
+    @patch.dict(os.environ, {"MASTER_ADDR": "custom.host", "SLURM_NODELIST": "node001"})
+    def test_get_master_addr_safe_priority(self):
+        """Test MASTER_ADDR takes priority over SLURM_NODELIST."""
+        assert get_master_addr_safe() == "custom.host"
+
+    @patch.dict(os.environ, {"SLURM_NTASKS": "8"}, clear=True)
+    def test_get_master_port_safe_slurm_default(self):
+        """Test default port for SLURM jobs."""
+        assert get_master_port_safe() == 29500
+
+    @patch.dict(os.environ, {"MASTER_PORT": "30000", "SLURM_NTASKS": "8"})
+    def test_get_master_port_safe_priority(self):
+        """Test MASTER_PORT takes priority over SLURM default."""
+        assert get_master_port_safe() == 30000
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch.dict(os.environ, {}, clear=True)
+    def test_get_rank_safe_warns_on_default(self, mock_is_initialized):
+        """Test warning issued when defaulting to rank 0."""
+        with pytest.warns(UserWarning, match="Could not determine rank"):
+            assert get_rank_safe() == 0
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch.dict(os.environ, {}, clear=True)
+    def test_get_world_size_safe_warns_on_default(self, mock_is_initialized):
+        """Test warning issued when defaulting to world size 1."""
+        with pytest.warns(UserWarning, match="Could not determine world size"):
+            assert get_world_size_safe() == 1
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_get_local_rank_preinit_warns_on_default(self):
+        """Test warning issued when defaulting to local rank 0."""
+        with pytest.warns(UserWarning, match="Could not determine local rank"):
+            assert get_local_rank_preinit() == 0
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_get_master_addr_safe_warns_on_default(self):
+        """Test warning issued when defaulting to localhost."""
+        with pytest.warns(UserWarning, match="Could not determine master address"):
+            assert get_master_addr_safe() == "localhost"
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_get_master_port_safe_warns_on_default(self):
+        """Test warning issued when defaulting to 29500."""
+        with pytest.warns(UserWarning, match="Could not determine master port"):
+            assert get_master_port_safe() == 29500
