@@ -50,6 +50,10 @@ logger:
 dataset:
   sequence_length: 8192
   maker_name: make_llava_video_178k_dataset
+  maker_kwargs:
+    video_root_path: ???
+    subsets:
+    - 0_30_s_nextqa
 
 rng:
   seed: 42

@@ -16,12 +16,13 @@
 Built-in maker functions that transform HuggingFace datasets into
 conversation-style examples consumable by VLM processors.
 """
+
 import json
 import random
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from datasets import load_dataset
+from datasets import concatenate_datasets, load_dataset
 
 from megatron.bridge.utils.path_utils import resolve_path
 
@@ -151,9 +152,7 @@ def make_raven_dataset(
         if user_prompt is None or assistant_answer is None:
             return None
 
-        user_content: List[Dict[str, Any]] = [
-            {"type": "image", "image": img} for img in images
-        ]
+        user_content: List[Dict[str, Any]] = [{"type": "image", "image": img} for img in images]
         user_content.append({"type": "text", "text": user_prompt})
 
         assistant_content = [{"type": "text", "text": assistant_answer}]
@@ -173,9 +172,8 @@ def make_raven_dataset(
 def make_llava_video_178k_dataset(
     video_root_path: str,
     path_or_dataset: str = "lmms-lab/LLaVA-Video-178K",
-    subset: str = "0_30_s_nextqa",
+    subsets: str | List[str] = "0_30_s_nextqa",
     split: str = "open_ended",
-    **kwargs,
 ) -> List[Dict[str, Any]]:
     """Load and preprocess a subset of the *LLaVA-Video-178K* dataset.
 
@@ -183,7 +181,7 @@ def make_llava_video_178k_dataset(
     - ``video``: path or URL to the MP4 file.
     - ``conversations``: a **two-turn** list::
 
-          [{"from": "human", "value": "<image>\n<question>"},
+          [{"from": "human", "value": "<video>\n<question>"},
            {"from": "gpt",   "value": "<answer>"}]
 
       We map this schema to our internal multimodal conversation format:
@@ -191,18 +189,31 @@ def make_llava_video_178k_dataset(
       User turn  →  [video, user prompt]
       Assistant  →  answer text
 
+    Note:
+        Video files are assumed to be pre-downloaded and stored locally in the
+        ``video_root_path`` directory. Rows with missing videos or empty
+        conversations are filtered out from the final output.
+
     Args:
+        video_root_path: Root directory where video files are stored locally.
         path_or_dataset: HF dataset path or local cache dir.
-        subset: one of the dataset's 19 directory-style subsets.
-        split: one of ``caption``, ``open_ended`` (default), ``multi_choice``.
+        subsets: Single subset name or list of the dataset's directory-style
+            subsets to load.
+        split: Split to load from the dataset. Note that "train" is automatically
+            mapped to "open_ended".
 
     Returns:
         A list of dicts each containing a ``conversation`` field ready for
         downstream VLM processors.
     """
+    if isinstance(subsets, str):
+        subsets = [subsets]
+
     if split == "train":
         split = "open_ended"
-    dataset = load_dataset(path_or_dataset, subset, split=split)
+    individual_datasets = [load_dataset(path_or_dataset, subset, split=split) for subset in subsets]
+    dataset = concatenate_datasets(individual_datasets)
+
     # FIXME: right now we assume the video files are pre-downloaded and stored in the video_root_path
     # we need to modify this to download the video files from the hub if they are not present in the video_root_path
 
