@@ -35,7 +35,7 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
-from src.megatron.bridge.peft.lora import VLMLoRA
+from megatron.bridge.peft.lora import VLMLoRA
 
 
 def pretrain_config(
@@ -232,17 +232,17 @@ def finetune_config(
         else:
             cfg.peft = VLMLoRA(
                 target_modules=[
-                    "*language_model*.linear_qkv", 
-                    "*language_model*.linear_proj", 
-                    "*language_model*.linear_fc1", 
-                    "*language_model*.linear_fc2"
+                    "*language_model*.linear_qkv",
+                    "*language_model*.linear_proj",
+                    "*language_model*.linear_fc1",
+                    "*language_model*.linear_fc2",
                 ],
                 dim=16,
                 alpha=32,
                 freeze_vision_model=False,
                 freeze_vision_projection=False,
             )
-            
+
         cfg.optimizer.lr = 5e-5
         cfg.optimizer.min_lr = 5e-6
         cfg.model.tensor_model_parallel_size = 1
