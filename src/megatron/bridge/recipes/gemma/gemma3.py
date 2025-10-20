@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -41,22 +40,22 @@ class Gemma3CommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     provider_class: type
-    hf_path: Optional[str]
-    dir: Optional[str]
+    hf_path: str | None
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_parallelism: int
     pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
+    pipeline_parallelism_dtype: torch.dtype | None
+    virtual_pipeline_parallelism: int | None
     context_parallelism: int
     sequence_parallelism: bool
     use_megatron_fsdp: bool
@@ -70,13 +69,13 @@ class Gemma3CommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
 
 
 # Sequence length constants
@@ -105,22 +104,22 @@ def gemma3_1b_pretrain_config(**user_kwargs: Unpack[Gemma3CommonKwargs]) -> Conf
 
 def _gemma3_common(
     provider_class: type,
-    hf_path: Optional[str] = None,
-    dir: Optional[str] = None,
+    hf_path: str | None = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
+    pipeline_parallelism_dtype: torch.dtype | None = None,
+    virtual_pipeline_parallelism: int | None = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
     use_megatron_fsdp: bool = False,
@@ -134,33 +133,33 @@ def _gemma3_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 2000,
     save_interval: int = 500,
     use_null_tokenizer: bool = True,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Gemma3 family models.
 
     Args:
         provider_class (type): Gemma3 model provider class (e.g., Gemma3ModelProvider1B).
-        hf_path (Optional[str]): HuggingFace model path (e.g., "google/gemma-3-1b").
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
+        hf_path (str | None): HuggingFace model path (e.g., "google/gemma-3-1b").
+        dir (str | None): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
+        data_paths (list[str] | None): List of paths to dataset files. If None, mock data will be used.
+        data_args_path (str | None): Path to file containing data arguments.
+        train_data_path (list[str] | None): List of training data paths.
+        valid_data_path (list[str] | None): List of validation data paths.
+        test_data_path (list[str] | None): List of test data paths.
+        per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
         tensor_parallelism (int): Degree of tensor model parallelism.
         pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
+        pipeline_parallelism_dtype (torch.dtype | None): Data type for pipeline parallelism.
+        virtual_pipeline_parallelism (int | None): Size of virtual pipeline parallelism.
         context_parallelism (int): Degree of context parallelism.
         sequence_parallelism (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
@@ -173,12 +172,12 @@ def _gemma3_common(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
+        lr_decay_iters (int | None): Number of iterations over which to decay the LR.
         eval_interval (int): Evaluation interval.
         save_interval (int): Checkpoint save interval.
         use_null_tokenizer (bool): Whether to use null tokenizer for synthetic data.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
+        precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
+        comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
