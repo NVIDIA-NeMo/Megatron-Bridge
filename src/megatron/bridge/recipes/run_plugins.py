@@ -175,6 +175,7 @@ class FaultTolerancePlugin(Plugin):
     This plugin enables workload hang detection, automatic calculation of timeouts used for hang detection,
     detection of rank(s) terminated due to an error and workload respawning in case of a failure.
 
+
     Args:
         enable_ft_package (bool): Enable the fault tolerance package. Default is True.
         calc_ft_timeouts (bool): Automatically compute timeouts. Default is True.
@@ -187,6 +188,10 @@ class FaultTolerancePlugin(Plugin):
         script_args_converter_fn (Optional[Callable]): A function that takes FaultTolerancePluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
+
+    Note:
+        This plugin is incompatible with NsysPlugin. Nsys profiling cannot be used when fault tolerance
+        is enabled.
     """
 
     enable_ft_package: bool = True
@@ -270,6 +275,10 @@ class NsysPlugin(Plugin):
         script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
+
+    Note:
+        This plugin is incompatible with FaultTolerancePlugin. Nsys profiling cannot be used when
+        fault tolerance is enabled, as the profiler interferes with the fault tolerance mechanisms.
     """
 
     profile_step_start: int

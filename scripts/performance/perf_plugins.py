@@ -104,6 +104,11 @@ class NsysPlugin(Plugin):
         script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
+
+    Note:
+        This plugin is incompatible with fault tolerance. Nsys profiling cannot be used when
+        fault tolerance is enabled, as the profiler interferes with the fault tolerance mechanisms.
+
     """
 
     profile_step_start: int
@@ -152,7 +157,7 @@ class NsysPlugin(Plugin):
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            raise ValueError("NsysPlugin only supports run.Script tasks")
+            raise NotImplementedError("NsysPlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -291,10 +296,8 @@ class PerfEnvPlugin(Plugin):
 
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
-            elif hasattr(task, "config"):
-                # For run.Partial, modify the task config directly
-                task.config.train.manual_gc = True
-                task.config.train.manual_gc_interval = self.manual_gc_interval
+            else:
+                raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
         # Improve perf by steering power to tensor cores, may not work on all systems
         if self.enable_vboost and isinstance(executor, SlurmExecutor):
