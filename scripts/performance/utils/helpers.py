@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from omegaconf import OmegaConf
 
@@ -63,6 +63,19 @@ COMM_OVERLAP_CONFIG_MAP = {
     },
 }
 
+def set_basic_perf_overrides(recipe: Any) -> None:
+    recipe.train.train_iters = 100
+    recipe.train.eval_iters = 0
+
+    recipe.checkpoint.save = None
+
+    recipe.logger.log_interval = 1
+    recipe.logger.tensorboard_dir = None
+
+    recipe.ddp.check_for_nan_in_grad = False
+    recipe.ddp.check_for_large_grads = False
+
+    recipe.rerun_state_machine.check_for_nan_in_loss = False
 
 def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the mcore fsdp overrides from the performance matrix."""
@@ -89,7 +102,7 @@ def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
             logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
 
-def get_precision_config(compute_dtype: str, fp8_recipe: str):
+def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
         if fp8_recipe == "ds":
@@ -134,6 +147,18 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
+def moe_a2a_1f1b_overrides(recipe: Any, perf_overrides: Any) -> None:
+    a2a_1f1b = perf_overrides.get("a2a_1f1b", False)
+    if a2a_1f1b:
+        recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+        recipe.comm_overlap.delay_wgrad_compute = True
+        recipe.model.moe_shared_expert_overlap = False
+    else:
+        recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
+        recipe.comm_overlap.delay_wgrad_compute = False
+        recipe.model.moe_shared_expert_overlap = True
+
+    return recipe
 
 def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
     """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""
