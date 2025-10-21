@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 from megatron.core.transformer.transformer_config import TransformerConfig
+
+from megatron.bridge.utils.common_utils import get_rank_safe
+
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 def apply_moe_token_drop(
@@ -21,6 +28,8 @@ def apply_moe_token_drop(
     moe_pad_expert_input_to_capacity: bool = True,
 ) -> None:
     """Token drop improves performance by better balancing work across experts, but may affect convergence.
+
+    MoE token drop is applicable to MoE models only.
 
     Args:
         model_provider (TransformerConfig): The transformer config to apply the token drop settings to
@@ -32,6 +41,14 @@ def apply_moe_token_drop(
         AssertionError: If moe_token_dispatcher_type is not alltoall or alltoall_seq
         ValueError: If moe_expert_capacity_factor is not set and moe_pad_expert_input_to_capacity is True
     """
+    if model_provider.num_moe_experts is None or model_provider.num_moe_experts == 0:
+        if get_rank_safe() == 0:
+            logger.warning(
+                "MoE token drop is only applicable to MoE models. "
+                "Model config does not use MoE (num_moe_experts is not set or is 0). "
+                "Skipping MoE token drop configuration."
+            )
+        return
 
     if moe_expert_capacity_factor < 0:
         moe_expert_capacity_factor = None

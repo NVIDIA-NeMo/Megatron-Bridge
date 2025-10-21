@@ -23,10 +23,17 @@ from megatron.bridge.training.deepep import apply_deepep, validate_deepep
 class TestApplyDeepEP:
     """Test the apply_deepep function."""
 
-    def test_apply_deepep_always_sets_configs(self):
-        """Test that apply_deepep always sets DeepEP configs regardless of hardware."""
-        # Create a mock TransformerConfig
+    @patch("torch.cuda.get_device_properties")
+    def test_apply_deepep_sets_configs_for_moe_model_on_ampere(self, mock_get_device_properties):
+        """Test that apply_deepep sets DeepEP configs for MoE models on Ampere GPUs."""
+        # Mock Ampere GPU (compute capability 8.x)
+        mock_properties = MagicMock()
+        mock_properties.major = 8
+        mock_get_device_properties.return_value = mock_properties
+
+        # Create a mock TransformerConfig with MoE enabled
         config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 8  # MoE model
 
         # Apply DeepEP
         apply_deepep(config)
@@ -36,10 +43,37 @@ class TestApplyDeepEP:
         assert config.moe_enable_deepep is True
         assert config.moe_shared_expert_overlap is False
 
-    def test_apply_deepep_overrides_existing_configs(self):
-        """Test that apply_deepep overrides any existing config values."""
+    @patch("torch.cuda.get_device_properties")
+    def test_apply_deepep_sets_configs_for_moe_model_on_hopper(self, mock_get_device_properties):
+        """Test that apply_deepep sets DeepEP configs for MoE models on Hopper GPUs."""
+        # Mock Hopper GPU (compute capability 9.x)
+        mock_properties = MagicMock()
+        mock_properties.major = 9
+        mock_get_device_properties.return_value = mock_properties
+
+        # Create a mock TransformerConfig with MoE enabled
+        config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 8  # MoE model
+
+        # Apply DeepEP
+        apply_deepep(config)
+
+        # Verify the correct configs were set
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_enable_deepep is True
+        assert config.moe_shared_expert_overlap is False
+
+    @patch("torch.cuda.get_device_properties")
+    def test_apply_deepep_overrides_existing_configs_for_moe_model(self, mock_get_device_properties):
+        """Test that apply_deepep overrides any existing config values for MoE models."""
+        # Mock Ampere GPU (compute capability 8.x)
+        mock_properties = MagicMock()
+        mock_properties.major = 8
+        mock_get_device_properties.return_value = mock_properties
+
         # Create a mock TransformerConfig with different initial values
         config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 8  # MoE model
         config.moe_token_dispatcher_type = "legacy"
         config.moe_enable_deepep = False
         config.moe_shared_expert_overlap = True
@@ -51,6 +85,98 @@ class TestApplyDeepEP:
         assert config.moe_token_dispatcher_type == "flex"
         assert config.moe_enable_deepep is True
         assert config.moe_shared_expert_overlap is False
+
+    @patch("megatron.bridge.training.deepep.logger")
+    def test_apply_deepep_warns_for_non_moe_model_none_experts(self, mock_logger):
+        """Test that apply_deepep logs warning and returns early when num_moe_experts is None."""
+        # Create a mock TransformerConfig without MoE
+        config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = None  # Explicitly set to None (default value)
+
+        # Apply DeepEP
+        apply_deepep(config)
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once()
+        assert "DeepEP is only applicable to MoE models" in mock_logger.warning.call_args[0][0]
+
+        # Verify configs were NOT set
+        assert config.moe_token_dispatcher_type != "flex"
+        assert config.moe_enable_deepep != True
+        assert config.moe_shared_expert_overlap != False
+
+    @patch("megatron.bridge.training.deepep.logger")
+    def test_apply_deepep_warns_for_non_moe_model_zero_experts(self, mock_logger):
+        """Test that apply_deepep logs warning and returns early when num_moe_experts is 0."""
+        # Create a mock TransformerConfig without MoE
+        config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 0  # Explicitly set to 0
+
+        # Apply DeepEP
+        apply_deepep(config)
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once()
+        assert "DeepEP is only applicable to MoE models" in mock_logger.warning.call_args[0][0]
+
+        # Verify configs were NOT set
+        assert config.moe_token_dispatcher_type != "flex"
+        assert config.moe_enable_deepep != True
+        assert config.moe_shared_expert_overlap != False
+
+    @patch("torch.cuda.get_device_properties")
+    @patch("megatron.bridge.training.deepep.logger")
+    def test_apply_deepep_warns_for_unsupported_gpu_volta(self, mock_logger, mock_get_device_properties):
+        """Test that apply_deepep logs warning and returns early on Volta GPUs."""
+        # Mock Volta GPU (compute capability 7.x)
+        mock_properties = MagicMock()
+        mock_properties.major = 7
+        mock_get_device_properties.return_value = mock_properties
+
+        # Create a mock TransformerConfig with MoE enabled
+        config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 8  # MoE model
+
+        # Apply DeepEP
+        apply_deepep(config)
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once()
+        assert (
+            "DeepEP is only applicable to Ampere (SM80) and Hopper (SM90) GPUs" in mock_logger.warning.call_args[0][0]
+        )
+
+        # Verify configs were NOT set
+        assert config.moe_token_dispatcher_type != "flex"
+        assert config.moe_enable_deepep != True
+        assert config.moe_shared_expert_overlap != False
+
+    @patch("torch.cuda.get_device_properties")
+    @patch("megatron.bridge.training.deepep.logger")
+    def test_apply_deepep_warns_for_unsupported_gpu_pascal(self, mock_logger, mock_get_device_properties):
+        """Test that apply_deepep logs warning and returns early on Pascal GPUs."""
+        # Mock Pascal GPU (compute capability 6.x)
+        mock_properties = MagicMock()
+        mock_properties.major = 6
+        mock_get_device_properties.return_value = mock_properties
+
+        # Create a mock TransformerConfig with MoE enabled
+        config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 8  # MoE model
+
+        # Apply DeepEP
+        apply_deepep(config)
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once()
+        assert (
+            "DeepEP is only applicable to Ampere (SM80) and Hopper (SM90) GPUs" in mock_logger.warning.call_args[0][0]
+        )
+
+        # Verify configs were NOT set
+        assert config.moe_token_dispatcher_type != "flex"
+        assert config.moe_enable_deepep != True
+        assert config.moe_shared_expert_overlap != False
 
 
 class TestValidateDeepEP:
