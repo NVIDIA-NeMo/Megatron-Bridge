@@ -19,7 +19,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Protocol, TypedDict, Union, cast
+from typing import Any, Callable, Protocol, TypedDict, cast
 
 from datasets import Dataset, DatasetDict, load_dataset
 from tqdm import tqdm
@@ -47,7 +47,7 @@ class ProcessExampleFn(Protocol):
     """Protocol defining the signature for a function that processes a single dataset example."""
 
     def __call__(
-        self, example: dict[str, Any], tokenizer: Optional[MegatronTokenizer] = None
+        self, example: dict[str, Any], tokenizer: MegatronTokenizer | None = None
     ) -> ProcessExampleOutput: ...
 
 
@@ -78,17 +78,17 @@ class HFDatasetConfig(FinetuningDatasetConfig):
 
     dataset_name: str
     process_example_fn: ProcessExampleFn
-    dataset_subset: Optional[str] = None
-    dataset_dict: Optional[DatasetDict] = None
-    split: Optional[str] = None
-    download_mode: Optional[str] = None
-    val_proportion: Optional[float] = 0.05
+    dataset_subset: str | None = None
+    dataset_dict: DatasetDict | None = None
+    split: str | None = None
+    download_mode: str | None = None
+    val_proportion: float | None = 0.05
     split_val_from_train: bool = True
     delete_raw: bool = False
     rewrite: bool = True
-    hf_kwargs: Optional[dict[str, Any]] = None
-    hf_filter_lambda: Optional[Callable] = None
-    hf_filter_lambda_kwargs: Optional[dict[str, Any]] = None
+    hf_kwargs: dict[str, Any] | None = None
+    hf_filter_lambda: Callable | None = None
+    hf_filter_lambda_kwargs: dict[str, Any] | None = None
 
 
 def preprocess_and_split_data(
@@ -98,7 +98,7 @@ def preprocess_and_split_data(
     tokenizer: MegatronTokenizer,
     process_example_fn: ProcessExampleFn,
     split_val_from_train: bool = True,
-    val_proportion: Optional[float] = None,
+    val_proportion: float | None = None,
     train_aliases: tuple[str] = ("train", "training"),
     test_aliases: tuple[str] = ("test", "testing"),
     val_aliases: tuple[str] = ("val", "validation", "valid", "eval"),
@@ -229,24 +229,24 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
         dataset_name: str,
         tokenizer,
         process_example_fn: ProcessExampleFn,
-        dataset_dict: Optional[DatasetDict] = None,
-        dataset_subset: Optional[str] = None,
-        dataset_root: Optional[Union[str, Path]] = None,
+        dataset_dict: DatasetDict | None = None,
+        dataset_subset: str | None = None,
+        dataset_root: str | Path | None = None,
         split=None,
         seq_length=1024,
         seed: int = 1234,
         memmap_workers: int = 1,
-        max_train_samples: Optional[int] = None,
-        packed_sequence_specs: Optional[PackedSequenceSpecs] = None,
-        download_mode: Optional[str] = None,
-        val_proportion: Optional[float] = 0.05,
+        max_train_samples: int | None = None,
+        packed_sequence_specs: PackedSequenceSpecs | None = None,
+        download_mode: str | None = None,
+        val_proportion: float | None = 0.05,
         split_val_from_train: bool = True,
         rewrite: bool = True,
         delete_raw: bool = False,
-        hf_kwargs: Optional[dict[str, Any]] = None,
-        dataset_kwargs: Optional[dict[str, Any]] = None,
-        hf_filter_lambda: Optional[Callable] = None,
-        hf_filter_lambda_kwargs: Optional[dict[str, Any]] = None,
+        hf_kwargs: dict[str, Any] | None = None,
+        dataset_kwargs: dict[str, Any] | None = None,
+        hf_filter_lambda: Callable | None = None,
+        hf_filter_lambda_kwargs: dict[str, Any] | None = None,
         do_validation: bool = True,
         do_test: bool = True,
     ) -> None:

@@ -19,7 +19,7 @@ conversation-style examples consumable by VLM processors.
 
 import json
 import random
-from typing import Any, Dict, List
+from typing import Any
 
 from datasets import load_dataset
 
@@ -28,7 +28,7 @@ from megatron.bridge.data.vlm_datasets.token_utils import json2token
 
 def make_rdr_dataset(
     path_or_dataset: str = "quintend/rdr-items", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the RDR dataset for image-to-text fine-tuning.
 
     Returns a list of examples with a "conversation" field that includes an image and text.
@@ -57,7 +57,7 @@ def make_rdr_dataset(
 
 def make_cord_v2_dataset(
     path_or_dataset: str = "naver-clova-ix/cord-v2", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the CORD-V2 dataset for image-to-text fine-tuning."""
     dataset = load_dataset(path_or_dataset, split=split)
 
@@ -90,7 +90,7 @@ def make_cord_v2_dataset(
 
 def make_medpix_dataset(
     path_or_dataset: str = "mmoukouba/MedPix-VQA", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the MedPix dataset for image-to-text fine-tuning."""
     dataset = load_dataset(path_or_dataset, split=split)
 
@@ -113,7 +113,7 @@ def make_medpix_dataset(
 
 def make_cv17_dataset(
     path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed", split: str = "train", **kwargs
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load and preprocess the CommonVoice 17 dataset for audio-to-text fine-tuning."""
     dataset = load_dataset(path_or_dataset, split=split)
     # Be robust to simple list-like datasets used in tests without `column_names` attr

@@ -15,7 +15,6 @@
 """Computes theoretical memory footprint for model training."""
 
 import math
-from typing import Optional
 
 import torch.nn.functional as F
 
@@ -116,9 +115,7 @@ def compute_weight_and_optimizer_memory(config: ConfigContainer, verbose: bool =
     return weight_and_optimizer_memory
 
 
-def compute_activation_memory(
-    config: ConfigContainer, num_microbatches: Optional[int], verbose: bool = False
-) -> float:
+def compute_activation_memory(config: ConfigContainer, num_microbatches: int | None, verbose: bool = False) -> float:
     """Compute theoretical memory footprint for activations.
 
     Estimates activation memory based on the formula from the Megatron-LM paper
@@ -215,7 +212,7 @@ def compute_activation_memory(
 
 
 def report_theoretical_memory(
-    config: ConfigContainer, num_microbatches: Optional[int] = None, verbose: bool = False
+    config: ConfigContainer, num_microbatches: int | None = None, verbose: bool = False
 ) -> None:
     """Compute and print the theoretical memory footprint components.
 

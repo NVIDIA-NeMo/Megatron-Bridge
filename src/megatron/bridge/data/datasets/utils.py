@@ -23,8 +23,7 @@ import re
 import signal
 import time
 from functools import lru_cache, partial
-from queue import Empty
-from typing import Any, Callable, Optional, Pattern, Type
+from typing import Any, Callable, Type
 
 import numpy as np
 import torch
@@ -350,7 +349,7 @@ class _TextMemMapDataset(Dataset):
 
         return data
 
-    def load_file(self, fn, index_mapping_dir: Optional[str] = None):
+    def load_file(self, fn, index_mapping_dir: str | None = None):
         """
         Loads a text file as np.int8.
 
@@ -883,7 +882,7 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
     return chat
 
 
-def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
+def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: list[Any] | None = None) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
 

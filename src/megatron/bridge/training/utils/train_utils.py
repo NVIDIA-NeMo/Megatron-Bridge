@@ -18,7 +18,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
-from typing import Any, Optional, Union
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -85,7 +85,7 @@ def param_is_not_shared(param: nn.Parameter) -> bool:
 
 
 def calc_params_l2_norm(
-    model: Union[MegatronModule, list[MegatronModule]],
+    model: MegatronModule | list[MegatronModule],
     model_config: Any,
     use_megatron_fsdp: bool = False,
     force_create_fp32_copy: bool = False,
@@ -270,7 +270,7 @@ def calc_dtensor_params_l2_norm(params):
     return total_norm_2.item() ** 0.5
 
 
-def reduce_max_stat_across_model_parallel_group(stat: Optional[float]) -> Optional[float]:
+def reduce_max_stat_across_model_parallel_group(stat: float | None) -> float | None:
     """Calculates the max of a stat across the model parallel group.
 
     Handles cases where some ranks might have the stat as None (e.g., grad norm
@@ -318,14 +318,14 @@ def logical_and_across_model_parallel_group(input: bool) -> bool:
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
-    learning_rate: Optional[float],
-    decoupled_learning_rate: Optional[float],
+    learning_rate: float | None,
+    decoupled_learning_rate: float | None,
     loss_scale: float,
     report_memory_flag: bool,
     skipped_iter: int,
-    grad_norm: Optional[float],
-    params_norm: Optional[float],
-    num_zeros_in_grad: Optional[int],
+    grad_norm: float | None,
+    params_norm: float | None,
+    num_zeros_in_grad: int | None,
     config: ConfigContainer,
     global_state: GlobalState,
     history_wct: list,
@@ -340,14 +340,14 @@ def training_log(
         loss_dict (dict[str, torch.Tensor]): Dictionary of losses for the current step.
         total_loss_dict (dict[str, Any]): Dictionary to accumulate losses and stats
                                          across logging intervals.
-        learning_rate (Optional[float]): Current learning rate.
-        decoupled_learning_rate (Optional[float]): Current decoupled learning rate (if used).
+        learning_rate (float | None): Current learning rate.
+        decoupled_learning_rate (float | None): Current decoupled learning rate (if used).
         loss_scale (float): Current loss scale value.
         report_memory_flag (bool): Flag to indicate if memory usage should be reported.
         skipped_iter (int): 1 if the iteration was skipped, 0 otherwise.
-        grad_norm (Optional[float]): Gradient norm if computed, else None.
-        params_norm (Optional[float]): Parameter L2 norm if computed, else None.
-        num_zeros_in_grad (Optional[int]): Number of zeros in gradient if computed, else None.
+        grad_norm (float | None): Gradient norm if computed, else None.
+        params_norm (float | None): Parameter L2 norm if computed, else None.
+        num_zeros_in_grad (int | None): Number of zeros in gradient if computed, else None.
         config: The main configuration container.
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
@@ -647,7 +647,7 @@ def training_log(
     return report_memory_flag
 
 
-def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
+def report_memory(memory_keys: dict[str, str] | None) -> dict:
     """
     Logs the memory usage of the model.
     This metric calls the torch memory stats API for CUDA and reports different memory statistics.
@@ -951,7 +951,7 @@ def needs_global_state_injection(forward_step_func: ForwardStepCallable) -> bool
 
 
 def maybe_inject_state(
-    forward_step_func: ForwardStepCallable, state: GlobalState, needs_injection: Optional[bool] = None
+    forward_step_func: ForwardStepCallable, state: GlobalState, needs_injection: bool | None = None
 ) -> ForwardStepCallable:
     """Optionally inject GlobalState into forward_step functions that expect it.
 

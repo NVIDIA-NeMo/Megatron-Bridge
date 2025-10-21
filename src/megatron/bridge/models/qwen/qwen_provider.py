@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 import torch.nn.functional as F
@@ -39,7 +39,7 @@ class Qwen2ModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     vocab_size: int = 151936
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
@@ -243,14 +243,14 @@ class Qwen3ModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     add_qkv_bias: bool = False
     qk_layernorm: bool = True
-    kv_channels: Optional[int] = 128
+    kv_channels: int | None = 128
     num_query_groups: int = 8
     seq_length: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     vocab_size: int = 151936
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"
@@ -349,14 +349,14 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     add_bias_linear: bool = False
     add_qkv_bias: bool = False
     qk_layernorm: bool = True
-    kv_channels: Optional[int] = 128
+    kv_channels: int | None = 128
     num_query_groups: int = 8
     seq_length: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     vocab_size: int = 151936
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 1000000.0
     position_embedding_type: str = "rope"

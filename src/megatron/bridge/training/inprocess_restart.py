@@ -17,7 +17,7 @@ import os
 import socket
 import warnings
 from datetime import timedelta
-from typing import Callable, Optional
+from typing import Callable
 
 import nvidia_resiliency_ext.inprocess as inprocess
 import torch
@@ -194,7 +194,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
 
 def maybe_wrap_for_inprocess_restart(
     train_fn: Callable, config: InProcessRestartConfig, state: GlobalState
-) -> tuple[Callable, Optional[torch.distributed.Store]]:
+) -> tuple[Callable, torch.distributed.Store] | None:
     """Conditionally wrap function for in-process restart."""
 
     if not config.enabled:

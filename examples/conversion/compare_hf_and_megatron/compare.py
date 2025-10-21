@@ -94,7 +94,6 @@ import argparse
 import importlib
 import os
 import sys
-from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -327,7 +326,7 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str, is_vl_model: bool):
+def process_inputs(tokenizer, processor, image_path: str | None, prompt: str, is_vl_model: bool):
     """Process inputs for both vision-language and regular LLM models.
 
     Args:

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
@@ -95,8 +94,8 @@ def pretrain(
 def _pretrain(
     state: GlobalState,
     forward_step_func: ForwardStepCallable,
-    store: Optional[dist.Store] = None,
-    inprocess_call_wrapper: Optional[CallWrapper] = None,
+    store: dist.Store | None = None,
+    inprocess_call_wrapper: CallWrapper | None = None,
 ) -> None:
     """Internal function containing the actual pretrain logic.
 

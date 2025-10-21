@@ -14,7 +14,7 @@
 import warnings
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable
 
 import torch
 import torch.nn.functional as F
@@ -45,7 +45,7 @@ class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     Base config for DeepSeek V2 and V3 models.
     """
 
-    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
+    transformer_layer_spec: "ModuleSpec" | Callable[["GPTModelProvider"], "ModuleSpec"] = partial(
         get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
     )
 
@@ -62,8 +62,8 @@ class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     seq_length: int = 4096
     rotary_base: float = 10000.0
     make_vocab_size_divisible_by: int = 3200
-    mtp_num_layers: Optional[int] = None
-    mtp_loss_scaling_factor: Optional[float] = None
+    mtp_num_layers: int | None = None
+    mtp_loss_scaling_factor: float | None = None
 
     # Regularization
     attention_dropout: float = 0.0
@@ -76,7 +76,7 @@ class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     moe_token_dispatcher_type: str = "alltoall"
     moe_router_load_balancing_type: str = "seq_aux_loss"
     moe_shared_expert_overlap: bool = True
-    moe_router_dtype: Optional[str] = "fp32"
+    moe_router_dtype: str | None = "fp32"
 
     # MLA
     q_lora_rank: int = 1536
@@ -96,8 +96,8 @@ class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     async_tensor_model_parallel_allreduce: bool = True
     attention_softmax_in_fp32: bool = False
     persist_layer_norm: bool = True
-    num_layers_in_first_pipeline_stage: Optional[int] = None
-    num_layers_in_last_pipeline_stage: Optional[int] = None
+    num_layers_in_first_pipeline_stage: int | None = None
+    num_layers_in_last_pipeline_stage: int | None = None
     account_for_embedding_in_pipeline_split: bool = False
     account_for_loss_in_pipeline_split: bool = False
 
@@ -126,7 +126,7 @@ class DeepSeekV2ModelProvider(DeepSeekModelProvider):
     num_moe_experts: int = 160
     moe_ffn_hidden_size: int = 1536
     moe_shared_expert_intermediate_size: int = 3072  # 1536 * 2 shared experts
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 59)  # first layer is dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] + [1] * 59)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 3
@@ -153,7 +153,7 @@ class DeepSeekV2LiteModelProvider(DeepSeekV2ModelProvider):
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared experts
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 26)  # first layer is dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1
@@ -173,9 +173,7 @@ class DeepSeekV3ModelProvider(DeepSeekModelProvider):
     num_moe_experts: int = 256
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] * 3 + [1] * 58
-    )  # first three layers are dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] * 3 + [1] * 58)  # first three layers are dense
     moe_router_topk: int = 8
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 4
@@ -206,7 +204,7 @@ class MoonlightModelProvider16B(DeepSeekModelProvider):
     num_moe_experts: int = 64
     moe_ffn_hidden_size: int = 1408
     moe_shared_expert_intermediate_size: int = 2816  # 1408 * 2 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0] * 1 + [1] * 26)  # first layer is dense
     moe_router_topk: int = 6
     moe_router_num_groups: int = 1
     moe_router_group_topk: int = 1

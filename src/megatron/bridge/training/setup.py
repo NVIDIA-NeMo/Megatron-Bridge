@@ -16,7 +16,7 @@ import inspect
 import logging
 import time
 from functools import partial
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple
 
 import torch
 from megatron.core.config import set_experimental_flag
@@ -67,17 +67,17 @@ class SetupOutput(NamedTuple):
     model: MegatronModule
     optimizer: MegatronOptimizer
     scheduler: OptimizerParamScheduler
-    train_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
-    test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
+    valid_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
+    test_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
     checkpointing_context: dict[str, Any]
 
 def setup(
     state: GlobalState,
-    train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
-    get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
-    restart_store: Optional[torch.distributed.Store] = None,
+    train_valid_test_datasets_provider: Callable[..., tuple[Any | None, Any | None, Any | None]],
+    get_embedding_ranks: Callable[[list[int], int | None], list[int]] | None = None,
+    get_position_embedding_ranks: Callable[[list[int], int | None], list[int]] | None = None,
+    restart_store: torch.distributed.Store | None = None,
 ) -> SetupOutput:
     """Initialize the training/evaluation environment using an existing GlobalState.
 
@@ -263,7 +263,7 @@ def _update_model_config_funcs(
     model: MegatronModule,
     model_config: GPTModelProvider | T5ModelProvider,
     ddp_config: DistributedDataParallelConfig,
-    optimizer: Optional[MegatronOptimizer],
+    optimizer: MegatronOptimizer | None,
     *,
     align_grad_reduce: bool = True,
 ) -> None:
@@ -382,7 +382,7 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     return transformed_model
 
 
-def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_vocab_size: int) -> tuple[int, bool]:
+def _validate_and_set_vocab_size(model_vocab_size: int | None, tokenizer_vocab_size: int) -> tuple[int, bool]:
     """Validate and determine the correct vocab size for the model.
 
     Args:

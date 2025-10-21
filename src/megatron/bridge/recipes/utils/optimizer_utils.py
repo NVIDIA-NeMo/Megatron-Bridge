@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 
@@ -20,13 +19,13 @@ from megatron.bridge.training.config import OptimizerConfig, SchedulerConfig
 def distributed_fused_adam_with_cosine_annealing(
     precision: str = "bf16-mixed",
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
     adam_eps: float = 1e-5,
     weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: Optional[float] = None,
+    min_lr: float | None = None,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """
@@ -79,14 +78,14 @@ def distributed_fused_adam_with_cosine_annealing(
 
 def distributed_fused_adam_with_cosine_annealing_samples(
     precision: str = "bf16-mixed",
-    lr_warmup_samples: Optional[int] = None,
-    lr_decay_samples: Optional[int] = None,
+    lr_warmup_samples: int | None = None,
+    lr_decay_samples: int | None = None,
     adam_beta1: float = 0.9,
     adam_beta2: float = 0.95,
     adam_eps: float = 1e-5,
     weight_decay: float = 0.1,
     max_lr: float = 1e-4,
-    min_lr: Optional[float] = None,
+    min_lr: float | None = None,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
     """

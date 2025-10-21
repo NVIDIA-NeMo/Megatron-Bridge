@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 import torch
 import yaml
@@ -87,7 +87,7 @@ def get_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = F
     return common_path
 
 
-def get_checkpoint_train_state_filename(checkpoints_path: str, prefix: Optional[str] = None) -> str:
+def get_checkpoint_train_state_filename(checkpoints_path: str, prefix: str | None = None) -> str:
     """Get the filename for the train state tracker file.
 
     This file typically stores metadata about the latest checkpoint, like the iteration number.
@@ -131,7 +131,7 @@ def get_checkpoint_tracker_filename(checkpoints_path: str) -> str:
     return os.path.join(checkpoints_path, "latest_checkpointed_iteration.txt")
 
 
-def checkpoint_exists(checkpoints_path: Optional[str]) -> bool:
+def checkpoint_exists(checkpoints_path: str | None) -> bool:
     """Check if a checkpoint directory exists.
 
     Args:

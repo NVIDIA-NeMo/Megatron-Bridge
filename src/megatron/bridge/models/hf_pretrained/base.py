@@ -15,7 +15,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Union
+from typing import ClassVar
 
 import torch
 from transformers import AutoConfig, PreTrainedModel
@@ -46,19 +46,19 @@ class PreTrainedBase(ABC):
                 ...
     """
 
-    model_name_or_path: Union[str, Path]
-    ARTIFACTS: ClassVar[List[str]] = []
-    OPTIONAL_ARTIFACTS: ClassVar[List[str]] = []
+    model_name_or_path: str | Path
+    ARTIFACTS: ClassVar[list[str]] = []
+    OPTIONAL_ARTIFACTS: ClassVar[list[str]] = []
 
     def __init__(self, **kwargs):
-        self._state_dict_accessor: Optional[StateDict] = None
+        self._state_dict_accessor: StateDict | None = None
         self.init_kwargs = kwargs
 
-    def get_artifacts(self) -> Dict[str, str]:
+    def get_artifacts(self) -> dict[str, str]:
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
 
-    def save_artifacts(self, save_directory: Union[str, Path]):
+    def save_artifacts(self, save_directory: str | Path):
         """
         Saves all loaded, generic artifacts that have a `save_pretrained` method
         to the specified directory. Note: This does not save the `model` attribute.
@@ -138,7 +138,7 @@ class PreTrainedBase(ABC):
             model.state.regex(r".*\\.bias$")  # Regex pattern
         """
         if self._state_dict_accessor is None:
-            source: Optional[Union[Dict[str, torch.Tensor], StateSource]] = None
+            source: dict[str, torch.Tensor] | StateSource | None = None
             # Prioritize the loaded model's state_dict if available
             if hasattr(self, "_model") and self._model is not None:
                 source = self.model.state_dict()

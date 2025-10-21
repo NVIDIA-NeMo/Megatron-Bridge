@@ -19,7 +19,7 @@ behavior for different types using the `impl` decorator.
 """
 
 from functools import _find_impl  # type: ignore
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, TypeVar
 
 
 _SignatureType = TypeVar("_SignatureType", bound=Callable)
@@ -40,8 +40,8 @@ class _Dispatch:
     def __init__(self, signature: Callable) -> None:
         self._signature = signature
         self._name = signature.__name__
-        self._exact_types: Dict[Any, Callable] = {}
-        self._dispatch_cache: Dict[Any, Callable] = {}
+        self._exact_types: dict[Any, Callable] = {}
+        self._dispatch_cache: dict[Any, Callable] = {}
 
         # Extract docstring and module info for rich repr
         self._doc = signature.__doc__
@@ -169,7 +169,7 @@ class _Dispatch:
         lines.append(")")
         return "\n".join(lines)
 
-    def _dispatch(self, instance: Any, instance_type: type) -> Optional[Callable]:
+    def _dispatch(self, instance: Any, instance_type: type) -> Callable | None:
         """Find the implementation for a given type.
 
         Fallback order:
@@ -253,7 +253,7 @@ class _Dispatch:
             suggestion_names = ", ".join(t.__name__ if hasattr(t, "__name__") else str(t) for t in instance_types)
             type_name_for_suggestion = f"({suggestion_names})"
             type_name_for_func = "tuple"
-            instance_type_hint = f"Tuple[{', '.join(t.__name__ for t in instance_types)}]"
+            instance_type_hint = f"tuple[{', '.join(t.__name__ for t in instance_types)}]"
         else:
             instance_type = instance if isinstance(instance, type) else type(instance)
             qualname = instance_type.__qualname__ if hasattr(instance_type, "__qualname__") else str(instance_type)

@@ -20,7 +20,6 @@ except ImportError as e:
     raise ImportError('Required `"nvidia-modelopt[torch]"` is not installed!') from e
 
 import os.path
-from typing import List
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
@@ -39,7 +38,7 @@ def has_modelopt_state(checkpoint_path: str) -> bool:
     return os.path.isdir(modelopt_state_path)
 
 
-def load_modelopt_state(model: List[MegatronModule], checkpoint_path: str) -> None:
+def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
     """Load modelopt_state from a checkpoint.
     Args:
         model: The model to load the modelopt_state into

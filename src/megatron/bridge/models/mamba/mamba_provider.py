@@ -15,7 +15,7 @@
 import logging
 import warnings
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional, Union
+from typing import Callable, Literal
 
 import torch
 from megatron.core import parallel_state
@@ -53,13 +53,13 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     num_attention_heads: int = 1
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
-    hybrid_override_pattern: Optional[str] = None
+    hybrid_override_pattern: int | None = None
     seq_length: int = 8192
     # Mamba with no attention has no need for position embeddings, so none is default
     position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
-    seq_len_interpolation_factor: Optional[float] = None
+    seq_len_interpolation_factor: float | None = None
     apply_rope_fusion: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False
@@ -72,8 +72,8 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
-    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = lambda: default_mamba_stack_spec
-    vocab_size: Optional[int] = None
+    mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] = lambda: default_mamba_stack_spec
+    vocab_size: int | None = None
     should_pad_vocab: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:

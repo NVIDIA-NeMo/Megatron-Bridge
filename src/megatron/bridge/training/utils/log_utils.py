@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from functools import partial
 from logging import Filter, LogRecord
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import torch
 import torch.distributed
@@ -60,7 +60,7 @@ def module_filter(record: LogRecord, modules_to_filter: list[str]) -> bool:
     return True
 
 
-def add_filter_to_all_loggers(filter: Union[Filter, Callable[[LogRecord], bool]]) -> None:
+def add_filter_to_all_loggers(filter: Filter | Callable[[LogRecord], bool]) -> None:
     """Add a filter to the root logger and all existing loggers.
 
     Args:
@@ -79,7 +79,7 @@ def add_filter_to_all_loggers(filter: Union[Filter, Callable[[LogRecord], bool]]
 def setup_logging(
     logging_level: int = logging.INFO,
     filter_warning: bool = True,
-    modules_to_filter: Optional[list[str]] = None,
+    modules_to_filter: list[str] | None = None,
     set_level_for_all_loggers: bool = False,
 ) -> None:
     """Set up logging level and filters for the application.
@@ -162,11 +162,11 @@ def log_single_rank(logger: logging.Logger, *args: Any, rank: int = 0, **kwargs:
     Args:
         logger (logging.Logger): The logger to write the logs
 
-        args (Tuple[Any]): All logging.Logger.log positional arguments
+        args (tuple[Any]): All logging.Logger.log positional arguments
 
         rank (int, optional): The rank to write on. Defaults to 0.
 
-        kwargs (Dict[str, Any]): All logging.Logger.log keyword arguments
+        kwargs (dict[str, Any]): All logging.Logger.log keyword arguments
     """
     if torch.distributed.is_initialized():
         if torch.distributed.get_rank() == rank:

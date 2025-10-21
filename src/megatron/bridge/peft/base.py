@@ -15,7 +15,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, TypeVar, Union
+from typing import TypeVar
 
 import torch
 import torch.nn as nn
@@ -26,7 +26,7 @@ from megatron.bridge.peft.walk_utils import walk
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-ModelType = TypeVar("ModelType", bound=Union[nn.Module, list[MegatronModule]])
+ModelType = TypeVar("ModelType", bound=nn.Module | list[MegatronModule])
 
 
 @dataclass
@@ -54,7 +54,7 @@ class PEFT(ABC):
     params_to_save: set[str] = field(default_factory=set, init=False, repr=False)
 
     @abstractmethod
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(self, module: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
         """Transform a single module according to the PEFT method.
 
         This method is called for each module in the model during the PEFT application process.
@@ -63,8 +63,8 @@ class PEFT(ABC):
 
         Args:
             module (nn.Module): The individual module to be transformed.
-            name (Optional[str]): The name of the module within the model structure. Defaults to None.
-            prefix (Optional[str]): A prefix to be added to the module name, typically used for
+            name (str | None): The name of the module within the model structure. Defaults to None.
+            prefix (str | None): A prefix to be added to the module name, typically used for
                                     nested modules. Defaults to None.
 
         Returns:

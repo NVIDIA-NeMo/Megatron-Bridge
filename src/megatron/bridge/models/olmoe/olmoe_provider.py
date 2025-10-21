@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Callable
 
 import torch
 import torch.nn.functional as F
@@ -49,7 +49,7 @@ def olmoe_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 class OlMoEModelProvider(GPTModelProvider):
     """Base provider for OlMoE Models."""
 
-    transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = olmoe_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = olmoe_layer_spec
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True
@@ -59,7 +59,7 @@ class OlMoEModelProvider(GPTModelProvider):
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     vocab_size: int = 50304
-    share_embeddings_and_output_weights: Optional[bool] = False
+    share_embeddings_and_output_weights: bool | None = False
     layernorm_epsilon: float = 1e-5
     autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.float32

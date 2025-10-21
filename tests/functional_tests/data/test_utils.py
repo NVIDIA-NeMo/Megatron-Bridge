@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -115,9 +115,7 @@ class TestProtocolAdapterBehavior:
         class TestProvider(DatasetProvider):
             seq_length: int = 512
 
-            def build_datasets(
-                self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
                 # Return mock datasets with context information
                 train_ds = MagicMock()
                 train_ds.context_info = {"train_samples": context.train_samples, "tokenizer": context.tokenizer}
@@ -149,9 +147,7 @@ class TestProtocolAdapterBehavior:
         class TestProvider(DatasetProvider):
             seq_length: int = 512
 
-            def build_datasets(
-                self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
                 train_ds = MagicMock()
                 train_ds.has_tokenizer = context.tokenizer is not None
                 return train_ds, None, None
@@ -172,9 +168,7 @@ class TestProtocolAdapterBehavior:
         class ErrorProvider(DatasetProvider):
             seq_length: int = 512
 
-            def build_datasets(
-                self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            def build_datasets(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, Any | None]:
                 raise ValueError("Custom dataset error")
 
         provider_config = ErrorProvider()

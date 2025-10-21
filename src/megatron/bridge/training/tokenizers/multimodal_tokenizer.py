@@ -3,7 +3,6 @@
 """Multimodal tokenizer."""
 
 from dataclasses import dataclass
-from typing import Dict, List, Union
 
 import numpy as np
 
@@ -76,7 +75,7 @@ class MultimodalTokenizer(MegatronTokenizer):
         self,
         tokenizer: MegatronTokenizer,
         prompt_format: str,
-        special_tokens: List[str],
+        special_tokens: list[str],
         image_tag_type: str,
     ):
         """Tokenizer with a support for non-text inputs.
@@ -86,7 +85,7 @@ class MultimodalTokenizer(MegatronTokenizer):
         Args:
             tokenizer (MegatronTokenizer): Underlying tokenizer.
             prompt_format (str): Prompt format for the tokenizer.
-            special_tokens (List[str]): Non-text tokens.
+            special_tokens (list[str]): Non-text tokens.
             image_tag_type (str): Image tag to apply, if any. For example <img><image></img>.
         """
         self._vocab_size = len(tokenizer)
@@ -157,7 +156,7 @@ class MultimodalTokenizer(MegatronTokenizer):
 
         self._image_tag = IMAGE_TAGS[image_tag_type]
 
-    def _apply_image_tag(self, text: Union[str, List[Dict]]):
+    def _apply_image_tag(self, text: str | list[dict]):
         """Surround <image> with image tags such as <img> and </img>."""
         if self._image_tag is None:
             return text
@@ -172,7 +171,7 @@ class MultimodalTokenizer(MegatronTokenizer):
 
         return text
 
-    def tokenize(self, text: Union[str, List[Dict]]):
+    def tokenize(self, text: str | list[dict]):
         """Tokenize conversation or string input."""
         if isinstance(text, list):
             # This code path is used by the inference code currently.
@@ -185,11 +184,11 @@ class MultimodalTokenizer(MegatronTokenizer):
         text = self._apply_image_tag(text)
         return self._tokenizer.encode(text)
 
-    def tokenize_conversation(self, conversation: List[Dict], return_target: bool, add_generation_prompt: bool):
+    def tokenize_conversation(self, conversation: list[dict], return_target: bool, add_generation_prompt: bool):
         """Convert a conversation to tokens.
 
         Args:
-            conversation (List[Dict]): Sequence of system/user/assistant messages.
+            conversation (list[dict]): Sequence of system/user/assistant messages.
                 Must be in the following format:
                 [
                     {"role": "user", "content": "something"},
@@ -256,11 +255,11 @@ class MultimodalTokenizer(MegatronTokenizer):
 
         return tokens, target
 
-    def convert_tokens_to_ids(self, tokens: List[str]):
+    def convert_tokens_to_ids(self, tokens: list[str]):
         """Convert tokens to IDs."""
         return self._tokenizer.convert_tokens_to_ids(tokens)
 
-    def detokenize(self, tokens: List[int]):
+    def detokenize(self, tokens: list[int]):
         """Detokenize tokens."""
         return self._tokenizer.decode(tokens)
 

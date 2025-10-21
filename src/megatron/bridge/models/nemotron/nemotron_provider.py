@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 
@@ -57,8 +57,8 @@ class NemotronModelProvider(GPTModelProvider):
     hidden_size: int = 3072
     ffn_hidden_size: int = 9216
     num_attention_heads: int = 24
-    num_query_groups: Optional[int] = 8
-    kv_channels: Optional[int] = 128
+    num_query_groups: int | None = 8
+    kv_channels: int | None = 128
     init_method_std: float = 0.0134
 
     # Data type settings to match HF models
@@ -80,7 +80,7 @@ class Nemotron3ModelProvider4B(NemotronModelProvider):
     ffn_hidden_size: int = 9216
     num_attention_heads: int = 24
     num_query_groups: int = 8
-    kv_channels: Optional[int] = 128
+    kv_channels: int | None = 128
     init_method_std: float = 0.0134
 
 
@@ -95,8 +95,8 @@ class Nemotron3ModelProvider8B(NemotronModelProvider):
     hidden_size: int = 4096
     ffn_hidden_size: int = 16384
     num_attention_heads: int = 32
-    num_query_groups: Optional[int] = None
-    kv_channels: Optional[int] = None
+    num_query_groups: int | None = None
+    kv_channels: int | None = None
     init_method_std: float = 0.010
 
 
@@ -111,8 +111,8 @@ class Nemotron3ModelProvider22B(NemotronModelProvider):
     hidden_size: int = 6144
     ffn_hidden_size: int = 24576
     num_attention_heads: int = 48
-    num_query_groups: Optional[int] = None
-    kv_channels: Optional[int] = None
+    num_query_groups: int | None = None
+    kv_channels: int | None = None
     init_method_std: float = 0.008
 
 
@@ -127,8 +127,8 @@ class Nemotron4ModelProvider15B(NemotronModelProvider):
     hidden_size: int = 6144
     ffn_hidden_size: int = 24576
     num_attention_heads: int = 48
-    num_query_groups: Optional[int] = 8
-    kv_channels: Optional[int] = None
+    num_query_groups: int | None = 8
+    kv_channels: int | None = None
     init_method_std: float = 0.0134
 
 
@@ -143,6 +143,6 @@ class Nemotron4ModelProvider340B(NemotronModelProvider):
     hidden_size: int = 18432
     ffn_hidden_size: int = 73728
     num_attention_heads: int = 96
-    num_query_groups: Optional[int] = 8
-    kv_channels: Optional[int] = None
+    num_query_groups: int | None = 8
+    kv_channels: int | None = None
     init_method_std: float = 0.0063

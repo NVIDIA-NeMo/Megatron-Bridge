@@ -15,7 +15,7 @@
 import math
 import re
 from importlib.metadata import version
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable
 
 import packaging
 import torch
@@ -66,7 +66,7 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool, bool]:
+def get_adapter_attributes_from_linear(m: nn.Module) -> tuple[bool, int, int, bool, bool]:
     """Returns attributes from the base layer.
 
     input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
@@ -164,7 +164,7 @@ def is_expert_linear(fqn: str) -> bool:
     return re.match(r".*mlp\..*experts.*\.linear_fc[1-2]$", fqn) is not None
 
 
-def wildcard_match(pattern: str, key: Optional[str]) -> Optional[bool]:
+def wildcard_match(pattern: str, key: str | None) -> bool | None:
     """Return whether the pattern (target module to add LoRA) matches the key (model weight name).
 
     This function performs wildcard matching using '*' as a placeholder for any substring.
@@ -237,7 +237,7 @@ def init_method_const(val: float) -> Callable[[torch.Tensor], torch.Tensor]:
     return init_
 
 
-def pad_seq_to_mult(x: torch.Tensor, mult: int) -> Tuple[torch.Tensor, int]:
+def pad_seq_to_mult(x: torch.Tensor, mult: int) -> tuple[torch.Tensor, int]:
     """Pad sequence length to be a multiple of mult.
 
     This function pads the first dimension of the tensor to ensure it's divisible by mult.
@@ -382,8 +382,8 @@ class ParallelLinearAdapter(nn.Module):
         row_init_method: str = "zero",
         input_is_parallel: bool = False,
         dropout: float = 0.0,
-        model_parallel_config: Optional[ModelParallelConfig] = None,
-        alpha: Optional[float] = None,
+        model_parallel_config: ModelParallelConfig | None = None,
+        alpha: float | None = None,
         dropout_position: str = "post",
         a2a_experimental: bool = False,
         is_expert: bool = False,
@@ -598,7 +598,7 @@ class ParallelLinearAdapter(nn.Module):
         return x
 
     def sharded_state_dict(
-        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: dict | None = None
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 

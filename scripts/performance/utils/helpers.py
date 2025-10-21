@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from omegaconf import OmegaConf
 
@@ -135,7 +135,7 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
-def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: Dict[str, Any]) -> None:
+def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded_fields: dict[str, Any]) -> None:
     """Apply GPU/precision-specific overrides from a unified YAML's perf_matrix."""
     preset = get_perf_matrix_overrides(yaml_root, args)
     if not preset:
@@ -149,7 +149,7 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
 
     # Deep-merge so dtype-specific values override common
     merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
-    perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore
+    perf_overrides: dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore
 
     recipe.train.micro_batch_size = perf_overrides.get("mbs", recipe.train.micro_batch_size)
     recipe.train.global_batch_size = perf_overrides.get("gbs", recipe.train.global_batch_size)

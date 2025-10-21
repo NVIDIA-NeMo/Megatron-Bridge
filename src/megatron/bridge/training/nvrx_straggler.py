@@ -14,7 +14,7 @@
 
 import logging
 import time
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 
@@ -306,7 +306,7 @@ class NVRxStragglerDetectionManager:
             self.logger.info("NVRx straggler detection shutdown complete.")
 
 
-def check_nvrx_straggler_detection(nvrx_straggler_manager: Optional["NVRxStragglerDetectionManager"]) -> bool:
+def check_nvrx_straggler_detection(nvrx_straggler_manager: "NVRxStragglerDetectionManager" | None) -> bool:
     """
     Check NVRx straggler detection and determine if training should exit.
 
@@ -324,7 +324,7 @@ def check_nvrx_straggler_detection(nvrx_straggler_manager: Optional["NVRxStraggl
 
 
 def safe_shutdown_nvrx_straggler_manager(
-    manager: Optional["NVRxStragglerDetectionManager"], logger_name: str = "nvrx_straggler"
+    manager: "NVRxStragglerDetectionManager" | None, logger_name: str = "nvrx_straggler"
 ) -> None:
     """
     Safely shutdown the NVRx straggler detection manager with error handling.

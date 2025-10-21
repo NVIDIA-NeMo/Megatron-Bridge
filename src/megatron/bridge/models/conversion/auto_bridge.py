@@ -15,7 +15,7 @@
 import dataclasses
 from functools import cached_property, partial
 from pathlib import Path
-from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
+from typing import Any, Generic, Iterable, Type, TypeVar
 
 import torch.distributed as dist
 import transformers
@@ -181,7 +181,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return cls(config)
 
     @classmethod
-    def from_hf_pretrained(cls, path: Union[str, Path], **kwargs) -> "AutoBridge":
+    def from_hf_pretrained(cls, path: str | Path, **kwargs) -> "AutoBridge":
         """
         Load an AutoBridge from a pretrained model, automatically detecting the model type.
 
@@ -231,7 +231,7 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 
     @classmethod
-    def can_handle(cls, path: Union[str, Path], trust_remote_code: bool = False) -> bool:
+    def can_handle(cls, path: str | Path, trust_remote_code: bool = False) -> bool:
         """
         Check if the bridge can handle the model at the given path.
 
@@ -303,7 +303,7 @@ class AutoBridge(Generic[MegatronModelT]):
         model: list[MegatronModelT],
         cpu: bool = False,
         show_progress: bool = True,
-        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        conversion_tasks: list[WeightConversionTask] | None = None,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
@@ -316,7 +316,7 @@ class AutoBridge(Generic[MegatronModelT]):
             model: Megatron model instance or list of instances
             cpu: Whether to move tensors to CPU before yielding
             show_progress: Display progress bar during export
-            conversion_tasks (Optional[List[WeightConversionTask]]): Pre-built conversion tasks.
+            conversion_tasks (list[WeightConversionTask] | None): Pre-built conversion tasks.
                 If not provided, tasks will be built automatically from the models.
                 *Please note that this is an advanced feature and should be used with caution.
                 The tasks needs to be built with the `get_conversion_tasks` method first and
@@ -437,7 +437,7 @@ class AutoBridge(Generic[MegatronModelT]):
             dist.barrier()
 
     def save_megatron_model(
-        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
+        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: str | Path | None = None
     ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
@@ -718,9 +718,9 @@ class AutoBridge(Generic[MegatronModelT]):
 
     def get_conversion_tasks(
         self,
-        megatron_model: Union[MegatronModelT, List[MegatronModelT]],
+        megatron_model: MegatronModelT | list[MegatronModelT],
         hf_path: str | Path | None = None,
-    ) -> List["WeightConversionTask"]:
+    ) -> list["WeightConversionTask"]:
         """Get the conversion tasks for weight conversion between HuggingFace and Megatron formats.
 
         This method returns the planned conversion tasks that would be executed during
@@ -737,7 +737,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 from the bridge's hf_pretrained instance.
 
         Returns:
-            List[WeightConversionTask]: List of conversion tasks that would be executed.
+            list[WeightConversionTask]: List of conversion tasks that would be executed.
                 Each task contains:
                 - param_name: Megatron parameter name
                 - mapping: The parameter mapping object handling the conversion

@@ -18,7 +18,7 @@ import sys
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import torch
 import torch.profiler
@@ -74,12 +74,12 @@ def train(
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
-    valid_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
+    valid_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
     global_state: GlobalState,
     checkpointing_context: dict[str, Any],
-    process_non_loss_data_func: Optional[Callable] = None,
-    non_loss_data_func: Optional[Callable] = None,
+    process_non_loss_data_func: Callable | None = None,
+    non_loss_data_func: Callable | None = None,
 ) -> None:
     """Main training loop.
 
@@ -477,12 +477,12 @@ def train(
 
 def train_step(
     forward_step_func: ForwardStepCallable,
-    data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
     global_state: GlobalState,
-) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
+) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, float | None, int | None]:
     """Single training step.
 
     Args:
@@ -620,10 +620,10 @@ def post_training_step_callbacks(
     num_floating_point_operations_since_last_log_event: float,
     straggler_timer: Any,
     iteration: int,
-    prof: Optional[torch.profiler.profile],
+    prof: torch.profiler.profile | None,
     config: ConfigContainer,
     should_toggle_forward_pre_hook: bool,
-    nsys_nvtx_context: Optional[TNvtxContext] = None,
+    nsys_nvtx_context: TNvtxContext | None = None,
 ) -> None:
     """Run all post-training-step functions (e.g., FT heartbeats, GC).
 
@@ -822,7 +822,7 @@ def save_checkpoint_and_time(
     num_floating_point_operations_so_far: float,
     checkpointing_context: dict[str, Any],
     non_persistent_ckpt: bool = False,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]] = None,
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None = None,
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
@@ -898,7 +898,7 @@ def checkpoint_and_decide_exit(
     opt_param_scheduler: OptimizerParamScheduler,
     num_floating_point_operations_so_far: float,
     checkpointing_context: dict[str, Any],
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None,
 ) -> bool:
     """Handles checkpointing decisions and determines if training should exit.
 
@@ -1045,7 +1045,7 @@ def _finish_train(global_state: GlobalState):
 
 
 def _should_skip_and_handle_iteration(
-    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+    global_state: GlobalState, train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
 ) -> bool:
     """Check if the current iteration should be skipped and handle it if so.
 
@@ -1076,7 +1076,7 @@ def _should_skip_and_handle_iteration(
 
 
 def _dummy_train_step(
-    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+    global_state: GlobalState, train_data_iterator: RerunDataIterator | list[RerunDataIterator] | None
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.
 

@@ -15,7 +15,7 @@
 import abc
 import os
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, TypedDict, TypeVar
 
 
 try:
@@ -110,11 +110,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         data_parallel_random_init: bool = True,
         use_cpu_initialization: None | bool = False,
         init_model_with_meta_device: bool | None = None,
-        pre_wrap_hook: Union[
-            Callable[[list[MegatronModule]], list[MegatronModule]],
-            list[Callable[[list[MegatronModule]], list[MegatronModule]]],
-        ]
-        | None = None,
+        pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | list[Callable[[list[MegatronModule]], list[MegatronModule]]] | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     ) -> list[ModelT]:
@@ -425,11 +421,7 @@ class GetModelKwargs(TypedDict, total=False):
     use_cpu_initialization: bool | None
     init_model_with_meta_device: bool | None
     pre_wrap_hook: (
-        Union[
-            Callable[[list[MegatronModule]], list[MegatronModule]],
-            list[Callable[[list[MegatronModule]], list[MegatronModule]]],
-        ]
-        | None
+        Callable[[list[MegatronModule]], list[MegatronModule]] | list[Callable[[list[MegatronModule]], list[MegatronModule]]] | None
     )
     post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
@@ -467,11 +459,7 @@ def get_model(
     data_parallel_random_init: bool = True,
     use_cpu_initialization: None | bool = False,
     init_model_with_meta_device: bool | None = None,
-    pre_wrap_hook: Union[
-        Callable[[list[MegatronModule]], list[MegatronModule]],
-        list[Callable[[list[MegatronModule]], list[MegatronModule]]],
-    ]
-    | None = None,
+    pre_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | list[Callable[[list[MegatronModule]], list[MegatronModule]]] | None = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.

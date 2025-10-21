@@ -15,7 +15,7 @@
 
 import sys
 from pathlib import Path
-from typing import Dict, Generic, List, Optional, TypeVar, Union
+from typing import Generic, TypeVar
 
 import torch
 from transformers import (
@@ -122,9 +122,9 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
 
     def __init__(
         self,
-        model_name_or_path: Optional[Union[str, Path]] = None,
-        device: Optional[Union[str, torch.device]] = None,
-        torch_dtype: Optional[torch.dtype] = None,
+        model_name_or_path: str | None | None = None,
+        device: str | torch.device | None = None,
+        torch_dtype: torch.dtype | None = None,
         trust_remote_code: bool = False,
         **kwargs,
     ):
@@ -190,7 +190,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    def _load_generation_config(self) -> Optional[GenerationConfig]:
+    def _load_generation_config(self) -> GenerationConfig | None:
         """Load the generation config."""
         if self.model_name_or_path is not None:
             try:
@@ -205,7 +205,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         return None
 
     @property
-    def generation_config(self) -> Optional[GenerationConfig]:
+    def generation_config(self) -> GenerationConfig | None:
         """Lazy load and return the generation config."""
         if not hasattr(self, "_generation_config"):
             self._generation_config = self._load_generation_config()
@@ -233,7 +233,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         self._tokenizer = value
 
     @property
-    def model_name_or_path(self) -> Optional[Union[str, Path]]:
+    def model_name_or_path(self) -> str | None | None:
         """Return the model name or path."""
         return self._model_name_or_path
 
@@ -257,9 +257,9 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
     @classmethod
     def from_pretrained(
         cls,
-        model_name_or_path: Union[str, Path],
-        device: Optional[Union[str, torch.device]] = None,
-        torch_dtype: Optional[torch.dtype] = None,
+        model_name_or_path: str | None,
+        device: str | torch.device | None = None,
+        torch_dtype: torch.dtype | None = None,
         trust_remote_code: bool = False,
         **kwargs,
     ) -> "PreTrainedCausalLM[CausalLMType]":
@@ -286,9 +286,9 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
 
     def generate(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
+        input_ids: torch.LongTensor | None = None,
         **kwargs: Unpack["GenerateKwargs"],
-    ) -> Union[torch.LongTensor, GenerateOutput]:
+    ) -> torch.LongTensor | GenerateOutput:
         """
         Generate text using the underlying language model.
 
@@ -315,7 +315,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
             repetition_penalty (float, optional): Penalty for repeating tokens.
                 Values > 1.0 discourage repetition.
             pad_token_id (int, optional): ID of padding token.
-            eos_token_id (int or List[int], optional): ID(s) of end-of-sequence token(s).
+            eos_token_id (int or list[int], optional): ID(s) of end-of-sequence token(s).
             use_cache (bool, optional): Whether to use past key values to speed up
                 generation. Defaults to True.
 
@@ -364,7 +364,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         """Forward call to model."""
         return self.model(*args, **kwargs)
 
-    def encode(self, text: Union[str, List[str]], **kwargs: Unpack["EncodeKwargs"]) -> Dict[str, torch.Tensor]:
+    def encode(self, text: str | list[str], **kwargs: Unpack["EncodeKwargs"]) -> dict[str, torch.Tensor]:
         """
         Encode text into token IDs using the model's tokenizer.
 
@@ -372,7 +372,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         The output is automatically moved to the same device as the model.
 
         Args:
-            text (str or List[str]): Input text to encode. Can be a single string
+            text (str or list[str]): Input text to encode. Can be a single string
                 or a list of strings for batch encoding.
             **kwargs: Additional arguments passed to the tokenizer. Common options:
                 padding (bool or str, optional): Padding strategy.
@@ -394,7 +394,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
                     expects them.
 
         Returns:
-            Dict[str, torch.Tensor]: Dictionary containing:
+            dict[str, torch.Tensor]: Dictionary containing:
                 - input_ids: Token IDs tensor of shape (batch_size, sequence_length)
                 - attention_mask: Attention mask tensor of same shape (if applicable)
                 - token_type_ids: Token type IDs tensor (if applicable)
@@ -430,7 +430,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
 
     def decode(
         self,
-        token_ids: Union[int, List[int], torch.Tensor],
+        token_ids: int | list[int] | torch.Tensor,
         **kwargs: Unpack["DecodeKwargs"],
     ) -> str:
         """
@@ -440,7 +440,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         back into human-readable text.
 
         Args:
-            token_ids (int, List[int], or torch.Tensor): Token IDs to decode.
+            token_ids (int, list[int], or torch.Tensor): Token IDs to decode.
                 Can be:
                 - Single token ID (int)
                 - List of token IDs
@@ -485,7 +485,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         """
         return self.tokenizer.decode(token_ids, **kwargs)
 
-    def to(self, device: Union[str, torch.device]):
+    def to(self, device: str | torch.device):
         """Move model to specified device."""
         self.device = device
         if self.has_model:
@@ -504,7 +504,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
             self._model = self._model.float()
         return self
 
-    def save_pretrained(self, save_directory: Union[str, Path]):
+    def save_pretrained(self, save_directory: str | None):
         """
         Save all components (model, tokenizer, config, generation_config) to a directory.
 
@@ -527,7 +527,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         self.save_artifacts(save_path)
 
     @property
-    def dtype(self) -> Optional[torch.dtype]:
+    def dtype(self) -> torch.dtype | None:
         """Get model's dtype if loaded."""
         if self.has_model:
             try:
@@ -537,7 +537,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         return None
 
     @property
-    def num_parameters(self) -> Optional[int]:
+    def num_parameters(self) -> int | None:
         """Get total number of parameters if model is loaded."""
         if self.has_model:
             return sum(p.numel() for p in self.model.parameters())
@@ -625,36 +625,36 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
 class GenerateKwargs(TypedDict, total=False):
     """TypedDict for generate method parameters."""
 
-    attention_mask: Optional[torch.Tensor]
-    max_length: Optional[int]
-    max_new_tokens: Optional[int]
-    min_length: Optional[int]
-    do_sample: Optional[bool]
-    temperature: Optional[float]
-    top_k: Optional[int]
-    top_p: Optional[float]
-    repetition_penalty: Optional[float]
-    pad_token_id: Optional[int]
-    eos_token_id: Optional[Union[int, List[int]]]
-    bos_token_id: Optional[int]
-    num_beams: Optional[int]
-    num_return_sequences: Optional[int]
-    early_stopping: Optional[bool]
-    use_cache: Optional[bool]
-    return_dict_in_generate: Optional[bool]
-    output_scores: Optional[bool]
-    output_attentions: Optional[bool]
+    attention_mask: torch.Tensor | None
+    max_length: int | None
+    max_new_tokens: int | None
+    min_length: int | None
+    do_sample: bool | None
+    temperature: float | None
+    top_k: int | None
+    top_p: float | None
+    repetition_penalty: float | None
+    pad_token_id: int | None
+    eos_token_id: int | list[int] | None
+    bos_token_id: int | None
+    num_beams: int | None
+    num_return_sequences: int | None
+    early_stopping: bool | None
+    use_cache: bool | None
+    return_dict_in_generate: bool | None
+    output_scores: bool | None
+    output_attentions: bool | None
 
 
 class EncodeKwargs(TypedDict, total=False):
     """TypedDict for encode method parameters."""
 
-    padding: Union[bool, str]
-    truncation: Union[bool, str]
-    max_length: Optional[int]
+    padding: bool | str
+    truncation: bool | str
+    max_length: int | None
     add_special_tokens: bool
     return_attention_mask: bool
-    return_token_type_ids: Optional[bool]
+    return_token_type_ids: bool | None
     return_tensors: str
 
 

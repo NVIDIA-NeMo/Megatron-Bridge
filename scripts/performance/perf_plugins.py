@@ -30,7 +30,7 @@ use hydra-style overrides.
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable
 
 
 MISSING_NEMO_RUN_MSG = "nemo-run is not available. Please install it with `pip install nemo-run`."
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _format_list_for_override(values: List | int):
+def _format_list_for_override(values: list | int):
     """Render a Python list into a Hydra/CLI-safe list string without spaces.
 
     Example: [0, 3] -> "[0,3]"
@@ -68,11 +68,11 @@ class NsysPluginScriptArgs:
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: List[int]
+    profile_ranks: list[int]
     record_shapes: bool
 
 
-def _default_nsys_converter(args: NsysPluginScriptArgs) -> List[str]:
+def _default_nsys_converter(args: NsysPluginScriptArgs) -> list[str]:
     """Default converter for NsysPlugin that generates hydra-style overrides."""
     return [
         "profiling.use_nsys_profiler=true",
@@ -95,13 +95,13 @@ class NsysPlugin(Plugin):
     Args:
         profile_step_start (int): The step at which to start the nsys profiling.
         profile_step_end (int): The step at which to end the nsys profiling.
-        profile_ranks (Optional[list[int]]): The ranks on which to run the nsys profiling. If not specified,
+        profile_ranks (list[int] | None): The ranks on which to run the nsys profiling. If not specified,
             profiling will be run on rank 0.
-        nsys_trace (Optional[list[str]]): The events to trace during profiling. If not specified,
+        nsys_trace (list[str] | None): The events to trace during profiling. If not specified,
             'nvtx' and 'cuda' events will be traced.
         record_shapes (bool): Whether to record tensor shapes. Default is False.
         nsys_gpu_metrics (bool): Whether to enable GPU metrics collection. Default is False.
-        script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
 
@@ -113,13 +113,13 @@ class NsysPlugin(Plugin):
 
     profile_step_start: int
     profile_step_end: int
-    profile_ranks: Optional[list[int]] = None
-    nsys_trace: Optional[list[str]] = None
+    profile_ranks: list[int] | None = None
+    nsys_trace: list[str] | None = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
-    script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[NsysPluginScriptArgs], list[str]] | None = None
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
         """Set up the nsys profiling plugin."""
@@ -168,7 +168,7 @@ class PerfEnvPluginScriptArgs:
     manual_gc_interval: int
 
 
-def _default_perf_env_converter(args: PerfEnvPluginScriptArgs) -> List[str]:
+def _default_perf_env_converter(args: PerfEnvPluginScriptArgs) -> list[str]:
     """Default converter for PerfEnvPlugin that generates hydra-style overrides."""
     return [
         f"train.manual_gc={str(args.enable_manual_gc).lower()}",
@@ -187,14 +187,14 @@ class PerfEnvPlugin(Plugin):
         layernorm_sm_margin (int): The SM margin for TransformerEngine Layernorm.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
-        nccl_pp_comm_chunksize (Optional[int]): Chunk size for P2P communications.
+        nccl_pp_comm_chunksize (int | None): Chunk size for P2P communications.
         gpu_sm100_or_newer (bool): Whether GPU is SM100 or newer architecture.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
         cp_size (int): Context parallelism size. Default is 1.
         pp_size (int): Pipeline parallelism size. Default is 1.
-        script_args_converter_fn (Optional[Callable]): A function that takes PerfEnvPluginScriptArgs
+        script_args_converter_fn (Callable | None): A function that takes PerfEnvPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
     """
@@ -202,14 +202,14 @@ class PerfEnvPlugin(Plugin):
     enable_layernorm_sm_margin: bool = True
     layernorm_sm_margin: int = 16
     enable_vboost: bool = False
-    nccl_pp_comm_chunksize: Optional[int] = None
+    nccl_pp_comm_chunksize: int | None = None
     gpu_sm100_or_newer: bool = False
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int = 1
     cp_size: int = 1
     pp_size: int = 1
-    script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
+    script_args_converter_fn: Callable[[PerfEnvPluginScriptArgs], list[str]] | None = None
     num_gpus: int = 8
     deepep_enabled: bool = False
     a2a_overlap: bool = False
@@ -234,7 +234,7 @@ class PerfEnvPlugin(Plugin):
 
         return vboost_cmd
 
-    def _set_num_cuda_device_max_connections(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def _set_num_cuda_device_max_connections(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         self.dp_size = self.num_gpus // (self.tp_size * self.cp_size * self.pp_size)
 
         cuda_device_max_connections = 8
@@ -261,7 +261,7 @@ class PerfEnvPlugin(Plugin):
         executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
         logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         """Enable the performance environment settings"""
 
         if not HAVE_NEMO_RUN:

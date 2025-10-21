@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from importlib.metadata import version
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 import packaging
 import torch
@@ -46,16 +46,16 @@ class AutocastTransformerLayer(TransformerLayer):
         output_layer_init_method: Callable,
         hidden_dropout: float,
         attention_dropout: float,
-        layer_number: Optional[int] = None,
-        kv_channels: Optional[int] = None,
+        layer_number: int | None = None,
+        kv_channels: int | None = None,
         self_attn_mask_type: str = "causal",
-        tp_group: Optional[Any] = None,
+        tp_group: Any | None = None,
         tp_size: int = 1,
         params_dtype: torch.dtype = torch.float32,
-        get_rng_state_tracker: Optional[Callable] = None,
+        get_rng_state_tracker: Callable | None = None,
         fuse_wgrad_accumulation: bool = False,
-        seq_length: Optional[int] = None,
-        micro_batch_size: Optional[int] = None,
+        seq_length: int | None = None,
+        micro_batch_size: int | None = None,
         sequence_parallel: bool = False,
         apply_residual_connection_post_layernorm: bool = False,
         output_layernorm: bool = False,
@@ -131,11 +131,11 @@ class AutocastTransformerLayer(TransformerLayer):
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor = None,
-        encoder_output: Optional[torch.Tensor] = None,
-        enc_dec_attn_mask: Optional[torch.Tensor] = None,
-        inference_params: Optional[Any] = None,
-        is_first_microbatch: Optional[bool] = None,
-        checkpoint_core_attention: Optional[bool] = False,
+        encoder_output: torch.Tensor | None = None,
+        enc_dec_attn_mask: torch.Tensor | None = None,
+        inference_params: Any | None = None,
+        is_first_microbatch: bool | None = None,
+        checkpoint_core_attention: bool | None = False,
     ) -> torch.Tensor:
         """
         Perform a forward pass through the transformer layer.
@@ -327,7 +327,7 @@ def get_gpt_full_te_layer_autocast_spec(transformer_config) -> ModuleSpec:
     )
 
 
-def torch_dtype_from_precision(precision: Union[int, str]) -> torch.dtype:
+def torch_dtype_from_precision(precision: int | str) -> torch.dtype:
     """Mapping from precision types to corresponding PyTorch parameter datatype."""
     if precision in ("bf16", "bf16-mixed"):
         return torch.bfloat16

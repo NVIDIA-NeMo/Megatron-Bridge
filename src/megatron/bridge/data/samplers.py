@@ -3,7 +3,7 @@
 """Dataloaders."""
 
 import random
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator
 
 import numpy as np
 import torch
@@ -17,15 +17,15 @@ def build_pretraining_data_loader(
     micro_batch_size: int,
     num_workers: int,
     data_sharding: bool,
-    worker_init_fn: Optional[Callable] = None,
-    collate_fn: Optional[Callable] = None,
+    worker_init_fn: Callable | None = None,
+    collate_fn: Callable | None = None,
     pin_memory: bool = True,
     persistent_workers: bool = False,
     data_parallel_rank: int = 0,
     data_parallel_size: int = 1,
-    drop_last: Optional[bool] = True,
-    global_batch_size: Optional[int] = None,
-) -> Optional[DataLoader]:
+    drop_last: bool | None = True,
+    global_batch_size: int | None = None,
+) -> DataLoader | None:
     """Build a dataloader for pretraining.
 
     Selects the appropriate sampler (MegatronPretrainingSampler,

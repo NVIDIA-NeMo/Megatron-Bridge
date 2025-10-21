@@ -28,11 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def tokenize_dataset(
-    path: Path,
-    tokenizer: MegatronTokenizer,
-    max_seq_length: int,
-    seed: int,
-    dataset_kwargs: dict | None = None,
+    path: Path, tokenizer: MegatronTokenizer, max_seq_length: int, seed: int, dataset_kwargs: dict | None = None
 ):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
@@ -42,9 +38,8 @@ def tokenize_dataset(
         path (Path): Path to the dataset file.
         tokenizer (MegatronTokenizer): The tokenizer to use for tokenization.
         max_seq_length (int): Maximum sequence length for the tokens.
-        seed (int): Random seed for shuffling the dataset.
+        seed (int): Random seed for shuffling the dataset (optional).
         dataset_kwargs (dict | None): Additional keyword arguments to pass to create_sft_dataset.
-            Can include 'chat', 'use_hf_tokenizer_chat_template', 'tool_schemas', etc.
 
     Returns:
         np.ndarray: A NumPy array containing the tokenized data.
@@ -101,8 +96,7 @@ def prepare_packed_sequence_data(
         seed (int | None): Random seed for shuffling (optional).
         packing_algorithm (str): The algorithm used for packing sequences
                 currently supports "first_fit_shuffle" and "first_fit_decreasing".
-        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_sft_dataset.
-            Enables packing with chat templates, tool schemas, etc.
+        dataset_kwargs (dict | None): Additional keyword arguments to pass to dataset creation.
 
     Returns:
         None: Saves the packed sequence data to the specified output path.
@@ -126,7 +120,7 @@ def prepare_packed_sequence_data(
         try:
             with output_metadata_path.open(mode="r") as f:
                 packing_metadata_file = json.load(f)
-                # 'packing_metadata_file' is expected to be a list of dicts: List[Dict[str, int]]
+                # 'packing_metadata_file' is expected to be a list of dicts: list[dict[str, int]]
                 # Each dict corresponds to a packed dataset. Typically there will be two dicts,
                 # one each for the packed val and train datasets.
                 # Each dict records two values: 'max_samples_per_bin', the max

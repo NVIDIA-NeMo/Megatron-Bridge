@@ -28,7 +28,6 @@ Example:
 """
 
 import argparse
-from typing import Optional
 
 import requests
 import torch
@@ -128,7 +127,7 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_image_inputs(processor, image_path: Optional[str], prompt: str):
+def process_image_inputs(processor, image_path: str | None, prompt: str):
     """Process image inputs for vision-language model.
 
     Args:

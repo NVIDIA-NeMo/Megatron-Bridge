@@ -24,7 +24,7 @@ def _get_rank_and_world_size():
     """Get the current rank and world size for distributed training.
 
     Returns:
-        Tuple[int, int]: (rank, world_size) where rank=0 and world_size=1 for non-distributed setups.
+        tuple[int, int]: (rank, world_size) where rank=0 and world_size=1 for non-distributed setups.
     """
     if dist.is_available() and dist.is_initialized():
         return dist.get_rank(), dist.get_world_size()

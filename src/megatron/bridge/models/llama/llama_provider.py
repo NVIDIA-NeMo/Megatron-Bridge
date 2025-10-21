@@ -15,7 +15,7 @@
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Union
+from typing import Callable
 
 import torch
 import torch.nn.functional as F
@@ -55,7 +55,7 @@ class LlamaModelProvider(GPTModelProvider):
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
-    use_transformer_engine_op_fuser: Optional[bool] = None
+    use_transformer_engine_op_fuser: bool | None = None
 
 
 @dataclass
@@ -367,7 +367,7 @@ class Llama4ModelProvider(Llama3ModelProvider):
     rotary_interleaved: bool = True
     apply_rope_fusion: bool = False
     nope_layer_interval: int = 4
-    transformer_layer_spec: Union[ModuleSpec, Callable[["LlamaModelProvider"], ModuleSpec]] = field(
+    transformer_layer_spec: ModuleSpec | Callable[["LlamaModelProvider"], ModuleSpec] = field(
         default_factory=lambda: get_llama4_layer_spec
     )
     # MOE
@@ -378,7 +378,7 @@ class Llama4ModelProvider(Llama3ModelProvider):
     moe_router_pre_softmax: bool = False
     moe_router_score_function: str = "sigmoid"
     moe_token_dispatcher_type: str = "alltoall"
-    moe_router_dtype: Optional[str] = None
+    moe_router_dtype: str | None = None
     moe_apply_probs_on_input: bool = True
     moe_shared_expert_overlap: bool = True
     moe_permute_fusion: bool = False
@@ -409,7 +409,7 @@ class Llama4Experts128ModelProvider(Llama4ModelProvider):
 
     num_moe_experts: int = 128
     rope_scaling: bool = False
-    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0, 1] * 24)
+    moe_layer_freq: int | list[int] = field(default_factory=lambda: [0, 1] * 24)
     qk_l2_norm: bool = False
 
 

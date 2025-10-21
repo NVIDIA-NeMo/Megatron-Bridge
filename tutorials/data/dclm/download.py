@@ -14,7 +14,6 @@
 
 import argparse
 import time
-from typing import Union
 
 import numpy as np
 import requests
@@ -72,7 +71,7 @@ def download_dataset(
     max_retries: int = 5,
     retry_delay: int = 10,
     resume_download: bool = True,
-    patterns: Union[str | list] = "*.jsonl.zst",
+    patterns: str | list = "*.jsonl.zst",
 ) -> None:
     """Downloads DCLM dataset from HF
 
@@ -82,7 +81,7 @@ def download_dataset(
         max_retries (int): max number of donwload retries when error has been reached.
         retry_delay (int): delay in seconds between code retries.
         resume_download (bool): whether to resume download from latest saved datafile.
-        patterns (Union[str|list]): patterns to download specific subdataset.
+        patterns (str | list): patterns to download specific subdataset.
     """
     start_time = time.time()
 

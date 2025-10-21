@@ -15,7 +15,7 @@
 """Utilities for recipe functional tests."""
 
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
@@ -32,10 +32,10 @@ def run_pretrain_recipe_test(
     config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_parallelism: Optional[int] = None,
-    pipeline_parallelism: Optional[int] = None,
-    expert_parallelism: Optional[int] = None,
-    model_overrides: Optional[dict] = None,
+    tensor_parallelism: int | None = None,
+    pipeline_parallelism: int | None = None,
+    expert_parallelism: int | None = None,
+    model_overrides: dict | None = None,
 ):
     """
     Common test implementation for pretrain recipe configurations.
@@ -146,9 +146,8 @@ def run_pretrain_vl_recipe_test(
     config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_parallelism: Optional[int] = None,
-    pipeline_parallelism: Optional[int] = None,
-    model_overrides: Optional[dict] = None,
+    tensor_parallelism: int | None = None,
+    pipeline_parallelism: int | None = None,
 ):
     """
     VLM variant of run_pretrain_recipe_test that uses the VLM forward step.
