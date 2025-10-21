@@ -17,7 +17,7 @@ requires = ["setuptools<80.0.0", "pybind11", "torch", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -28,7 +28,7 @@ name = "megatron-bridge"
 description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM models"
 readme = "README.md"
 dynamic = ["version"]
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
 maintainers = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
@@ -102,16 +102,14 @@ override-dependencies = [
     "triton; sys_platform == 'never'",
 ]
 
-# uv.sources allows us to override dependencies with VCS commits. 
+# uv.sources allows us to override dependencies with VCS commits.
 # Lets use this only for debugging purposes, but not for production (main).
 [tool.uv.sources]
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "0289e76380088358a584d809faf69effab1a7cda" } # on `release_v2.7
 megatron-core = { path = "3rdparty/Megatron-LM/" }
 
 [project.optional-dependencies]
-recipes = [
-    "nemo-run>=0.5.0a0,<0.6.0",
-]
+recipes = ["nemo-run>=0.5.0a0,<0.6.0"]
 
 [dependency-groups]
 docs = [
@@ -134,12 +132,16 @@ test = [
     "pygithub",
     "click",
 ]
-dev = [
-    "pre-commit>=3.6.0",
-    "ruff>=0.9.9",
-    "mypy>=1.8.0",
+dev = ["pre-commit>=3.6.0", "ruff>=0.9.9", "mypy>=1.8.0"]
+peft = ["peft>=0.4.0"]
+build = [
+    "setuptools",
+    "torch",
+    "pybind11",
+    "Cython>=3.0.0",
+    "numpy<2.0.0",
+    "ninja",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"
@@ -151,7 +153,7 @@ Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Bridge"
 [tool.pytest.ini_options]
 # durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.
 # -vv will also display tests with durration = 0.00s
-addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add these arguments to pytest
+addopts = "--verbose --pyargs --durations=0 --strict-markers" # always add these arguments to pytest
 testpaths = ["tests"]
 # directories to ignore when discovering tests
 norecursedirs = [
@@ -169,7 +171,7 @@ norecursedirs = [
     "CVS",
     "dist",
     "venv",
-    "{arch}"
+    "{arch}",
 ]
 # markers to select tests, use `pytest --markers` to see all available markers, `pytest -m "<marker>"` to select tests
 markers = [

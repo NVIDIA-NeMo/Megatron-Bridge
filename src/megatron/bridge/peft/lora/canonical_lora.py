@@ -14,96 +14,23 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Tuple
+from typing import List, Literal, Optional
 
 import torch
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from torch import nn
 
-from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora.canonical_lora_layers import (
+    LoRALinearSplitFC1UpGate,
+    LoRALinearSplitQKV,
+    ModuleDict,
+)
+from megatron.bridge.peft.lora.lora_layers import LinearAdapter, LoRALinear
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
 
 
 logger = logging.getLogger(__name__)
-
-
-class ModuleDict(nn.ModuleDict):
-    """
-    nn.ModuleDict with a sharded_state_dict implementation for checkpointing
-    """
-
-    def sharded_state_dict(
-        self,
-        prefix: str = "",
-        sharded_offsets: Tuple[Tuple[int, int, int]] = (),
-        metadata: Optional[dict] = None,
-    ) -> "ShardedStateDict":
-        """Retrieve the sharded state dictionary of the wrapped module and adapter.
-
-        This method is used for distributed checkpointing, combining the sharded states
-        of both the main module and the adapter.
-
-        Args:
-            prefix (str): A prefix added to parameter and buffer names. Defaults to ''.
-            sharded_offsets (Tuple[Tuple[int, int, int]]): Offsets for sharded parameters.
-                                                           Defaults to an empty tuple.
-            metadata (Optional[dict]): Additional metadata for the sharded state.
-                                       Defaults to None.
-
-        Returns:
-            ShardedStateDict: The combined sharded state dictionary.
-        """
-        sharded_state_dict = {}
-        for key, layer in self.items():
-            sharded_state_dict.update(layer.sharded_state_dict(f"{prefix}{key}.", sharded_offsets, metadata))
-        return sharded_state_dict
-
-
-class LoRALinearSplitQKV(AdapterWrapper):
-    """An adapter wrapper for `linear_qkv` where q, k, v are three separate adapters.
-    This module that adds the output of the adapters to the output of the wrapped module while taking care of shape.
-
-    This class is designed to be used with LoRA (Low-Rank Adaptation) and similar techniques
-    where the adapter's output is added to the main module's output. It extends the AdapterWrapper
-    class to provide a specific implementation of the forward method.
-    """
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        # pylint: disable=C0115,C0116
-        linear_output, bias, layernorm_output = self.base_linear_forward(x)
-        query = self.adapter.adapter_q(layernorm_output)
-        key = self.adapter.adapter_k(layernorm_output)
-        value = self.adapter.adapter_v(layernorm_output)
-
-        query_4d = query.reshape(query.shape[0], query.shape[1], -1, self.to_wrap.config.kv_channels)
-        key_4d = key.reshape(key.shape[0], key.shape[1], -1, self.to_wrap.config.kv_channels)
-        value_4d = value.reshape(value.shape[0], value.shape[1], -1, self.to_wrap.config.kv_channels)
-
-        qkv_4d = torch.cat([query_4d, key_4d, value_4d], dim=2)
-        adapter_output = qkv_4d.reshape(qkv_4d.shape[0], qkv_4d.shape[1], -1)
-
-        return linear_output + adapter_output, bias
-
-
-class LoRALinearSplitFC1UpGate(AdapterWrapper):
-    """An adapter wrapper for `linear_fc1` where up_proj and gate_proj are two separate adapters.
-    This module that adds the output of the adapters to the output of the wrapped module while taking care of shape.
-
-    This class is designed to be used with LoRA (Low-Rank Adaptation) and similar techniques
-    where the adapter's output is added to the main module's output. It extends the AdapterWrapper
-    class to provide a specific implementation of the forward method.
-    """
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        # pylint: disable=C0115,C0116
-        linear_output, bias, layernorm_output = self.base_linear_forward(x)
-        adapter_output_gate = self.adapter.adapter_gate(layernorm_output)
-        adapter_output_up = self.adapter.adapter_up(layernorm_output)
-        adapter_output = torch.cat([adapter_output_gate, adapter_output_up], dim=2)
-        return linear_output + adapter_output, bias
 
 
 @dataclass
@@ -275,3 +202,145 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 return LoRALinearSplitFC1UpGate(m, adapters)
 
         return m
+
+    def merge(self, model):
+        """Merge canonical LoRA adapter weights into base model weights.
+
+        Args:
+            model: The model with canonical LoRA adapters applied
+
+        Returns:
+            The model with canonical LoRA adapters merged into base weights
+        """
+        # First merge adapters into base weights
+        merge_transform = CanonicalLoRAMerge()
+        merge_transform(model, training=False)
+
+        # Then unwrap adapter modules to return clean base structure
+        unwrapped_model = []
+        for stage in model if isinstance(model, list) else [model]:
+            unwrapped_stage = self._unwrap_canonical_modules(stage)
+            unwrapped_model.append(unwrapped_stage)
+
+        return unwrapped_model
+
+    def _unwrap_canonical_modules(self, module):
+        """Recursively unwrap canonical LoRA adapter modules."""
+        # Handle canonical LoRA wrapper types
+        if isinstance(module, (LoRALinearSplitQKV, LoRALinearSplitFC1UpGate)):
+            # Return the unwrapped base module
+            return module.to_wrap
+        elif isinstance(module, LoRALinear):
+            # Handle standard LoRA modules too
+            return module.to_wrap
+
+        # For non-adapter modules, recursively unwrap children
+        for name, child in list(module.named_children()):
+            unwrapped_child = self._unwrap_canonical_modules(child)
+            setattr(module, name, unwrapped_child)
+
+        return module
+
+
+class CanonicalLoRAMerge(PEFT):
+    """Implements the canonical LoRA weight merge for parameter-efficient fine-tuning."""
+
+    @torch.no_grad()
+    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+        """Merge canonical LoRA adapters with base model weights."""
+        if isinstance(module, LoRALinearSplitQKV):
+            logging.info(f"merging LoRALinearSplitQKV {(prefix if prefix else '') + '.' + (name if name else '')}")
+            base_weight = module.to_wrap.weight
+            config = module.to_wrap.config
+
+            # Calculate dimensions for Q, K, V slices
+            kv_channels = config.kv_channels
+            num_query_groups = config.num_query_groups
+            num_attention_heads = config.num_attention_heads
+            heads_per_group = num_attention_heads // num_query_groups
+
+            # Merge each adapter if it exists
+            for adapter_name in ["adapter_q", "adapter_k", "adapter_v"]:
+                if adapter_name not in module.adapter or module.adapter[adapter_name] is None:
+                    continue
+
+                adapter = module.adapter[adapter_name]
+                lora_weight = (
+                    adapter.alpha
+                    / adapter.dim
+                    * adapter.linear_out.weight.to(base_weight.device)
+                    @ adapter.linear_in.weight.to(base_weight.device)
+                )
+
+                # Determine which slice to merge into
+                if adapter_name == "adapter_q":
+                    q_size = heads_per_group * num_query_groups * kv_channels
+                    start_idx = 0
+                    end_idx = q_size
+                elif adapter_name == "adapter_k":
+                    q_size = heads_per_group * num_query_groups * kv_channels
+                    k_size = num_query_groups * kv_channels
+                    start_idx = q_size
+                    end_idx = start_idx + k_size
+                elif adapter_name == "adapter_v":
+                    q_size = heads_per_group * num_query_groups * kv_channels
+                    k_size = num_query_groups * kv_channels
+                    start_idx = q_size + k_size
+                    end_idx = start_idx + num_query_groups * kv_channels
+                else:
+                    continue
+
+                # Merge into the appropriate slice of base weight
+                if base_weight.data[start_idx:end_idx].shape == lora_weight.shape:
+                    base_weight.data[start_idx:end_idx] += lora_weight
+                else:
+                    logger.warning(
+                        f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}"
+                    )
+
+            # Set merged flag to gate future adapter computation
+            setattr(module, "_merged", True)
+            return module
+
+        elif isinstance(module, LoRALinearSplitFC1UpGate):
+            logging.info(
+                f"merging LoRALinearSplitFC1UpGate {(prefix if prefix else '') + '.' + (name if name else '')}"
+            )
+            base_weight = module.to_wrap.weight
+
+            # Merge each adapter if it exists
+            for adapter_name in ["adapter_gate", "adapter_up"]:
+                if adapter_name not in module.adapter or module.adapter[adapter_name] is None:
+                    continue
+
+                adapter = module.adapter[adapter_name]
+                lora_weight = (
+                    adapter.alpha
+                    / adapter.dim
+                    * adapter.linear_out.weight.to(base_weight.device)
+                    @ adapter.linear_in.weight.to(base_weight.device)
+                )
+
+                # Determine slice for gate vs up
+                if adapter_name == "adapter_gate":
+                    start_idx = 0
+                    end_idx = base_weight.shape[0] // 2
+                elif adapter_name == "adapter_up":
+                    start_idx = base_weight.shape[0] // 2
+                    end_idx = base_weight.shape[0]
+                else:
+                    continue
+
+                # Merge into the appropriate slice
+                if base_weight.data[start_idx:end_idx].shape == lora_weight.shape:
+                    base_weight.data[start_idx:end_idx] += lora_weight
+                else:
+                    logger.warning(
+                        f"Skipping merge for {adapter_name} - shape mismatch: {base_weight.data[start_idx:end_idx].shape} vs {lora_weight.shape}"
+                    )
+
+            # Set merged flag to gate future adapter computation
+            setattr(module, "_merged", True)
+            return module
+
+        return module

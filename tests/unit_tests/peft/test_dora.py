@@ -30,8 +30,8 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.peft.dora import DoRA
-from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
+from megatron.bridge.peft.lora.dora import DoRA
+from megatron.bridge.peft.lora.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from tests.unit_tests.peft.test_utils import MockModelParallelConfig
 
 

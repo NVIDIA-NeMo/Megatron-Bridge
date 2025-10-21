@@ -48,12 +48,15 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
     if output_dir:
         save_path = os.path.join(output_dir, model_name)
     else:
-        save_path = model_name
+        # Default to outputs directory (not tracked by git)
+        save_path = os.path.join("outputs", model_name)
 
     bridge = AutoBridge.from_hf_pretrained(hf_model_id)
     megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
     console.print(weights_verification_table(bridge, megatron_model))
 
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
     console.print(f"Saving HF-ckpt in {save_path}...")
     bridge.save_hf_pretrained(megatron_model, save_path)
 

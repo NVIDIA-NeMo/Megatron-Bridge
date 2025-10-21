@@ -54,9 +54,6 @@ class LlamaBridge(MegatronModelBridge):
         else:
             cls = LlamaModelProvider
 
-        # Extract kv_channels from head_dim if present (used by Llama Nemotron models)
-        kv_channels = getattr(hf_config, "head_dim", None)
-
         provider = cls(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
@@ -65,9 +62,9 @@ class LlamaBridge(MegatronModelBridge):
             init_method_std=hf_config.initializer_range,
             layernorm_epsilon=hf_config.rms_norm_eps,
             num_query_groups=hf_config.num_key_value_heads,
+            kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
             seq_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
-            kv_channels=kv_channels,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),

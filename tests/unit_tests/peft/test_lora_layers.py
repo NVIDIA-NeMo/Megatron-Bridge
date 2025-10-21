@@ -26,8 +26,8 @@ import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
 
-from megatron.bridge.peft.lora import TELinearAdapter
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
+from megatron.bridge.peft.lora.lora import TELinearAdapter
+from megatron.bridge.peft.lora.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
 
 
 class MockLinearWithTupleReturn(nn.Module):

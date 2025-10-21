@@ -49,6 +49,7 @@ class LlamaModelProvider(GPTModelProvider):
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
     share_embeddings_and_output_weights: bool = False
+    kv_channels: Optional[int] = 128  # hidden_size / num_attention_heads for most Llama models
     # Fusions
     bias_activation_fusion: bool = True
     masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
@@ -276,6 +277,7 @@ class Llama32ModelProvider1B(Llama31ModelProvider):
     ffn_hidden_size: int = 8192
     num_attention_heads: int = 32
     num_query_groups: int = 8
+    kv_channels: int = 64  # 2048 / 32
     make_vocab_size_divisible_by: int = 128
 
 
