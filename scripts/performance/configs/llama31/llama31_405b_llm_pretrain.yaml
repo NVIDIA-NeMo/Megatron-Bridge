@@ -120,7 +120,7 @@ perf_matrix:
         cp: 1
         vp: null
         use_megatron_fsdp: true
-        cpu_offloading_num_layers: 95
+        cpu_offloading_num_layers: 80
       fp8_mx:
         tp: 4
         pp: 8
@@ -156,7 +156,7 @@ perf_matrix:
         cp: 1
         vp: null
         use_megatron_fsdp: true
-        cpu_offloading_num_layers: 95
+        cpu_offloading_num_layers: 80
       fp8_mx:
         tp: 4
         pp: 8
