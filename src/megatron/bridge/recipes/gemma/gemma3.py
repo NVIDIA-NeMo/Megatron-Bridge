@@ -243,7 +243,7 @@ def _gemma3_common(
             reset_attention_mask=False,
             reset_position_ids=False,
             eod_mask_loss=False,
-            sequence_length=seq_length,
+            seq_length=seq_length,
             num_dataset_builder_threads=1,
             blend=blend,
             blend_per_split=blend_per_split,
