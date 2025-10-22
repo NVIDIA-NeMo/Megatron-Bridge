@@ -176,6 +176,8 @@ def _qwen3_next_common(
         enable_recompute (bool): Whether to enable recompute for memory optimization.
         account_for_embedding_in_pipeline_split (bool): Whether to account for embedding in pipeline split.
         account_for_loss_in_pipeline_split (bool): Whether to account for loss in pipeline split.
+        mtp_num_layers (Optional[int]): Number of layers for MTP.
+        mtp_loss_scaling_factor (Optional[float]): Loss scaling factor for MTP.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
@@ -186,6 +188,7 @@ def _qwen3_next_common(
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
+        enable_deepep (bool): Whether to enable DEEPEP for MoE.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -225,12 +228,12 @@ def _qwen3_next_common(
     model_cfg.mtp_loss_scaling_factor = mtp_loss_scaling_factor
 
     # Performance optimization knobs
-    model_cfg.moe_permute_fusion = True
-    model_cfg.moe_router_fusion = True
-    if enable_deepep:
-        model_cfg.moe_token_dispatcher_type = "flex"
-        model_cfg.moe_enable_deepep = True
-        model_cfg.moe_shared_expert_overlap = False
+    # model_cfg.moe_permute_fusion = True
+    # model_cfg.moe_router_fusion = True
+    # if enable_deepep:
+    #     model_cfg.moe_token_dispatcher_type = "flex"
+    #     model_cfg.moe_enable_deepep = True
+    #     model_cfg.moe_shared_expert_overlap = False
 
     if precision_config is None:
         precision_config = bf16_mixed()

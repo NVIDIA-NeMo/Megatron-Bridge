@@ -14,12 +14,22 @@
 
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import Callable, Optional
 import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +419,10 @@ class Qwen3MoEModelProvider235B_A22B(Qwen3MoEModelProvider):
 @dataclass
 class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     """Base provider for Qwen 3 MoE Models."""
+
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = partial(
+        get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
+    )
 
     layernorm_zero_centered_gamma: bool = True # Zero-centered RMSNorm
     kv_channels: int | None = 256

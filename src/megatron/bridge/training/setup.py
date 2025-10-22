@@ -42,7 +42,7 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
-from megatron.bridge.training.utils.weight_decay_utils import get_no_wd_decay_cond
+from megatron.bridge.training.utils.weight_decay_utils import get_no_weight_decay_cond
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
 
 
@@ -180,7 +180,7 @@ def setup(
     )
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    no_wd_decay_cond = get_no_wd_decay_cond(
+    no_weight_decay_cond = get_no_weight_decay_cond(
         cfg.scheduler.no_weight_decay_cond_type,
         default_skip_embedding_weight_decay=cfg.model.embedding_init_method_std is not None,
     )
@@ -189,7 +189,7 @@ def setup(
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
-        no_wd_decay_cond=no_wd_decay_cond,
+        no_weight_decay_cond=no_weight_decay_cond,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
