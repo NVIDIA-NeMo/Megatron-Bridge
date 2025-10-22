@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NemotronH models
 # Nemotron Nano v2 models
 from megatron.bridge.recipes.nemotronh.nemotron_nano_v2 import (
     nemotron_nano_9b_v2_pretrain_config,
     nemotron_nano_12b_v2_pretrain_config,
 )
+
+# NemotronH models
 from megatron.bridge.recipes.nemotronh.nemotronh import (
     nemotronh_4b_pretrain_config,
     nemotronh_8b_pretrain_config,
