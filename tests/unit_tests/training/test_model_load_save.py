@@ -20,6 +20,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
@@ -905,3 +906,37 @@ class TestLoadTokenizer:
         mock_load_args.assert_called_once_with(ckpt_path)
         mock_cfg_from_args.assert_called_once_with(mock_args)
         mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_with_kwargs(self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer):
+        """Test loading tokenizer config and overriding."""
+        # Setup mocks
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "make_vocab_size_divisible_by": 128},
+            "tokenizer": {},
+        }
+        mock_read_cfg.return_value = mock_run_cfg_dict
+
+        mock_tokenizer_cfg = Mock(spec=TokenizerConfig)
+        mock_tokenizer_cfg.vocab_size = 32000
+        mock_tokenizer_cfg.tokenizer_model = "/path/to/tokenizer.model"
+        mock_instantiate.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        # test changing asset filepath
+        new_asset_path = "/path/to/different/tokenizer.model"
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            _ = load_tokenizer(ckpt_path, tokenizer_model=new_asset_path)
+
+            assert mock_tokenizer_cfg.tokenizer_model == new_asset_path
+
+            # test setting attribute that doesn't exist
+            with pytest.raises(
+                AttributeError, match="Attempting to set a non-existent attribute 'tensor_model_parallel_size'"
+            ):
+                load_tokenizer(ckpt_path, tensor_model_parallel_size=1)
