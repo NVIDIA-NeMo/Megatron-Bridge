@@ -239,6 +239,7 @@ runs:
           --runtime=nvidia --gpus all \
           --shm-size=64g \
           --env TRANSFORMERS_OFFLINE=0 \
+          --cpus=12 \
           --env HYDRA_FULL_ERROR=1 \
           --env HF_HOME=/home/TestData/HF_HOME \
           --env NEMO_HOME=/home/TestData/nemo_home \
