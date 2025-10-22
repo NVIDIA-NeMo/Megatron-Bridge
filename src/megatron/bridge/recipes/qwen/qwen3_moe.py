@@ -17,10 +17,12 @@ from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -34,8 +36,57 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
 
-def qwen3_30b_a3b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+class Qwen3MoeCommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen3 MoE recipe helpers."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+    # Dataset configuration
+    data_paths: Optional[List[str]]
+    data_args_path: Optional[str]
+    train_data_path: Optional[List[str]]
+    valid_data_path: Optional[List[str]]
+    test_data_path: Optional[List[str]]
+    per_split_data_args_path: Optional[str]
+    mock: bool
+    # Model configuration
+    tensor_parallelism: int
+    pipeline_parallelism: int
+    pipeline_parallelism_dtype: Optional[torch.dtype]
+    virtual_pipeline_parallelism: Optional[int]
+    context_parallelism: int
+    expert_parallelism: Optional[int]
+    expert_tensor_parallelism: int
+    sequence_parallelism: bool
+    use_megatron_fsdp: bool
+    enable_recompute: bool
+    account_for_embedding_in_pipeline_split: bool
+    account_for_loss_in_pipeline_split: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    seq_length: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    eval_interval: int
+    save_interval: int
+    use_null_tokenizer: bool
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+
+
+def qwen3_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3MoeCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3-30B-A3B MoE.
+
+    See `_qwen3_moe_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3MoeCommonKwargs = {
         "hf_path": "Qwen/Qwen3-30B-A3B",
         "tensor_parallelism": 4,
         "pipeline_parallelism": 2,
@@ -45,12 +96,16 @@ def qwen3_30b_a3b_pretrain(**user_kwargs):
         "enable_recompute": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3MoeCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_moe_common(**combined_kwargs)
 
 
-def qwen3_235b_a22b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen3_235b_a22b_pretrain_config(**user_kwargs: Unpack[Qwen3MoeCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3-235B-A22B MoE.
+
+    See `_qwen3_moe_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3MoeCommonKwargs = {
         "hf_path": "Qwen/Qwen3-235B-A22B",
         "tensor_parallelism": 4,
         "pipeline_parallelism": 16,
@@ -63,7 +118,7 @@ def qwen3_235b_a22b_pretrain(**user_kwargs):
         "account_for_loss_in_pipeline_split": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3MoeCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_moe_common(**combined_kwargs)
 
 
@@ -100,8 +155,12 @@ def _qwen3_moe_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
+    lr_decay_iters: Optional[int] = None,
+    eval_interval: int = 500,
+    save_interval: int = 500,
+    use_null_tokenizer: bool = False,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
@@ -137,6 +196,7 @@ def _qwen3_moe_common(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
 
@@ -162,13 +222,18 @@ def _qwen3_moe_common(
     model_cfg.expert_model_parallel_size = expert_parallelism
     model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
     model_cfg.sequence_parallel = sequence_parallelism
-    
+
+    if precision_config is None:
+        precision_config = bf16_mixed()
+    if isinstance(precision_config, MixedPrecisionConfig):
+        precision_config.grad_reduce_in_fp32 = False
+
     # MoE-specific pipeline split configurations
     if account_for_embedding_in_pipeline_split:
         model_cfg.account_for_embedding_in_pipeline_split = True
     if account_for_loss_in_pipeline_split:
         model_cfg.account_for_loss_in_pipeline_split = True
-    
+
     # Add recompute settings for memory optimization (used by some MoE models)
     if enable_recompute:
         model_cfg.recompute_granularity = "full"
@@ -178,22 +243,17 @@ def _qwen3_moe_common(
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
+        lr_decay_iters=lr_decay_iters,
         max_lr=lr,
         min_lr=min_lr,
     )
-
-    if precision_config is None:
-        precision_config = bf16_mixed()
-    if isinstance(precision_config, MixedPrecisionConfig):
-        precision_config.grad_reduce_in_fp32 = False
 
     # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=500,
+            eval_interval=eval_interval,
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
@@ -233,9 +293,13 @@ def _qwen3_moe_common(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_path),
+        tokenizer=TokenizerConfig(
+            tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
+            tokenizer_model=hf_path if not use_null_tokenizer else None,
+            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
+        ),
         checkpoint=CheckpointConfig(
-            save_interval=500,
+            save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",

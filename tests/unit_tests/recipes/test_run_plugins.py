@@ -29,14 +29,18 @@ except ImportError:
 if HAS_NEMO_RUN:
     from megatron.bridge.recipes.run_plugins import (
         FaultTolerancePlugin,
+        FaultTolerancePluginScriptArgs,
         NsysPlugin,
+        NsysPluginScriptArgs,
         PerfEnvPlugin,
+        PerfEnvPluginScriptArgs,
         PreemptionPlugin,
+        PreemptionPluginScriptArgs,
         PyTorchProfilerPlugin,
+        PyTorchProfilerPluginScriptArgs,
         WandbPlugin,
+        WandbPluginScriptArgs,
     )
-    from megatron.bridge.recipes.utils.nemo_run_utils import prepare_config_for_nemo_run
-    from megatron.bridge.training.config import ProfilingConfig
 
 
 def create_test_config(**kwargs):
@@ -179,29 +183,6 @@ class TestPreemptionPlugin:
         assert plugin.enable_exit_handler is True
         assert plugin.enable_exit_handler_for_data_loader is False
 
-    def test_setup_with_partial_task(self):
-        """Test setup with run.Partial task."""
-        plugin = PreemptionPlugin(enable_exit_handler=True, enable_exit_handler_for_data_loader=True)
-
-        # Create a config using llama3_8b recipe
-        config = create_test_config(train_iters=100)
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-        executor = MagicMock(spec=run.SlurmExecutor)
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        # Verify config was modified
-        assert task.config.train.exit_signal_handler is True
-        assert task.config.train.exit_signal_handler_for_dataloader is True
-
-        # Verify SLURM signal was set
-        assert executor.signal == "TERM@60"
-
     def test_setup_with_script_task(self):
         """Test setup with run.Script task."""
         plugin = PreemptionPlugin(preempt_time=120)
@@ -227,10 +208,9 @@ class TestPreemptionPlugin:
         """Test setup with non-SLURM executor."""
         plugin = PreemptionPlugin()
 
-        # Create config and task
-        config = create_test_config()
-        task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(config)
+        # Create script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
 
         # Create non-SLURM executor
         executor = MagicMock()  # Not a SlurmExecutor
@@ -244,6 +224,58 @@ class TestPreemptionPlugin:
         if hasattr(executor, "signal"):
             # If it exists, it should be a Mock object, not an actual string
             assert isinstance(executor.signal, MagicMock)
+
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter that uses argparse-style arguments
+        def custom_converter(args: PreemptionPluginScriptArgs):
+            result = []
+            if args.enable_exit_handler:
+                result.append("--enable-exit-handler")
+            if args.enable_exit_handler_for_data_loader:
+                result.append("--enable-exit-handler-dataloader")
+            return result
+
+        plugin = PreemptionPlugin(
+            enable_exit_handler=True,
+            enable_exit_handler_for_data_loader=True,
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--enable-exit-handler" in task.args
+        assert "--enable-exit-handler-dataloader" in task.args
+        # Verify hydra-style args are NOT present
+        assert "train.exit_signal_handler=True" not in task.args
+
+    def test_default_converter_used_when_none_provided(self):
+        """Test that default converter is used when script_args_converter_fn is None."""
+        plugin = PreemptionPlugin(enable_exit_handler=True, script_args_converter_fn=None)
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify default hydra-style args are present
+        assert "train.exit_signal_handler=True" in task.args
+        assert "train.exit_signal_handler_for_dataloader=False" in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -260,41 +292,6 @@ class TestFaultTolerancePlugin:
         assert plugin.initial_rank_heartbeat_timeout == 1800
         assert plugin.rank_heartbeat_timeout == 300
 
-    def test_setup_with_partial_task(self):
-        """Test setup with run.Partial task."""
-        plugin = FaultTolerancePlugin(
-            enable_ft_package=True, calc_ft_timeouts=False, num_in_job_restarts=5, num_job_retries_on_failure=3
-        )
-
-        # Create config using llama3_8b recipe
-        config = create_test_config()
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-
-        # Mock executor and launcher
-        executor = MagicMock()
-        mock_ft_launcher = MagicMock(spec=run.FaultTolerance)
-
-        with patch.object(run, "FaultTolerance", return_value=mock_ft_launcher) as mock_ft_class:
-            plugin.setup(task, executor)
-
-        # Verify FaultTolerance launcher was created with correct params
-        mock_ft_class.assert_called_once_with(
-            max_restarts=5, initial_rank_heartbeat_timeout=1800, rank_heartbeat_timeout=300
-        )
-
-        # Verify executor settings
-        assert executor.launcher == mock_ft_launcher
-        assert executor.retries == 3
-
-        # Verify fault tolerance config was set
-        assert hasattr(task.config, "ft")
-        assert task.config.ft.enable_ft_package is True
-        assert task.config.ft.calc_ft_timeouts is False
-
     def test_setup_with_script_task(self):
         """Test setup with run.Script task."""
         plugin = FaultTolerancePlugin()
@@ -305,51 +302,43 @@ class TestFaultTolerancePlugin:
 
         # Create mock executor
         executor = MagicMock()
-        mock_ft_launcher = MagicMock(spec=run.FaultTolerance)
 
-        with patch.object(run, "FaultTolerance", return_value=mock_ft_launcher):
-            plugin.setup(task, executor)
+        # Run setup
+        plugin.setup(task, executor)
 
         # Verify CLI overrides were added
         assert "ft.enable_ft_package=true" in task.args
         assert "ft.calc_ft_timeouts=true" in task.args
 
-    def test_nsys_profiler_warning(self):
-        """Test that nsys profiler is disabled when fault tolerance is enabled."""
-        plugin = FaultTolerancePlugin()
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
 
-        # Create config without profiling
-        config = create_test_config()
+        # Define a custom converter
+        def custom_converter(args: FaultTolerancePluginScriptArgs):
+            return [
+                f"--ft-enabled={str(args.enable_ft_package).lower()}",
+                f"--ft-calc-timeouts={str(args.calc_ft_timeouts).lower()}",
+            ]
 
-        # Remove any existing profiling config
-        if hasattr(config, "profiling"):
-            delattr(config, "profiling")
+        plugin = FaultTolerancePlugin(
+            enable_ft_package=True, calc_ft_timeouts=False, script_args_converter_fn=custom_converter
+        )
 
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        # Add profiling config with nsys enabled
-        prepared_config.profiling = ProfilingConfig(use_nsys_profiler=True)
-
-        # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
 
         # Create mock executor
         executor = MagicMock()
 
-        with patch.object(run, "FaultTolerance", return_value=MagicMock()):
-            # Capture logger warning
-            from megatron.bridge.recipes import run_plugins
+        # Run setup
+        plugin.setup(task, executor)
 
-            with patch.object(run_plugins.logger, "warning") as mock_warning:
-                plugin.setup(task, executor)
-
-        # Verify nsys profiler was disabled
-        assert task.config.profiling.use_nsys_profiler is False
-
-        # Verify warning was logged
-        mock_warning.assert_called_once()
-        assert "Nsys not supported with the FaultTolerancePlugin" in mock_warning.call_args[0][0]
+        # Verify custom converter was used
+        assert "--ft-enabled=true" in task.args
+        assert "--ft-calc-timeouts=false" in task.args
+        # Verify hydra-style args are NOT present
+        assert "ft.enable_ft_package=true" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -371,71 +360,6 @@ class TestNsysPlugin:
         assert plugin.nsys_trace == ["nvtx", "cuda", "cudnn"]
         assert plugin.record_shapes is True
 
-    def test_setup_with_partial_task(self):
-        """Test setup with run.Partial task."""
-        plugin = NsysPlugin(profile_step_start=100, profile_step_end=200)
-
-        # Create config using llama3_8b recipe
-        config = create_test_config()
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        # Ensure config has profiling attribute (it might not by default)
-        if not hasattr(prepared_config, "profiling"):
-            prepared_config.profiling = None
-
-        # Create mock task and executor
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-        # Ensure task has hasattr method that works properly
-        task.hasattr = lambda attr: hasattr(task, attr)
-
-        # Create mock executor with launcher
-        executor = MagicMock()
-        mock_launcher = MagicMock()
-        executor.get_launcher.return_value = mock_launcher
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        # Verify launcher settings
-        assert mock_launcher.nsys_profile is True
-        assert mock_launcher.nsys_trace == ["nvtx", "cuda"]
-
-        # Verify profiling config
-        assert hasattr(task.config, "profiling")
-        assert task.config.profiling is not None
-        assert task.config.profiling.use_nsys_profiler is True
-        assert task.config.profiling.profile_step_start == 100
-        assert task.config.profiling.profile_step_end == 200
-        assert task.config.profiling.profile_ranks == [0]
-        assert task.config.profiling.record_shapes is False
-
-    def test_setup_with_slurm_executor(self):
-        """Test setup with SlurmExecutor sets proper filename."""
-        plugin = NsysPlugin(profile_step_start=1, profile_step_end=10)
-
-        # Create config and ensure it has profiling attribute
-        config = create_test_config()
-        prepared_config = prepare_config_for_nemo_run(config)
-        if not hasattr(prepared_config, "profiling"):
-            prepared_config.profiling = None
-
-        # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-        task.hasattr = lambda attr: hasattr(task, attr)
-
-        # Create SLURM executor
-        executor = MagicMock(spec=run.SlurmExecutor)
-        mock_launcher = MagicMock()
-        executor.get_launcher.return_value = mock_launcher
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        # Verify SLURM-specific filename was set
-        assert mock_launcher.nsys_filename == "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"
-
     def test_setup_with_script_task(self):
         """Test setup with run.Script task."""
         plugin = NsysPlugin(profile_step_start=50, profile_step_end=100, profile_ranks=[0, 1, 2], record_shapes=True)
@@ -446,8 +370,6 @@ class TestNsysPlugin:
 
         # Create mock executor
         executor = MagicMock()
-        mock_launcher = MagicMock()
-        executor.get_launcher.return_value = mock_launcher
 
         # Run setup
         plugin.setup(task, executor)
@@ -462,6 +384,59 @@ class TestNsysPlugin:
         ]
         for arg in expected_args:
             assert arg in task.args
+
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter that uses JSON format
+        def custom_converter(args: NsysPluginScriptArgs):
+            import json
+
+            config = {
+                "nsys_enabled": True,
+                "start": args.profile_step_start,
+                "end": args.profile_step_end,
+                "ranks": args.profile_ranks,
+                "shapes": args.record_shapes,
+            }
+            return ["--nsys-config", json.dumps(config)]
+
+        plugin = NsysPlugin(
+            profile_step_start=10,
+            profile_step_end=20,
+            profile_ranks=[0, 1],
+            record_shapes=True,
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--nsys-config" in task.args
+        # Find the JSON arg
+        json_arg = None
+        for i, arg in enumerate(task.args):
+            if arg == "--nsys-config" and i + 1 < len(task.args):
+                json_arg = task.args[i + 1]
+                break
+
+        assert json_arg is not None
+        import json
+
+        config = json.loads(json_arg)
+        assert config["nsys_enabled"] is True
+        assert config["start"] == 10
+        assert config["end"] == 20
+        # Verify hydra-style args are NOT present
+        assert "profiling.use_nsys_profiler=true" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -485,22 +460,30 @@ class TestPyTorchProfilerPlugin:
         assert plugin.memory_snapshot_path == "/tmp/memory.pickle"
         assert plugin.record_shapes is True
 
-    def test_setup_with_partial_task(self):
-        """Test setup with run.Partial task."""
-        plugin = PyTorchProfilerPlugin(profile_step_start=10, profile_step_end=20, record_memory_history=True)
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
 
-        # Create config
-        config = create_test_config()
-        prepared_config = prepare_config_for_nemo_run(config)
+        # Define a custom converter
+        def custom_converter(args: PyTorchProfilerPluginScriptArgs):
+            return [
+                "--pytorch-profiler",
+                f"--profile-start={args.profile_step_start}",
+                f"--profile-end={args.profile_step_end}",
+                f"--profile-ranks={','.join(map(str, args.profile_ranks))}",
+                f"--memory-history={'true' if args.record_memory_history else 'false'}",
+            ]
 
-        # Ensure config has profiling attribute
-        if not hasattr(prepared_config, "profiling"):
-            prepared_config.profiling = None
+        plugin = PyTorchProfilerPlugin(
+            profile_step_start=5,
+            profile_step_end=15,
+            profile_ranks=[0, 1],
+            record_memory_history=True,
+            script_args_converter_fn=custom_converter,
+        )
 
-        # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-        task.hasattr = lambda attr: hasattr(task, attr)
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
 
         # Create mock executor
         executor = MagicMock()
@@ -508,16 +491,14 @@ class TestPyTorchProfilerPlugin:
         # Run setup
         plugin.setup(task, executor)
 
-        # Verify profiling config
-        assert hasattr(task.config, "profiling")
-        assert task.config.profiling is not None
-        assert task.config.profiling.use_pytorch_profiler is True
-        assert task.config.profiling.profile_step_start == 10
-        assert task.config.profiling.profile_step_end == 20
-        assert task.config.profiling.profile_ranks == [0]
-        assert task.config.profiling.record_memory_history is True
-        assert task.config.profiling.memory_snapshot_path == "snapshot.pickle"
-        assert task.config.profiling.record_shapes is False
+        # Verify custom converter was used
+        assert "--pytorch-profiler" in task.args
+        assert "--profile-start=5" in task.args
+        assert "--profile-end=15" in task.args
+        assert "--profile-ranks=0,1" in task.args
+        assert "--memory-history=true" in task.args
+        # Verify hydra-style args are NOT present
+        assert "profiling.use_pytorch_profiler=true" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -538,62 +519,6 @@ class TestWandbPlugin:
         assert plugin.entity == "test_entity"
         assert plugin.save_dir == "/custom/wandb"
         assert plugin.log_task_config is False
-
-    @patch.dict(os.environ, {"WANDB_API_KEY": "test_api_key"})
-    def test_setup_with_partial_task_with_api_key(self):
-        """Test setup with run.Partial task when WANDB_API_KEY is set."""
-        plugin = WandbPlugin(project="llama_training", name="experiment_1", entity="nvidia")
-
-        # Create config
-        config = create_test_config()
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-
-        # Create mock executor
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Run setup
-        plugin.setup(task, executor)
-
-        # Verify env var was set
-        assert executor.env_vars["WANDB_API_KEY"] == "test_api_key"
-
-        # Verify logger config
-        assert task.config.logger.wandb_project == "llama_training"
-        assert task.config.logger.wandb_entity == "nvidia"
-        assert task.config.logger.wandb_exp_name == "experiment_1"
-        assert task.config.logger.wandb_save_dir == "/nemo_run/wandb"
-
-    @patch.dict(os.environ, {}, clear=True)
-    def test_setup_without_api_key(self):
-        """Test setup when WANDB_API_KEY is not set."""
-        plugin = WandbPlugin(project="test_project")
-
-        # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(create_test_config())
-
-        # Create mock executor
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        # Capture logger warning
-        import megatron.bridge.recipes.run_plugins
-
-        with patch.object(megatron.bridge.recipes.run_plugins.logger, "warning") as mock_warning:
-            plugin.setup(task, executor)
-
-        # Verify warning was logged
-        mock_warning.assert_called_once()
-        call_args = mock_warning.call_args[0][0]
-        assert "WANDB_API_KEY environment variable is not set" in call_args
-
-        # Verify env var was NOT set
-        assert "WANDB_API_KEY" not in executor.env_vars
 
     @patch.dict(os.environ, {"WANDB_API_KEY": "test_api_key"})
     def test_setup_with_script_task(self):
@@ -622,6 +547,73 @@ class TestWandbPlugin:
         ]
         for arg in expected_args:
             assert arg in task.args
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_setup_with_script_task_without_api_key(self):
+        """Test setup with run.Script task when WANDB_API_KEY is not set."""
+        plugin = WandbPlugin(project="test_project")
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Capture logger warning
+        import megatron.bridge.recipes.run_plugins
+
+        with patch.object(megatron.bridge.recipes.run_plugins.logger, "warning") as mock_warning:
+            plugin.setup(task, executor)
+
+        # Verify warning was logged
+        mock_warning.assert_called_once()
+        call_args = mock_warning.call_args[0][0]
+        assert "WANDB_API_KEY environment variable is not set" in call_args
+
+        # Verify env var was NOT set
+        assert "WANDB_API_KEY" not in executor.env_vars
+
+    @patch.dict(os.environ, {"WANDB_API_KEY": "test_api_key"})
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter
+        def custom_converter(args: WandbPluginScriptArgs):
+            result = ["--wandb"]
+            result.append(f"--wandb-project={args.project}")
+            if args.entity:
+                result.append(f"--wandb-entity={args.entity}")
+            if args.name:
+                result.append(f"--wandb-name={args.name}")
+            return result
+
+        plugin = WandbPlugin(
+            project="custom_project",
+            entity="custom_entity",
+            name="custom_run",
+            script_args_converter_fn=custom_converter,
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--wandb" in task.args
+        assert "--wandb-project=custom_project" in task.args
+        assert "--wandb-entity=custom_entity" in task.args
+        assert "--wandb-name=custom_run" in task.args
+        # Verify hydra-style args are NOT present
+        assert "logger.wandb_project=custom_project" not in task.args
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -652,8 +644,8 @@ class TestPerfEnvPlugin:
         )
 
         # Create mock task and executor
-        task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(create_test_config())
+        task = MagicMock(spec=run.Script)
+        task.args = []
 
         executor = MagicMock()
         executor.env_vars = {}
@@ -672,8 +664,8 @@ class TestPerfEnvPlugin:
         plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, tp_size=2, cp_size=1)
 
         # Create mock task and executor
-        task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(create_test_config())
+        task = MagicMock(spec=run.Script)
+        task.args = []
 
         executor = MagicMock()
         executor.env_vars = {}
@@ -684,33 +676,13 @@ class TestPerfEnvPlugin:
         # Verify CUDA_DEVICE_MAX_CONNECTIONS is 1 for older GPUs
         assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "1"
 
-    def test_manual_gc_config(self):
-        """Test manual garbage collection configuration."""
-        plugin = PerfEnvPlugin(enable_manual_gc=True, manual_gc_interval=200)
-
-        # Test with Partial task
-        config = create_test_config()
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-
-        executor = MagicMock()
-        executor.env_vars = {}
-
-        plugin.setup(task, executor)
-
-        # Verify manual GC was enabled
-        assert task.config.train.manual_gc is True
-        assert task.config.train.manual_gc_interval == 200
-
     def test_vboost_with_slurm_executor(self):
         """Test vboost setup with SlurmExecutor."""
         plugin = PerfEnvPlugin(enable_vboost=True)
 
         # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepare_config_for_nemo_run(create_test_config())
+        task = MagicMock(spec=run.Script)
+        task.args = []
 
         # Create SLURM executor
         executor = MagicMock(spec=run.SlurmExecutor)
@@ -747,57 +719,150 @@ class TestPerfEnvPlugin:
         assert "train.manual_gc=true" in task.args
         assert "train.manual_gc_interval=150" in task.args
 
+    def test_custom_script_args_converter(self):
+        """Test setup with custom script args converter."""
+
+        # Define a custom converter
+        def custom_converter(args: PerfEnvPluginScriptArgs):
+            result = []
+            if args.enable_manual_gc:
+                result.append("--enable-gc")
+                result.append(f"--gc-interval={args.manual_gc_interval}")
+            return result
+
+        plugin = PerfEnvPlugin(
+            enable_manual_gc=True, manual_gc_interval=250, script_args_converter_fn=custom_converter
+        )
+
+        # Create mock script task
+        task = MagicMock(spec=run.Script)
+        task.args = []
+
+        # Create mock executor
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        # Verify custom converter was used
+        assert "--enable-gc" in task.args
+        assert "--gc-interval=250" in task.args
+        # Verify hydra-style args are NOT present
+        assert "train.manual_gc=true" not in task.args
+
+    def test_cuda_max_connections_with_deepep_enabled(self):
+        """Test that deepep_enabled sets CUDA_DEVICE_MAX_CONNECTIONS to 32."""
+        plugin = PerfEnvPlugin(deepep_enabled=True, tp_size=1, cp_size=1, pp_size=1, num_gpus=8)
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"
+        assert plugin.dp_size == 8
+
+    def test_cuda_max_connections_with_a2a_overlap_enabled(self):
+        """Test that a2a_overlap prevents setting CUDA_DEVICE_MAX_CONNECTIONS to 1 on older GPUs."""
+        plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, a2a_overlap=True, tp_size=2, cp_size=1, pp_size=1, num_gpus=8)
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+        assert plugin.dp_size == 4
+
+    def test_cuda_max_connections_without_a2a_overlap_older_gpu(self):
+        """Test that without a2a_overlap, CUDA_DEVICE_MAX_CONNECTIONS is set to 1 on older GPUs with TP."""
+        plugin = PerfEnvPlugin(
+            gpu_sm100_or_newer=False, a2a_overlap=False, tp_size=4, cp_size=1, pp_size=1, num_gpus=8
+        )
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "1"
+        assert plugin.dp_size == 2
+
+    def test_cuda_max_connections_sm100_with_multiple_parallelisms(self):
+        """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with both TP/CP and DP/PP."""
+        plugin = PerfEnvPlugin(
+            gpu_sm100_or_newer=True, tp_size=2, cp_size=2, pp_size=2, num_gpus=16, deepep_enabled=False
+        )
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert plugin.dp_size == 2
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "32"
+
+    def test_cuda_max_connections_sm100_with_tp_only(self):
+        """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with only TP (no DP or PP)."""
+        plugin = PerfEnvPlugin(gpu_sm100_or_newer=True, tp_size=8, cp_size=1, pp_size=1, num_gpus=8)
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert plugin.dp_size == 1
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+
+    def test_cuda_max_connections_default_case(self):
+        """Test CUDA_DEVICE_MAX_CONNECTIONS defaults to 8 when no special conditions apply."""
+        plugin = PerfEnvPlugin(
+            gpu_sm100_or_newer=False,
+            deepep_enabled=False,
+            tp_size=1,
+            cp_size=1,
+            pp_size=1,
+            num_gpus=8,
+            a2a_overlap=False,
+        )
+
+        # Create mock task and executor
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {}
+
+        # Run setup
+        plugin.setup(task, executor)
+
+        assert plugin.dp_size == 8
+        assert executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == "8"
+
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 class TestPluginIntegration:
-    """Test integration of multiple plugins with llama3_8b recipe."""
-
-    def test_multiple_plugins_with_llama_config(self):
-        """Test using multiple plugins together with llama3_8b config."""
-        # Create plugins
-        preemption_plugin = PreemptionPlugin(preempt_time=300)
-        ft_plugin = FaultTolerancePlugin(num_in_job_restarts=5)
-        perf_plugin = PerfEnvPlugin(tp_size=2, pp_size=2, enable_manual_gc=True)
-
-        # Create config from llama3_8b recipe
-        config = create_test_config(
-            name="test_llama_training",
-            tensor_parallelism=2,
-            pipeline_parallelism=2,
-            train_iters=1000,
-            global_batch_size=32,
-            micro_batch_size=2,
-        )
-        prepared_config = prepare_config_for_nemo_run(config)
-
-        # Create mock task
-        task = MagicMock(spec=run.Partial)
-        task.config = prepared_config
-
-        # Create SLURM executor
-        executor = MagicMock(spec=run.SlurmExecutor)
-        executor.env_vars = {}
-        mock_launcher = MagicMock()
-
-        with patch.object(run, "FaultTolerance", return_value=mock_launcher):
-            # Apply all plugins
-            preemption_plugin.setup(task, executor)
-            ft_plugin.setup(task, executor)
-            perf_plugin.setup(task, executor)
-
-        # Verify all configurations were applied
-        # From preemption plugin
-        assert task.config.train.exit_signal_handler is True
-        assert executor.signal == "TERM@300"
-
-        # From fault tolerance plugin
-        assert hasattr(task.config, "ft")
-        assert task.config.ft.enable_ft_package is True
-        assert executor.launcher == mock_launcher
-        assert executor.retries == 2
-
-        # From perf plugin
-        assert task.config.train.manual_gc is True
+    """Test integration of multiple plugins."""
 
     def test_script_task_with_multiple_plugins(self):
         """Test multiple plugins with Script task."""

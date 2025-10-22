@@ -52,6 +52,8 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.config import CheckpointConfig
 from megatron.bridge.training.state import GlobalState, TrainState
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils import wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
@@ -135,6 +137,45 @@ def get_checkpoint_version() -> Optional[float]:
     """
     global _CHECKPOINT_VERSION
     return _CHECKPOINT_VERSION
+
+
+def delete_extra_state(state_dict):
+    """Delete all extra state keys from the model state dictionary.
+
+    This function removes all keys containing '_extra_state' from the model
+    portion of the state dictionary. This is useful for cleaning up corrupted
+    or problematic extra state that can cause issues during model loading.
+
+    Args:
+        state_dict: The state dictionary. Can be either:
+                   - A full checkpoint dict with a "model" key, or
+                   - A model state dict directly
+
+    Returns:
+        The modified state dictionary with extra state keys removed.
+    """
+    # Handle both cases: full checkpoint dict with "model" key or direct model state dict
+    if isinstance(state_dict, dict) and "model" in state_dict:
+        # Full checkpoint dict case
+        target_dict = state_dict["model"]
+    else:
+        # Direct model state dict case
+        target_dict = state_dict
+
+    # If target is not a mapping-like object, nothing to clean
+    if not hasattr(target_dict, "keys"):
+        return state_dict
+
+    # Some objects may implement keys() but not be directly iterable into a list (e.g., mocks)
+    try:
+        keys = list(target_dict.keys())
+    except Exception:
+        return state_dict
+
+    for key in keys:
+        if isinstance(key, str) and "_extra_state" in key:
+            del target_dict[key]
+    return state_dict
 
 
 def _get_checkpoint_format(checkpoint_path: str) -> str:
@@ -226,7 +267,7 @@ def read_metadata(tracker_filename: str) -> tuple[int, bool]:
         # iteration across all ranks.
         if iteration != max_iter:
             rank = torch.distributed.get_rank()
-            print(
+            print_rank_0(
                 "WARNING: on rank {} found iteration {} in the "
                 "metadata while max iteration across the ranks "
                 "is {}, replacing it with max iteration.".format(rank, iteration, max_iter),
@@ -509,7 +550,7 @@ def save_checkpoint(
         )
 
     state_dict = generate_state_dict(
-        cfg.checkpoint,
+        ckpt_cfg,
         model,
         optimizer,
         opt_param_scheduler,
@@ -626,6 +667,7 @@ def save_checkpoint(
         train_state_local_filename = get_checkpoint_train_state_filename(checkpoint_name)
         train_state_global_filename = get_checkpoint_train_state_filename(save_dir, prefix=TRACKER_PREFIX)
         config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+        tracker_filename = get_checkpoint_tracker_filename(save_dir)
         if ckpt_type == CheckpointType.LOCAL:
 
             def train_state_finalize_fn():
@@ -646,11 +688,23 @@ def save_checkpoint(
                     msc = MultiStorageClientFeature.import_package()
                     msc.torch.save(train_state_dict, train_state_local_filename)
                     msc.torch.save(train_state_dict, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with msc.open(tracker_filename, "w") as f:
+                        f.write(str(train_state.step))
                 else:
                     torch.save(train_state_dict, train_state_local_filename)
                     shutil.copy(train_state_local_filename, train_state_global_filename)
+                    # Write Megatron-LM tracker file for compatibility
+                    with open(tracker_filename, "w") as f:
+                        f.write(str(train_state.step))
 
                 cfg.to_yaml(config_filename)
+
+                # Save tokenizer files for self-contained checkpoints (if enabled)
+                if ckpt_cfg.save_tokenizer_assets:
+                    tokenizer_instance = getattr(cfg.dataset, "tokenizer", None) if cfg.dataset else None
+                    if tokenizer_instance is not None:
+                        save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
 
                 tp_rank = (tensor_rank if tensor_rank is not None else mpu.get_tensor_model_parallel_rank()) + 1
                 tp_world_size = mpu.get_tensor_model_parallel_world_size()
@@ -784,7 +838,7 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
         return
 
     dp_rank = mpu.get_data_parallel_rank()
-    print(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
+    print_rank_0(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
     train_dataloader_state_dict = train_iterator.iterable.save_state()
     # Get the base directory for the current iteration
     iter_dir = get_checkpoint_name(dataloader_save_path, iteration)
@@ -801,6 +855,141 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
     torch.save(dataloader_save_dict, data_state_save_path)
+
+
+def save_tokenizer_assets(
+    tokenizer: MegatronTokenizer,
+    tokenizer_config: TokenizerConfig,
+    checkpoint_path: str,
+) -> None:
+    """Save tokenizer files to the checkpoint directory.
+
+    Always saves tokenizer files to ensure checkpoints are self-contained
+    and portable. Handles both HuggingFace tokenizers and file-based tokenizers.
+    Compatible with MultiStorageClient for cloud storage support.
+
+    Args:
+        tokenizer: The tokenizer instance to save.
+        tokenizer_config: The tokenizer configuration (used for file-based tokenizers).
+        checkpoint_path: The checkpoint directory path.
+    """
+    if tokenizer is None:
+        return
+
+    # Only rank 0 saves tokenizer files
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    if rank != 0:
+        return
+
+    def resolve_path(path_str: str) -> str:
+        """Resolve relative paths to absolute paths."""
+        if not path_str:
+            return path_str
+        path_obj = Path(path_str)
+        if path_obj.is_absolute():
+            return path_str
+        # Resolve relative to current working directory
+        return str(path_obj.resolve())
+
+    try:
+        # Check if MultiStorageClient is enabled
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            checkpoint_path_obj = msc.Path(checkpoint_path)
+            tokenizer_dir = checkpoint_path_obj / "tokenizer"
+            tokenizer_dir.mkdir(parents=True, exist_ok=True)
+            use_msc = True
+        else:
+            tokenizer_dir = os.path.join(checkpoint_path, "tokenizer")
+            os.makedirs(tokenizer_dir, exist_ok=True)
+            use_msc = False
+
+        tokenizer_type = tokenizer_config.tokenizer_type
+
+        # Handle HuggingFace and Multimodal tokenizers
+        if tokenizer_type in ("HuggingFaceTokenizer", "MultimodalTokenizer"):
+            if use_msc:
+                import tempfile
+
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    if hasattr(tokenizer, "save_pretrained"):
+                        tokenizer.save_pretrained(tmp_dir)
+                    elif hasattr(tokenizer, "_tokenizer") and hasattr(tokenizer._tokenizer, "save_pretrained"):
+                        tokenizer._tokenizer.save_pretrained(tmp_dir)
+                    else:
+                        logger.debug(f"{tokenizer_type} does not support save_pretrained(), skipping tokenizer save")
+                        return
+
+                    logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
+                    for filename in os.listdir(tmp_dir):
+                        src_path = os.path.join(tmp_dir, filename)
+                        if os.path.isfile(src_path):
+                            dest_path = tokenizer_dir / filename
+                            with open(src_path, "rb") as src_f:
+                                with msc.open(str(dest_path), "wb") as dest_f:
+                                    dest_f.write(src_f.read())
+            else:
+                logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
+                if hasattr(tokenizer, "save_pretrained"):
+                    tokenizer.save_pretrained(tokenizer_dir)
+                elif hasattr(tokenizer, "_tokenizer") and hasattr(tokenizer._tokenizer, "save_pretrained"):
+                    tokenizer._tokenizer.save_pretrained(tokenizer_dir)
+            return
+
+        # Handle file-based tokenizers - resolve all paths
+        files_to_copy = []
+
+        if tokenizer_type in ("BertWordPieceLowerCase", "BertWordPieceCase"):
+            if tokenizer_config.vocab_file:
+                resolved_path = resolve_path(tokenizer_config.vocab_file)
+                files_to_copy.append(("vocab_file", resolved_path, "vocab.txt"))
+
+        elif tokenizer_type == "GPT2BPETokenizer":
+            if tokenizer_config.vocab_file:
+                resolved_path = resolve_path(tokenizer_config.vocab_file)
+                files_to_copy.append(("vocab_file", resolved_path, "vocab.json"))
+            if tokenizer_config.merge_file:
+                resolved_path = resolve_path(tokenizer_config.merge_file)
+                files_to_copy.append(("merge_file", resolved_path, "merges.txt"))
+
+        elif tokenizer_type in ("SentencePieceTokenizer", "GPTSentencePieceTokenizer", "Llama2Tokenizer"):
+            if tokenizer_config.tokenizer_model:
+                resolved_path = resolve_path(tokenizer_config.tokenizer_model)
+                files_to_copy.append(("tokenizer_model", resolved_path, "tokenizer.model"))
+
+        elif tokenizer_type == "TikTokenizer":
+            if tokenizer_config.tokenizer_model:
+                resolved_path = resolve_path(tokenizer_config.tokenizer_model)
+                files_to_copy.append(("tokenizer_model", resolved_path, "tokenizer.json"))
+
+        elif tokenizer_type == "NullTokenizer":
+            logger.debug(f"{tokenizer_type} requires no file artifacts")
+            return
+
+        # Copy the files
+        if files_to_copy:
+            logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
+            for config_attr, source_path, dest_filename in files_to_copy:
+                if source_path and os.path.exists(source_path):
+                    if use_msc:
+                        dest_path = tokenizer_dir / dest_filename
+                        with open(source_path, "rb") as src_f:
+                            with msc.open(str(dest_path), "wb") as dest_f:
+                                dest_f.write(src_f.read())
+                        logger.debug(f"Copied {config_attr}: {source_path} -> {dest_path}")
+                    else:
+                        dest_path = os.path.join(tokenizer_dir, dest_filename)
+                        shutil.copy2(source_path, dest_path)
+                        logger.debug(f"Copied {config_attr}: {source_path} -> {dest_path}")
+                else:
+                    logger.debug(f"{config_attr} not found at resolved path: {source_path}")
+
+    except Exception as e:
+        if get_rank_safe() == 0:
+            logger.error(f"Failed to save tokenizer files: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
 
 
 def _generate_model_state_dict(
@@ -976,6 +1165,9 @@ def _load_model_weights_from_checkpoint(
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
+    # we keep weights only for bridge use, remove extra state
+    # because they are not needed and could cause unexpected issues.
+    delete_extra_state(state_dict)
     if return_state_dict:
         return state_dict
 
@@ -1048,11 +1240,15 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
     """Helper function to load state dict with fallback for missing extra states."""
     try:
         module.load_state_dict(state_dict, strict=strict)
-    except Exception:
+    except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
+            print_rank_0(f"Warning: Exception during strict loading: {e}")
             load_return = module.load_state_dict(state_dict, strict=False)
-            print(f"load_return: {load_return}")
+            print_rank_0(f"load_return: {load_return}")
+        else:
+            # Re-raise if we were already in non-strict mode
+            raise
 
 
 def _load_checkpoint_from_path(
@@ -1376,7 +1572,7 @@ def _load_checkpoint_from_path(
             if "rerun_state_machine" in state_dict:
                 get_rerun_state_machine().load_state_dict(state_dict["rerun_state_machine"])
         except Exception as e:
-            print(f"Unable to restore RerunMachine from checkpoint: {e}. Skipping.")
+            print_rank_0(f"Unable to restore RerunMachine from checkpoint: {e}. Skipping.")
             sys.exit()
 
     # Load RNG states
@@ -1450,30 +1646,6 @@ def _load_checkpoint_from_path(
         fault_tolerance.on_checkpoint_loaded(is_local_chkpt=is_local_chkpt, global_state=state)
 
     return state.train_state.step, state.train_state.floating_point_operations_so_far
-
-
-def init_async_checkpoint_worker(global_state: GlobalState) -> None:
-    """Initialize the async checkpoint worker if enabled.
-
-    Creates a persistent background worker for handling asynchronous checkpoint saves
-    when both async_save and use_persistent_ckpt_worker are enabled in the configuration.
-
-    Args:
-        global_state: The GlobalState instance containing the configuration and async queue.
-    """
-    from megatron.bridge.utils.common_utils import print_rank_0
-
-    checkpoint_config = global_state.cfg.checkpoint
-
-    if (
-        checkpoint_config.save is not None
-        and checkpoint_config.async_save
-        and checkpoint_config.use_persistent_ckpt_worker
-    ):
-        # Access the async_calls_queue property to trigger lazy initialization
-        # This creates the persistent worker immediately during setup
-        _ = global_state.async_calls_queue
-        print_rank_0("Initialized persistent async checkpoint worker")
 
 
 def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str, Any]:

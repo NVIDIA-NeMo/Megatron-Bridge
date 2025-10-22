@@ -13,12 +13,16 @@
 # limitations under the License.
 
 ConfigContainer:
+  dataset:
+    num_workers: 2
+
   model:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
+    recompute_granularity: "selective"
 
   train:
-    train_iters: 25
+    train_iters: 100
     eval_iters: 0
 
   rerun_state_machine:
@@ -63,10 +67,10 @@ perf_matrix:
         tp: 2
         pp: 8
         cp: 1
-        vp: 2
+        vp: 4
         ep: 64
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
       fp8_cs:
       fp8_ss:
@@ -77,19 +81,17 @@ perf_matrix:
         seq_length: 4096
         mbs: 1
         gbs: 2048
-        tp: 2
+        tp: 1
         pp: 16
         cp: 1
         vp: null
         ep: 8
         etp: 1
-        fsdp: false
-      bf16:
+        use_megatron_fsdp: false
         cuda_graphs: false
+      bf16:
       fp8_cs:
-        cuda_graphs: true
       fp8_mx:
-        cuda_graphs: true
   gb200:
     num_gpus_256:
       common:
@@ -97,14 +99,14 @@ perf_matrix:
         seq_length: 4096
         mbs: 1
         gbs: 2048
-        tp: 2
+        tp: 1
         pp: 4
         cp: 1
-        vp: null
+        vp: 4
         ep: 64
         etp: 1
-        fsdp: false
-        cuda_graphs: true
+        use_megatron_fsdp: false
+        cuda_graphs: false
       bf16:
       fp8_cs:
       fp8_mx:

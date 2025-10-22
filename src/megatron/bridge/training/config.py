@@ -15,9 +15,10 @@
 import logging
 import os
 import signal
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Tuple, Union
 
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
@@ -25,12 +26,13 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
-from megatron.bridge.models.mamba.mamba_provider import MambaProvider
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.deepep import validate_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -208,8 +210,9 @@ class RerunStateMachineConfig:
 class DataloaderConfig:
     """Base configuration for data loading."""
 
-    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = None
-    """Single pass vs multiple pass data loader"""
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
+    """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
+    'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
     num_workers: int = 8
     """Dataloader number of workers."""
@@ -222,6 +225,73 @@ class DataloaderConfig:
 
     persistent_workers: bool = False
     """Whether to keep data loading workers persistent across epochs."""
+
+
+@dataclass(frozen=True)
+class DatasetBuildContext:
+    """Interface that encapsulates framework internals.
+
+    This context provides metadata needed to build datasets
+    while hiding implementation details of the framework.
+
+    Attributes:
+        train_samples: Number of samples for training dataset
+        valid_samples: Number of samples for validation dataset
+        test_samples: Number of samples for test dataset
+        tokenizer: Optional tokenizer instance for text processing
+    """
+
+    train_samples: int
+    valid_samples: int
+    test_samples: int
+    tokenizer: Optional[MegatronTokenizer] = None
+
+
+@dataclass
+class DatasetProvider(DataloaderConfig, ABC):
+    """Abstract base class for custom dataset configurations.
+
+    Provides an interface for users to implement their own dataset builders
+    while automatically inheriting all DataloaderConfig functionality.
+
+    Users must:
+    1. Inherit from this class
+    2. Implement the build_datasets() method
+
+    Example:
+        @dataclass
+        class S3DatasetConfig(DatasetProvider):
+            bucket_name: str
+            data_prefix: str
+            seq_length: int
+
+            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                # Custom implementation to load data from S3
+                train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
+                valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
+                test_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/test", context.tokenizer)
+                return train_ds, valid_ds, test_ds
+    """
+
+    @abstractmethod
+    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+        """Build train, validation, and test datasets.
+
+        This method is called by the framework during dataset initialization.
+        Implementations should use the provided context to create appropriate
+        datasets for each split.
+
+        Args:
+            context: Build context with sample counts and tokenizer
+
+        Returns:
+            Tuple of (train_dataset, valid_dataset, test_dataset)
+            Any element can be None if that split shouldn't be created.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        pass
 
 
 @dataclass
@@ -268,7 +338,14 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 
 @dataclass(kw_only=True)
 class FinetuningDatasetConfig(DataloaderConfig):
-    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig."""
+    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig.
+
+    Note: For fine-tuning, dataloader_type defaults to 'batch' which ensures sequences
+    within each global batch are padded to the same length.
+    """
+
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
+    """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
 
     dataset_root: Optional[Union[str, Path]] = None
     seq_length: int
@@ -293,16 +370,25 @@ class SchedulerConfig:
     """Decay style for the annealing phase of WSD"""
 
     lr_decay_iters: Optional[int] = None
-    """number of iterations to decay learning rate over, If None defaults to `--train-iters`"""
+    """number of iterations to decay learning rate over, If None defaults to `train.train_iters`"""
+
+    lr_decay_samples: Optional[int] = None
+    """number of samples to decay learning rate over, If None defaults to `train.train_samples`"""
 
     lr_wsd_decay_iters: Optional[int] = None
     """number of iterations for the annealing phase in the wsd schedule"""
+
+    lr_wsd_decay_samples: Optional[int] = None
+    """number of samples for the annealing phase in the wsd schedule"""
 
     lr_warmup_fraction: Optional[float] = None
     """fraction of lr-warmup-(iters/samples) to use for warmup (as a float)"""
 
     lr_warmup_iters: int = 0
     """number of iterations to linearly warmup learning rate over."""
+
+    lr_warmup_samples: int = 0
+    """number of samples to linearly warmup learning rate over."""
 
     lr_warmup_init: float = 0.0
     """Initial value for learning rate warmup. The scheduler starts warmup from this value."""
@@ -333,7 +419,7 @@ class SchedulerConfig:
     wd_incr_steps: Optional[int] = field(init=False, default=None)
     wsd_decay_steps: Optional[int] = field(init=False, default=None)
 
-    def finalize(self):
+    def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
         if self.start_weight_decay is not None:
             assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
@@ -341,6 +427,28 @@ class SchedulerConfig:
 
         if self.override_opt_param_scheduler:
             assert not self.use_checkpoint_opt_param_scheduler, "both override and use-checkpoint are set."
+
+        # Validate mutual exclusivity between iteration-based and sample-based scheduler fields
+        has_iter_fields = (
+            self.lr_decay_iters is not None or self.lr_warmup_iters != 0 or self.lr_wsd_decay_iters is not None
+        )
+        has_sample_fields = (
+            self.lr_decay_samples is not None or self.lr_warmup_samples != 0 or self.lr_wsd_decay_samples is not None
+        )
+
+        assert not (has_iter_fields and has_sample_fields), (
+            f"Cannot mix iteration-based and sample-based scheduler fields. "
+            f"Found iteration fields: lr_decay_iters={self.lr_decay_iters}, lr_warmup_iters={self.lr_warmup_iters}, lr_wsd_decay_iters={self.lr_wsd_decay_iters}. "
+            f"Found sample fields: lr_decay_samples={self.lr_decay_samples}, lr_warmup_samples={self.lr_warmup_samples}, lr_wsd_decay_samples={self.lr_wsd_decay_samples}. "
+            f"Use either iteration fields OR sample fields, not both."
+        )
+
+        # Validate mutual exclusivity between lr_warmup_fraction and specific warmup fields
+        if self.lr_warmup_fraction is not None:
+            assert self.lr_warmup_iters == 0 and self.lr_warmup_samples == 0, (
+                f"Cannot specify lr_warmup_fraction={self.lr_warmup_fraction} with lr_warmup_iters={self.lr_warmup_iters} or lr_warmup_samples={self.lr_warmup_samples}. "
+                f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
+            )
 
 
 @dataclass(kw_only=True)
@@ -388,8 +496,12 @@ class TrainingConfig:
 
     train_iters: Optional[int] = None
     """Total number of iterations to train over all training runs.
-    Note that either train-iters or train-samples should be provided.
+    Note that either train_iters or train_samples should be provided.
     """
+
+    train_samples: Optional[int] = None
+    """Total number of samples to train over all training runs.
+    Note that either train_iters or train_samples should be provided."""
 
     exit_interval: Optional[int] = None
     """Exit the program after the iteration is divisible by this value."""
@@ -422,6 +534,9 @@ class TrainingConfig:
     disable garbage collection at the start and the end of each evaluation run.
     """
 
+    iterations_to_skip: list[int] = field(default_factory=list)
+    """List of iterations to skip during training, empty by default."""
+
     # ---------------- Validation config. ----------------
 
     eval_iters: int = 100
@@ -432,6 +547,21 @@ class TrainingConfig:
 
     skip_train: bool = False
     """If set, bypass the training loop, optionally do evaluation for validation/test, and exit."""
+
+    def finalize(self) -> None:
+        """Validate training mode specification and calculate train_iters from train_samples if needed."""
+        has_train_iters = self.train_iters is not None
+        has_train_samples = self.train_samples is not None
+
+        assert has_train_iters or has_train_samples, "Either train_iters or train_samples must be provided"
+        assert not (has_train_iters and has_train_samples), "Cannot specify both train_iters and train_samples"
+        if has_train_samples:
+            assert self.train_samples > 0, "train_samples must be positive"
+            assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
+
+            # Calculate train_iters from train_samples (rampup_batch_size already validated as None)
+            self.train_iters = self.train_samples // self.global_batch_size
+            print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
 
 
 @dataclass(kw_only=True)
@@ -549,6 +679,11 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
+    save_tokenizer_assets: bool = True
+    """Save tokenizer files to checkpoint directory. When enabled, saves all tokenizer artifacts
+    (vocab files, special tokens, tokenizer config) to make checkpoints self-contained and portable.
+    Set to False for performance-sensitive scenarios where tokenizer files are not needed."""
+
     replication: bool = False
     """If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks."""
 
@@ -584,6 +719,12 @@ class LoggerConfig:
 
     log_throughput: bool = False
     """If set, calculate and log throughput per GPU."""
+
+    log_throughput_to_tensorboard: bool = False
+    """Enable throughput logging to tensorboard."""
+
+    throughput_window_size: int = 100
+    """Number of batches to use for a rolling average of throughput."""
 
     log_progress: bool = False
     """If set, log progress (in terms of number of processed tokens and number of floating-point operations)
@@ -628,6 +769,18 @@ class LoggerConfig:
 
     log_memory_to_tensorboard: bool = False
     """Enable memory logging to tensorboard."""
+
+    memory_keys: dict[str, str] | None = None
+    """Names of memory statistics to log from `torch.cuda.memory_stats()`"""
+
+    log_l2_norm_grad_to_tensorboard: bool = False
+    """Enable gradients logging to tensorboard."""
+
+    log_runtime_to_tensorboard: bool = False
+    """Enable runtime metrics logging to tensorboard."""
+
+    runtime_time_unit: str = "hours"
+    """ Time unit to use for time logging. """
 
     log_world_size_to_tensorboard: bool = False
     """Enable world size logging to tensorboard."""
@@ -694,10 +847,19 @@ class ProfilingConfig:
     record_shapes: bool = False
     """Record shapes of tensors."""
 
+    nvtx_ranges: bool = False
+    """Enable NVTX range annotations for profiling. When enabled, inserts NVTX markers
+    to categorize execution in profiler output."""
+
     def finalize(self) -> None:
         """Validate profiling configuration."""
         assert not (self.use_pytorch_profiler and self.use_nsys_profiler), (
             "Exactly one of pytorch or nsys profiler should be enabled, not both, when ProfilingConfig is active."
+        )
+        assert self.profile_step_start >= 0, f"profile_step_start must be >= 0, got {self.profile_step_start}"
+        assert self.profile_step_end >= 0, f"profile_step_end must be >= 0, got {self.profile_step_end}"
+        assert self.profile_step_end >= self.profile_step_start, (
+            f"profile_step_end ({self.profile_step_end}) must be >= profile_step_start ({self.profile_step_start})"
         )
 
 
@@ -800,6 +962,67 @@ class NVRxStragglerDetectionConfig:
                 raise ValueError("gpu_individual_perf_threshold must be between 0.0 and 1.0.")
 
 
+@dataclass
+class InProcessRestartConfig:
+    """Configuration settings for NVIDIA Resiliency Extension in-process restart functionality."""
+
+    enabled: bool = False
+    """Enable in-process restart mechanism from nvidia-resiliency-ext."""
+
+    max_iterations: Optional[int] = None
+    """Maximum number of in-process restart iterations."""
+
+    monitor_thread_interval: float = 1.0
+    """Monitoring interval (in seconds) for the monitoring thread."""
+
+    monitor_process_interval: float = 1.0
+    """Monitoring interval (in seconds) for the monitoring process."""
+
+    progress_watchdog_interval: float = 1.0
+    """Interval (in seconds) for automatic progress watchdog timestamp updates."""
+
+    heartbeat_interval: float = 30.0
+    """Monitoring interval (in seconds) for detecting unresponsive ranks."""
+
+    soft_timeout: float = 60.0
+    """Soft progress timeout (in seconds)."""
+
+    hard_timeout: float = 90.0
+    """Hard progress timeout (in seconds)."""
+
+    heartbeat_timeout: float = 60.0
+    """Timeout (in seconds) for a missing rank detection heartbeat."""
+
+    barrier_timeout: float = 120.0
+    """Timeout (in seconds) for internal distributed barrier."""
+
+    completion_timeout: float = 120.0
+    """Timeout (in seconds) for barrier on completion on all ranks."""
+
+    last_call_wait: float = 1.0
+    """Time interval (in seconds) for other ranks to report concurrent terminal failures."""
+
+    termination_grace_time: float = 1.0
+    """Interval (in seconds) between SIGTERM and SIGKILL issued on hard timeout."""
+
+    granularity: Literal["node", "rank"] = "node"
+    """Granularity for in-process restart."""
+
+    active_world_size: Optional[int] = None
+    """The number of ranks initially executing the workload.
+    The remaining ranks from the allocation are set aside as warm reserve.
+    If None, defaults to WORLD_SIZE environment variable."""
+
+    empty_cuda_cache: bool = True
+    """Empty CUDA cache during restart finalization."""
+
+    max_rank_faults: Optional[int] = None
+    """Maximum number of rank faults allowed before terminating the job."""
+
+    monitor_process_logdir: Optional[str] = None
+    """Directory for monitor process log files. If None, monitor process logging is disabled."""
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -808,11 +1031,11 @@ class ConfigContainer(Container):
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
-    model: GPTModelProvider | T5ModelProvider | MambaProvider
+    model: GPTModelProvider | T5ModelProvider | MambaModelProvider
     optimizer: OptimizerConfig
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | FinetuningDatasetConfig
+    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -824,6 +1047,7 @@ class ConfigContainer(Container):
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    inprocess_restart: Optional[InProcessRestartConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -894,6 +1118,8 @@ class ConfigContainer(Container):
             self.optimizer.finalize()
         if hasattr(self.model, "finalize"):
             self.model.finalize()
+
+        self.train.finalize()
         self.scheduler.finalize()
         self.checkpoint.finalize()
         if self.profiling is not None:
@@ -916,6 +1142,8 @@ class ConfigContainer(Container):
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
 
         # Run validations
+        _validate_and_sync_distributed_optimizer_settings(self)
+
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("Using use_megatron_fsdp and use_torch_fsdp2 at the same time is not supported.")
 
@@ -925,15 +1153,13 @@ class ConfigContainer(Container):
             self.dist.use_megatron_fsdp = True
             self.ddp.use_megatron_fsdp = True
 
+            assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
+
             if self.checkpoint.save is not None or self.checkpoint.load is not None:
                 # only check if saving or loading
                 assert self.checkpoint.ckpt_format == "fsdp_dtensor", (
                     "Megatron FSDP only supports fsdp_dtensor checkpoint format"
                 )
-
-            if self.model.gradient_accumulation_fusion:
-                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
-                self.model.gradient_accumulation_fusion = False
 
             if self.ddp.average_in_collective:
                 print_rank_0("average_in_collective is not supported with Megatron FSDP, setting to True")
@@ -966,18 +1192,11 @@ class ConfigContainer(Container):
                 # optimizer state in the CPU memory of DP rank 0.
                 assert self.checkpoint.ckpt_format == "torch_dist"
 
-        # Scheduler
-        if self.scheduler.lr_decay_iters is None:
-            self.scheduler.lr_decay_iters = self.train.train_iters
-        self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
-        self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
-        self.scheduler.wsd_decay_steps = None
-        if self.scheduler.lr_wsd_decay_iters is not None:
-            self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
-        if self.scheduler.lr_warmup_fraction is not None:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_iters
-        else:
-            self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+        # Cross-validation between training and scheduler configs
+        self._validate_training_scheduler_compatibility()
+
+        # Calculate scheduler steps for both iteration-based and sample-based training
+        self._calculate_scheduler_steps()
 
         if self.model.context_parallel_size > 1:
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
@@ -1034,11 +1253,67 @@ class ConfigContainer(Container):
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
 
-        assert self.ddp.use_distributed_optimizer == self.optimizer.use_distributed_optimizer, (
-            "Please ensure 'use_distributed_optimizer' setting in DistributedDataParallelConfig and OptimizerConfig matches."
-        )
-
         self._sync_and_validate_external_cuda_graph()
+
+    def _validate_training_scheduler_compatibility(self) -> None:
+        """Cross-validation between training and scheduler configs."""
+        has_train_samples = self.train.train_samples is not None
+
+        if has_train_samples:
+            # Sample-based training validation
+            assert self.scheduler.lr_decay_iters is None, (
+                "Use lr_decay_samples for sample-based training, not lr_decay_iters"
+            )
+            assert self.scheduler.lr_warmup_iters == 0, (
+                "Use lr_warmup_samples for sample-based training, not lr_warmup_iters"
+            )
+            assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_samples != 0), (
+                "Can only specify one of lr_warmup_fraction or lr_warmup_samples"
+            )
+        else:
+            # Iteration-based training validation
+            assert self.scheduler.lr_decay_samples is None, (
+                "Use lr_decay_iters for iteration-based training, not lr_decay_samples"
+            )
+            assert self.scheduler.lr_warmup_samples == 0, (
+                "Use lr_warmup_iters for iteration-based training, not lr_warmup_samples"
+            )
+            assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_iters != 0), (
+                "Can only specify one of lr_warmup_fraction or lr_warmup_iters"
+            )
+
+    def _calculate_scheduler_steps(self) -> None:
+        """Calculate scheduler steps for both iteration-based and sample-based training."""
+        is_sample_based = self.train.train_samples is not None
+
+        if is_sample_based:
+            if self.scheduler.lr_decay_samples is None:
+                self.scheduler.lr_decay_samples = self.train.train_samples
+            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_samples
+            self.scheduler.wd_incr_steps = self.train.train_samples
+
+            if self.scheduler.lr_wsd_decay_samples is not None:
+                self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_samples
+
+            # Warmup calculation for sample-based training
+            if self.scheduler.lr_warmup_fraction is not None:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
+            else:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_samples
+        else:
+            # Iteration-based training
+            if self.scheduler.lr_decay_iters is None:
+                self.scheduler.lr_decay_iters = self.train.train_iters
+            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
+            self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
+
+            if self.scheduler.lr_wsd_decay_iters is not None:
+                self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
+
+            if self.scheduler.lr_warmup_fraction is not None:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
+            else:
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:
@@ -1074,3 +1349,28 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Validate configuration after all modifications
     cfg.validate()
+
+
+def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:
+    """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
+
+    This function ensures that distributed optimizer settings are consistent across
+    DDP and optimizer configurations. If either setting is enabled, both will be
+    enabled to maintain consistency.
+
+    Args:
+        config: The configuration container to validate and potentially modify.
+    """
+    ddp_setting = config.ddp.use_distributed_optimizer
+    optimizer_setting = config.optimizer.use_distributed_optimizer
+
+    if ddp_setting or optimizer_setting:
+        if ddp_setting != optimizer_setting:
+            warn_rank_0(
+                f"Distributed optimizer settings were not in sync: "
+                f"ddp.use_distributed_optimizer={ddp_setting}, "
+                f"optimizer.use_distributed_optimizer={optimizer_setting}. "
+                f"Automatically enabling distributed optimizer for both settings."
+            )
+        config.ddp.use_distributed_optimizer = True
+        config.optimizer.use_distributed_optimizer = True

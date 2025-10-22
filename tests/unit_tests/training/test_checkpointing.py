@@ -16,7 +16,7 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 import pytest
 import torch
@@ -28,8 +28,10 @@ from megatron.bridge.training.checkpointing import (
     _get_checkpoint_format,
     _get_non_persistent_iteration,
     _load_base_checkpoint,
+    _load_model_state_dict,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
+    delete_extra_state,
     ensure_directory_exists,
     find_checkpoint_rank_0,
     get_checkpoint_name,
@@ -114,6 +116,31 @@ class TestCheckpointUtilities:
         result = get_checkpoint_tracker_filename("/checkpoints")
         expected = "/checkpoints/latest_checkpointed_iteration.txt"
         assert result == expected
+
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_rank")
+    @patch("torch.distributed.all_reduce")
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    @patch("builtins.open", create=True)
+    def test_read_metadata_mismatch_warns(
+        self, mock_open, mock_print_rank_0, mock_all_reduce, mock_get_rank, mock_dist_init
+    ):
+        """When iterations differ across ranks, a warning should be printed via print_rank_0."""
+        mock_dist_init.return_value = True
+        mock_get_rank.return_value = 0
+        mock_file = mock_open.return_value.__enter__.return_value
+        mock_file.read.return_value = "10"
+
+        # Mock tensor semantics: iters_cuda[0].item() -> 20
+        mock_tensor_item = Mock()
+        mock_tensor_item.item.return_value = 20
+        mock_tensor = Mock()
+        mock_tensor.__getitem__ = Mock(return_value=mock_tensor_item)
+
+        with patch("torch.tensor", return_value=mock_tensor):
+            _ = read_metadata("/path/to/tracker")
+
+        assert mock_print_rank_0.called
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -261,6 +288,32 @@ class TestRNGState:
         assert rng_state["rng_tracker_states"] == "tracker_states"
 
 
+class TestDeleteExtraState:
+    """Tests for delete_extra_state utility added for cleanup of extraneous keys."""
+
+    def test_delete_extra_state_with_model_section(self):
+        sd = {"model": {"layer.weight": 1, "te_extra_state": 2, "_extra_state.foo": 3}}
+        result = delete_extra_state(sd)
+        assert "te_extra_state" not in result["model"]
+        assert "_extra_state.foo" not in result["model"]
+        assert result["model"]["layer.weight"] == 1
+
+    def test_delete_extra_state_direct_model_state(self):
+        sd = {"layer.weight": 1, "something_extra_state": 2}
+        result = delete_extra_state(sd)
+        assert "something_extra_state" not in result
+        assert result["layer.weight"] == 1
+
+    def test_delete_extra_state_non_mapping_noop(self):
+        class NotMapping:
+            pass
+
+        # Should not throw and should return the original object wrapper
+        sd = {"model": NotMapping()}
+        result = delete_extra_state(sd)
+        assert result is sd
+
+
 @pytest.fixture
 def save_checkpoint_fixtures():
     """Fixture for save checkpoint tests."""
@@ -282,6 +335,7 @@ def save_checkpoint_fixtures():
     mock_cfg.checkpoint.save_rng = True
     mock_cfg.checkpoint.ckpt_format = "torch_dist"
     mock_cfg.checkpoint.non_persistent_ckpt_type = "global"
+    mock_cfg.checkpoint.save_tokenizer_assets = False  # Disable for unit tests
 
     # Create nested mock attributes
     mock_cfg.optimizer = Mock()
@@ -290,6 +344,7 @@ def save_checkpoint_fixtures():
     mock_cfg.rng.data_parallel_random_init = False
     mock_cfg.dataset = Mock()
     mock_cfg.dataset.dataloader_save = None
+    mock_cfg.dataset.tokenizer = None  # No tokenizer in unit tests
     mock_cfg.to_yaml = Mock()  # Mock config YAML export
     mock_cfg.logger = Mock()
     mock_cfg.logger.log_progress = False
@@ -321,6 +376,7 @@ class TestSaveCheckpoint:
 
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("torch.save")
     @patch("shutil.copy")
     @_patch_modelopt_state_saver()
@@ -361,6 +417,7 @@ class TestSaveCheckpoint:
         mock_save_modelopt,
         mock_shutil_copy,
         mock_torch_save,
+        mock_file_open,
         mock_is_last_rank,
         mock_wandb,
         save_checkpoint_fixtures,
@@ -406,6 +463,22 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+
+        # Verify that the tracker file was written with the correct iteration
+        tracker_calls = [
+            call
+            for call in mock_file_open.call_args_list
+            if len(call[0]) > 0 and "latest_checkpointed_iteration.txt" in call[0][0]
+        ]
+        assert len(tracker_calls) > 0, "Tracker file should be written"
+
+        # Verify the iteration was written to the file
+        mock_file_handle = mock_file_open()
+        write_calls = [call for call in mock_file_handle.write.call_args_list]
+        assert len(write_calls) > 0, "Should write iteration to tracker file"
+        # Check that the iteration (1000) was written
+        written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
+        assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
 
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_save_checkpoint_invalid_non_persistent_type(self, mock_print_rank_0, save_checkpoint_fixtures):
@@ -969,6 +1042,43 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_get_strategy.assert_called_once_with("/test/checkpoint")
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
 
+    @patch("megatron.bridge.training.checkpointing.delete_extra_state")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    @patch("megatron.bridge.training.checkpointing.unwrap_model")
+    @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
+    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    def test_load_model_weights_calls_delete_extra_state(
+        self,
+        mock_get_strategy,
+        mock_generate_state_dict,
+        mock_unwrap_model,
+        mock_dist_ckpt,
+        mock_delete_extra_state,
+        mock_model,
+        mock_common_state_dict,
+        mock_full_state_dict,
+        mock_metadata,
+    ):
+        """Ensure extra state cleanup is invoked on the loaded state dict."""
+        mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+        mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
+        mock_dist_ckpt.load.return_value = mock_full_state_dict
+        mock_get_strategy.return_value = Mock()
+        mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(1)}}
+        mock_unwrap_model.return_value = mock_model
+
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        _load_model_weights_from_checkpoint(
+            checkpoint_path="/ckpt",
+            model=mock_model,
+            fully_parallel_load=False,
+            dist_ckpt_strictness="assume_ok_unexpected",
+            strict=True,
+        )
+
+        mock_delete_extra_state.assert_called_once_with(mock_full_state_dict)
+
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
@@ -1158,6 +1268,33 @@ class TestLoadModelWeightsFromCheckpoint:
         assert returned_sd == mock_full_state_dict
         mock_dist_ckpt.load.assert_called_once()
         mock_load_state_dict.assert_not_called()
+
+
+class TestLoadModelStateDictHelper:
+    """Tests for _load_model_state_dict strict fallback behavior and logging."""
+
+    @patch("megatron.bridge.training.checkpointing.print_rank_0")
+    def test_load_model_state_dict_strict_fallback(self, mock_print_rank_0):
+        module = Mock()
+        # First call raises, second (non-strict) call succeeds
+        module.load_state_dict.side_effect = [Exception("boom"), "ok"]
+
+        _load_model_state_dict(module, {"w": 1}, strict=True)
+
+        # Should have been called twice: strict=True then strict=False
+        assert module.load_state_dict.call_count == 2
+        first_args, first_kwargs = module.load_state_dict.call_args_list[0]
+        second_args, second_kwargs = module.load_state_dict.call_args_list[1]
+        assert first_kwargs.get("strict") is True
+        assert second_kwargs.get("strict") is False
+        assert mock_print_rank_0.called
+
+    def test_load_model_state_dict_non_strict_raises(self):
+        module = Mock()
+        module.load_state_dict.side_effect = Exception("fail")
+
+        with pytest.raises(Exception):
+            _load_model_state_dict(module, {"w": 1}, strict=False)
 
 
 class TestMegatronLMCompatibility:

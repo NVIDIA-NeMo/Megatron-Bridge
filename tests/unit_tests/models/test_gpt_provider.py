@@ -280,3 +280,123 @@ class TestGPTModelProvider:
         )
 
         assert provider.generation_config == generation_config
+
+    @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
+    def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec):
+        """Test quantization_layer_spec function."""
+        from megatron.bridge.models.gpt_provider import quantization_layer_spec
+
+        # Create a mock provider
+        provider = GPTModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=12,
+        )
+
+        # Mock the return value
+        mock_spec = Mock()
+        mock_get_gpt_modelopt_spec.return_value = mock_spec
+
+        # Call the function
+        result = quantization_layer_spec(provider)
+
+        # Verify the mock was called with correct parameters
+        mock_get_gpt_modelopt_spec.assert_called_once_with(
+            config=provider,
+            local_core_attention=False,
+            remap_te_layernorm=True,
+            real_quant_cfg="None",
+            use_arbitrary_attention_mask=True,
+        )
+
+        # Verify the result
+        assert result is mock_spec
+
+    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
+    def test_default_layer_spec_with_restore_modelopt_state(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+        """Test default_layer_spec when restore_modelopt_state is True."""
+        from megatron.bridge.models.gpt_provider import default_layer_spec
+
+        # Create a provider with restore_modelopt_state=True
+        provider = GPTModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=12,
+            restore_modelopt_state=True,
+        )
+
+        # Mock return values
+        mock_quant_spec.return_value = "quantization_spec"
+        mock_te_full_spec.return_value = "te_full_spec"
+        mock_te_spec.return_value = "te_spec"
+
+        # Call the function
+        result = default_layer_spec(provider)
+
+        # Should use quantization spec when restore_modelopt_state is True
+        mock_quant_spec.assert_called_once_with(provider)
+        mock_te_full_spec.assert_not_called()
+        mock_te_spec.assert_not_called()
+        assert result == "quantization_spec"
+
+    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
+    def test_default_layer_spec_with_te_full_layer_spec(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+        """Test default_layer_spec when use_transformer_engine_full_layer_spec is True."""
+        from megatron.bridge.models.gpt_provider import default_layer_spec
+
+        # Create a provider with use_transformer_engine_full_layer_spec=True
+        provider = GPTModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=12,
+            restore_modelopt_state=False,
+            use_transformer_engine_full_layer_spec=True,
+        )
+
+        # Mock return values
+        mock_quant_spec.return_value = "quantization_spec"
+        mock_te_full_spec.return_value = "te_full_spec"
+        mock_te_spec.return_value = "te_spec"
+
+        # Call the function
+        result = default_layer_spec(provider)
+
+        # Should use TE full spec when use_transformer_engine_full_layer_spec is True
+        mock_quant_spec.assert_not_called()
+        mock_te_full_spec.assert_called_once_with(provider)
+        mock_te_spec.assert_not_called()
+        assert result == "te_full_spec"
+
+    @patch("megatron.bridge.models.gpt_provider.quantization_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_layer_spec")
+    @patch("megatron.bridge.models.gpt_provider.transformer_engine_full_layer_spec")
+    def test_default_layer_spec_default_case(self, mock_te_full_spec, mock_te_spec, mock_quant_spec):
+        """Test default_layer_spec default case (regular TE spec)."""
+        from megatron.bridge.models.gpt_provider import default_layer_spec
+
+        # Create a provider with default settings
+        provider = GPTModelProvider(
+            num_layers=12,
+            hidden_size=768,
+            num_attention_heads=12,
+            restore_modelopt_state=False,
+            use_transformer_engine_full_layer_spec=False,
+        )
+
+        # Mock return values
+        mock_quant_spec.return_value = "quantization_spec"
+        mock_te_full_spec.return_value = "te_full_spec"
+        mock_te_spec.return_value = "te_spec"
+
+        # Call the function
+        result = default_layer_spec(provider)
+
+        # Should use regular TE spec by default
+        mock_quant_spec.assert_not_called()
+        mock_te_full_spec.assert_not_called()
+        mock_te_spec.assert_called_once_with(provider)
+        assert result == "te_spec"

@@ -188,7 +188,7 @@ class TestNemotronHConversion:
         test_output_dir = tmp_path / f"nemotronh_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        # Run multi_gpu_hf.py with specified parallelism configuration on our toy model
+        # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration on our toy model
         cmd = [
             "python",
             "-m",
@@ -198,10 +198,10 @@ class TestNemotronHConversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/workspace/.coverage",
-            "--source=/workspace/",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
-            "examples/models/multi_gpu_hf.py",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
             nemotronh_toy_model_path,  # Use our local toy model instead of downloading
             "--output-dir",

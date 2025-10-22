@@ -26,7 +26,11 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -83,9 +87,22 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
+def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+    """Layer specification for quantization with ModelOpt."""
+    return get_gpt_modelopt_spec(
+        config=config,
+        local_core_attention=False,
+        remap_te_layernorm=True,
+        real_quant_cfg="None",
+        use_arbitrary_attention_mask=True,
+    )
+
+
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.use_transformer_engine_full_layer_spec:
+    if config.restore_modelopt_state:
+        return quantization_layer_spec(config)
+    elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
         return transformer_engine_layer_spec(config)
@@ -156,6 +173,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     bias_dropout_fusion: bool = field(default_factory=fusions.can_enable_bias_dropout_fusion)
     apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
 
+    # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
+    # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
+
+    restore_modelopt_state: bool = False
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 
@@ -219,7 +241,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         kwargs = {}
         if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
             kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
-
+        if self.attention_backend == AttnBackend.local:
+            if hasattr(transformer_layer_spec, "submodules"):
+                transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
         with model_init_device_context():
             model = MCoreGPTModel(
                 self,

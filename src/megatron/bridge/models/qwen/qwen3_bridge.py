@@ -30,7 +30,7 @@ from megatron.bridge.models.qwen.qwen_provider import Qwen3ModelProvider
 @MegatronModelBridge.register_bridge(source=Qwen3ForCausalLM, target=GPTModel)
 class Qwen3Bridge(MegatronModelBridge):
     """
-    Megatron Hub Bridge for Qwen3 Causal LM.
+    Megatron Bridge for Qwen3 Causal LM.
 
     This bridge handles the conversion between HuggingFace Qwen2ForCausalLM
     (used for Qwen3 models) and Megatron-Core GPTModel formats. Qwen3 differs

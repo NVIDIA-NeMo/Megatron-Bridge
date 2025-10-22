@@ -13,14 +13,19 @@
 # limitations under the License.
 
 import sys
-from os.path import basename, splitext
 from pathlib import Path
 
 from omegaconf import OmegaConf
 
-from .argument_parser import parse_cli_args
-from .utils.executors import slurm_executor
-from .utils.helpers import get_perf_matrix_overrides
+
+try:
+    from argument_parser import parse_cli_args
+    from utils.common import get_perf_matrix_overrides
+    from utils.executors import slurm_executor
+except (ImportError, ModuleNotFoundError):
+    from .argument_parser import parse_cli_args
+    from .utils.common import get_perf_matrix_overrides
+    from .utils.executors import slurm_executor
 
 
 try:
@@ -31,7 +36,10 @@ except ImportError:
     HAS_NEMO_RUN = False
 
 if HAS_NEMO_RUN:
-    from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
+    try:
+        from perf_plugins import NsysPlugin, PerfEnvPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .perf_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
@@ -40,7 +48,11 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     args, _ = parse_cli_args()
-    exp_name = f"{splitext(basename(__file__))[0]}_{args.compute_dtype}"
+    exp_name = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}"
+    exp_name += "_bf16" if args.compute_dtype == "bf16" else f"_{args.compute_dtype}_{args.fp8_recipe}"
+
+    if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b", "235b_a22b"]:
+        assert args.hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
 
     SCRIPT_DIR: Path = Path(__file__).parent.resolve()
     RUN_SCRIPT_FILENAME: str = "run_script.py"
@@ -58,12 +70,44 @@ if __name__ == "__main__":
         logger.error("Ensure the path passed to --config_file is correct.")
         sys.exit(1)
 
+    num_gpus_per_node = args.gpus_per_node
+    yaml_overrides_omega = OmegaConf.load(config_filepath)
+    preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
+    if not preset:
+        num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
+        logger.debug(f"No preset found for {args.gpu}.{num_gpus_yaml_key} in perf_matrix")
+
+    common = preset.get("common") or {}
+    compute_dtype, fp8_recipe = args.compute_dtype.lower(), args.fp8_recipe.lower()
+    compute_dtype = compute_dtype if compute_dtype == "bf16" else f"{compute_dtype}_{fp8_recipe}"
+    dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
+    # Deep-merge so dtype-specific values override common
+    merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
+    perf_overrides = OmegaConf.to_container(merged_perf, resolve=True)  #
+
+    tp = perf_overrides.get("tp", 1)
+    cp = perf_overrides.get("cp", 1)
+    pp = perf_overrides.get("pp", 1)
+
+    enable_deepep, a2a_overlap = False, False
+    if args.gpu.lower() in ["h100"]:
+        if args.model_name == "deepseek" and args.model_size == "v3":
+            enable_deepep = True
+            a2a_overlap = True
+
     plugins = (
         [
             PerfEnvPlugin(
                 enable_vboost=args.enable_vboost,
                 nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
                 gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
+                layernorm_sm_margin=20 if enable_deepep else 16,
+                tp_size=tp,
+                cp_size=cp,
+                pp_size=pp,
+                num_gpus=args.num_gpus,
+                deepep_enabled=enable_deepep,
+                a2a_overlap=a2a_overlap,
             )
         ]
         if HAS_NEMO_RUN
@@ -78,12 +122,6 @@ if __name__ == "__main__":
         f"{SCRIPT_DIR}:{SCRIPT_DIR}",
     ]
     logger.info(f"Custom mounts: {custom_mounts}")
-
-    num_gpus_per_node = args.gpus_per_node
-    yaml_overrides_omega = OmegaConf.load(config_filepath)
-    preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
-    if preset:
-        num_gpus_per_node = preset.get("num_gpus_per_node", args.gpus_per_node)
 
     num_nodes = -(args.num_gpus // -num_gpus_per_node)
     executor = slurm_executor(
@@ -102,12 +140,38 @@ if __name__ == "__main__":
         wandb_key=args.wandb_key,
     )
 
+    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
+        if args.compute_dtype == "fp8" and args.fp8_recipe in ["cs", "mx"]:
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
+        if args.compute_dtype == "bf16" and (not args.use_tokendrop):
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
+    del_cudnn_ln = True
+    if args.gpu.lower() in ["h100"]:
+        if args.model_name == "llama3" and args.model_size == "8b":
+            if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+                executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                executor.env_vars["NCCL_CTA_POLICY"] = "1"
+                del_cudnn_ln = False
+    if args.gpu.lower() in ["gb200"]:
+        if args.model_name == "llama3" and args.model_size == "70b":
+            if args.compute_dtype == "bf16" or (args.compute_dtype == "fp8" and args.fp8_recipe == "cs"):
+                del_cudnn_ln = False
+        if args.model_name == ["llama31"] and args.model_size == "405b":
+            if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+                del_cudnn_ln = False
+    if del_cudnn_ln:
+        if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
+        if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
+
     target_script_args = [
         "--config_file",
         str(config_filepath),
     ]
     # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu"]
+    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
     for arg_name in args_to_forward:
         if hasattr(args, arg_name):
             arg_value = getattr(args, arg_name)
@@ -121,4 +185,4 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True)
+    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True, name=exp_name)

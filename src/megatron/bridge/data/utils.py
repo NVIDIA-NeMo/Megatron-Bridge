@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import fields
-from typing import Any, Callable, Dict, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, Union
 
 from megatron.core import mpu
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
@@ -24,6 +24,8 @@ from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBu
 from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
 from megatron.bridge.training.config import (
     DataloaderConfig,
+    DatasetBuildContext,
+    DatasetProvider,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     MockGPTDatasetConfig,
@@ -99,12 +101,15 @@ def hf_train_valid_test_datasets_provider(
         f"> building train, validation, and test datasets for Huggingface dataset {dataset_config.dataset_name} ..."
     )
 
+    # Get field names from DataloaderConfig to exclude
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
     train_ds, valid_ds, test_ds = HFDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
             for field in fields(dataset_config)
-            if field not in fields(DataloaderConfig)
+            if field.name not in dataloader_field_names
         },
     ).build()
 
@@ -133,12 +138,15 @@ def finetuning_train_valid_test_datasets_provider(
         f">building train, validation, and test datasets for Finetuning dataset from {dataset_config.dataset_root} ..."
     )
 
+    # Get field names from DataloaderConfig to exclude
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
     train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
             for field in fields(dataset_config)
-            if field not in fields(DataloaderConfig)
+            if field.name not in dataloader_field_names
         },
     ).build()
 
@@ -156,9 +164,11 @@ _REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig
 
 
 def get_dataset_provider(
-    dataset_config: Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig],
+    dataset_config: Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig, DatasetProvider],
 ) -> Callable:
     """Get the appropriate dataset provider function based on the config type.
+
+    Supports both registry-based providers and protocol-based providers.
 
     Args:
         dataset_config: The dataset configuration object.
@@ -166,4 +176,24 @@ def get_dataset_provider(
     Returns:
         The callable dataset provider function corresponding to the config type.
     """
+    # Check if config implements the DatasetProvider protocol
+    if isinstance(dataset_config, DatasetProvider):
+
+        def protocol_adapter(
+            train_val_test_num_samples: list[int],
+            config: DatasetProvider,
+            tokenizer: Optional[MegatronTokenizer] = None,
+        ) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            """Adapter function that bridges the protocol interface with the legacy interface."""
+            context = DatasetBuildContext(
+                train_samples=train_val_test_num_samples[0],
+                valid_samples=train_val_test_num_samples[1],
+                test_samples=train_val_test_num_samples[2],
+                tokenizer=tokenizer,
+            )
+            return config.build_datasets(context)
+
+        return protocol_adapter
+
+    # Fall back to existing registry
     return _REGISTRY[type(dataset_config)]

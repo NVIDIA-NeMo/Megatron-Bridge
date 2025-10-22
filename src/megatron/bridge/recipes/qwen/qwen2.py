@@ -17,6 +17,7 @@ from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -35,110 +36,198 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def qwen2_500m_pretrain(**user_kwargs):
-    recommended_kwargs = {
+class Qwen2CommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen2/2.5 recipe helper functions."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+    # Dataset configuration
+    data_paths: Optional[List[str]]
+    data_args_path: Optional[str]
+    train_data_path: Optional[List[str]]
+    valid_data_path: Optional[List[str]]
+    test_data_path: Optional[List[str]]
+    per_split_data_args_path: Optional[str]
+    mock: bool
+    # Model configuration
+    tensor_parallelism: int
+    pipeline_parallelism: int
+    pipeline_parallelism_dtype: Optional[torch.dtype]
+    virtual_pipeline_parallelism: Optional[int]
+    context_parallelism: int
+    sequence_parallelism: bool
+    use_megatron_fsdp: bool
+    check_for_nan_in_grad: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    seq_length: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    eval_interval: int
+    save_interval: int
+    use_null_tokenizer: bool
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+
+
+def qwen2_500m_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2 0.5B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-0.5B",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
-def qwen2_1p5b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen2_1p5b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2 1.5B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-1.5B",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
-def qwen2_7b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen2_7b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2 7B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-7B",
         "tensor_parallelism": 2,
         "pipeline_parallelism": 1,
+        "use_megatron_fsdp": False,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
-def qwen2_72b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen2_72b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2 72B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-72B",
         "tensor_parallelism": 8,
         "pipeline_parallelism": 4,
         "pipeline_parallelism_dtype": torch.bfloat16,
+        "use_megatron_fsdp": False,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
-def qwen25_500m_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen25_500m_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5 0.5B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-0.5B",
         "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
-    return _qwen2_common(**combined_kwargs)
-
-
-def qwen25_1p5b_pretrain(**user_kwargs):
-    recommended_kwargs = {
-        "hf_path": "Qwen/Qwen2.5-1.5B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
-    return _qwen2_common(**combined_kwargs)
-
-
-def qwen25_7b_pretrain(**user_kwargs):
-    recommended_kwargs = {
-        "hf_path": "Qwen/Qwen2.5-7B",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
-    }
-    # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
-    return _qwen2_common(**combined_kwargs)
-
-
-def qwen25_14b_pretrain(**user_kwargs):
-    recommended_kwargs = {
-        "hf_path": "Qwen/Qwen2.5-14B",
-        "tensor_parallelism": 4,
         "pipeline_parallelism": 1,
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
-def qwen25_32b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen25_1p5b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5 1.5B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
+        "hf_path": "Qwen/Qwen2.5-1.5B",
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 1,
+        "check_for_nan_in_grad": True,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen2_common(**combined_kwargs)
+
+
+def qwen25_7b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5 7B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
+        "hf_path": "Qwen/Qwen2.5-7B",
+        "tensor_parallelism": 2,
+        "pipeline_parallelism": 1,
+        "check_for_nan_in_grad": True,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen2_common(**combined_kwargs)
+
+
+def qwen25_14b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5 14B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
+        "hf_path": "Qwen/Qwen2.5-14B",
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 1,
+        "check_for_nan_in_grad": True,
+        "use_megatron_fsdp": False,
+    }
+    # Combine defaults with user kwargs; user values take precedence.
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen2_common(**combined_kwargs)
+
+
+def qwen25_32b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5 32B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-32B",
         "tensor_parallelism": 8,
         "pipeline_parallelism": 2,
         "pipeline_parallelism_dtype": torch.bfloat16,
+        "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
-def qwen25_72b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen25_72b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen2.5 72B.
+
+    See `_qwen2_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-72B",
         "tensor_parallelism": 8,
         "pipeline_parallelism": 4,
@@ -146,7 +235,7 @@ def qwen25_72b_pretrain(**user_kwargs):
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen2_common(**combined_kwargs)
 
 
@@ -179,6 +268,10 @@ def _qwen2_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
+    lr_decay_iters: Optional[int] = None,
+    eval_interval: int = 500,
+    save_interval: int = 500,
+    use_null_tokenizer: bool = True,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
@@ -212,6 +305,7 @@ def _qwen2_common(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
 
@@ -239,7 +333,7 @@ def _qwen2_common(
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
+        lr_decay_iters=lr_decay_iters,
         max_lr=lr,
         min_lr=min_lr,
     )
@@ -249,7 +343,7 @@ def _qwen2_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=500,
+            eval_interval=eval_interval,
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
@@ -284,9 +378,13 @@ def _qwen2_common(
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        tokenizer=TokenizerConfig(
+            tokenizer_type="NullTokenizer" if use_null_tokenizer else "HuggingFaceTokenizer",
+            tokenizer_model=hf_path if not use_null_tokenizer else None,
+            vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
+        ),
         checkpoint=CheckpointConfig(
-            save_interval=500,
+            save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",

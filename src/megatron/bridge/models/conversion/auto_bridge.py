@@ -17,11 +17,10 @@ from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Generic, Iterable, List, Optional, Type, TypeVar, Union
 
-import torch.distributed
+import torch.distributed as dist
 import transformers
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
-from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -34,8 +33,9 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
-from megatron.bridge.models.model_provider import GetModelKwargs, ModelProviderMixin
+from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
@@ -63,7 +63,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
     Example:
         >>> # Load and convert a model to Megatron format
-        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+        >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
         >>> provider = bridge.to_megatron_provider()
         >>> megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
 
@@ -159,7 +159,7 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> from transformers import AutoConfig
             >>>
             >>> # Load just the configuration
-            >>> config = AutoConfig.from_pretrained("meta-llama/Llama-3-8B")
+            >>> config = AutoConfig.from_pretrained("meta-llama/Meta-Llama-3-8B")
             >>>
             >>> # Create bridge from config (no weights)
             >>> bridge = AutoBridge.from_hf_config(config)
@@ -191,7 +191,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: HuggingFace model ID or path to model directory
-                Examples: "meta-llama/Llama-3-8B", "./my_model"
+                Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             **kwargs: Additional arguments passed to HuggingFace from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -211,7 +211,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
             >>> # Load with specific settings
             >>> bridge = AutoBridge.from_hf_pretrained(
-            ...     "meta-llama/Llama-3-8B",
+            ...     "meta-llama/Meta-Llama-3-8B",
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
             ... )
@@ -220,14 +220,8 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
         # First load just the config to check architecture support
-        try:
-            config = AutoConfig.from_pretrained(path, trust_remote_code=kwargs.get("trust_remote_code", False))
-        except Exception as e:
-            raise ValueError(
-                f"Failed to load configuration from {path}. "
-                f"Ensure the path is valid and contains a config.json file. "
-                f"Error: {e}"
-            )
+        # Use thread-safe config loading to prevent race conditions
+        config = safe_load_config_with_retry(path, trust_remote_code=kwargs.get("trust_remote_code", False))
 
         cls._validate_config(config, str(path))
 
@@ -246,7 +240,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: Path to model directory or HuggingFace model ID
-                Examples: "meta-llama/Llama-3-8B", "/models/my_model"
+                Examples: "meta-llama/Meta-Llama-3-8B", "/models/my_model"
             trust_remote_code: Whether to trust remote code when loading config.
                 Set to True for models that use custom modeling code.
 
@@ -255,13 +249,13 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Check if a model is supported
-            >>> if AutoBridge.can_handle("meta-llama/Llama-3-8B"):
+            >>> if AutoBridge.can_handle("meta-llama/Meta-Llama-3-8B"):
             ...     print("Model is supported!")
             ... else:
             ...     print("Model requires a custom bridge implementation")
         """
         try:
-            config = AutoConfig.from_pretrained(path, trust_remote_code=trust_remote_code)
+            config = safe_load_config_with_retry(path, trust_remote_code=trust_remote_code)
             return cls.supports(config)
         except Exception:
             return False
@@ -379,9 +373,9 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
-            if torch.distributed.get_rank() == 0:
+            if dist.get_rank() == 0:
                 self.hf_pretrained.save_artifacts(path)
         else:
             # No distributed training, save artifacts
@@ -422,8 +416,8 @@ class AutoBridge(Generic[MegatronModelT]):
             - Automatically handles model sharding for large models
             - The saved weights can be loaded with HuggingFace's from_pretrained
         """
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.barrier()
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
         dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
         generator = model_bridge.stream_weights_megatron_to_hf(
             dispatch_instance, model, self.hf_pretrained, cpu=True, show_progress=show_progress
@@ -439,10 +433,12 @@ class AutoBridge(Generic[MegatronModelT]):
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            torch.distributed.barrier()
+        if dist.is_available() and dist.is_initialized():
+            dist.barrier()
 
-    def save_megatron_model(self, model: list[MegatronModule], path: str | Path) -> None:
+    def save_megatron_model(
+        self, model: list[MegatronModule], path: str | Path, hf_tokenizer_path: Optional[str | Path] = None
+    ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
         state.
@@ -455,11 +451,19 @@ class AutoBridge(Generic[MegatronModelT]):
         Args:
             model: Megatron model instance or list of instances
             path: Directory path where the checkpoint will be saved
-            ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats)
+            hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
+                If provided, the tokenizer metadata will be included in the checkpoint.
 
         Example:
             >>> # Save model checkpoint after conversion
             >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+            >>> # Save model checkpoint with tokenizer metadata
+            >>> bridge.save_megatron_model(
+            ...     megatron_model,
+            ...     "./megatron_checkpoint",
+            ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+            ... )
 
         Note:
             - This method is collective and must be called by all ranks
@@ -470,9 +474,11 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
-        save_megatron_model(model, path)
+        save_megatron_model(model, path, hf_tokenizer_path=hf_tokenizer_path)
 
-    def load_megatron_model(self, path: str | Path, **kwargs: Unpack[GetModelKwargs]) -> list[MegatronModelT]:
+    def load_megatron_model(
+        self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
+    ) -> list[MegatronModelT]:
         """
         Load a Megatron model from a native Megatron checkpoint.
 
@@ -482,6 +488,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             path: Directory path where the Megatron checkpoint is stored
+            mp_overrides: Optional model-parallel overrides to apply to the loaded config.
             **kwargs: Additional arguments passed to the model provider
 
         Returns:
@@ -525,10 +532,13 @@ class AutoBridge(Generic[MegatronModelT]):
             checkpoint_path = checkpoint_path / latest_iter.name
         # else: checkpoint_path remains as the input path (no iter folders found)
 
+        skip_temp_dist_context = dist.is_available() and dist.is_initialized()
         # Load the state dict
         model = load_megatron_model(
             str(checkpoint_path),
-            use_cpu_init=True,
+            use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
+            skip_temp_dist_context=skip_temp_dist_context,
+            mp_overrides=mp_overrides,
         )
         return model if isinstance(model, list) else [model]
 
@@ -549,7 +559,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             hf_model_id: HuggingFace model ID or path to model directory
-                Examples: "meta-llama/Llama-3-8B", "./my_model"
+                Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
             megatron_path: Directory path where the Megatron checkpoint will be saved
             **kwargs: Additional arguments passed to from_hf_pretrained
                 Common options include:
@@ -561,13 +571,13 @@ class AutoBridge(Generic[MegatronModelT]):
         Example:
             >>> # Basic import
             >>> AutoBridge.import_ckpt(
-            ...     "meta-llama/Llama-3-8B",
+            ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b"
             ... )
 
             >>> # Import with specific settings
             >>> AutoBridge.import_ckpt(
-            ...     "meta-llama/Llama-3-8B",
+            ...     "meta-llama/Meta-Llama-3-8B",
             ...     "./megatron_checkpoints/llama3_8b",
             ...     torch_dtype=torch.float16,
             ...     device_map="auto"
@@ -580,7 +590,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
         # Save as Megatron checkpoint
-        bridge.save_megatron_model(megatron_model, megatron_path)
+        bridge.save_megatron_model(megatron_model, megatron_path, hf_tokenizer_path=hf_model_id)
 
     def export_ckpt(
         self,
@@ -670,7 +680,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> # Create provider and model with loaded weights
-            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3-8B")
+            >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             >>> provider = bridge.to_megatron_provider()
             >>> model = provider.get_model()
 
@@ -691,8 +701,10 @@ class AutoBridge(Generic[MegatronModelT]):
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
-            # Skip weights initialization since we are going to load weights
-            provider.perform_initialization = False
+            # TODO(yuya): Temporary workaround: keep initialization enabled.
+            # When disabled, TP-related attributes are not added properly and TP breaks in Megatron-Core.
+            # We will fix this in the core soon; setting this to True may slow startup a bit.
+            provider.perform_initialization = True
             if hf_path is None:
                 provider.register_pre_wrap_hook(
                     partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)

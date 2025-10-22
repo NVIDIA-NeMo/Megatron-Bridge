@@ -17,7 +17,7 @@ from typing import Optional, Union
 
 import torch
 
-from megatron.bridge.models.mamba import NVIDIAMambaProvider8B
+from megatron.bridge.models.mamba import NVIDIAMambaModelProvider8B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -42,7 +42,7 @@ def model_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
-) -> NVIDIAMambaProvider8B:
+) -> NVIDIAMambaModelProvider8B:
     """
     Configure the Mamba 8B model.
 
@@ -55,9 +55,9 @@ def model_config(
         sequence_parallelism: Whether to use sequence parallelism.
 
     Returns:
-        NVIDIAMambaProvider8B: Configuration for the Mamba 8B model.
+        NVIDIAMambaModelProvider8B: Configuration for the Mamba 8B model.
     """
-    return NVIDIAMambaProvider8B(
+    return NVIDIAMambaModelProvider8B(
         tensor_model_parallel_size=tensor_parallelism,
         pipeline_model_parallel_size=pipeline_parallelism,
         pipeline_dtype=pipeline_parallelism_dtype,
@@ -93,6 +93,7 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
+    lr_decay_iters: Optional[int] = None,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
@@ -123,6 +124,7 @@ def pretrain_config(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        lr_decay_iters (Optional[int]): Number of iterations for learning rate decay.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration for the model.
 
@@ -149,7 +151,7 @@ def pretrain_config(
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
+        lr_decay_iters=lr_decay_iters,
         adam_beta1=0.9,
         adam_beta2=0.95,
         adam_eps=1e-5,

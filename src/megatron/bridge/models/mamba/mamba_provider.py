@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
@@ -25,6 +26,7 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils.common_utils import get_rank_safe
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -32,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
+class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     """Configuration and provider for Megatron Core Mamba models.
 
     This class extends TransformerConfig with Mamba-specific parameters and
@@ -123,7 +125,7 @@ class MambaProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
 
 
 @dataclass
-class MambaProvider130M(MambaProvider):
+class MambaModelProvider130M(MambaModelProvider):
     """Configuration for a 130M parameter Mamba model."""
 
     hybrid_override_pattern: str = "M" * 24
@@ -136,7 +138,7 @@ class MambaProvider130M(MambaProvider):
 
 
 @dataclass
-class MambaProvider370M(MambaProvider):
+class MambaModelProvider370M(MambaModelProvider):
     """Configuration for a 370M parameter Mamba model."""
 
     hybrid_override_pattern: str = "M" * 48
@@ -149,7 +151,7 @@ class MambaProvider370M(MambaProvider):
 
 
 @dataclass
-class MambaProvider780M(MambaProvider):
+class MambaModelProvider780M(MambaModelProvider):
     """Configuration for a 780M parameter Mamba model."""
 
     hybrid_override_pattern: str = "M" * 48
@@ -162,7 +164,7 @@ class MambaProvider780M(MambaProvider):
 
 
 @dataclass
-class MambaProvider1_3B(MambaProvider):
+class MambaModelProvider1P3B(MambaModelProvider):
     """Configuration for a 1.3B parameter Mamba model."""
 
     hybrid_override_pattern: str = "M" * 48
@@ -175,7 +177,7 @@ class MambaProvider1_3B(MambaProvider):
 
 
 @dataclass
-class MambaProvider2_7B(MambaProvider):
+class MambaModelProvider2P7B(MambaModelProvider):
     """Configuration for a 2.7B parameter Mamba model."""
 
     hybrid_override_pattern: str = "M" * 64
@@ -188,7 +190,7 @@ class MambaProvider2_7B(MambaProvider):
 
 
 @dataclass
-class NVIDIAMambaProvider8B(MambaProvider):
+class NVIDIAMambaModelProvider8B(MambaModelProvider):
     """Configuration for a 8B parameter Mamba model used in NVIDIA research."""
 
     hybrid_override_pattern: str = "M" * 56
@@ -202,7 +204,7 @@ class NVIDIAMambaProvider8B(MambaProvider):
 
 
 @dataclass
-class NVIDIAMambaHybridProvider8B(MambaProvider):
+class NVIDIAMambaHybridModelProvider8B(MambaModelProvider):
     """Configuration for a 8B parameter hybrid Mamba model used in NVIDIA research."""
 
     hybrid_override_pattern: str = "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
@@ -214,3 +216,129 @@ class NVIDIAMambaHybridProvider8B(MambaProvider):
     num_attention_heads: int = 32
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
+
+
+# -----------------------------------------------------------------------------
+# Deprecated aliases (to be removed in a future release)
+# -----------------------------------------------------------------------------
+
+
+def _warn_deprecated(old_cls: str, new_cls: str) -> None:
+    if get_rank_safe() == 0:
+        warnings.warn(
+            f"{old_cls} is deprecated and will be removed in a future release. Use {new_cls} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
+@dataclass
+class MambaProvider(MambaModelProvider):
+    """Deprecated alias for ``MambaModelProvider``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MambaModelProvider`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MambaProvider", "MambaModelProvider")
+        super().__post_init__()
+
+
+@dataclass
+class MambaProvider130M(MambaModelProvider130M):
+    """Deprecated alias for ``MambaModelProvider130M``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MambaModelProvider130M`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MambaProvider130M", "MambaModelProvider130M")
+        super().__post_init__()
+
+
+@dataclass
+class MambaProvider370M(MambaModelProvider370M):
+    """Deprecated alias for ``MambaModelProvider370M``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MambaModelProvider370M`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MambaProvider370M", "MambaModelProvider370M")
+        super().__post_init__()
+
+
+@dataclass
+class MambaProvider780M(MambaModelProvider780M):
+    """Deprecated alias for ``MambaModelProvider780M``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MambaModelProvider780M`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MambaProvider780M", "MambaModelProvider780M")
+        super().__post_init__()
+
+
+@dataclass
+class MambaProvider1_3B(MambaModelProvider1P3B):
+    """Deprecated alias for ``MambaModelProvider1P3B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MambaModelProvider1P3B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MambaProvider1_3B", "MambaModelProvider1P3B")
+        super().__post_init__()
+
+
+@dataclass
+class MambaProvider2_7B(MambaModelProvider2P7B):
+    """Deprecated alias for ``MambaModelProvider2P7B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``MambaModelProvider2P7B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("MambaProvider2_7B", "MambaModelProvider2P7B")
+        super().__post_init__()
+
+
+@dataclass
+class NVIDIAMambaProvider8B(NVIDIAMambaModelProvider8B):
+    """Deprecated alias for ``NVIDIAMambaModelProvider8B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NVIDIAMambaModelProvider8B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NVIDIAMambaProvider8B", "NVIDIAMambaModelProvider8B")
+        super().__post_init__()
+
+
+@dataclass
+class NVIDIAMambaHybridProvider8B(NVIDIAMambaHybridModelProvider8B):
+    """Deprecated alias for ``NVIDIAMambaHybridModelProvider8B``.
+
+    Deprecated:
+        This alias remains for backward compatibility and will be removed in a
+        future release. Import and use ``NVIDIAMambaHybridModelProvider8B`` instead.
+    """
+
+    def __post_init__(self) -> None:
+        _warn_deprecated("NVIDIAMambaHybridProvider8B", "NVIDIAMambaHybridModelProvider8B")
+        super().__post_init__()

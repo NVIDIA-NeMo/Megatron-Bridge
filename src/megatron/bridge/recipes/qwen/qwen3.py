@@ -17,6 +17,7 @@ from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -34,63 +35,129 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
-def qwen3_600m_pretrain(**user_kwargs):
-    recommended_kwargs = {
+
+class Qwen3CommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen3 recipe helper functions."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+    # Dataset configuration
+    data_paths: Optional[List[str]]
+    data_args_path: Optional[str]
+    train_data_path: Optional[List[str]]
+    valid_data_path: Optional[List[str]]
+    test_data_path: Optional[List[str]]
+    per_split_data_args_path: Optional[str]
+    mock: bool
+    # Model configuration
+    tensor_parallelism: int
+    pipeline_parallelism: int
+    pipeline_parallelism_dtype: Optional[torch.dtype]
+    virtual_pipeline_parallelism: Optional[int]
+    context_parallelism: int
+    sequence_parallelism: bool
+    use_megatron_fsdp: bool
+    use_null_tokenizer: bool
+    enable_recompute: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    seq_length: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    eval_interval: int
+    save_interval: int
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+
+
+def qwen3_600m_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3 0.6B.
+
+    See `_qwen3_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-0.6B",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_common(**combined_kwargs)
 
 
-def qwen3_1p7b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen3_1p7b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3 1.7B.
+
+    See `_qwen3_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-1.7B",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_common(**combined_kwargs)
 
 
-def qwen3_4b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen3_4b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3 4B.
+
+    See `_qwen3_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-4B",
         "tensor_parallelism": 2,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_common(**combined_kwargs)
 
 
-def qwen3_8b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen3_8b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3 8B.
+
+    See `_qwen3_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-8B",
         "tensor_parallelism": 4,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_common(**combined_kwargs)
 
 
-def qwen3_14b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen3_14b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3 14B.
+
+    See `_qwen3_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-14B",
         "tensor_parallelism": 8,
         "pipeline_parallelism": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_common(**combined_kwargs)
 
 
-def qwen3_32b_pretrain(**user_kwargs):
-    recommended_kwargs = {
+def qwen3_32b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Qwen3 32B.
+
+    See `_qwen3_common` for the full list of parameters.
+    """
+    recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-32B",
         "tensor_parallelism": 8,
         "pipeline_parallelism": 2,
@@ -98,7 +165,7 @@ def qwen3_32b_pretrain(**user_kwargs):
         "enable_recompute": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
-    combined_kwargs = recommended_kwargs | user_kwargs
+    combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_common(**combined_kwargs)
 
 
@@ -132,6 +199,9 @@ def _qwen3_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
+    lr_decay_iters: Optional[int] = None,
+    eval_interval: int = 500,
+    save_interval: int = 500,
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
@@ -166,6 +236,7 @@ def _qwen3_common(
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
 
@@ -190,7 +261,7 @@ def _qwen3_common(
     model_cfg.context_parallel_size = context_parallelism
     model_cfg.sequence_parallel = sequence_parallelism
     model_cfg.seq_length = seq_length
-    
+
     # Add recompute settings for memory optimization (used by larger models like 32B)
     if enable_recompute:
         model_cfg.recompute_granularity = "full"
@@ -199,7 +270,7 @@ def _qwen3_common(
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
-        lr_decay_iters=train_iters,
+        lr_decay_iters=lr_decay_iters,
         max_lr=lr,
         min_lr=min_lr,
     )
@@ -209,7 +280,7 @@ def _qwen3_common(
         model=model_cfg,
         train=TrainingConfig(
             train_iters=train_iters,
-            eval_interval=500,
+            eval_interval=eval_interval,
             eval_iters=32,
             global_batch_size=global_batch_size,
             micro_batch_size=micro_batch_size,
@@ -218,7 +289,7 @@ def _qwen3_common(
             manual_gc_eval=100,
         ),
         optimizer=opt_cfg,
-        scheduler=scheulder_cfg,
+        scheduler=scheduler_cfg,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
@@ -255,7 +326,7 @@ def _qwen3_common(
             vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE if use_null_tokenizer else None,
         ),
         checkpoint=CheckpointConfig(
-            save_interval=500,
+            save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
             ckpt_format="torch_dist",
