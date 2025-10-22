@@ -141,7 +141,7 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja"]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy<2.0.0", "ninja", "nvidia-mathdx"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"

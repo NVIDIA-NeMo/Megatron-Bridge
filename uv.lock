@@ -2144,6 +2144,7 @@ build = [
     { name = "cython" },
     { name = "ninja" },
     { name = "numpy" },
+    { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
     { name = "torch", marker = "sys_platform == 'never'" },
@@ -2201,6 +2202,7 @@ build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "ninja" },
     { name = "numpy", specifier = "<2.0.0" },
+    { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
     { name = "torch" },
@@ -2982,6 +2984,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/22/836f60313a04a118382456f97905ef040667197dbedd8b0d8bb3492b7de7/nvidia_cutlass_dsl-4.3.0.dev0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9e9b5d9d4ddec47b62666e68a7a4c91811ae50ce372c3de88d05d09d488af592", size = 62492188, upload-time = "2025-10-21T09:41:02.249Z" },
     { url = "https://files.pythonhosted.org/packages/d3/73/b198c04e00858e51aaad0ced1f2a59a7ef259b582f224900715a1d3defd2/nvidia_cutlass_dsl-4.3.0.dev0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:5e3c1f20924b1abc05b47c17a716ecf3e98a00159d3c0a5579a228a364147f56", size = 58856462, upload-time = "2025-10-21T09:37:59.788Z" },
     { url = "https://files.pythonhosted.org/packages/90/53/bda935ca72a05ed84719210b38b7e10e6607066993fe185614149f191681/nvidia_cutlass_dsl-4.3.0.dev0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:cb0f87ed600efa442845dac5c7a30181351d9de80e1168cf1d090f4e0ff5e541", size = 62491878, upload-time = "2025-10-21T09:40:21.965Z" },
+]
+
+[[package]]
+name = "nvidia-mathdx"
+version = "25.1.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/00/f1a73ac224d466b31b6eb09794656112e896185678720b05668777e87db3/nvidia_mathdx-25.1.1-py3-none-any.whl", hash = "sha256:4fb948fe4842d24e679f3d0c140c8a0e8e24c3c7ae5eb6e08584253ad94a198b", size = 39894902, upload-time = "2025-05-06T22:58:32.29Z" },
 ]
 
 [[package]]
@@ -5231,7 +5241,7 @@ name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mpmath" },
+    { name = "mpmath", marker = "sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
 wheels = [
@@ -5517,15 +5527,15 @@ name = "torch"
 version = "2.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
-    { name = "sympy" },
+    { name = "filelock", marker = "sys_platform != 'linux'" },
+    { name = "fsspec", marker = "sys_platform != 'linux'" },
+    { name = "jinja2", marker = "sys_platform != 'linux'" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and sys_platform != 'linux'" },
+    { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and sys_platform != 'linux'" },
+    { name = "setuptools", marker = "python_full_version >= '3.12' and sys_platform != 'linux'" },
+    { name = "sympy", marker = "sys_platform != 'linux'" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "sys_platform != 'linux'" },
 ]
 
 [[package]]
