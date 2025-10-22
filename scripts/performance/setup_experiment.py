@@ -185,4 +185,4 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True, name=exp_name)
+    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=args.detach, name=exp_name)
