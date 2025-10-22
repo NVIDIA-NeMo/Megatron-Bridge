@@ -522,6 +522,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         cpu: bool = True,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        reuse_buffer_from_cache: bool = False,
     ) -> Iterable[HFWeightTuple]:
         """Export Megatron weights to HuggingFace format.
 
@@ -562,6 +563,14 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     megatron_model, hf_config, conversion_tasks=tasks
                 ):
                     print(f"Exported {name}: {weight.shape}")
+                
+                # Or optionally use reuse_buffer_from_cache for the returned values. User must ensure 
+                the tensors are used immediately after getting from the generator.
+                for name, weight in bridge.stream_weights_megatron_to_hf(
+                    megatron_model, hf_config, conversion_tasks=tasks, reuse_buffer_from_cache=True
+                ):
+                    print(f"Exported {name}: {weight.shape}")
+
 
         Raises:
             ValueError: If input parameters are invalid.
@@ -581,7 +590,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         model_config = unwrap_model(megatron_model)[0].config
         embeddings_are_tied = model_config.share_embeddings_and_output_weights
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module)
+            converted_weights_dict = task.mapping.megatron_to_hf(task.param_weight, task.megatron_module, reuse_buffer_from_cache)
 
             # All ranks get the full tensor
             for hf_name, tensor in converted_weights_dict.items():
@@ -606,6 +615,10 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 else:
                     # Regular case - yield the tensor normally
                     yield HFWeightTuple(hf_name, final_tensor)
+        
+        # cleanup and buffer cache after finishing conversion
+        if reuse_buffer_from_cache and len(conversion_tasks):
+            conversion_tasks[0].mapping.buffer_cache.clear()
 
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.
@@ -928,6 +941,7 @@ def stream_weights_megatron_to_hf(
     cpu: bool = True,
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
+    reuse_buffer_from_cache: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...
@@ -963,10 +977,11 @@ def register_bridge_implementation(
         cpu: bool = True,
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        reuse_buffer_from_cache: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_weights_megatron_to_hf(
-            megatron_model, hf_pretrained, cpu=cpu, show_progress=show_progress, conversion_tasks=conversion_tasks
+            megatron_model, hf_pretrained, cpu=cpu, show_progress=show_progress, conversion_tasks=conversion_tasks, reuse_buffer_from_cache=reuse_buffer_from_cache
         )
 
     # Set meaningful names for debugging
