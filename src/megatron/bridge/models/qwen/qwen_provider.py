@@ -451,6 +451,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     moe_shared_expert_gate: bool = True
 
 
+@dataclass
 class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     """
     Provider for Qwen 3 Next: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct
@@ -462,3 +463,4 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     num_query_groups: int = 2
     ffn_hidden_size: int = 5120
     moe_ffn_hidden_size: int = 512
+    mtp_num_layers: int = 1

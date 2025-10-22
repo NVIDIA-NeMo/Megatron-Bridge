@@ -16,7 +16,6 @@ import json
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
-import zlib
 
 import torch
 import torch.distributed
@@ -1844,7 +1843,11 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
     
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         hf_weights = super().megatron_to_hf(megatron_weights, megatron_module)
-        hf_weights.data = hf_weights.data + 1
+        assert isinstance(hf_weights, dict) and len(hf_weights) == 1, (
+            f"Expected a dictionary with one element, got {hf_weights.keys()=}"
+        )
+        inner_hf_weight = list(hf_weights.values())[0]
+        inner_hf_weight.data = inner_hf_weight.data + 1
         return hf_weights
 
 
@@ -1966,18 +1969,18 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
     head_size = provider.kv_channels or (provider.hidden_size // head_num)
     hidden_size = provider.hidden_size
     is_bias = q.ndim == 1
-    have_gate = int(provider.attention_output_gate)
+    q_head_size = head_size * 2 if provider.attention_output_gate else head_size
 
     # Reshape to expose head dimension
     if is_bias:
-        q_reshaped = q.view(head_num, head_size * (1 + have_gate))
+        q_reshaped = q.view(head_num, q_head_size)
         k_reshaped = k.view(num_query_groups, head_size)
         v_reshaped = v.view(num_query_groups, head_size)
     else:
-        q_reshaped = q.view(head_num, head_size * (1 + have_gate), hidden_size)
+        q_reshaped = q.view(head_num, q_head_size, hidden_size)
         k_reshaped = k.view(num_query_groups, head_size, hidden_size)
         v_reshaped = v.view(num_query_groups, head_size, hidden_size)
-    if have_gate:
+    if provider.attention_output_gate:
         q_reshaped, z_reshaped = torch.chunk(q_reshaped, 2, dim=1)
 
     # Interleave in Megatron pattern: [q1...qn, k1, v1, q1...qn, k2, v2, ...]
@@ -1986,7 +1989,7 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         q_group = q_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
         k_group = k_reshaped[i : i + 1]
         v_group = v_reshaped[i : i + 1]
-        if have_gate:
+        if provider.attention_output_gate:
             z_group = z_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
             qkv_weights.extend([q_group, z_group, k_group, v_group])
         else:
@@ -1996,7 +1999,7 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
 
     assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
         f"QKV weights are not correctly merged, "
-        f"{q.numel()=}, {k.numel()=}, {v.numel()=}, {qkv.numel()=}"
+        f"{q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
     )
 
     # Final reshape
@@ -2023,8 +2026,7 @@ def split_qkv_weights(
     num_query_groups = provider.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = provider.kv_channels or (provider.hidden_size // head_num)
-    have_gate = int(config.attention_output_gate)
-    if have_gate:
+    if provider.attention_output_gate:
         qkv_total_dim = 2 * head_num + 2 * num_query_groups
         total_heads_per_group = 2 * heads_per_group + 2
     else:
@@ -2052,7 +2054,7 @@ def split_qkv_weights(
     k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
     v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    if config.attention_output_gate:
+    if provider.attention_output_gate:
         z_slice = torch.cat(
             [
                 torch.arange(
@@ -2063,7 +2065,7 @@ def split_qkv_weights(
             ]
         )
         # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
-        q = torch.cat([qkv[q_slice], qkv[z_slice]], dim=1)
+        q = torch.cat([qkv_reshaped[q_slice], qkv_reshaped[z_slice]], dim=1)
     else:
         q = qkv_reshaped[q_slice]
     k = qkv_reshaped[k_slice]
@@ -2071,7 +2073,7 @@ def split_qkv_weights(
 
     assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
         f"QKV weights are not correctly merged, "
-        f"{q.numel()=}, {k.numel()=}, {v.numel()=}, {qkv.numel()=}"
+        f"{q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
     )
 
     if is_bias:
@@ -2130,10 +2132,10 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor)
     """TODO: add comments
     """
     hidden_size = provider.hidden_size
-    qk_head_dim = provider.gdn_qk_head_dim
-    v_head_dim = provider.gdn_v_head_dim
-    num_qk_heads = provider.gdn_num_qk_heads
-    num_v_heads = provider.gdn_num_v_heads
+    qk_head_dim = provider.linear_key_head_dim
+    v_head_dim = provider.linear_value_head_dim
+    num_qk_heads = provider.linear_num_key_heads
+    num_v_heads = provider.linear_num_value_heads
     qk_dim = qk_head_dim * num_qk_heads
     v_dim = v_head_dim * num_v_heads
     in_proj_dim = qk_dim * 2 + v_dim * 2 + num_v_heads * 2

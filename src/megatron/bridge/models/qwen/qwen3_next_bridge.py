@@ -23,6 +23,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     GDNLinearMapping,
     QKVMapping,
+    ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -95,45 +96,39 @@ class Qwen3NextBridge(MegatronModelBridge):
 
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
-        layer_mappings = {
-            # MoE
-            "mlp.router.weight": "mlp.gate.weight",
-            "pre_mlp_layernorm.weight": "post_attention_layernorm.weight",
-            # Shared expert gate
-            "mlp.shared_experts.gate_weight": "mlp.shared_expert_gate.weight",
-            # Standard attention
-            "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
-            "self_attention.q_layernorm.weight": "self_attn.q_norm.weight",
-            "self_attention.k_layernorm.weight": "self_attn.k_norm.weight",
-            "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
-            # Linear attention
-            "self_attention.in_proj.layer_norm_weight": "input_layernorm.weight",
-            "self_attention.out_proj.weight": "linear_attn.out_proj.weight",
-            "self_attention.conv1d.weight": "linear_attn.conv1d.weight",
-            "self_attention.A_log": "linear_attn.A_log",
-            "self_attention.dt_bias": "linear_attn.dt_bias",
-        }
-
-        # Main decoder params
         param_mappings = {
             # Embedding and output
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
-        }
-        for megatron_param, hf_param in layer_mappings.items():
-            param_mappings[f"decoder.layers.*.{megatron_param}"] = f"model.layers.*.{hf_param}"
-
-        # MTP params
-        param_mappings.update({
+            # MoE
+            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
+            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
+            # Standard attention
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
+            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
+            # Linear attention
+            "decoder.layers.*.self_attention.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.out_proj.weight": "model.layers.*.linear_attn.out_proj.weight",
+            "decoder.layers.*.self_attention.conv1d.weight": "model.layers.*.linear_attn.conv1d.weight",
+            "decoder.layers.*.self_attention.A_log": "model.layers.*.linear_attn.A_log",
+            "decoder.layers.*.self_attention.dt_bias": "model.layers.*.linear_attn.dt_bias",
+            # MTP projection and norms
             "mtp.layers.0.eh_proj.weight": "mtp.fc.weight",
             "mtp.layers.0.enorm.weight": "mtp.pre_fc_norm_embedding.weight",
             "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
             "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
-        })
-        for megatron_param, hf_param in layer_mappings.items():
-            param_mappings[f"mtp.layers.*.transformer_layer.{megatron_param}"] = f"mtp.layers.*.{hf_param}"
-
+            # MTP MoE
+            "mtp.layers.0.transformer_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
+            "mtp.layers.0.transformer_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
+            # MTP standard attention
+            "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+            "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+            "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+            "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+        }
 
         mapping_list = []
         # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
@@ -205,7 +200,16 @@ class Qwen3NextBridge(MegatronModelBridge):
                     megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc2.weight",
                     hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
                 ),
-                # Qwen3-Next implement the output norm as: a standard RMSNorm + initializing weight to ones,
+                # Shared expert gate
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.shared_experts.gate_weight",
+                    hf_param="model.layers.*.mlp.shared_expert_gate.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="mtp.layers.0.transformer_layer.mlp.shared_experts.gate_weight",
+                    hf_param="mtp.layers.0.mlp.shared_expert_gate.weight",
+                ),
+                # Qwen3-Next implements the output norm as a standard RMSNorm while initializing weight to ones,
                 # while other norms are regular zero-centered RMSNorms.
                 # To correctly load the output norm weight, we need to subtract 1 from it.
                 RMSNorm2ZeroCenteredRMSNormMapping(

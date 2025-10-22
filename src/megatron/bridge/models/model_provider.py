@@ -109,7 +109,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = True,
         use_cpu_initialization: None | bool = False,
-        return_cpu_model: bool = False,
         init_model_with_meta_device: bool | None = None,
         pre_wrap_hook: Union[
             Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -137,7 +136,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             wrap_with_ddp: Whether to wrap model with DDP.
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
             use_cpu_initialization: Initialize model on CPU.
-            return_cpu_model: Return model on CPU.
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: A single callable or list of callables to modify the model before it's wrapped.
                 If provided, this will override all hooks registered via `register_pre_wrap_hook`.
@@ -164,6 +162,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         if not parallel_state.is_initialized():
             print("Model parallel not initialized, initializing...")
             self.initialize_model_parallel(seed=0)
+        else:
+            model_parallel_cuda_manual_seed(seed=0)
 
         # Convert list of hooks to a single composed callable
         if isinstance(pre_wrap_hook, list):
@@ -190,7 +190,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             wrap_with_ddp=wrap_with_ddp,
             data_parallel_random_init=data_parallel_random_init,
             use_cpu_initialization=use_cpu_initialization,
-            return_cpu_model=return_cpu_model,
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
@@ -469,7 +468,6 @@ def get_model(
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = True,
     use_cpu_initialization: None | bool = False,
-    return_cpu_model: bool = False,
     init_model_with_meta_device: bool | None = None,
     pre_wrap_hook: Union[
         Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -503,7 +501,6 @@ def get_model(
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
         use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
-        return_cpu_model: Whether to return the model on CPU.
         init_model_with_meta_device: Whether to initialize the model on the meta device
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
@@ -560,7 +557,6 @@ def get_model(
     if (
         not use_torch_fsdp2
         and not model_config.use_cpu_initialization
-        and not return_cpu_model
         and not model_config.init_model_with_meta_device
     ):
         for model_module in model:
@@ -573,9 +569,6 @@ def get_model(
         correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
-        assert not return_cpu_model, (
-            f"{return_cpu_model=} conflicts with {wrap_with_ddp=}"
-        )
         model = _ddp_wrap(
             model,
             data_parallel_random_init,
