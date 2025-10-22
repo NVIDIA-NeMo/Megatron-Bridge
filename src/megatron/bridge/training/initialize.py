@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import datetime
+import os
 import warnings
 from typing import Callable, Optional
 
@@ -32,7 +33,13 @@ from megatron.core.utils import configure_nvtx_profiling, get_te_version, is_te_
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
-from megatron.bridge.utils.common_utils import get_local_rank_preinit, get_rank_safe, get_world_size_safe
+from megatron.bridge.utils.common_utils import (
+    get_local_rank_preinit,
+    get_master_addr_safe,
+    get_master_port_safe,
+    get_rank_safe,
+    get_world_size_safe,
+)
 
 
 def initialize_megatron(
@@ -358,6 +365,13 @@ def _initialize_distributed(
         # Set to non-default stream for cudagraph capturing.
         if model_config.external_cuda_graph:
             torch.cuda.set_stream(torch.cuda.Stream())
+
+        # Ensure MASTER_ADDR and MASTER_PORT are set for distributed initialization
+        # These may come from torchrun, SLURM, or defaults
+        if "MASTER_ADDR" not in os.environ:
+            os.environ["MASTER_ADDR"] = get_master_addr_safe()
+        if "MASTER_PORT" not in os.environ:
+            os.environ["MASTER_PORT"] = str(get_master_port_safe())
 
         # Call the init process
         init_process_group_kwargs = {

@@ -1674,11 +1674,9 @@ class TestSyncAndValidateExternalCudaGraph:
         # Should not warn since te_rng_tracker is already enabled
         mock_warn_rank_0.assert_not_called()
 
-    @patch("os.getenv")
-    def test_expandable_segments_validation_error(self, mock_getenv):
+    @patch.dict("os.environ", {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
+    def test_expandable_segments_validation_error(self):
         """Test that expandable_segments:True in PYTORCH_CUDA_ALLOC_CONF raises error with external CUDA graphs."""
-        mock_getenv.side_effect = ["0", "0", "expandable_segments:True"]
-
         gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
 
         container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
@@ -1689,12 +1687,9 @@ class TestSyncAndValidateExternalCudaGraph:
         ):
             container._sync_and_validate_external_cuda_graph()
 
-    @patch("os.getenv")
-    def test_expandable_segments_validation_pass(self, mock_getenv):
+    @patch.dict("os.environ", {"PYTORCH_CUDA_ALLOC_CONF": ""}, clear=False)
+    def test_expandable_segments_validation_pass(self):
         """Test that expandable_segments validation passes when not set or set to False."""
-        # Test with expandable_segments:False
-        mock_getenv.side_effect = ["0", "0", ""]
-
         gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
 
         container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
