@@ -256,6 +256,7 @@ def _qwen3_next_common(
         max_lr=lr,
         min_lr=min_lr,
     )
+    scheduler.no_weight_decay_cond_type = "qwen3_next"
 
     # Config Container
     cfg = ConfigContainer(

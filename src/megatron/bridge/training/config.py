@@ -414,6 +414,12 @@ class SchedulerConfig:
     weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
     """Weight decay increment function."""
 
+    no_weight_decay_cond_type: Optional[Literal["qwen3_next"]] = None
+    """Type of no weight decay condition. Choices: 
+    None (default): param no weight decay if and only if it is 1D; or it is bias; 
+    or it is embedding and embedding_init_method_std is not None. 
+    "qwen3_next": In addition to the default rules, apply weight decay to qk layernorm as a special case."""
+
     lr_warmup_steps: Optional[int] = field(init=False, default=None)
     lr_decay_steps: Optional[int] = field(init=False, default=None)
     wd_incr_steps: Optional[int] = field(init=False, default=None)
