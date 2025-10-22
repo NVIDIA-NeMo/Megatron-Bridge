@@ -904,6 +904,7 @@ class TestLoadBaseCheckpoint:
         """Fixture for base checkpoint tests."""
         mock_cfg = Mock(spec=CheckpointConfig)
         mock_cfg.exit_on_missing_checkpoint = False
+        mock_cfg.ckpt_step = None
         return mock_cfg
 
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
@@ -1377,10 +1378,10 @@ class TestMegatronLMCompatibility:
     @patch("os.path.exists")
     def test_load_base_checkpoint_legacy_tracker(self, mock_isfile, mock_read_metadata):
         """Test loading checkpoint with legacy Megatron-LM tracker file."""
-        mock_cfg = Mock()
-        mock_cfg.checkpoint = Mock()
-        mock_cfg.checkpoint.non_persistent_ckpt_type = None
-        mock_cfg.checkpoint.exit_on_missing_checkpoint = False
+        mock_cfg = Mock(spec=CheckpointConfig)
+        mock_cfg.non_persistent_ckpt_type = None
+        mock_cfg.exit_on_missing_checkpoint = False
+        mock_cfg.ckpt_step = None
 
         # Mock file existence: NeMo-LM tracker doesn't exist, legacy tracker does
         def mock_isfile_side_effect(path):
