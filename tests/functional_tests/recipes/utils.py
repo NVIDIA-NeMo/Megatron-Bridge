@@ -94,18 +94,12 @@ def run_pretrain_recipe_test(
         if tensor_parallelism is not None:
             if hasattr(config.model, "tensor_model_parallel_size"):
                 config.model.tensor_model_parallel_size = tensor_parallelism
-            else:
-                setattr(config.model, "tensor_parallelism", tensor_parallelism)
         if pipeline_parallelism is not None:
             if hasattr(config.model, "pipeline_model_parallel_size"):
                 config.model.pipeline_model_parallel_size = pipeline_parallelism
-            else:
-                setattr(config.model, "pipeline_parallelism", pipeline_parallelism)
         if expert_parallelism is not None:
             if hasattr(config.model, "expert_model_parallel_size"):
                 config.model.expert_model_parallel_size = expert_parallelism
-            else:
-                setattr(config.model, "expert_parallelism", expert_parallelism)
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
