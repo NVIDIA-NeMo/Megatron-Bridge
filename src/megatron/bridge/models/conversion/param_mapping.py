@@ -78,6 +78,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                     gathered = self.gather_from_tp_ranks(weight)
                     return {"custom_weight": gathered[0].t()}
     """
+    buffer_cache_for_conversion = {}
 
     def __init__(self, megatron_param: str, hf_param: Union[str, Dict[str, str]]):
         """Initialize the weight mapping.
@@ -252,6 +253,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Convert weights FROM Megatron format.
 
@@ -272,7 +274,21 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         ...
 
-    def broadcast_from_pp_rank(self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None) -> Optional[torch.Tensor]:
+    def allocate_or_reuse_from_buffer_cache(self, num_copies: int, shape: Tuple[int, ...], dtype: torch.dtype, device: torch.device, reuse_buffer_from_cache: bool) -> torch.Tensor:
+        """Get a tensor from shape, dtype and device. Maybe reuse a tensor from the tensor cache."""
+        if reuse_buffer_from_cache:
+            key = (num_copies, shape, dtype, device)
+            tensors = MegatronParamMapping.buffer_cache_for_conversion.get(key, None)
+            if tensors is None:
+                tensors = [torch.empty(shape, dtype=dtype, device=device) for _ in range(num_copies)]
+                MegatronParamMapping.buffer_cache_for_conversion[key] = tensors
+            return tensors
+        return [torch.empty(shape, dtype=dtype, device=device) for _ in range(num_copies)]
+
+    def clear_buffer_cache(self):
+        MegatronParamMapping.buffer_cache_for_conversion.clear()
+
+    def broadcast_from_pp_rank(self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None, reuse_buffer_from_cache: bool = False) -> Optional[torch.Tensor]:
         """Broadcast a tensor from the pipeline-parallel rank that owns it.
 
         Broadcasts to **all** PP ranks. This mirrors the behaviour of
@@ -338,7 +354,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             shape, dtype, tensor_parallel, partition_dim = target_tensor_spec
             # Use CPU by default, unless CUDA is available
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            tensor = torch.empty(shape, dtype=dtype, device=device)
+            tensor = self.allocate_or_reuse_from_buffer_cache(1, tuple(shape), dtype, device, reuse_buffer_from_cache)[0]
             if tensor_parallel is not None:
                 tensor.tensor_model_parallel = tensor_parallel
             if partition_dim is not None:
@@ -489,7 +505,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         )
         return output
 
-    def gather_from_tp_ranks(self, tensor: torch.Tensor) -> List[torch.Tensor]:
+    def gather_from_tp_ranks(self, tensor: torch.Tensor, reuse_buffer_from_cache: bool = False) -> List[torch.Tensor]:
         """Gather tensors from all TP ranks.
 
         Args:
@@ -502,7 +518,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         if self.tp_size == 1:
             return [tensor]
 
-        gathered = [torch.empty_like(tensor) for _ in range(self.tp_size)]
+        gathered = self.allocate_or_reuse_from_buffer_cache(self.tp_size, tuple(tensor.shape), tensor.dtype, tensor.device, reuse_buffer_from_cache)
         torch.distributed.all_gather(gathered, tensor, group=self.tp_group)
         return gathered
 
@@ -596,6 +612,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[MegatronModule],
         hf_param_name: Optional[str],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Handle expert parallel weight gathering for MoE models.
 
@@ -642,7 +659,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         )
 
         # Gather weights from all EP ranks
-        gathered_weights = [torch.empty_like(megatron_weights) for _ in range(self.ep_size)]
+        gathered_weights = self.allocate_or_reuse_from_buffer_cache(self.ep_size, tuple(megatron_weights.shape), megatron_weights.dtype, megatron_weights.device, reuse_buffer_from_cache)
         torch.distributed.all_gather(gathered_weights, megatron_weights, group=self.ep_group)
 
         # Return dictionary mapping HF parameter names to weights
@@ -670,10 +687,11 @@ class DirectMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Direct copy with PP broadcast."""
         # Handle cross-PP broadcast
-        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param))
+        megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.hf_param), reuse_buffer_from_cache=reuse_buffer_from_cache)
 
         if megatron_weights is None:
             return {}
@@ -769,6 +787,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate."""
         # Handle cross-PP broadcast
@@ -784,11 +803,11 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             full_weights = megatron_weights
         else:
             # Gather from all TP ranks
-            gathered = self.gather_from_tp_ranks(megatron_weights)
+            gathered = self.gather_from_tp_ranks(megatron_weights, reuse_buffer_from_cache=reuse_buffer_from_cache)
             full_weights = torch.cat(gathered, dim=0)
 
-        if self.is_expert:
-            return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
+        if self.is_expert and self.ep_size > 1:
+            return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param, reuse_buffer_from_cache=reuse_buffer_from_cache)
 
         return {str(self.hf_param): full_weights}
 
@@ -867,6 +886,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate."""
         # Handle cross-PP broadcast
@@ -881,11 +901,11 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if self.tp_size == 1:
             full_weights = megatron_weights
         else:
-            gathered = self.gather_from_tp_ranks(megatron_weights)
+            gathered = self.gather_from_tp_ranks(megatron_weights, reuse_buffer_from_cache=reuse_buffer_from_cache)
             full_weights = torch.cat(gathered, dim=1)
 
-        if self.is_expert:
-            return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
+        if self.is_expert and self.ep_size > 1:
+            return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param, reuse_buffer_from_cache=reuse_buffer_from_cache)
 
         return {str(self.hf_param): full_weights}
 
@@ -928,6 +948,7 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Return weight only from rank 0 to avoid duplication."""
         # Handle cross-PP broadcast
@@ -939,8 +960,8 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.is_expert:
-            return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
+        if self.is_expert and self.ep_size > 1:
+            return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param, reuse_buffer_from_cache=reuse_buffer_from_cache)
 
         return {str(self.hf_param): megatron_weights}
 
@@ -1381,6 +1402,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
+        reuse_buffer_from_cache: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Gather concatenated shards and split into gate and up."""
         # Handle cross-PP broadcast first
@@ -1400,7 +1422,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         else:
             # Gather shards from all TP ranks
-            gathered_shards = self.gather_from_tp_ranks(megatron_weights)
+            gathered_shards = self.gather_from_tp_ranks(megatron_weights, reuse_buffer_from_cache=reuse_buffer_from_cache)
 
             # Split each shard back into gate and up parts
             gate_parts = []
@@ -1416,9 +1438,9 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             gate = torch.cat(gate_parts, dim=0)
             up = torch.cat(up_parts, dim=0)
 
-        if self.is_expert:
-            gathered_gate_weights_dict = self.gather_from_ep_ranks(gate, megatron_module, self.hf_param["gate"])
-            gathered_up_weights_dict = self.gather_from_ep_ranks(up, megatron_module, self.hf_param["up"])
+        if self.is_expert and self.ep_size > 1:
+            gathered_gate_weights_dict = self.gather_from_ep_ranks(gate, megatron_module, self.hf_param["gate"], reuse_buffer_from_cache=reuse_buffer_from_cache)
+            gathered_up_weights_dict = self.gather_from_ep_ranks(up, megatron_module, self.hf_param["up"], reuse_buffer_from_cache=reuse_buffer_from_cache)
             return {**gathered_gate_weights_dict, **gathered_up_weights_dict}
 
         return {self.hf_param["gate"]: gate, self.hf_param["up"]: up}
