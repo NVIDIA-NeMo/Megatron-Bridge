@@ -233,8 +233,14 @@ def parse_cli_args():
         "--detach",
         help="Detach the experiment from the terminal. Disabled by default",
         action="store_true",
-        required=False,
+        dest="detach",
         default=True,
+    )
+    parser.add_argument(
+        "--no-detach",
+        help="Do not detach the experiment from the terminal. Enabled by default",
+        action="store_false",
+        dest="detach",
     )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
