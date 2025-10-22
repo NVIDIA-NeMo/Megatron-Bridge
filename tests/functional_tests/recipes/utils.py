@@ -148,6 +148,7 @@ def run_pretrain_vl_recipe_test(
     tmp_path: Path,
     tensor_parallelism: Optional[int] = None,
     pipeline_parallelism: Optional[int] = None,
+    model_overrides: Optional[dict] = None,
 ):
     """
     VLM variant of run_pretrain_recipe_test that uses the VLM forward step.
@@ -198,6 +199,9 @@ def run_pretrain_vl_recipe_test(
         if pipeline_parallelism is not None:
             config.model.pipeline_parallelism = pipeline_parallelism
 
+        if model_overrides:
+            for attribute_name, attribute_value in model_overrides.items():
+                setattr(config.model, attribute_name, attribute_value)
         pretrain(config, vlm_forward_step)
 
         # Basic verification that training completed successfully

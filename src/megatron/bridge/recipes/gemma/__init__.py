@@ -12,19 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NemotronH models
-from megatron.bridge.recipes.nemotronh.nemotronh import (
-    nemotronh_4b_pretrain_config,
-    nemotronh_8b_pretrain_config,
-    nemotronh_47b_pretrain_config,
-    nemotronh_56b_pretrain_config,
+# Gemma3 models
+from .gemma3 import (
+    gemma3_1b_pretrain_config,
 )
 
 
 __all__ = [
-    # NemotronH models
-    "nemotronh_4b_pretrain_config",
-    "nemotronh_8b_pretrain_config",
-    "nemotronh_47b_pretrain_config",
-    "nemotronh_56b_pretrain_config",
+    # Gemma3 models
+    "gemma3_1b_pretrain_config",
 ]
