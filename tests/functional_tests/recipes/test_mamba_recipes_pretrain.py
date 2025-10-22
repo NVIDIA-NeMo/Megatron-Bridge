@@ -16,9 +16,15 @@
 
 import pytest
 
-from megatron.bridge.recipes.mamba.mamba2_130m import pretrain_config as mamba2_130m_config
-from megatron.bridge.recipes.mamba.mamba2_370m import pretrain_config as mamba2_370m_config
-from megatron.bridge.recipes.mamba.mamba2_780m import pretrain_config as mamba2_780m_config
+from megatron.bridge.recipes.mamba import (
+    mamba2_130m_pretrain_config as mamba2_130m_config,
+)
+from megatron.bridge.recipes.mamba import (
+    mamba2_370m_pretrain_config as mamba2_370m_config,
+)
+from megatron.bridge.recipes.mamba import (
+    mamba2_780m_pretrain_config as mamba2_780m_config,
+)
 from tests.functional_tests.recipes.utils import run_pretrain_config_override_test, run_pretrain_recipe_test
 
 
