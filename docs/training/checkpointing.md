@@ -85,17 +85,6 @@ The `load` parameter should always point to the base checkpoint directory (not t
 - `pretrained_checkpoint`: Always loads the latest/release checkpoint (base model)
 - `load` + `ckpt_step`: Can load a specific adapter checkpoint iteration
 
-Example:
-```yaml
-# PEFT resume from specific adapter checkpoint iteration
-checkpoint:
-  load: /adapter_checkpoints         # Resume adapter training
-  pretrained_checkpoint: /base_model # Frozen base model (always loads latest)
-  ckpt_step: 5000                    # Load adapters from iter_0005000
-peft:
-  enabled: true
-```
-```
 
 ### Checkpoint Loading Strictness
 
