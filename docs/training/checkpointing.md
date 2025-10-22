@@ -52,9 +52,50 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 | `load_optim` | `bool` | `True` | Whether to load optimizer state from checkpoint |
 | `load_rng` | `bool` | `True` | Whether to load random number generator state from checkpoint |
 | `load_main_params_from_ckpt` | `bool` | `False` | Load main parameters from checkpoint (use with `load_optim=False`) |
-| `ckpt_step` | `Optional[int]` | `None` | Specific checkpoint step to load from |
+| `ckpt_step` | `Optional[int]` | `None` | Specific checkpoint iteration to load (overrides latest from tracker) |
 | `exit_on_missing_checkpoint` | `bool` | `False` | Exit if specified checkpoint is not found instead of random initialization |
 | `dist_ckpt_strictness` | `Literal[...]` | `"assume_ok_unexpected"` | Handling of key mismatches during distributed checkpoint load |
+
+### Loading Specific Checkpoint Iterations
+
+By default, Megatron Bridge loads the **latest checkpoint** available in the specified directory by reading from the tracker file (`latest_train_state.pt`). However, you can explicitly load from a specific checkpoint iteration using the `ckpt_step` parameter.
+
+**Python API:**
+```python
+from megatron.bridge.training.config import CheckpointConfig
+
+# Load latest checkpoint
+checkpoint = CheckpointConfig(
+    load="/path/to/checkpoint_dir"
+)
+
+# Load specific iteration
+checkpoint = CheckpointConfig(
+    load="/path/to/checkpoint_dir",
+    ckpt_step=5000  # Overrides tracker, loads iter_0005000
+)
+```
+
+```{note}
+The `load` parameter should always point to the base checkpoint directory (not the `iter_N` subdirectory). The `ckpt_step` parameter overrides which iteration is loaded from that directory.
+
+**Important:** If `ckpt_step` is specified but the checkpoint directory does not exist, training will **fail immediately** with a `FileNotFoundError`. This is intentional to prevent accidentally starting training from scratch when you meant to resume from a specific checkpoint.
+
+**PEFT Note:** The `ckpt_step` parameter applies **only to the `load` path** (adapter checkpoints), not to `pretrained_checkpoint` (frozen base model). When resuming PEFT training:
+- `pretrained_checkpoint`: Always loads the latest/release checkpoint (base model)
+- `load` + `ckpt_step`: Can load a specific adapter checkpoint iteration
+
+Example:
+```yaml
+# PEFT resume from specific adapter checkpoint iteration
+checkpoint:
+  load: /adapter_checkpoints         # Resume adapter training
+  pretrained_checkpoint: /base_model # Frozen base model (always loads latest)
+  ckpt_step: 5000                    # Load adapters from iter_0005000
+peft:
+  enabled: true
+```
+```
 
 ### Checkpoint Loading Strictness
 
