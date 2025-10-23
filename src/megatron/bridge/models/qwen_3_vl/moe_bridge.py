@@ -19,13 +19,12 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
-    GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvider
-from .model import Qwen3VLModel  # Using same model for MoE
+from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3VLMoeForConditionalGeneration, target=Qwen3VLModel)
@@ -65,9 +64,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
-        # Create the generic MoE provider with configuration from the HF model
         provider = Qwen3VLMoEModelProvider(
-            # Language model configuration from text_config
             num_layers=text_config.num_hidden_layers,
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,  # Dense FFN size (for non-MoE layers if any)

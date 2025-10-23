@@ -21,34 +21,17 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 from copy import deepcopy
 from functools import partial
 import torch.nn.functional as F
 
-import torch
-
-# Import from Megatron-Core (available at runtime in the Megatron environment)
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-
-# Import the Qwen3 MoE base model provider
-from megatron.bridge.models import Qwen3MoEModelProvider
-
-# Import vision config from transformers library
-# This requires transformers to be installed with Qwen3VL support
+from megatron.bridge.models import Qwen3MoEModelProvider    
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
 
-# Placeholder for the Qwen3VL MoE model class - implement similarly to Qwen25VLModel
-# from .modeling_qwen3_vl_moe import Qwen3VLMoEModel
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLMoETransformerLayer  #fix me
-from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
-
-# =============================================================================
-# Qwen 3 VL MoE Model Providers
-# =============================================================================
-
 
 @dataclass
 class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
@@ -215,7 +198,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         vision_transformer_config.num_layers_in_first_pipeline_stage = None
         vision_transformer_config.num_layers_in_last_pipeline_stage = None
         
-        # Spec for the Qwen3VLMoETransformerLayer
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=False,
@@ -256,10 +238,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         # Use parent class to create standard MoE language model
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
-
-# =============================================================================
-# Qwen 3 VL MoE Model Size Configurations
-# =============================================================================
 
 
 @dataclass

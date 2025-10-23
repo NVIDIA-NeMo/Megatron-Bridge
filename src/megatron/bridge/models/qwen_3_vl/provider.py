@@ -26,28 +26,11 @@ from copy import deepcopy
 from functools import partial
 import torch.nn.functional as F
 
-import torch
-
-# Import from Megatron-Core (available at runtime in the Megatron environment)
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-
-# Import the Qwen3 base model provider
 from megatron.bridge.models import Qwen3ModelProvider
-
-# Import vision config from transformers library
-# This requires transformers to be installed with Qwen3VL support
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
-
-# Placeholder for the Qwen3VL model class - implement similarly to Qwen25VLModel
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLTransformerLayer
-from megatron.core.transformer.spec_utils import ModuleSpec
-
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
-
-# =============================================================================
-# Qwen 3 VL Model Providers
-# =============================================================================
 
 
 @dataclass
@@ -233,10 +216,6 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         # Use parent class to create standard language model
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
-
-# =============================================================================
-# Qwen 3 VL Model Size Configurations (Non-MoE)
-# =============================================================================
 
 
 @dataclass

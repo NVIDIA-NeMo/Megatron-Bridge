@@ -1,4 +1,16 @@
-import logging
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import torch
 from megatron.core import InferenceParams, tensor_parallel, mpu
@@ -50,17 +62,6 @@ class Qwen3VLModel(MegatronModule):
         add_decoder: bool = True,
     ) -> None:
         super().__init__(config=language_transformer_config)
-
-        # patch self_attention to use qwen3vl attention
-        # vision_transformer_layer_spec.submodules.self_attention.module = (
-        #     Qwen3VLSelfAttention
-        # )
-        # for layer_spec in language_transformer_layer_spec.layer_specs:
-        #     layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
-
-        # logging.getLogger(__name__).warning(
-        #     "Qwen3VL model is under development and may be missing features."
-        # )
 
         self.pre_process = pre_process
         self.post_process = post_process
