@@ -20,12 +20,16 @@ from typing import Any, Callable, NamedTuple, Optional
 
 import torch
 from megatron.core.config import set_experimental_flag
-from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.bridge.training.finalize_model_grads import (
+    finalize_model_grads as bridge_finalize_model_grads,
+)
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -145,6 +149,11 @@ def setup(
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
 
+    # (M4-refactor): Retrieve PGCollection from legacy globals via parallel_state
+    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+    # Surface it on state for downstream wiring in later phases
+    state.pg_collection = pg_collection
+
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
 
@@ -217,6 +226,7 @@ def setup(
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
+        pg_collection=state.pg_collection,
     )
 
     # Data stuff.
@@ -266,6 +276,7 @@ def _update_model_config_funcs(
     optimizer: Optional[MegatronOptimizer],
     *,
     align_grad_reduce: bool = True,
+    pg_collection: Optional[ProcessGroupCollection] = None,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
     if isinstance(model[0], (DistributedDataParallel, megatron_FSDP)) and ddp_config.overlap_grad_reduce:
@@ -285,7 +296,9 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = finalize_model_grads
+        model_config.finalize_model_grads_func = partial(
+            bridge_finalize_model_grads, pg_collection=pg_collection
+        )
         model_config.grad_scale_func = optimizer.scale_loss
 
 

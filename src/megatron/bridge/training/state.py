@@ -135,6 +135,7 @@ class GlobalState:
         self._nvrx_straggler_created: bool = False
         self._energy_monitor: Optional[EnergyMonitor] = None
         self._energy_monitor_created: bool = False
+        self.pg_collection = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
