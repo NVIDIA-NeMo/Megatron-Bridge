@@ -33,6 +33,19 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 logger = logging.getLogger(__name__)
 
 
+def get_default_mamba_stack_spec():
+    """Return the default Mamba stack spec.
+
+    This is a named function (not a lambda) to allow proper serialization
+    and reconstruction from checkpoints. Named functions can be imported
+    via their module path, unlike lambdas.
+
+    Returns:
+        Default Mamba stack specification from megatron.core
+    """
+    return default_mamba_stack_spec
+
+
 @dataclass
 class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel]):
     """Configuration and provider for Megatron Core Mamba models.
@@ -72,7 +85,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     deallocate_pipeline_outputs: bool = True
     bias_dropout_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
-    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = lambda: default_mamba_stack_spec
+    mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_mamba_stack_spec
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
 

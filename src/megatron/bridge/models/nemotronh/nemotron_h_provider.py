@@ -26,6 +26,20 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger = logging.getLogger(__name__)
 
 
+def nemotron_h_squared_relu(x: torch.Tensor) -> torch.Tensor:
+    """Squared ReLU activation function used in Nemotron-H models.
+
+    Computes: ReLU(x)^2
+
+    Args:
+        x: Input tensor
+
+    Returns:
+        Squared ReLU of input tensor
+    """
+    return torch.pow(F.relu(x), 2)
+
+
 @dataclass
 class NemotronHModelProvider(MambaModelProvider):
     """Configuration for Nemotron-H models."""
@@ -35,7 +49,7 @@ class NemotronHModelProvider(MambaModelProvider):
     mamba_head_dim: int = 64
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
-    activation_func: callable = lambda x: torch.pow(F.relu(x), 2)
+    activation_func: callable = nemotron_h_squared_relu
     masked_softmax_fusion: bool = True
     apply_query_key_layer_scaling: bool = False
     persist_layer_norm: bool = True
@@ -111,6 +125,7 @@ class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
     num_layers: int = 56
     hidden_size: int = 4480
     mamba_num_heads: int = 128
+    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 15680
     num_attention_heads: int = 40
@@ -126,6 +141,7 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     num_layers: int = 62
     hidden_size: int = 5120
     mamba_num_heads: int = 128
+    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 20480
     num_attention_heads: int = 40
