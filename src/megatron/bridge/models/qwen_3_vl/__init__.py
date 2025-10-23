@@ -14,8 +14,15 @@
 
 """Qwen3 VL model providers and configurations."""
 
+# Core model components
+from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel  # noqa: F401
+from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel  # noqa: F401
+from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock  # noqa: F401
+from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig  # noqa: F401
+from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel  # noqa: F401
+
 # Dense model providers
-from .qwen3_vl_provider import ( 
+from megatron.bridge.models.qwen_3_vl.provider import (
     Qwen3VLModelProvider,
     Qwen3VLModelProvider600M,
     Qwen3VLModelProvider1P7B,
@@ -26,7 +33,7 @@ from .qwen3_vl_provider import (
 )
 
 # MoE (Mixture of Experts) model providers
-from .qwen3_vl_moe_provider import (
+from megatron.bridge.models.qwen_3_vl.moe_provider import (
     Qwen3VLMoEModelProvider,
     Qwen3VLMoEModelProvider30B_A3B,
     Qwen3VLMoEModelProvider235B_A22B,
@@ -34,11 +41,16 @@ from .qwen3_vl_moe_provider import (
 )
 
 # Bridges for HuggingFace to Megatron conversion
-from .qwen3_vl_bridge import Qwen3VLBridge
-from .qwen3_vl_moe_bridge import Qwen3VLMoEBridge
-from .model import Qwen3VLModel, Qwen3VLMoEModel
+from megatron.bridge.models.qwen_3_vl.bridge import Qwen3VLBridge
+from megatron.bridge.models.qwen_3_vl.moe_bridge import Qwen3VLMoEBridge
 
 __all__ = [
+    # Core components
+    "Qwen3VLVisionModel",
+    "Qwen3VLGPTModel",
+    "Qwen3VLTransformerBlock",
+    "Qwen3VLTransformerConfig",
+    "Qwen3VLModel",
     # Dense models
     "Qwen3VLModelProvider",
     "Qwen3VLModelProvider600M",
@@ -55,7 +67,4 @@ __all__ = [
     # Bridges
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
-    # Models
-    "Qwen3VLModel",
-    "Qwen3VLMoEModel",
 ]

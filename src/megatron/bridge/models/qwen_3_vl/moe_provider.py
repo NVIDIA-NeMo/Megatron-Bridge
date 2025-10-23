@@ -40,8 +40,8 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionCon
 
 # Placeholder for the Qwen3VL MoE model class - implement similarly to Qwen25VLModel
 # from .modeling_qwen3_vl_moe import Qwen3VLMoEModel
-from .model import Qwen3VLModel
-from .transformer_block import Qwen3VLTransformerBlock as Qwen3VLMoETransformerLayer  #fix me
+from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLMoETransformerLayer  #fix me
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 

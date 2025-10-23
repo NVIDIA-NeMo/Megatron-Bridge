@@ -9,7 +9,7 @@ uv run ./tests/unit_tests/models/qwen_35_vl/test_vision_model.py
 import torch
 from transformers import AutoProcessor
 from unittest.mock import Mock
-from megatron.bridge.models.qwen_35_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
 
 
 class TestVisionModel:

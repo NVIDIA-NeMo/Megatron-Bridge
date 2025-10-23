@@ -17,10 +17,11 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.transformer_config import TransformerConfig
-from megatron.bridge.models.qwen_35_vl.transformer_block import Qwen3VLTransformerBlock
-from megatron.bridge.models.qwen_35_vl.rope import Qwen3VLTextRotaryEmbedding
+from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock
+from megatron.bridge.models.qwen_3_vl.rope import Qwen3VLTextRotaryEmbedding
 
 from transformers import Qwen3VLMoeTextConfig
+
 class Qwen3VLGPTModel(GPTModel):
 
     def __init__(

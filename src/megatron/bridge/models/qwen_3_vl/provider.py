@@ -39,10 +39,11 @@ from megatron.bridge.models import Qwen3ModelProvider
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
 
 # Placeholder for the Qwen3VL model class - implement similarly to Qwen25VLModel
-from .model import Qwen3VLModel
-from .transformer_block import Qwen3VLTransformerBlock as Qwen3VLTransformerLayer
+from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLTransformerLayer
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
 # =============================================================================
 # Qwen 3 VL Model Providers
@@ -187,7 +188,12 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         vision_transformer_config.num_layers_in_last_pipeline_stage = None
         
         # Spec for the Qwen3VLTransformerLayer
-        language_transformer_layer_spec = ModuleSpec(module=Qwen3VLTransformerLayer)
+        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
+            num_experts=None,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+        )
         
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,

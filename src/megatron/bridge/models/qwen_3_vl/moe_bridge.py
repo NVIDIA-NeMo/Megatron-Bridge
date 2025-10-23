@@ -24,7 +24,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.qwen3_vl.qwen3_vl_moe_provider import Qwen3VLMoEModelProvider
+from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvider
 from .model import Qwen3VLModel  # Using same model for MoE
 
 

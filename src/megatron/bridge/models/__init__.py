@@ -180,7 +180,7 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModel,
     Qwen25VLModelProvider,
 )
-from megatron.bridge.models.qwen3_vl import (
+from megatron.bridge.models.qwen_3_vl import (
     Qwen3VLModel,
     Qwen3VLModelProvider,
     Qwen3VLModelProvider600M,

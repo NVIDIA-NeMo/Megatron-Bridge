@@ -12,20 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 '''
-uv run python -m torch.distributed.run --nproc_per_node=8 ./tests/unit_tests/models/qwen_35_vl/test_v
-ision_model.py
+uv run python -m torch.distributed.run --nproc_per_node=8 ./tests/unit_tests/models/qwen_35_vl/test_model.py
 '''
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.models.qwen_35_vl.model import Qwen35VLModel
-from megatron.bridge.models.qwen_35_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLTransformerLayer
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import AutoProcessor
 from transformers import Qwen3VLMoeConfig
+
+
 class TestQwen3VLModel:
 
     def __init__(self):
@@ -124,12 +126,13 @@ class TestQwen3VLModel:
         Returns:
             ModuleSpec: Layer specification for transformer layers.
         """
-        return get_gpt_layer_with_transformer_engine_spec(
+        language_model_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,  # No MoE for basic test
             moe_grouped_gemm=False,
             qk_layernorm=False,
             fp8=False,
         )
+        return language_model_layer_spec
 
     def get_data_batch(self):
         """Generate a batch of data for model forward pass.
@@ -203,7 +206,7 @@ class TestQwen3VLModel:
         language_transformer_config = self.get_language_transformer_config()
         language_model_layer_spec = self.get_language_model_layer_spec()
         
-        model = Qwen35VLModel(
+        model = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
@@ -223,7 +226,7 @@ class TestQwen3VLModel:
         language_transformer_config = self.get_language_transformer_config()
         language_model_layer_spec = self.get_language_model_layer_spec()
 
-        model = Qwen35VLModel(
+        model = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_model_layer_spec,
@@ -244,7 +247,8 @@ class TestQwen3VLModel:
 
 
 
+
 if __name__ == "__main__":
     test_qwen3_vl_model = TestQwen3VLModel()
-    test_qwen3_vl_model.test_qwen35_vl_test_fwd_pass()
+    test_qwen3_vl_model.test_qwen3_vl_model_init()
 

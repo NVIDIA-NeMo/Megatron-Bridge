@@ -3,7 +3,7 @@ uv run ./tests/unit_tests/models/qwen_35_vl/test_rope.py
 '''
 
 import torch
-from megatron.bridge.models.qwen_35_vl.rope import Qwen3VLTextRotaryEmbedding
+from megatron.bridge.models.qwen_3_vl.rope import Qwen3VLTextRotaryEmbedding
 from transformers import Qwen3VLMoeTextConfig
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
 import logging
@@ -55,10 +55,9 @@ class TestQwen3VLTextRotaryEmbedding:
         head_dim_half = hf_cos.shape[-1] // 2
         torch.testing.assert_close(hf_cos[..., :head_dim_half], mbridge_cos, rtol=1e-4, atol=1e-4)
         torch.testing.assert_close(hf_sin[..., :head_dim_half], mbridge_sin, rtol=1e-4, atol=1e-4)
-        
         logging.info("✓ RoPE embeddings match between HuggingFace and Megatron Bridge!")
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s', force=True)
     test_rope = TestQwen3VLTextRotaryEmbedding()
     test_rope.test_qwen3_vl_text_rotary_embedding()

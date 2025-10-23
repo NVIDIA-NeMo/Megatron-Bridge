@@ -7,15 +7,15 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.qwen_35_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_35_vl.vision_model import Qwen3VLVisionModel
-from megatron.bridge.models.qwen_35_vl.utils import get_rope_index
-from megatron.bridge.models.qwen_35_vl.gpt_model import Qwen3VLGPTModel
-from megatron.bridge.models.qwen_35_vl.utils import split_deepstack_embs
+from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.models.qwen_3_vl.utils import get_rope_index
+from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_3_vl.utils import split_deepstack_embs
 
 
 # Note: This is under development and may be missing features.
-class Qwen35VLModel(MegatronModule):
+class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
 
     Args:
