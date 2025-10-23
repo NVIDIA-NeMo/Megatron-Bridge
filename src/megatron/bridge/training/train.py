@@ -323,9 +323,8 @@ def train(
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
-        batch_size = (
-            parallel_state.get_data_parallel_world_size() * train_config.micro_batch_size * get_num_microbatches()
-        )
+        dp_size = global_state.pg_collection.dp.size()
+        batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
         if train_config.decrease_batch_size_if_needed:
@@ -593,9 +592,8 @@ def train_step(
                 # there is one dict per microbatch. in new reporting, we average
                 # over the total number of tokens across the global batch.
                 val = torch.vstack(val).sum(dim=0)
-                torch.distributed.all_reduce(
-                    val, group=parallel_state.get_data_parallel_group(with_context_parallel=True)
-                )
+                dp_cp_group = global_state.pg_collection.dp_cp
+                torch.distributed.all_reduce(val, group=dp_cp_group)
                 loss_reduced[key] = val[0] / val[1]
             elif val[0].numel() == 1:
                 # legacy behavior, we average over the number of microbatches
@@ -1068,7 +1066,8 @@ def _should_skip_and_handle_iteration(
 
     # Update step and sample counters
     global_state.train_state.step += 1
-    batch_size = parallel_state.get_data_parallel_world_size() * cfg.train.micro_batch_size * get_num_microbatches()
+    dp_size = global_state.pg_collection.dp.size()
+    batch_size = dp_size * cfg.train.micro_batch_size * get_num_microbatches()
     global_state.train_state.consumed_train_samples += batch_size
     global_state.train_state.skipped_train_samples += batch_size
 
