@@ -20,16 +20,13 @@ from typing import Any, Callable, NamedTuple, Optional
 
 import torch
 from megatron.core.config import set_experimental_flag
-from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.bridge.training.finalize_model_grads import (
-    finalize_model_grads as bridge_finalize_model_grads,
-)
 
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -297,7 +294,7 @@ def _update_model_config_funcs(
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
         model_config.finalize_model_grads_func = partial(
-            bridge_finalize_model_grads, pg_collection=pg_collection
+            finalize_model_grads, pg_collection=pg_collection
         )
         model_config.grad_scale_func = optimizer.scale_loss
 
