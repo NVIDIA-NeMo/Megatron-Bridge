@@ -11,24 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from .mamba2 import (
-    mamba2_1p3b_pretrain_config,
-    mamba2_2p7b_pretrain_config,
-    mamba2_8b_pretrain_config,
-    mamba2_130m_pretrain_config,
-    mamba2_370m_pretrain_config,
-    mamba2_780m_pretrain_config,
-    mamba2_hybrid_8b_pretrain_config,
-)
-
-
-__all__ = [
-    "mamba2_130m_pretrain_config",
-    "mamba2_370m_pretrain_config",
-    "mamba2_780m_pretrain_config",
-    "mamba2_1p3b_pretrain_config",
-    "mamba2_2p7b_pretrain_config",
-    "mamba2_8b_pretrain_config",
-    "mamba2_hybrid_8b_pretrain_config",
-]
