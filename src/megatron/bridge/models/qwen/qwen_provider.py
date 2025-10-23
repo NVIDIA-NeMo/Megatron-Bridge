@@ -246,6 +246,7 @@ class Qwen3ModelProvider(GPTModelProvider):
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
     seq_length: int = 40960
+    max_position_embeddings: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -352,6 +353,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
     seq_length: int = 40960
+    max_position_embeddings: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0

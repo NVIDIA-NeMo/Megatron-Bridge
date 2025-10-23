@@ -13,13 +13,12 @@
 # limitations under the License.
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 import torch
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)
@@ -44,12 +43,12 @@ class NemotronModelProvider(GPTModelProvider):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     rotary_percent: float = 0.5
-    masked_softmax_fusion: bool = field(default_factory=fusions.can_enable_masked_softmax_fusion)
+    masked_softmax_fusion: bool = True
     persist_layer_norm: bool = True
     bias_dropout_add_fusion: bool = False
     layernorm_zero_centered_gamma: bool = True
     cross_entropy_loss_fusion: bool = True
-    apply_rope_fusion: bool = field(default_factory=fusions.can_enable_apply_rope_fusion)
+    apply_rope_fusion: bool = True
 
     # Nemotron3Config4B as default configs
     num_layers: int = 32
