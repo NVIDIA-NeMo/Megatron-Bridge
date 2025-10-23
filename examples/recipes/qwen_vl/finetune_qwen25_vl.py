@@ -127,6 +127,12 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         action="store_true",
         help="Use preloaded dataset provider (enabled automatically when --data-path is set).",
     )
+    parser.add_argument(
+        "--peft_scheme",
+        type=str,
+        default=None,
+        help="PEFT scheme to use: 'lora', 'dora', or None.",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
@@ -151,19 +157,20 @@ def main() -> None:
             ", ".join(sorted(available_recipes)),
         )
         sys.exit(2)
-    pretrain_config = getattr(qwen_vl_recipes, recipe_name)
+    finetune_config = getattr(qwen_vl_recipes, recipe_name)
 
     # Determine dataset type based on CLI flag (overrides) or fall back to auto-detect
     use_preloaded_flag = bool(args.data_path) or bool(getattr(args, "use_preloaded", False))
     dataset_type = args.dataset_type or ("preloaded" if use_preloaded_flag else "mock")
 
-    cfg: ConfigContainer = pretrain_config(
+    cfg: ConfigContainer = finetune_config(
         dataset_type=dataset_type,
         train_data_path=args.data_path,
         valid_data_path=None,
         test_data_path=None,
         image_folder=args.image_folder,
         pretrained_checkpoint=args.pretrained_checkpoint,
+        peft=args.peft_scheme,
     )
     logger.info("Loaded base configuration")
 
