@@ -69,7 +69,7 @@ def run_pretrain_recipe_test(
         test_seq_length = 512
         config.model.seq_length = test_seq_length
         config.dataset.sequence_length = test_seq_length
-
+        config.train.global_batch_size = 8
         # Keep dataloader light-weight for CI
         if hasattr(config.dataset, "pin_memory"):
             config.dataset.pin_memory = False
