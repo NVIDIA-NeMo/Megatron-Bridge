@@ -269,7 +269,14 @@ runs:
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
           export GH_TOKEN=${{ inputs.PAT }}
-          bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh
+          
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || 'functional_tests' }}/${{ inputs.script }}.sh || EXIT_CODE=$?
+
+          if [[ "$EXIT_CODE" -eq 124 ]]; then
+            echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
+          fi
+
+          exit $EXIT_CODE
         '
 
         RUN_TEST_EOF
@@ -280,15 +287,8 @@ runs:
         echo "::endgroup::"
 
     - name: Run main script
-      uses: nick-fields/retry@v3
-      id: run-main-script
-      with:
-        timeout_seconds: ${{ steps.create.outputs.timeout_in_seconds }}
-        max_attempts: 3
-        shell: bash
-        retry_on: timeout
-        command: /bin/bash job.sh
-        on_retry_command: /bin/bash retry_job.sh
+      shell: bash
+      run: /bin/bash job.sh
 
     - name: Check result
       id: check
