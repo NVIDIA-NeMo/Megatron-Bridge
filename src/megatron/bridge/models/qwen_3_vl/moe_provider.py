@@ -43,7 +43,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionCon
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLMoETransformerLayer  #fix me
 from megatron.core.transformer.spec_utils import ModuleSpec
-
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
 # =============================================================================
 # Qwen 3 VL MoE Model Providers
@@ -70,6 +70,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
     
+    pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
+    
     # Vision-specific token IDs matching Qwen3VL MoE configuration
     # Based on HuggingFace Qwen3-VL-MoE configs
     # Token ID for image placeholder in text
@@ -84,6 +86,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     bos_token_id: int = 151643
     # EOS token ID for Qwen3-VL models
     eos_token_id: int = 151645
+
+    head_dim: int = 128
     
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
@@ -95,6 +99,10 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # RoPE theta value specific to Qwen3-VL models
     # From HuggingFace config: rope_theta: 5000000
     rotary_base: float = 5000000.0
+    sequence_parallel: bool = False
+    spatial_merge_size: int = 2
+    temporal_patch_size: int = 2
+    patch_size: int = 16
     
     # Override to disable scattering embeddings for vision insertion
     scatter_embedding_sequence_parallel: bool = False
@@ -124,6 +132,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     freeze_vision_model: bool = False
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
+    language_max_sequence_length: int = 2048
     
     # QK layernorm is already True in Qwen3MoEModelProvider, no need to redefine
     
@@ -207,7 +216,12 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         vision_transformer_config.num_layers_in_last_pipeline_stage = None
         
         # Spec for the Qwen3VLMoETransformerLayer
-        language_transformer_layer_spec = ModuleSpec(module=Qwen3VLMoETransformerLayer)
+        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
+            num_experts=self.num_moe_experts,
+            moe_grouped_gemm=False,
+            qk_layernorm=False,
+            fp8=False,
+        )
         
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,

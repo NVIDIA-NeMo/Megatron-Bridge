@@ -79,8 +79,10 @@ class Qwen3VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = False
 
         if self.pre_process:
+            pretrained_model_name = getattr(language_transformer_config, 'pretrained_model_name', "Qwen/Qwen3-VL-30B-A3B-Instruct")
             self.vision_model = Qwen3VLVisionModel(
                 vision_transformer_config,
+                pretrained_model_name=pretrained_model_name,
             )
 
         self.language_model = Qwen3VLGPTModel(
@@ -205,6 +207,8 @@ class Qwen3VLModel(MegatronModule):
         vision_data = None
         image_mask = None
         deepstack_feature_lists = None
+        # position ids is computed within the model
+        position_ids = None
 
         if self.pre_process:
             if image_grid_thw is not None:
@@ -244,6 +248,8 @@ class Qwen3VLModel(MegatronModule):
                         f"{video_start_index}"
                     )
                 assert video_embeds is None, "not support video now"
+
+                print(f"[rank {torch.distributed.get_rank()}] [Qwen3VLModel.forward] image_embeds shape {image_embeds.shape} combined_embeddings shape {combined_embeddings.shape} image_mask shape {image_mask.shape}")
 
                 if image_embeds is not None:
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()

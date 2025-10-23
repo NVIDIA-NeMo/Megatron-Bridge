@@ -60,6 +60,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     Default value of 8 is used for GQA (Grouped Query Attention).
     """
     head_dim: int = 128
+    hidden_size: int = 2048
     
     # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
@@ -78,6 +79,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     # Vision configuration using the transformers Qwen3VLVisionConfig
     # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
+    
+    pretrained_model_name: str = "Qwen/Qwen3-VL-8B-Instruct"
     
     # Vision-specific token IDs matching Qwen3VL configuration
     # Based on https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/blob/main/config.json
@@ -115,6 +118,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     freeze_vision_model: bool = False
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
+
+    sequence_parallel: bool = True
     
     # QK layernorm is already True in Qwen3ModelProvider, no need to redefine
     # qk_layernorm: bool = True  # Already defined in parent
@@ -323,6 +328,8 @@ class Qwen3VLModelProvider8B(Qwen3VLModelProvider):
     num_query_groups: int = 8  # num_key_value_heads in HF config (GQA configuration)
     ffn_hidden_size: int = 12288
     # Note: share_embeddings_and_output_weights defaults to False for 8B
+
+    pretrained_model_name: str = "Qwen/Qwen3-VL-8B-Instruct"
     
     # Vision configuration for 8B model
     # Using transformers Qwen3VLVisionConfig with default parameters
