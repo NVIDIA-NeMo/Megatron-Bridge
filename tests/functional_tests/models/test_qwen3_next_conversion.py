@@ -31,27 +31,27 @@ HF_QWEN3_NEXT_TOY_MODEL_CONFIG = {
     "bos_token_id": 151643,
     "eos_token_id": 151643,
     "hidden_act": "silu",
-    "hidden_size": 128,  # Matches Qwen3NextModelProvider80B_A3B
-    "head_dim": 256,  # Matches Qwen3NextModelProvider80B_A3B
+    "hidden_size": 128,
+    "head_dim": 256,
     "initializer_range": 0.02,
-    "intermediate_size": 5120,  # Matches Qwen3NextModelProvider80B_A3B
-    "max_position_embeddings": 262144,  # Matches Qwen3NextModelProvider80B_A3B
+    "intermediate_size": 5120,
+    "max_position_embeddings": 262144,
     "model_type": "qwen3_next",
-    "num_attention_heads": 16,  # Matches Qwen3NextModelProvider80B_A3B
+    "num_attention_heads": 16,
     "num_hidden_layers": 2,  # Reduced for toy model testing
-    "num_key_value_heads": 2,  # Matches Qwen3NextModelProvider80B_A3B
+    "num_key_value_heads": 2,
     "rms_norm_eps": 1e-06,
-    "rope_theta": 10000000.0,  # Matches Qwen3NextModelProvider80B_A3B
+    "rope_theta": 10000000.0,
     "tie_word_embeddings": False,
     "torch_dtype": "bfloat16",
     "transformers_version": "4.40.1",
     "use_cache": True,
     "vocab_size": 151936,
     # MoE specific
-    "num_experts": 8,  # Matches Qwen3NextModelProvider80B_A3B
-    "num_experts_per_tok": 2,  # Matches Qwen3NextModelProvider80B_A3B
-    "moe_intermediate_size": 512,  # Matches Qwen3NextModelProvider80B_A3B
-    "shared_expert_intermediate_size": 512,  # Matches Qwen3NextModelProvider80B_A3B
+    "num_experts": 8,
+    "num_experts_per_tok": 2,
+    "moe_intermediate_size": 512,
+    "shared_expert_intermediate_size": 512,
     # Qwen3-Next specific
     "full_attention_interval": 2,  # 1 standard attention layer per 4 layers
     "partial_rotary_factor": 0.25,  # RoPE only applies to first 25% of dims
