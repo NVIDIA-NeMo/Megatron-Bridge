@@ -15,7 +15,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -65,10 +65,18 @@ def slurm_executor(
     wandb_key: str = None,
     network: str = None,
     custom_bash_cmds: List[str] = None,
+    additional_slurm_params: Dict[str, Any] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
     and fine-tuning experiments
+
+    Args:
+        additional_slurm_params: Dict[str, Any], optional
+            Additional SLURM parameters to pass to sbatch. These will be converted to #SBATCH directives.
+            Example: {"nodelist": "node001,node002", "constraint": "gpu"} will generate:
+                #SBATCH --nodelist=node001,node002
+                #SBATCH --constraint=gpu
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
     err_msgs = []
@@ -90,7 +98,7 @@ def slurm_executor(
     if wandb_key is not None:
         PERF_ENV_VARS["WANDB_API_KEY"] = wandb_key
 
-    if gpu.lower() == "gb200":
+    if gpu.lower() in ["gb200", "gb300"]:
         PERF_ENV_VARS["NCCL_NET_GDR_LEVEL"] = "PHB"  # For NCCL 2.25
         PERF_ENV_VARS["NCCL_NET_GDR_C2C"] = "1"  # For NCCL 2.26
 
@@ -111,7 +119,7 @@ def slurm_executor(
                 segment = segment_candidate
                 break
 
-    numa_divisor = 2 if gpu.lower() == "gb200" else 4
+    numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
     custom_bash_cmds.append(numa_cmd)
 
@@ -137,6 +145,7 @@ def slurm_executor(
         segment=segment,
         network=network,
         launcher=launcher,
+        additional_parameters=additional_slurm_params,
     )
 
     return executor

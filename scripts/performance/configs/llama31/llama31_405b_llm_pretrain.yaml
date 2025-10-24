@@ -23,7 +23,7 @@ ConfigContainer:
     seq_length: 8192
 
   train:
-    train_iters: 100
+    train_iters: 50
     eval_iters: 0
 
   rerun_state_machine:
@@ -47,8 +47,8 @@ ConfigContainer:
     # For optional fields in the config, specify the target to instantiate the object.
     _target_: megatron.bridge.training.config.ProfilingConfig
     use_nsys_profiler: true
-    profile_step_start: 10
-    profile_step_end: 11
+    profile_step_start: 45
+    profile_step_end: 50
     profile_ranks: [0]
     record_shapes: false
     use_pytorch_profiler: false
@@ -120,7 +120,43 @@ perf_matrix:
         cp: 1
         vp: null
         use_megatron_fsdp: true
+        cpu_offloading_num_layers: 80
+      fp8_mx:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        use_megatron_fsdp: false
+  gb300:
+    num_gpus_128:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 8192
+        mbs: 1
+        gbs: 64
+        cuda_graphs: false
+        ep: 1
+        etp: null
+      bf16:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        use_megatron_fsdp: false
+      fp8_ds:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: null
+        use_megatron_fsdp: true
         cpu_offloading_num_layers: 95
+      fp8_cs:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: null
+        use_megatron_fsdp: true
+        cpu_offloading_num_layers: 80
       fp8_mx:
         tp: 4
         pp: 8

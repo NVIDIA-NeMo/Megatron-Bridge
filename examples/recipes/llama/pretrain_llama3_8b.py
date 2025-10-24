@@ -55,6 +55,7 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
+import torch
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
@@ -167,6 +168,11 @@ def main() -> None:
     # Start training
     logger.debug("Starting pretraining...")
     pretrain(config=cfg, forward_step_func=forward_step)
+    
+    # Cleanup process group
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
