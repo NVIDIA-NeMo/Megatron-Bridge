@@ -1230,6 +1230,26 @@ class TestCheckpointConfig:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_ckpt_step_requires_load_directory(self):
+        """Test that ckpt_step requires checkpoint.load to be set."""
+        # Test that ckpt_step without load fails
+        ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load=None)
+
+        with pytest.raises(ValueError) as exc_info:
+            ckpt_cfg.finalize()
+
+        assert "ckpt_step=5000 specified but checkpoint.load is None" in str(exc_info.value)
+        assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
+
+    def test_ckpt_step_with_load_directory_passes(self):
+        """Test that ckpt_step with checkpoint.load passes validation."""
+        ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load="/checkpoints")
+
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        assert ckpt_cfg.ckpt_step == 5000
+        assert ckpt_cfg.load == "/checkpoints"
+
     def test_async_save_validation_error(self):
         """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
 
