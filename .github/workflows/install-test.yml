@@ -33,13 +33,12 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: ${{ matrix.arch }}
-    name: Pip - Python${{ matrix.python-version }} - ${{ matrix.arch == 'ubuntu-latest' && 'AMD64/Linux' || 'ARM64/Darwin' }} - Bare Metal
+    runs-on: linux-amd64-cpu16
+    name: Pip - Python${{ matrix.python-version }} - AMD64/Linux - Bare Metal
     container: ubuntu:24.04
     strategy:
       fail-fast: false
       matrix:
-        arch: ["ubuntu-latest"]
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Checkout repository

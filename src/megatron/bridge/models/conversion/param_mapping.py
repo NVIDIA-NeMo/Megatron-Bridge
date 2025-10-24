@@ -503,19 +503,47 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     ) -> Dict[str, torch.Tensor]:
         """Handle expert parallel weight gathering for MoE models.
 
-        This method handles the gathering of expert weights across expert parallel
-        ranks. It should only be called when the parameter is confirmed to be an
-        expert weight.
-        For example, with expert parallel size = 2 and 8 total experts, experts are distributed as:
-        Rank 0: [0, 1, 2, 3], Rank 1: [4, 5, 6, 7]
-        This will return a dictionary with one entry per EP rank, e.g. {0: weight0, 4: weight4}
+        This method gathers expert weights across expert-parallel (EP) ranks and
+        returns a mapping from HF parameter names to the corresponding tensors
+        from each EP rank. Call this only for confirmed expert parameters
+        (self.is_expert is True), typically after TP gathering/concatenation in
+        the export path (Megatron → HF).
+
+        Behavior and notation:
+        - Let E be the total number of experts (e.g., config.num_moe_experts) and
+          S be the expert-parallel size (ep_size). We assume E % S == 0.
+        - Each EP rank owns E/S experts. For a given parameter name, we infer a
+          local expert index L (0 ≤ L < E/S) on the current EP rank from the
+          global expert id embedded in the name (works for both .weight and .bias).
+        - The set of global expert ids that correspond to this local index L
+          across all EP ranks is: {L + k * (E/S) | k ∈ [0, S-1]}.
+
+        Communication and outputs:
+        - We perform an all_gather over the EP group to collect the tensor from
+          every EP rank into a list ordered by EP rank id.
+        - For each EP rank k, we construct the HF parameter name by replacing the
+          expert id in `hf_param_name` with (L + k * (E/S)), preserving the rest
+          of the path, and map that name to the gathered tensor from rank k.
+
+        Example:
+        - E = 8, S = 2 → E/S = 4. Experts are distributed as:
+          Rank 0: [0, 1, 2, 3], Rank 1: [4, 5, 6, 7].
+          If the local index L = 0 (derived from the param name), this returns:
+          {"...experts.0.weight": tensor_from_rank0, "...experts.4.weight": tensor_from_rank1}
 
         Args:
-            megatron_weights (Optional[torch.Tensor]): The local expert weight tensor.
-            megatron_module (Optional[MegatronModule]): The megatron module containing config.
+            megatron_weights (Optional[torch.Tensor]): The local expert weight tensor
+                (after any TP handling) on this EP rank.
+            megatron_module (Optional[MegatronModule]): The Megatron module containing
+                configuration (used to determine E and E/S). Can be None on non-owning PP
+                ranks; values will be broadcast across PP.
+            hf_param_name (Optional[str]): HF parameter name template for the current
+                (local) expert on this rank. The expert id within this string is replaced
+                with the appropriate global expert ids for each EP rank.
 
         Returns:
-            Dict[str, torch.Tensor]: Dictionary of expert weights mapped to HF parameter names.
+            Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
+            to the corresponding expert tensors gathered from each EP rank.
         """
         if megatron_module is None:
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(None)
