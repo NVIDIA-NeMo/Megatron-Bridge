@@ -136,7 +136,7 @@ class TestQwen3NextBridge:
         assert result.num_attention_heads == mock_qwen3_next_config.num_attention_heads
         assert result.num_query_groups == mock_qwen3_next_config.num_key_value_heads
         assert result.qk_layernorm is True  # Qwen3 Next uses QK layernorm
-        assert result.apply_layernorm_1p is True
+        assert result.layernorm_zero_centered_gamma is True
         assert result.attention_output_gate is True
 
     def test_provider_bridge_linear_attention_config(self, mock_pretrained_qwen3_next, mock_qwen3_next_config):

@@ -73,7 +73,7 @@ class Qwen3NextBridge(MegatronModelBridge):
             moe_grouped_gemm=True,
             kv_channels=hf_config.head_dim,
             # New for Qwen3-Next
-            apply_layernorm_1p=True,
+            layernorm_zero_centered_gamma=True,
             attention_output_gate=True,
             linear_attention_type="gated_delta_net",
             linear_attention_freq=hf_config.full_attention_interval,
@@ -85,7 +85,7 @@ class Qwen3NextBridge(MegatronModelBridge):
             linear_value_head_dim=hf_config.linear_value_head_dim,
             linear_num_key_heads=hf_config.linear_num_key_heads,
             linear_num_value_heads=hf_config.linear_num_value_heads,
-            mtp_num_layers=1,
+            mtp_num_layers=0,  # Set to 1 if need MTP
         )
 
         return provider
