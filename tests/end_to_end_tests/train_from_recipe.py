@@ -402,73 +402,24 @@ def main():
     # Parse plugin config overrides from unknown arguments
     plugin_config_overrides = parse_plugin_config_overrides(unknown_args)
 
-    # Import recipe dynamically using merged naming convention with legacy fallback.
-    #
-    # Supported cases (in order):
-    # 1) New merged-name API (preferred):
-    #    - Path:  megatron.bridge.recipes.<family>.<merged_name>
-    #    - Args:  --model-family llama --recipe-name llama3_8b_pretrain_config --pretrain
-    #    - Example resolved symbol: megatron.bridge.recipes.llama.llama3_8b_pretrain_config
-    #
-    # 2) Legacy module API (single module exposes config function):
-    #    - Path:  megatron.bridge.recipes.<family>.<module>.<pretrain_config|finetune_config>
-    #    - Args:  --model-family llama --recipe-name llama3 --pretrain
-    #    - Example resolved symbol: megatron.bridge.recipes.llama.llama3.pretrain_config
-    #
-    # 3) Oldest attribute API (family __init__ exposes suffixed names):
-    #    - Path:  megatron.bridge.recipes.<family>.<recipe_name>_<pretrain_config|finetune_config>
-    #    - Args:  --model-family llama --recipe-name llama3_8b --pretrain
-    #    - Example resolved symbol: megatron.bridge.recipes.llama.llama3_8b_pretrain_config
-    #
-    # The resolver below tries (1) then (2) then (3), raising a clear error if none match.
-    merged_attr = args.recipe_name
+    # Import recipe dynamically using the merged attribute pattern.
+    # RECIPE_NAME must be the exact function name exported by the family package.
+    # Example: --model-family llama --recipe-name llama3_8b_pretrain_config
+    # Resolves to: megatron.bridge.recipes.llama.llama3_8b_pretrain_config
     family_pkg_path = f"megatron.bridge.recipes.{args.model_family}"
-    logging.info(f"Attempting merged-name import: {family_pkg_path}.{merged_attr}")
+    recipe_attr = args.recipe_name
+
+    logging.info(f"Importing recipe: {family_pkg_path}.{recipe_attr}")
 
     try:
         family_pkg = importlib.import_module(family_pkg_path)
-        if not hasattr(family_pkg, merged_attr):
-            raise AttributeError
-        config_builder = getattr(family_pkg, merged_attr)
-        logging.info(f"Using merged recipe API: {family_pkg_path}.{merged_attr}")
-    except Exception:
-        # Legacy fallback paths
-        # 1) args.recipe_name is a module under the family exposing pretrain_config/finetune_config
-        legacy_module_path = f"{family_pkg_path}.{args.recipe_name}"
-        logging.info(f"Merged import failed; trying legacy module path: {legacy_module_path}")
-
-        # Determine function name by mode
-        if args.pretrain:
-            config_name = args.config_name or "pretrain_config"
-        elif args.finetune:
-            config_name = args.config_name or "finetune_config"
-        else:
-            raise ValueError("Must specify either --pretrain or --finetune")
-
-        try:
-            recipe_module = importlib.import_module(legacy_module_path)
-            if not hasattr(recipe_module, config_name):
-                raise AttributeError
-            config_builder = getattr(recipe_module, config_name)
-            logging.info(f"Using legacy module API: {legacy_module_path}.{config_name}")
-        except Exception:
-            # 2) Oldest style: attribute on family package named <recipe_name>_<config_name>
-            # Avoid double suffixing if user already passed a merged name
-            if merged_attr.endswith("_pretrain_config") or merged_attr.endswith("_finetune_config"):
-                legacy_attr = merged_attr
-            else:
-                legacy_attr = f"{args.recipe_name}_{config_name}"
-            logging.info(f"Trying oldest legacy attribute: {family_pkg_path}.{legacy_attr}")
-            family_pkg = importlib.import_module(family_pkg_path)
-            if not hasattr(family_pkg, legacy_attr):
-                raise ValueError(
-                    "Unable to resolve recipe. Tried: "
-                    f"(1) {family_pkg_path}.{merged_attr}, "
-                    f"(2) {legacy_module_path}.{config_name}, "
-                    f"(3) {family_pkg_path}.{legacy_attr}"
-                )
-            config_builder = getattr(family_pkg, legacy_attr)
-            logging.info(f"Using oldest legacy API: {family_pkg_path}.{legacy_attr}")
+        config_builder = getattr(family_pkg, recipe_attr)
+    except (ImportError, AttributeError) as e:
+        raise ValueError(
+            f"Unable to import recipe '{recipe_attr}' from '{family_pkg_path}'. "
+            f"Ensure RECIPE_NAME matches an exported function in the family package __init__.py. "
+            f"Error: {e}"
+        )
 
     base_config = config_builder(dir="/nemo_run/", name=args.exp_name)
 
