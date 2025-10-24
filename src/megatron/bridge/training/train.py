@@ -529,12 +529,20 @@ def train_step(
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
                 num_microbatches=get_num_microbatches(),
                 default_seq_length=model_config.seq_length,
                 seq_key="tokens",
+            )
+
+            # Convert to list of iterators for virtual pipeline parallelism
+            # With virtual PP, each model chunk needs independent access to the same microbatch
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
             )
 
         # Forward pass.

@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#
-# Test purpose:
-# - Parametrize over all exported Qwen recipe functions in `megatron.bridge.recipes.qwen`.
-# - For each recipe, monkeypatch `AutoBridge` with a lightweight fake to avoid I/O.
-# - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
-# - Verify tokenizer selection honors `use_null_tokenizer`, and sanity-check parallelism fields.
-#
-
 import importlib
 from typing import Callable
 
@@ -118,3 +110,248 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+
+# Llama3 finetune-specific tests
+_LLAMA3_FINETUNE_FUNCS = [
+    getattr(_llama_module, name)
+    for name in [
+        "llama32_1b_finetune_config",
+        "llama32_3b_finetune_config",
+        "llama3_8b_finetune_config",
+        "llama31_8b_finetune_config",
+        "llama3_70b_finetune_config",
+        "llama31_70b_finetune_config",
+        "llama31_405b_finetune_config",
+    ]
+    if callable(getattr(_llama_module, name, None))
+]
+
+
+@pytest.mark.parametrize("recipe_func", _LLAMA3_FINETUNE_FUNCS)
+def test_llama3_finetune_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each Llama3 finetune recipe builds a valid config."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    cfg = recipe_func(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Finetuning always uses HF tokenizer
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model is not None
+
+    # Check parallelism
+    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+
+@pytest.mark.parametrize("recipe_func", _LLAMA3_FINETUNE_FUNCS)
+@pytest.mark.parametrize("peft", ["lora", "none"])
+def test_llama3_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT and full SFT configurations are correctly applied."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    overrides["peft"] = peft
+
+    cfg = recipe_func(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check PEFT config presence
+    if peft == "lora":
+        assert cfg.peft is not None
+    elif peft == "none":
+        assert cfg.peft is None
+
+
+@pytest.mark.parametrize("packed", [True, False])
+def test_llama3_8b_finetune_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
+    """Test that packed sequence configuration works correctly."""
+    from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_8b_finetune_config")
+    overrides["packed_sequence"] = packed
+
+    cfg = llama3_8b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Packed sequence affects global batch size default
+    if packed and "global_batch_size" not in overrides:
+        # Would default to 8 for packed
+        pass
+    else:
+        # Uses explicit override
+        assert cfg.train.global_batch_size == overrides["global_batch_size"]
+
+
+def test_llama31_405b_has_recompute(monkeypatch: pytest.MonkeyPatch):
+    """Test that 405B model has recompute enabled."""
+    from megatron.bridge.recipes.llama import llama31_405b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama31_405b_finetune_config")
+    cfg = llama31_405b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check recompute settings
+    assert hasattr(cfg.model, "recompute_granularity")
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
+
+    # Check account_for settings
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
+
+
+def test_llama31_405b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 405B LoRA has correct default parallelism (performance mode)."""
+    from megatron.bridge.recipes.llama import llama31_405b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama31_405b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = llama31_405b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, 405B performance mode uses TP=4, PP=4, VPP=4
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+    assert cfg.train.global_batch_size == 6
+
+
+def test_llama31_405b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 405B full SFT has correct default parallelism."""
+    from megatron.bridge.recipes.llama import llama31_405b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama31_405b_finetune_config")
+    overrides["peft"] = "none"
+
+    cfg = llama31_405b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, 405B should use TP=8, PP=14
+    assert cfg.model.tensor_model_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_size == 14
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.sequence_parallel is True
+    assert cfg.train.global_batch_size == 6  # 405B uses smaller batch
+
+
+def test_llama3_8b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 8B full SFT has correct default parallelism and performance optimizations."""
+    from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_8b_finetune_config")
+    overrides["peft"] = "none"
+
+    cfg = llama3_8b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, 8B should use TP=2
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+
+    # Check full SFT-specific performance settings
+    assert cfg.ddp.grad_reduce_in_fp32 is False  # Performance optimization
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is True
+
+    # Check manual GC is enabled
+    assert cfg.train.manual_gc is True
+
+
+def test_llama3_8b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 8B LoRA has correct default parallelism and performance optimizations."""
+    from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_8b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = llama3_8b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, 8B should use TP=1
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+
+    # Check PEFT-specific performance settings
+    assert cfg.model.cross_entropy_loss_fusion is False  # Disabled for PEFT
+    assert cfg.optimizer.use_distributed_optimizer is False  # Disabled for PEFT
+
+    # Check manual GC is enabled
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 100
+
+
+def test_llama3_70b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 70B full SFT has correct default parallelism."""
+    from megatron.bridge.recipes.llama import llama3_70b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_70b_finetune_config")
+    overrides["peft"] = "none"
+
+    cfg = llama3_70b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, 70B should use TP=8, PP=4
+    assert cfg.model.tensor_model_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 5
+    assert cfg.model.sequence_parallel is True
+
+
+def test_llama3_70b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 70B LoRA has correct default parallelism."""
+    from megatron.bridge.recipes.llama import llama3_70b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_70b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = llama3_70b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, 70B should use TP=8, PP=1
+    assert cfg.model.tensor_model_parallel_size == 8
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
