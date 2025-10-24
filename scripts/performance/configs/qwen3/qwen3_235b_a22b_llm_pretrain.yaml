@@ -91,7 +91,7 @@ perf_matrix:
   b200:
     num_gpus_64:
       common:
-        num_gpus_per_node: 4
+        num_gpus_per_node: 8
         seq_length: 4096
         mbs: 1
         gbs: 1024
