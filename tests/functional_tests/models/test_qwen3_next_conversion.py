@@ -101,75 +101,7 @@ class TestQwen3NextConversion:
         tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory
-        def add_mtp_weights_and_save(model, model_dir):
-            state_dict = model.state_dict()
-            # Get model dimensions from config
-            hidden_size = config.hidden_size  # 2048
-            num_experts = config.num_experts  # 8 (reduced for toy model)
-            moe_intermediate_size = config.moe_intermediate_size  # 512
-            shared_expert_intermediate_size = config.shared_expert_intermediate_size  # 512
-            num_attention_heads = config.num_attention_heads  # 16
-            num_key_value_heads = config.num_key_value_heads  # 2
-            head_dim = config.head_dim  # 256
-
-            # Add MTP projection and norms
-            state_dict["mtp.fc.weight"] = torch.randn(hidden_size, hidden_size * 2, dtype=torch.bfloat16)
-            state_dict["mtp.pre_fc_norm_embedding.weight"] = torch.randn(hidden_size, dtype=torch.bfloat16)
-            state_dict["mtp.pre_fc_norm_hidden.weight"] = torch.randn(hidden_size, dtype=torch.bfloat16)
-            state_dict["mtp.norm.weight"] = torch.randn(hidden_size, dtype=torch.bfloat16)
-
-            # Add MTP layer 0 (single MTP layer)
-            # MTP attention norms
-            state_dict["mtp.layers.0.input_layernorm.weight"] = torch.randn(hidden_size, dtype=torch.bfloat16)
-            state_dict["mtp.layers.0.self_attn.q_norm.weight"] = torch.randn(head_dim, dtype=torch.bfloat16)
-            state_dict["mtp.layers.0.self_attn.k_norm.weight"] = torch.randn(head_dim, dtype=torch.bfloat16)
-
-            # MTP attention projections
-            state_dict["mtp.layers.0.self_attn.q_proj.weight"] = torch.randn(
-                2 * num_attention_heads * head_dim, hidden_size, dtype=torch.bfloat16
-            )
-            state_dict["mtp.layers.0.self_attn.k_proj.weight"] = torch.randn(
-                num_key_value_heads * head_dim, hidden_size, dtype=torch.bfloat16
-            )
-            state_dict["mtp.layers.0.self_attn.v_proj.weight"] = torch.randn(
-                num_key_value_heads * head_dim, hidden_size, dtype=torch.bfloat16
-            )
-            state_dict["mtp.layers.0.self_attn.o_proj.weight"] = torch.randn(
-                hidden_size, num_attention_heads * head_dim, dtype=torch.bfloat16
-            )
-
-            # MTP MoE components
-            state_dict["mtp.layers.0.post_attention_layernorm.weight"] = torch.randn(hidden_size, dtype=torch.bfloat16)
-            state_dict["mtp.layers.0.mlp.gate.weight"] = torch.randn(num_experts, hidden_size, dtype=torch.bfloat16)
-
-            # MTP experts (using same number of experts as main model)
-            for expert_idx in range(num_experts):
-                state_dict[f"mtp.layers.0.mlp.experts.{expert_idx}.gate_proj.weight"] = torch.randn(
-                    moe_intermediate_size, hidden_size, dtype=torch.bfloat16
-                )
-                state_dict[f"mtp.layers.0.mlp.experts.{expert_idx}.up_proj.weight"] = torch.randn(
-                    moe_intermediate_size, hidden_size, dtype=torch.bfloat16
-                )
-                state_dict[f"mtp.layers.0.mlp.experts.{expert_idx}.down_proj.weight"] = torch.randn(
-                    hidden_size, moe_intermediate_size, dtype=torch.bfloat16
-                )
-
-            # MTP shared expert
-            state_dict["mtp.layers.0.mlp.shared_expert_gate.weight"] = torch.randn(1, hidden_size, dtype=torch.bfloat16)
-            state_dict["mtp.layers.0.mlp.shared_expert.gate_proj.weight"] = torch.randn(
-                shared_expert_intermediate_size, hidden_size, dtype=torch.bfloat16
-            )
-            state_dict["mtp.layers.0.mlp.shared_expert.up_proj.weight"] = torch.randn(
-                shared_expert_intermediate_size, hidden_size, dtype=torch.bfloat16
-            )
-            state_dict["mtp.layers.0.mlp.shared_expert.down_proj.weight"] = torch.randn(
-                hidden_size, shared_expert_intermediate_size, dtype=torch.bfloat16
-            )
-
-            # Save updated state dict with MTP weights
-            weights_file = model_dir / "model.safetensors"
-            save_file(state_dict, str(weights_file))
-        add_mtp_weights_and_save(model, model_dir)
+        model.save_pretrained(model_dir, safe_serialization=True)
 
         # Also save config.json explicitly to ensure compatibility with correct torch_dtype
         config_to_save = HF_QWEN3_NEXT_TOY_MODEL_CONFIG.copy()

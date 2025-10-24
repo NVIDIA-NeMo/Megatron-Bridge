@@ -427,7 +427,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     )
 
     normalization: str = "RMSNorm"
-    apply_layernorm_1p: bool = True  # Zero-Centered RMSNorm
+    layernorm_zero_centered_gamma: bool = True  # Zero-Centered RMSNorm
     rotary_percent: float = 0.25  # Qwen3-Next applies RoPE only to the first 25% of dims
     attention_output_gate: bool = True  # Qwen3-Next applies output gate to standard attention
     kv_channels: Optional[int] = 256
@@ -463,4 +463,4 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     num_query_groups: int = 2
     ffn_hidden_size: int = 5120
     moe_ffn_hidden_size: int = 512
-    mtp_num_layers: int = 1
+    mtp_num_layers: int = 0  # Set to 1 if need MTP
