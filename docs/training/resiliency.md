@@ -539,3 +539,232 @@ The system uses `RerunDataIterator` to handle data replay:
 - **State Saving**: Captures data iterator state for reproducible re-runs.
 - **Replay Capability**: Can rewind and replay the same data batches.
 - **Checkpoint Support**: Saves/restores iterator state across job restarts.
+
+## In-Process Restart
+
+> **Warning**: This is a highly experimental feature and is subject to change in backwards incompatible ways without notice.
+
+The in-process restart mechanism provides automatic fault recovery by restarting the training function within the same operating system process when failures occur. Unlike traditional scheduler-level restarts, in-process restart eliminates the overhead of launching new jobs, starting containers, initializing Python interpreters, and creating new CUDA contexts.
+
+> **Note**: In-process restart is not suitable for all types of failures. Hardware-level failures such as switch failures, network partitions, or multiple node failures that render nodes inaccessible cannot be recovered through in-process restart alone. For comprehensive fault tolerance, it is recommended to combine in-process restart with the fault tolerance system (in-job restarts) described earlier in this document. This layered approach provides both fast recovery for software faults and robust handling of hardware-level failures.
+
+For comprehensive information about this functionality, refer to the [NVIDIA Resiliency Extension In-Process Restart documentation](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/index.html).
+
+### Key Features
+
+- **In-Process Recovery**: Restarts training within the same process, avoiding container and interpreter restart overhead.
+- **Automatic Fault Detection**: Detects unhandled Python exceptions, deadlocks, and livelocks across all distributed ranks.
+- **Coordinated Restart**: Ensures all healthy ranks restart simultaneously when any rank encounters a fault.
+- **Timeout Mechanisms**: Provides both soft and hard timeouts to detect and recover from hangs.
+- **Rank Reassignment**: Supports excluding unhealthy ranks and utilizing warm reserve workers.
+- **State Reuse**: Enables reuse of process-group-independent objects across restart attempts to minimize latency.
+- **Granular Control**: Supports both node-level and rank-level restart granularity.
+- **Health Checks**: Performs GPU health validation and optionally tracks fault counts.
+
+### Prerequisites
+
+Before using in-process restart, ensure the following requirements are met:
+
+1. **PyTorch Version**: PyTorch v2.5.1 or higher is required.
+2. **NCCL Version**: NCCL v2.26.2 or higher is required.
+3. **Checkpoint Configuration**: A valid checkpoint directory must be configured for state recovery.
+4. **GIL-Released Operations**: All operations that wait on NCCL kernels or synchronize with GPU must release the Python Global Interpreter Lock (GIL).
+
+> **Important**: If operations hold the GIL during a fault, graceful restart cannot proceed, and affected ranks will be forcibly terminated.
+
+### Configuration
+
+Configure in-process restart through {py:class}`bridge.training.config.InProcessRestartConfig`:
+
+```python
+from megatron.bridge.training.config import InProcessRestartConfig
+
+# Configure in-process restart in your config
+config.inprocess_restart = InProcessRestartConfig(
+    enabled=True,
+    active_world_size=None,  # Defaults to WORLD_SIZE, set lower to use warm reserves
+    granularity="node",  # or "rank" for rank-level restart
+    max_iterations=None,  # No limit on restart attempts
+    soft_timeout=60.0,  # Timeout for detecting GIL-released hangs
+    hard_timeout=90.0,  # Timeout for forcibly terminating hung ranks
+    heartbeat_interval=30.0,
+    heartbeat_timeout=60.0,
+    monitor_thread_interval=1.0,
+    monitor_process_interval=1.0,
+    progress_watchdog_interval=1.0,
+    barrier_timeout=120.0,
+    completion_timeout=120.0,
+    last_call_wait=1.0,
+    termination_grace_time=1.0,
+    empty_cuda_cache=True,
+    max_rank_faults=None,  # No limit on rank faults
+    monitor_process_logdir=None,  # Disable monitor process logging
+)
+```
+
+### Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | `bool` | `False` | Enable in-process restart mechanism |
+| `active_world_size` | `int` | `None` | Number of ranks initially executing workload (remaining ranks are warm reserves) |
+| `granularity` | `str` | `"node"` | Restart granularity: `"node"` or `"rank"` |
+| `max_iterations` | `int` | `None` | Maximum number of restart iterations (None = unlimited) |
+| `soft_timeout` | `float` | `60.0` | Soft progress timeout in seconds (for detecting GIL-released hangs) |
+| `hard_timeout` | `float` | `90.0` | Hard progress timeout in seconds (for forcibly terminating hung ranks) |
+| `heartbeat_interval` | `float` | `30.0` | Interval in seconds for heartbeat monitoring |
+| `heartbeat_timeout` | `float` | `60.0` | Timeout in seconds for detecting missing rank heartbeats |
+| `monitor_thread_interval` | `float` | `1.0` | Monitoring interval in seconds for monitoring thread |
+| `monitor_process_interval` | `float` | `1.0` | Monitoring interval in seconds for monitoring process |
+| `progress_watchdog_interval` | `float` | `1.0` | Interval in seconds for automatic progress watchdog updates |
+| `barrier_timeout` | `float` | `120.0` | Timeout in seconds for internal distributed barriers |
+| `completion_timeout` | `float` | `120.0` | Timeout in seconds for completion barrier on all ranks |
+| `last_call_wait` | `float` | `1.0` | Time interval in seconds for other ranks to report concurrent failures |
+| `termination_grace_time` | `float` | `1.0` | Interval in seconds between SIGTERM and SIGKILL on hard timeout |
+| `empty_cuda_cache` | `bool` | `True` | Empty CUDA cache during restart finalization |
+| `max_rank_faults` | `int` | `None` | Maximum number of rank faults allowed before terminating (None = unlimited) |
+| `monitor_process_logdir` | `str` | `None` | Directory for monitor process log files (None = disabled) |
+
+### Slurm Configuration Requirements
+
+> **Warning**: Running in-process restart through NeMo-Run's Slurm Executor is **not currently supported**.
+
+If you need to use in-process restart with Slurm, you must launch your jobs directly using `srun` with the proper configuration. Refer to the [NVIDIA Resiliency Extension Slurm configuration guide](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/usage_guide.html#running-with-slurm) for detailed instructions on:
+
+- Setting `--kill-on-bad-exit=0` to prevent Slurm from terminating the entire job on rank failures
+- Using the `wait_daemon.py` utility for proper monitoring process cleanup
+- Configuring SLURM PMI for compatibility
+
+#### Monitor Process Log Files
+
+When `monitor_process_logdir` is configured, the system automatically generates monitor process log files for rank 0 only. The log file path must be coordinated between your Python configuration and the `wait_daemon.py` script used in your Slurm launch command.
+
+The system creates log files with the following naming convention:
+
+```
+monitor_{SLURM_JOB_ID}_{hostname}_{SLURM_PROCID}_{SLURM_LOCALID}.log
+```
+
+Where:
+- `SLURM_JOB_ID`: The Slurm job ID from the `SLURM_JOB_ID` environment variable
+- `hostname`: The hostname of the node where rank 0 is running
+- `SLURM_PROCID`: The global rank from the `SLURM_PROCID` environment variable
+- `SLURM_LOCALID`: The local rank on the node from the `SLURM_LOCALID` environment variable
+
+**Python Configuration:**
+
+```python
+config.inprocess_restart = InProcessRestartConfig(
+    enabled=True,
+    monitor_process_logdir="/scratch/logs/monitor",  # Provide directory only
+)
+```
+
+**Corresponding Slurm Launch Command:**
+
+You must pass the same log file path pattern to `wait_daemon.py` in your sbatch script. The path should include `{rank}` as a placeholder that will be substituted with the actual rank:
+
+```bash
+srun --kill-on-bad-exit=0 \
+    python -m nvidia_resiliency_ext.inprocess.wait_daemon \
+    --monitor-process-logfile=/scratch/logs/monitor/monitor_${SLURM_JOB_ID}_$(hostname)_\${SLURM_PROCID}_\${SLURM_LOCALID}.log \
+    -- \
+    python your_training_script.py
+```
+
+> **Important**: The monitor process log file path must match between your Python configuration (`monitor_process_logdir`) and the `wait_daemon.py` command-line argument. This coordination ensures that `wait_daemon.py` can properly monitor and wait for the monitor process to complete its cleanup before exiting.
+
+### Integration in Megatron Bridge
+
+The in-process restart system integrates with Megatron Bridge's training pipeline through several mechanisms:
+
+#### 1. Function Wrapping
+
+The `pretrain()` function detects when in-process restart is enabled and wraps the internal `_pretrain()` function with the restart mechanism:
+
+```python
+if config.inprocess_restart and config.inprocess_restart.enabled:
+    from megatron.bridge.training.inprocess_restart import maybe_wrap_for_inprocess_restart
+    
+    wrapped_pretrain, store = maybe_wrap_for_inprocess_restart(
+        _pretrain, config.inprocess_restart, state
+    )
+    wrapped_pretrain(state, forward_step_func, store=store)
+```
+
+#### 2. Coordination Store
+
+A dedicated `TCPStore` is created for coordination between ranks during restart operations:
+- Uses `MASTER_PORT + 1` to avoid conflicts with PyTorch distributed
+- Enables rank-to-rank communication for fault detection and recovery
+- Supports prefix-based isolation for each restart attempt
+
+#### 3. State Management
+
+During restart, the system performs comprehensive cleanup:
+
+- **PyTorch State**: Destroys distributed process groups via `torch.distributed.destroy_process_group()`
+- **Megatron State**: Cleans up global state through `destroy_global_state()`
+- **Training State**: Resets the `GlobalState` object for fresh initialization
+- **CUDA State**: Optionally empties CUDA cache to free memory
+- **Async Workers**: Aborts persistent async checkpoint worker processes
+
+#### 4. Restart Flow
+
+When a fault occurs on any rank:
+
+1. **Fault Detection**: The wrapper detects the exception, timeout, or missing heartbeat
+2. **Distributed Abort**: All ranks are notified and begin coordinated shutdown
+3. **State Cleanup**: Each rank cleans up PyTorch, Megatron, and CUDA state
+4. **Health Check**: GPU health is validated on each rank
+5. **Rank Reassignment**: Unhealthy ranks are excluded, reserves may be activated
+6. **Barrier Synchronization**: All healthy ranks wait at a distributed barrier
+7. **Function Restart**: The wrapped function restarts on all healthy ranks simultaneously
+
+#### 5. Restart Iterations
+
+The `CallWrapper` tracks restart iterations and provides this information to the wrapped function:
+- Iteration 0: Initial execution
+- Iteration 1+: Restart attempts after faults
+- Used to create isolated `PrefixStore` instances per restart attempt
+
+### Environment Configuration
+
+#### Required Environment Variables
+
+Set these environment variables to optimize in-process restart behavior:
+
+```bash
+# Suppress c10d TCPStore wait timeout warnings
+export TORCH_CPP_LOG_LEVEL=error
+
+# Prevent PyTorch NCCL Watchdog from forcibly terminating on NCCL/CUDA errors
+export TORCH_NCCL_RETHROW_CUDA_ERRORS=0
+
+# Disable NVLS support in NCCL (required for in-process restart)
+export NCCL_NVLS_ENABLE=0
+```
+
+#### PyTorch NCCL Watchdog Timeout
+
+Configure the PyTorch NCCL watchdog timeout to be longer than the `hard_timeout`:
+
+```python
+import torch.distributed as dist
+from datetime import timedelta
+
+# When initializing the distributed backend
+dist.init_process_group(
+    backend='nccl',
+    timeout=timedelta(seconds=config.inprocess_restart.hard_timeout + 60)
+)
+```
+
+### Known Issues
+
+Refer to the [NVIDIA Resiliency Extension Known Issues](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/usage_guide.html#known-issues) for the most up-to-date list of limitations and workarounds related to:
+
+- PyTorch distributed limitations
+- NCCL collective termination
+- CUDA context handling
+- Checkpoint worker cleanup

@@ -198,6 +198,42 @@ if __name__ == "__main__":
     run.run(train_script, plugins=plugins, executor=executor)
 ```
 
+##### Custom Argument Converters
+
+By default, plugins convert their configuration to Hydra-style CLI arguments when used with `run.Script` tasks. If your training script uses a different argument format (e.g., argparse), you can provide a custom converter function via the `script_args_converter_fn` parameter.
+
+```python
+import nemo_run as run
+from typing import List
+from megatron.bridge.recipes.run_plugins import (
+    PreemptionPlugin,
+    PreemptionPluginScriptArgs,
+)
+
+# Define a custom converter for argparse-style arguments
+def argparse_preemption_converter(args: PreemptionPluginScriptArgs) -> List[str]:
+    result = []
+    if args.enable_exit_handler:
+        result.append("--enable-exit-handler")
+    if args.enable_exit_handler_for_data_loader:
+        result.append("--enable-exit-handler-dataloader")
+    return result
+
+if __name__ == "__main__":
+    train_script = run.Script(path="/path/to/train/script.py", entrypoint="python")
+    executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
+
+    # Use the plugin with the custom converter
+    plugin = PreemptionPlugin(
+        preempt_time=120,
+        enable_exit_handler=True,
+        script_args_converter_fn=argparse_preemption_converter,
+    )
+    run.run(train_script, plugins=[plugin], executor=executor)
+```
+
+Each plugin provides its own corresponding dataclass (e.g., `PreemptionPluginScriptArgs`, `NsysPluginScriptArgs`) that defines the available arguments for conversion.
+
 See the [API reference](#bridge.recipes.run_plugins) for a list of available NeMo-Run plugins.
 
 ### Avoiding Hangs

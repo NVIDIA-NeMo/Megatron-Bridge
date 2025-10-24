@@ -34,6 +34,7 @@ Megatron Bridge uses Megatron Core's distributed checkpointing system, which is 
 | `save_interval` | `Optional[int]` | `None` | Number of iterations between persistent checkpoint saves |
 | `save_optim` | `bool` | `True` | Whether to save optimizer state |
 | `save_rng` | `bool` | `True` | Whether to save random number generator state |
+| `save_tokenizer_assets` | `bool` | `True` | Whether to save tokenizer files (vocab, config, special tokens) to checkpoint |
 
 ### Asynchronous Saving
 
@@ -51,9 +52,39 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 | `load_optim` | `bool` | `True` | Whether to load optimizer state from checkpoint |
 | `load_rng` | `bool` | `True` | Whether to load random number generator state from checkpoint |
 | `load_main_params_from_ckpt` | `bool` | `False` | Load main parameters from checkpoint (use with `load_optim=False`) |
-| `ckpt_step` | `Optional[int]` | `None` | Specific checkpoint step to load from |
+| `ckpt_step` | `Optional[int]` | `None` | Specific checkpoint iteration to load (overrides latest from tracker) |
 | `exit_on_missing_checkpoint` | `bool` | `False` | Exit if specified checkpoint is not found instead of random initialization |
 | `dist_ckpt_strictness` | `Literal[...]` | `"assume_ok_unexpected"` | Handling of key mismatches during distributed checkpoint load |
+
+### Loading Specific Checkpoint Iterations
+
+By default, Megatron Bridge loads the **latest checkpoint** available in the specified directory by reading from the tracker file (`latest_train_state.pt`). However, you can explicitly load from a specific checkpoint iteration using the `ckpt_step` parameter.
+
+**Python API:**
+```python
+from megatron.bridge.training.config import CheckpointConfig
+
+# Load latest checkpoint
+checkpoint = CheckpointConfig(
+    load="/path/to/checkpoint_dir"
+)
+
+# Load specific iteration
+checkpoint = CheckpointConfig(
+    load="/path/to/checkpoint_dir",
+    ckpt_step=5000  # Overrides tracker, loads iter_0005000
+)
+```
+
+```{note}
+The `load` parameter should always point to the base checkpoint directory (not the `iter_N` subdirectory). The `ckpt_step` parameter overrides which iteration is loaded from that directory.
+
+**Important:** If `ckpt_step` is specified but the checkpoint directory does not exist, training will **fail immediately** with a `FileNotFoundError`. This is intentional to prevent accidentally starting training from scratch when you meant to resume from a specific checkpoint.
+
+**PEFT Note:** The `ckpt_step` parameter applies **only to the `load` path** (adapter checkpoints), not to `pretrained_checkpoint` (frozen base model). When resuming PEFT training:
+- `pretrained_checkpoint`: Always loads the latest/release checkpoint (base model)
+- `load` + `ckpt_step`: Can load a specific adapter checkpoint iteration
+
 
 ### Checkpoint Loading Strictness
 
@@ -95,6 +126,7 @@ The checkpoint includes the following components when using the `torch_dist` che
 - **Model parameters and optimizer states**: Stored across `.distcp` files to support distributed training.
 - **Training state**: Captures the current iteration count, number of consumed samples, and the state of the learning rate scheduler.
 - **Configuration**: Serialized as a YAML file (`run_config.yaml`) containing the complete `ConfigContainer`.
+- **Tokenizer files**: All tokenizer artifacts (vocabulary, special tokens, config) for self-contained checkpoints.
 - **Dataloader states**: Ensures deterministic resumption of data iteration.
 - **Metadata**: Used for validating and correctly loading the checkpoint.
 
@@ -114,11 +146,48 @@ checkpoint_dir/
 │   ├── metadata.json                         # MCore dist ckpt metadata
 │   ├── run_config.yaml                       # Serialized ConfigContainer
 │   ├── train_state.pt                        # Number of steps, consumed samples, etc
+│   ├── tokenizer/                            # Tokenizer files (saved by default)
+│   │   ├── tokenizer.json                   # Full tokenizer vocabulary
+│   │   ├── tokenizer_config.json            # Tokenizer configuration
+│   │   ├── special_tokens_map.json          # Special token definitions
+│   │   └── ...                              # Other tokenizer artifacts
 │   ├── dataloader_state/                     # Data iterator states
 │   │   ├── train_dataloader_dprank000.pt    # DP rank 0 dataloader state
 │   │   ├── train_dataloader_dprank001.pt    # DP rank 1 dataloader state
 │   │   ├── train_dataloader_dprank002.pt    # DP rank 2 dataloader state
 │   │   └── ...                              # One file per DP rank
+```
+
+### Tokenizer Assets
+
+By default, Megatron Bridge saves all tokenizer files to the checkpoint directory, making checkpoints self-contained and portable. This is particularly important for:
+- **Inference and evaluation**: Direct access to tokenizer for computing logprobs
+- **Portability**: No dependency on original tokenizer file locations
+- **Reproducibility**: Exact tokenizer state is preserved
+
+The tokenizer files saved depend on the tokenizer type:
+- **HuggingFace tokenizers**: `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, and vocab files
+- **SentencePiece tokenizers**: `tokenizer.model` file
+- **GPT2 BPE tokenizers**: `vocab.json` and `merges.txt`
+- **BERT tokenizers**: `vocab.txt`
+- **Tiktoken tokenizers**: `tokenizer.json`
+
+To disable tokenizer asset saving for performance-sensitive scenarios:
+
+```python
+from megatron.bridge.training.config import CheckpointConfig
+
+checkpoint = CheckpointConfig(
+    save_tokenizer_assets=False,  # Skip tokenizer file saving
+    ...
+)
+```
+
+Or in YAML:
+
+```yaml
+checkpoint:
+  save_tokenizer_assets: false
 ```
 
 ## Local Checkpointing

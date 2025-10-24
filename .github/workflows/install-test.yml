@@ -24,57 +24,20 @@ on:
       - "pull-request/[0-9]+"
       - "deploy-release/*"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
-
-  pip-test-bare-metal:
-    needs: [pre-flight]
-    if: |
-      !(needs.pre-flight.outputs.docs_only == 'true'
-      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: linux-amd64-cpu16
-    name: Pip - Python${{ matrix.python-version }} - AMD64/Linux - Bare Metal
-    container: ubuntu:24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set PATH
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
-          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
-          echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
-          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
-
-      - name: Install project
-        run: bash docker/common/install.sh --base-image ubuntu --python-version ${{ matrix.python-version }}
-
-      - name: Checkout check-imports
-        uses: actions/checkout@v4
-        with:
-          repository: NVIDIA-NeMo/FW-CI-templates
-          ref: v0.39.0
-          path: FW-CI-templates
-
-      - name: Check imports for megatron-bridge
-        uses: ./FW-CI-templates/.github/actions/check-imports
-        with:
-          package-name: megatron.bridge
-          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   pip-test-pytorch:
     needs: [pre-flight]
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: linux-amd64-cpu16
+    runs-on: self-hosted-nemo
     name: Pip - Python${{ matrix.python-version }}${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }} - AMD64/Linux - NGC PyTorch
     container:
       image: nvcr.io/nvidia/pytorch:25.05-py3
@@ -87,8 +50,16 @@ jobs:
     env:
       EXTRA: ${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
     steps:
+      - name: Install git
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          apt-get update
+          apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set PATH
         run: |
@@ -121,7 +92,7 @@ jobs:
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: linux-amd64-cpu16
+    runs-on: self-hosted-nemo
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
       image: nvcr.io/nvidia/pytorch:25.05-py3
@@ -131,8 +102,16 @@ jobs:
       matrix:
         python-version: ["3.12"]
     steps:
+      - name: Install git
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          apt-get update
+          apt-get install -y git
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set PATH
         run: |
@@ -149,70 +128,8 @@ jobs:
         shell: bash
         run: bash docker/common/install.sh --base-image pytorch --use-uv
 
-      # NGC PyTorch 25.05 has a version of triton that is broken on CPU only machines.
-      # - name: Checkout check-imports
-      #   uses: actions/checkout@v4
-      #   with:
-      #     repository: NVIDIA-NeMo/FW-CI-templates
-      #     ref: v0.39.0
-      #     path: FW-CI-templates
-
-      # - name: Check imports for megatron-bridge
-      #   uses: ./FW-CI-templates/.github/actions/check-imports
-      #   with:
-      #     package-name: megatron.bridge
-      #     python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
-
-  uv-test-bare-metal:
-    needs: [pre-flight]
-    if: |
-      !(needs.pre-flight.outputs.docs_only == 'true'
-      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: linux-amd64-cpu16
-    name: UV - Python ${{ matrix.python-version }} - 'AMD64/Linux' - Bare Metal
-    container: ubuntu:24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set PATH
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "VIRTUAL_ENV=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
-          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
-          echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
-          echo "CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
-          echo "CUDACXX=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
-          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
-
-      - name: Install project
-        shell: bash
-        run: |
-          bash docker/common/install.sh --base-image ubuntu --use-uv
-          uv run python -m ensurepip --upgrade
-          ln -sf /opt/venv/bin/pip3 /opt/venv/bin/pip
-
-      - name: Checkout check-imports
-        uses: actions/checkout@v4
-        with:
-          repository: NVIDIA-NeMo/FW-CI-templates
-          ref: v0.39.0
-          path: FW-CI-templates
-
-      - name: Check imports for megatron-bridge
-        uses: ./FW-CI-templates/.github/actions/check-imports
-        with:
-          package-name: megatron.bridge
-          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
-
   install-test-summary:
-    needs: [pre-flight, pip-test-bare-metal, pip-test-pytorch, uv-test-bare-metal, uv-test-pytorch]
+    needs: [pre-flight, pip-test-pytorch, uv-test-pytorch]
     runs-on: ubuntu-latest
     name: Install test summary
     if: |

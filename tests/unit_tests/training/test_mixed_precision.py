@@ -30,6 +30,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
+    bf16_with_nvfp4_mixed,
     fp16_mixed,
     fp16_with_fp8_current_scaling_mixed,
     fp16_with_fp8_delayed_scaling_mixed,
@@ -648,6 +649,19 @@ class TestMixedPrecisionRecipes:
         # Verify fp8_param is initialized from fp8_param_gather
         assert config.fp8_param is False
 
+    def test_bf16_with_nvfp4_mixed(self):
+        config = bf16_with_nvfp4_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # NVFP4 specific settings
+        assert config.fp8 is None
+        assert config.fp4 == "e2m1"
+        assert config.fp4_recipe == "nvfp4"
+        assert config.fp8_param_gather is False
+
     def test_fp16_with_fp8_subchannel_scaling_mixed(self):
         config = fp16_with_fp8_subchannel_scaling_mixed()
 
@@ -782,6 +796,19 @@ class TestRegisterAndGetMixedPrecisionConfig:
         assert config_underscore.bf16 == config_hyphen.bf16
         assert config_underscore.params_dtype == config_hyphen.params_dtype
         assert config_underscore.pipeline_dtype == config_hyphen.pipeline_dtype
+
+    def test_get_mixed_precision_config_with_hyphens_and_underscores(self):
+        """Edge case user input."""
+        config_underscore = get_mixed_precision_config("fp16_with_mxfp8_mixed")
+        config_both = get_mixed_precision_config("fp16-with-mxfp8_mixed")
+
+        # Both should be valid MixedPrecisionConfig instances
+        assert isinstance(config_both, MixedPrecisionConfig)
+        assert isinstance(config_underscore, MixedPrecisionConfig)
+
+        assert config_both.bf16 == config_underscore.bf16
+        assert config_both.params_dtype == config_underscore.params_dtype
+        assert config_both.pipeline_dtype == config_underscore.pipeline_dtype
 
     def test_get_mixed_precision_config_hyphen_aliases_for_all_recipes(self):
         """Verify that all registered recipes with underscores also work with hyphens."""

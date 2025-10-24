@@ -81,6 +81,7 @@ dependencies = [
     "nvidia-modelopt[torch]>=0.33.0a0,<0.34.0; sys_platform != 'darwin'",
     "nvidia-resiliency-ext>=0.4.0a0,<0.5.0; sys_platform != 'darwin'",
 #    "transformer-engine[pytorch]>=2.6.0a0,<2.8.0; sys_platform != 'darwin'"
+    "qwen-vl-utils",
 ]
 
 
@@ -98,11 +99,17 @@ no-build-isolation-package = [
     "flash_mla",
 ]
 prerelease = "allow"
+override-dependencies = [
+    "torch; sys_platform == 'never'",
+    "torchvision; sys_platform == 'never'",
+    "triton; sys_platform == 'never'",
+]
 
 # uv.sources allows us to override dependencies with VCS commits. 
 # Lets use this only for debugging purposes, but not for production (main).
 [tool.uv.sources]
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "0289e76380088358a584d809faf69effab1a7cda" } # on `release_v2.7
+megatron-core = { path = "3rdparty/Megatron-LM/" }
 
 [project.optional-dependencies]
 recipes = [
@@ -124,6 +131,7 @@ test = [
     "flake8>=7.2.0",
     "pylint>=3.3.7",
     "pytest>=8.3.5",
+    "pytest-timeout>=2.4.0",
     "pytest-mock>=3.14.0",
     "pytest-runner>=6.0.1",
     "pygithub",
@@ -181,14 +189,14 @@ markers = [
 concurrency = ["thread", "multiprocessing"]
 omit = [
     "/tmp/*",
-    "/workspace/tests/*",
-    "/workspace/*.py",
+    "/opt/Megatron-Bridge/tests/*",
+    "/opt/Megatron-Bridge/*.py",
     "*_ray.py",
 ]
 
 [tool.coverage.paths]
 source = [
     ".",
-    "/workspace/",
+    "/opt/Megatron-Bridge/",
     "/home/runner/work/Megatron-Bridge/Megatron-Bridge",
 ]

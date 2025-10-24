@@ -169,17 +169,27 @@ def create_packing_strategy(
         all_seq_lens.extend([i] * count)
 
     packing_fn = globals()[packing_algorithm]
-    assignments = packing_fn(all_seq_lens, pack_size)
+    assignments: list[list[int]] = packing_fn(all_seq_lens, pack_size)
     packed_seq_lens = [sum(x) for x in assignments]
     packing_factor = len(all_seq_lens) / len(packed_seq_lens)
 
     max_seqlen = max(all_seq_lens)
     max_samples_per_bin = max([len(b) for b in assignments])
-    packing_metadata = {"dataset_max_seqlen": max_seqlen, "max_samples_per_bin": max_samples_per_bin}
+    min_packed_seqlen = min(packed_seq_lens)
+    packing_efficiency = sum(packed_seq_lens) / len(packed_seq_lens) / pack_size * 100
+
+    packing_metadata = {
+        "dataset_max_seqlen": max_seqlen,
+        "max_samples_per_bin": max_samples_per_bin,
+        "packing_factor": round(packing_factor, 2),
+        "packing_efficiency": round(packing_efficiency, 2),
+        "pack_size": pack_size,
+        "min_packed_seqlen": min_packed_seqlen,
+    }
 
     logger.debug("Packed sequence lengths:")
     logger.debug(packed_seq_lens)
-    logger.info(f"Packing is {sum(packed_seq_lens) / len(packed_seq_lens) / pack_size * 100:.2f}% efficient")
+    logger.info(f"Packing is {packing_efficiency:.2f}% efficient")
     logger.info(
         f">>>>> For pack size {pack_size}, average number of sequences per pack is n = {packing_factor:.3f} <<<<<"
     )
@@ -226,7 +236,7 @@ def fill_packing_strategy(
                             [
                                 # (x['answer_start_idx'] - 1) because we want to train on the output
                                 # after the last context token
-                                idx >= (x["answer_start_idx"] - 1) and x["input_ids"][idx] != pad_id
+                                idx >= (x["answer_start_idx"] - 1)
                                 for idx in range(len(x["input_ids"]))
                             ]
                             for x in per_seq_data

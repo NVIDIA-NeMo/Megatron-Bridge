@@ -11,6 +11,7 @@ performance-summary.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
+megatron-lm-to-megatron-bridge.md
 ```
 
 ```{toctree}
@@ -47,6 +48,7 @@ training/packed-sequences.md
 :hidden:
 
 adding-new-models.md
+bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
 ```
