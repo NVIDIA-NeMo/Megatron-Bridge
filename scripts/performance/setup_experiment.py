@@ -38,6 +38,12 @@ except ImportError:
 if HAS_NEMO_RUN:
     from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
 
+    # TEMPORARY WORKAROUND - Remove in next release when upstream srun issue is fixed
+    try:
+        from utils.slurm_exit_code_override import *  # Monkey-patch for false-positive job failures
+    except (ImportError, ModuleNotFoundError):
+        from .utils.slurm_exit_code_override import *  # Monkey-patch for false-positive job failures
+
 import logging
 
 
