@@ -293,7 +293,12 @@ class AutoBridge(Generic[MegatronModelT]):
                 raise ValueError("hf_path is required when hf_pretrained is not a PreTrainedCausalLM instance")
             pre_trained = self.hf_pretrained
         else:
-            pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
+            # Preserve trust_remote_code setting from the original bridge instance
+            trust_remote_code = getattr(self.hf_pretrained, 'trust_remote_code', False)
+            pre_trained = PreTrainedCausalLM.from_pretrained(
+                hf_path, 
+                trust_remote_code=trust_remote_code
+            )
         self._model_bridge.load_weights_hf_to_megatron(model, pre_trained)
 
         return model
@@ -347,6 +352,25 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
         )
 
+    def set_custom_modeling_source(self, source_path: Union[str, Path]) -> None:
+        """
+        Set the source path for preserving custom modeling files.
+        
+        This is useful when converting from Megatron checkpoints where the original
+        HuggingFace model with custom modeling files needs to be referenced.
+        
+        Args:
+            source_path: Path to the directory containing custom modeling files
+            
+        Example:
+            >>> bridge = AutoBridge.from_hf_pretrained("model_path", trust_remote_code=True)
+            >>> # After loading Megatron checkpoint, set the original HF source
+            >>> bridge.set_custom_modeling_source("/path/to/original/hf/model")
+            >>> bridge.save_hf_pretrained(megatron_model, "./output")
+        """
+        if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            self.hf_pretrained._original_source_path = source_path
+
     def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -354,6 +378,10 @@ class AutoBridge(Generic[MegatronModelT]):
         This method exports the complete model including configuration, tokenizer,
         and weights to a directory that can be loaded with HuggingFace's
         from_pretrained methods.
+        
+        If the original model was loaded with trust_remote_code=True, any custom
+        modeling files (e.g., modeling_*.py, configuration_*.py) will be preserved
+        to ensure the saved model can be loaded properly.
 
         Args:
             model: Megatron model instance or list of instances
