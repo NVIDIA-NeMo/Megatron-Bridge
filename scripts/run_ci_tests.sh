@@ -223,7 +223,12 @@ run_docker() {
 
   if [[ "${SKIP_LINT}" == "true" ]]; then LINT_CMD="true"; else LINT_CMD="${DOCKER_LINT_PREFIX}"; fi
   if [[ "${SKIP_UNIT}" == "true" ]]; then UNIT_CMD="true"; else UNIT_CMD="bash tests/unit_tests/Launch_Unit_Tests.sh"; fi
-  if [[ "${SKIP_FUNCTIONAL}" == "true" ]]; then FUNC_CMD="true"; else FUNC_CMD="python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m 'not pleasefixme' --tb=short -rA tests/functional_tests/training -k 'not test_inprocess_restart' && coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m 'not pleasefixme' --tb=short -rA tests/functional_tests/converter -k 'not gemma and not gemma2 and not gemma3 and not glm45' && coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m 'not pleasefixme' --tb=short -rA tests/functional_tests/models -k 'not gemma and not gemma2 and not gemma3 and not glm45' && python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m 'not pleasefixme' --tb=short -rA tests/functional_tests/recipes -k 'not gemma and not gemma2 and not gemma3 and not glm45'"; fi
+  if [[ "${SKIP_FUNCTIONAL}" == "true" ]]; then
+    FUNC_CMD="true"
+  else
+    # Discover and run all L2_* launcher scripts with optional exclusion list (comma-separated basenames in L2_EXCLUDE)
+    FUNC_CMD="shopt -s nullglob; EXCLUDES=\"\${L2_EXCLUDE:-}\"; for f in tests/functional_tests/L2_*.sh; do bn=\$(basename \"\$f\"); if [[ \\\" ,\${EXCLUDES}, \\\" == *\\\",\${bn},\\\"* ]]; then echo \"[functional] Skipping \${bn}\"; continue; fi; echo \"[functional] Running \${bn}\"; bash \"\$f\"; done"
+  fi
 
   echo "[docker] Building image from docker/Dockerfile.ci"
   docker build -f "${REPO_ROOT}/docker/Dockerfile.ci" -t megatron-bridge "${REPO_ROOT}"
