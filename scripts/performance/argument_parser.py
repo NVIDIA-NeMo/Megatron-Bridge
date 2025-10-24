@@ -1,5 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -21,6 +21,7 @@ from nemo_run.config import get_nemorun_home
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
+DEFAULT_HF_HOME = DEFAULT_NEMO_HOME / "hf_home"
 
 
 def parse_cli_args():
@@ -123,6 +124,11 @@ def parse_cli_args():
         "for models and checkpoints. This saves a lot of time (especially for bigger models) if checkpoints already",
         f"exist here. Missing files will be downloaded here from HuggingFace. Defaults to {DEFAULT_NEMO_HOME}",
     ]
+    hf_home_msg = [
+        "Sets env var `HF_HOME` (on compute node using sbatch script)- directory where HuggingFace searches",
+        "for tokenizers and checkpoints. This saves a lot of time (especially for bigger models) if checkpoints already",
+        f"exist here. Missing files will be downloaded here from HuggingFace. Defaults to {DEFAULT_NEMO_HOME}/hf_home",
+    ]
     parser.add_argument(
         "-nh",
         "--nemo_home",
@@ -173,6 +179,13 @@ def parse_cli_args():
         return arg.split(",")
 
     parser.add_argument(
+        "--hf_home",
+        type=str,
+        help=" ".join(hf_home_msg),
+        default=hf_home_msg,
+    )
+
+    parser.add_argument(
         "-cm",
         "--custom_mounts",
         type=list_of_strings,
@@ -205,7 +218,7 @@ def parse_cli_args():
     parser.add_argument(
         "-en",
         "--enable_nsys",
-        help="Enable Nsys profiling. Diabled by default",
+        help="Enable Nsys profiling. Disabled by default",
         action="store_true",
     )
     parser.add_argument(
@@ -243,5 +256,4 @@ def parse_cli_args():
         dest="detach",
     )
 
-    args, cli_dotlist_overrides = parser.parse_known_args()
-    return args, cli_dotlist_overrides
+    return parser
