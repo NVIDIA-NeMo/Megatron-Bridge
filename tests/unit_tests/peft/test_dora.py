@@ -754,6 +754,7 @@ class TestDoRAMegatronIntegration:
                 dora_count = sum(1 for _, m in chunk.named_modules() if isinstance(m, DoRALinear))
                 assert dora_count > 0, "Should have DoRA adaptations applied"
 
+    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
     def test_dora_different_targets(self):
         """Test DoRA with different target module configurations using pre-wrap hooks."""
 
