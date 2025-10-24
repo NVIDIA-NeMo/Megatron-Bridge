@@ -27,4 +27,49 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     gpu_block = perf.get(args.gpu) or {}
     preset = gpu_block.get(num_gpus_yaml_key) or {}
 
+    # weak scaling for deepseek
+    if preset == {} and args.model_name in ["deepseek"]:
+        default_num_gpus = 1024 if args.gpu.lower() in ["h100"] else 256
+        num_gpus_yaml_key = f"num_gpus_{default_num_gpus}"
+        preset = gpu_block.get(num_gpus_yaml_key)
+        preset["common"]["gbs"] = args.num_gpus * 8
+
+    elif preset == {} and args.model_name in ["llama3", "llama31"]:
+        gpu_defaults = {
+            "gb300": {
+                "405b": 128,
+                "70b":  64,
+                "8b":   8,
+            },
+            "gb200": {
+                "405b": 128,
+                "70b":  64,
+                "8b":   8,
+            },
+            "b200": {
+                "405b": 128,
+                "70b":  64,
+                "8b":   8,
+            },
+            "h100": {
+                "405b": 1024,
+                "70b":  64,
+                "8b":   8,
+            },
+        }
+        default_num_gpus = gpu_defaults[args.gpu][args.model_size]
+        num_gpus_yaml_key = f"num_gpus_{default_num_gpus}"
+        preset = gpu_block.get(num_gpus_yaml_key)
+        scaling_factor = preset["common"]["gbs"] / default_num_gpus
+        preset["common"]["gbs"] = int(args.num_gpus * scaling_factor)
+
+    if args.tensor_parallel_size: preset["common"]["tp"] = args.tensor_parallel_size
+    if args.pipeline_parallel_size: preset["common"]["pp"] = args.pipeline_parallel_size
+    if args.context_parallel_size: preset["common"]["cp"] = args.context_parallel_size
+    if args.virtual_pipeline_parallel_size: preset["common"]["vp"] = args.virtual_pipeline_parallel_size
+    if args.expert_parallel_size: preset["common"]["ep"] = args.expert_parallel_size
+    if args.expert_tensor_parallel_size: preset["common"]["etp"] = args.expert_tensor_parallel_size
+    if args.micro_batch_size: preset["common"]["mbs"] = args.micro_batch_size
+    if args.global_batch_size: preset["common"]["gbs"] = args.global_batch_size
+
     return preset
