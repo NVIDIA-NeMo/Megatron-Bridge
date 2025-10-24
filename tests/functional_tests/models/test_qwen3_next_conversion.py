@@ -18,10 +18,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from safetensors.torch import load_file, save_file
-from transformers import AutoTokenizer
-
-from transformers import Qwen3NextConfig, Qwen3NextForCausalLM
+from transformers import AutoTokenizer, Qwen3NextConfig, Qwen3NextForCausalLM
 
 
 # Toy model config based on Qwen3-Next-80B-A3B but with minimal layers for testing
@@ -282,4 +279,3 @@ class TestQwen3NextConversion:
         except Exception as e:
             print(f"Error during Qwen3Next {test_name} conversion test: {e}")
             raise
-
