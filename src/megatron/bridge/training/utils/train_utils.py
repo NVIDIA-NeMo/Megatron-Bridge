@@ -862,6 +862,14 @@ def report_throughput(
         elapsed_samples = int(history_samples[-1]) - int(history_samples[0])
         elapsed_tokens = int(history_tokens[-1]) - int(history_tokens[0])
         elapsed_wct = history_wct[-1] - history_wct[0]
+        
+        # Skip throughput calculation if elapsed_wct is zero or negative
+        # This can happen during checkpoint resumption when history_wct is reinitialized
+        # and the first few iterations are very fast or have identical timestamps
+        if elapsed_wct <= 0:
+            print_rank_0(f"Warning: elapsed_wct is {elapsed_wct}, skipping throughput calculation at iteration {iteration}")
+            return {}
+        
         batches_per_sec = elapsed_batches / elapsed_wct
         samples_per_sec = elapsed_samples / elapsed_wct
         dev_batches_per_sec = batches_per_sec / world_size
