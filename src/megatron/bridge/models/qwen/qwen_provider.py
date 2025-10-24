@@ -450,6 +450,9 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     moe_shared_expert_intermediate_size: int = 512  # 512 * 1 shared expert
     moe_shared_expert_gate: bool = True
 
+    # Checkpointing
+    hetereogenous_dist_checkpoint: bool = True
+
 
 @dataclass
 class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
