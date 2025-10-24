@@ -49,7 +49,6 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.utils import unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
-    restore_sharded_modelopt_state,
     save_modelopt_state,
     save_sharded_modelopt_state,
 )

@@ -178,11 +178,23 @@ def setup(
         cfg.model.register_pre_wrap_hook(peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
-    if cfg.model.restore_modelopt_state:
+    if getattr(cfg.model, "restore_modelopt_state", False):
         from megatron.bridge.training.post_training.checkpointing import load_modelopt_state
 
         def modelopt_pre_wrap_hook(model):
-            checkpoint_path = cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load
+            from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
+
+            # Check which checkpoint path has modelopt state
+            if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
+                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
+            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load):
+                checkpoint_path = cfg.checkpoint.load
+            else:
+                raise RuntimeError(
+                    f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
+                    f"or load={cfg.checkpoint.load}"
+                )
+
             load_modelopt_state(model, checkpoint_path)
             return model
 

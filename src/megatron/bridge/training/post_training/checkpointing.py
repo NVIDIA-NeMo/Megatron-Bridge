@@ -19,44 +19,51 @@ try:
 except ImportError as e:
     raise ImportError('Required `"nvidia-modelopt[torch]"` is not installed!') from e
 
-<<<<<<< HEAD
-import os.path
-=======
 import os
-from typing import List
->>>>>>> 0254ddd4 (QAT support)
 
 import torch
+from megatron.core import dist_checkpointing
 from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
 
 def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
-    """Get the path to use for ModelOpt operations (handles iteration directories).
-
-    Uses the same robust logic as AutoBridge for finding the latest iteration.
-    """
+    """Get the path to use for ModelOpt operations (handles iteration directories)."""
     if not checkpoint_path or not os.path.isdir(checkpoint_path):
         return checkpoint_path
 
-    # Check for iter_* folders (inspired by AutoBridge implementation)
-    iter_folders = [
-        f
-        for f in os.listdir(checkpoint_path)
-        if os.path.isdir(os.path.join(checkpoint_path, f)) and f.startswith("iter_")
-    ]
+    # Check for iter_* folders
+    try:
+        iter_folders = [
+            f
+            for f in os.listdir(checkpoint_path)
+            if os.path.isdir(os.path.join(checkpoint_path, f)) and f.startswith("iter_")
+        ]
+    except (OSError, FileNotFoundError):
+        # Directory doesn't exist or can't be accessed
+        return checkpoint_path
 
     if iter_folders:
-        # Find the folder with the largest iteration number
-        def get_iter_number(folder_name: str) -> int:
-            try:
-                return int(folder_name.replace("iter_", ""))
-            except ValueError:
-                return -1  # Invalid format, put at the end
+        # Find the folder with the largest iteration number from state dict
+        latest_iter_num = -1
+        latest_iter_folder = None
 
-        latest_iter = max(iter_folders, key=get_iter_number)
-        return os.path.join(checkpoint_path, latest_iter)
+        for folder in iter_folders:
+            folder_path = os.path.join(checkpoint_path, folder)
+            try:
+                state_dict = dist_checkpointing.load_common_state_dict(folder_path)
+                if state_dict is not None:
+                    iter_num = state_dict.get("iteration", 0)
+                    if iter_num > latest_iter_num:
+                        latest_iter_num = iter_num
+                        latest_iter_folder = folder
+            except Exception:
+                # Skip checkpoints that fail to load
+                continue
+
+        if latest_iter_folder is not None:
+            return os.path.join(checkpoint_path, latest_iter_folder)
 
     return checkpoint_path  # No iteration dirs, use root
 
@@ -91,9 +98,9 @@ def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> No
         model: The model to load the modelopt_state into
         checkpoint_path: Path to the checkpoint directory
     """
-    modelopt_checkpointpath = _get_modelopt_checkpoint_path(checkpoint_path)
+    modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path)
     unwrapped_model = unwrap_model(model)
-    restore_sharded_modelopt_state(unwrapped_model, checkpoint_path)
+    restore_sharded_modelopt_state(unwrapped_model, modelopt_checkpoint_path)
 
 
 def _has_only_kd_state(modelopt_state_path: str) -> bool:

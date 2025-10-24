@@ -14,25 +14,38 @@
 # limitations under the License.
 
 """
-Llama3 8B Pretraining Script with YAML and CLI Configuration Overrides.
+Quantized Llama3 8B Pretraining Script with YAML and CLI Configuration Overrides.
 
-This script provides a flexible way to pretrain Llama3 8B models using Megatron-Bridge with support for
+This script provides a flexible way to pretrain quantized Llama3 8B models using Megatron-Bridge with support for
 both YAML configuration files and command-line overrides using Hydra-style syntax.
 
+Prerequisites:
+First, you must run the quantization process to create a quantized checkpoint:
+    torchrun --nproc_per_node 8 examples/quantization/quantize.py \
+        --export-quant-cfg fp8 \
+        --megatron-save-path <path to the quantized checkpoint> \
+        --tp 8 \
+        --hf-model-id meta-llama/Meta-Llama-3-8B
+
 Examples:
-    Basic usage with default configuration:
-        $ torchrun --nproc_per_node=8 examples/recipes/llama/pretrain_llama3_8b.py
+    Using CLI overrides only:
+        torchrun --nproc_per_node=8 examples/quantization/pretrain_quantized_llama3_8b.py \
+            --hf-path meta-llama/Meta-Llama-3-8B \
+            model.tensor_model_parallel_size=4 \
+            model.gradient_accumulation_fusion=False \
+            checkpoint.pretrained_checkpoint=<path to the quantized checkpoint>
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 pretrain_llama3_8b.py --config-file my_custom_config.yaml
-
-    Using CLI overrides only:
-        $ torchrun --nproc_per_node=8 pretrain_llama3_8b.py model.tensor_model_parallel_size=4 train.train_iters=100000
+        torchrun --nproc_per_node=8 examples/quantization/pretrain_quantized_llama3_8b.py \
+            --hf-path meta-llama/Meta-Llama-3-8B \
+            --config-file conf/quantized_llama3_8b_pretrain_override_example.yaml
 
     Combining YAML and CLI overrides (CLI takes precedence):
-        $ torchrun --nproc_per_node=8 pretrain_llama3_8b.py --config-file conf/my_config.yaml \
-        model.pipeline_dtype=torch.float16 \
-        train.global_batch_size=512
+        torchrun --nproc_per_node=8 examples/quantization/pretrain_quantized_llama3_8b.py \
+            --hf-path meta-llama/Meta-Llama-3-8B \
+            --config-file conf/quantized_llama3_8b_pretrain_override_example.yaml \
+            model.pipeline_dtype=torch.float16 \
+            train.global_batch_size=512
 
 Configuration Precedence:
     1. Base configuration from pretrain_config() recipe
@@ -61,6 +74,7 @@ from omegaconf import OmegaConf
 from megatron.bridge.recipes.llama import llama3_8b_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
@@ -74,10 +88,10 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 # Define paths relative to this script's location
-# Assumes this script (pretrain_llama3_8b.py) is in Megatron-Bridge/examples/recipes/llama/
+# Assumes this script (pretrain_quantized_llama3_8b.py) is in Megatron-Bridge/examples/quantization/
 # and the config is in a 'conf' subdirectory.
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
-DEFAULT_CONFIG_FILENAME: str = "llama3_8b_pretrain_override_example.yaml"
+DEFAULT_CONFIG_FILENAME: str = "quantized_llama3_8b_pretrain_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
 
@@ -92,6 +106,12 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         type=str,
         default=str(DEFAULT_CONFIG_FILE_PATH),
         help="Path to the YAML OmegaConf override file. Default: conf/llama3_8b_pretrain_override_example.yaml",
+    )
+    parser.add_argument(
+        "--hf-path",
+        type=str,
+        default=None,
+        help="HuggingFace model path or local directory (overrides the default recipe hf_path)",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
@@ -132,7 +152,13 @@ def main() -> None:
     logger.info("------------------------------------------------------------------")
 
     # Load base configuration from the recipe as a Python dataclass
-    cfg: ConfigContainer = pretrain_config()
+    # If --hf-path is provided, pass it to the recipe function
+    recipe_kwargs = {}
+    if args.hf_path:
+        logger.info(f"Using custom HuggingFace path: {args.hf_path}")
+        recipe_kwargs["hf_path"] = args.hf_path
+
+    cfg: ConfigContainer = pretrain_config(**recipe_kwargs)
     logger.info("Loaded base configuration")
 
     # Print configuration on rank 0
@@ -163,6 +189,11 @@ def main() -> None:
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
+
+    # Check for ModelOpt state
+    checkpoint_to_check = cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load
+    if checkpoint_to_check and has_modelopt_state(checkpoint_to_check):
+        cfg.model.restore_modelopt_state = True
 
     # Display final configuration
     if get_rank_safe() == 0:

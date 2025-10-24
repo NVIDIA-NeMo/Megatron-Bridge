@@ -96,6 +96,8 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
     use_arbitrary_attention_mask = parallel_state.get_context_parallel_world_size() == 1
+    # arbitrary attention mask is used for speculative decoding training
+    # When context parallel > 1, only causal mask type is supported
     return get_gpt_modelopt_spec(
         config=config,
         local_core_attention=False,
