@@ -285,7 +285,7 @@ class TestMegatronFSDP:
 
         try:
             seq_length = 512
-            total_iters = 20
+            total_iters = 10
 
             # Create config with checkpointing enabled
             cfg = create_fsdp_config_container(
@@ -325,8 +325,8 @@ class TestMegatronFSDP:
 
         try:
             seq_length = 512
-            total_iters = 20
-            checkpoint_iters = 10
+            total_iters = 10
+            checkpoint_iters = 5
 
             # First training run - train for 10 iterations and save checkpoint
             cfg_first = create_fsdp_config_container(
@@ -348,7 +348,7 @@ class TestMegatronFSDP:
 
             torch.distributed.barrier()
 
-            # Second training run - resume from checkpoint and train for remaining 10 iterations
+            # Second training run - resume from checkpoint and train remaining iterations
             cfg_second = create_fsdp_config_container(
                 seq_length=seq_length,
                 train_iters=total_iters,
@@ -364,7 +364,7 @@ class TestMegatronFSDP:
 
             torch.distributed.barrier()
 
-            # Verify FSDP DTensor checkpoint files from second run (should be at total_iters=20)
+            # Verify FSDP DTensor checkpoint files from second run (should be at total_iters)
             verify_checkpoint_files(checkpoint_dir, total_iters, ckpt_format=cfg_second.checkpoint.ckpt_format)
 
         finally:

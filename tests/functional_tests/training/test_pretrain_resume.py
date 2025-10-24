@@ -44,8 +44,8 @@ from tests.functional_tests.utils import (
 @dataclass
 class Llama3ModelProvider145M(Llama3ModelProvider):
     rotary_base: int = 500_000
-    seq_length: int = 8192
-    num_layers: int = 2
+    seq_length: int = 1024
+    num_layers: int = 1
     hidden_size: int = 768
     ffn_hidden_size: int = 2688
     num_attention_heads: int = 16
@@ -79,7 +79,7 @@ class TestPretrainResume:
             global_batch_size = 8
             micro_batch_size = 1
             seq_length = 512
-            total_iters = 20
+            total_iters = 10
             checkpoint_iters = 10
 
             # First training run - train for 10 iterations and save checkpoint

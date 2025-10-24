@@ -62,9 +62,13 @@ def run_pretrain_recipe_test(
         config: ConfigContainer = config_func(
             dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", mock=True
         )
+        # Keep runs short and consistent across tests
         config.train.train_iters = 10
         config.train.eval_interval = 5
         config.train.eval_iters = 2
+        # Standardize batch sizes for functional tests
+        config.train.micro_batch_size = 1
+        config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 2
         test_seq_length = 512
         config.model.seq_length = test_seq_length
@@ -161,9 +165,13 @@ def run_pretrain_vl_recipe_test(
         config: ConfigContainer = config_func(
             dir=str(shared_base_dir), name=f"{recipe_name}_functional_test", dataset_type="mock"
         )
-        config.train.train_iters = 2
-        config.train.eval_interval = 1
-        config.train.eval_iters = 1
+        # Keep runs short and consistent across tests
+        config.train.train_iters = 10
+        config.train.eval_interval = 5
+        config.train.eval_iters = 2
+        # Standardize batch sizes for functional tests
+        config.train.micro_batch_size = 1
+        config.train.global_batch_size = 8
         config.scheduler.lr_warmup_iters = 1
         test_seq_length = 1024
         config.model.seq_length = test_seq_length
@@ -193,9 +201,11 @@ def run_pretrain_vl_recipe_test(
         if pipeline_parallelism is not None:
             config.model.pipeline_parallelism = pipeline_parallelism
 
+        # Apply any model-specific overrides provided by the caller
         if model_overrides:
             for attribute_name, attribute_value in model_overrides.items():
                 setattr(config.model, attribute_name, attribute_value)
+
         pretrain(config, vlm_forward_step)
 
         # Basic verification that training completed successfully

@@ -83,6 +83,9 @@ jobs:
     runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
+    env:
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -125,6 +128,8 @@ jobs:
     environment: nemo-ci
     env:
       HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

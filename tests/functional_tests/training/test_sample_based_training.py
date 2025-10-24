@@ -68,6 +68,7 @@ class TestSampleBasedTrainingFunctional:
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,
                 sequence_parallel=False,
+                num_layers=2,
                 attention_softmax_in_fp32=True,
                 pipeline_dtype=torch.bfloat16,
                 bf16=True,
