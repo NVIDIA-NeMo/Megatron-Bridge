@@ -159,7 +159,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # Additional parameters that might be needed
     init_model_with_meta_device: bool = False
     use_te_rng_tracker: bool = False
-    enable_cuda_graph: bool = False
     virtual_pipeline_model_parallel_size: Optional[int] = None
     account_for_embedding_in_pipeline_split: bool = False
     account_for_loss_in_pipeline_split: bool = False
@@ -193,7 +192,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
 
-        if self.enable_cuda_graph:
+        if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "
                 "enabled with use_te_rng_tracker=True'."
