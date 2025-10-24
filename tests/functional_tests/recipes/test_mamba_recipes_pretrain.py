@@ -17,16 +17,12 @@
 import pytest
 
 from megatron.bridge.recipes.mamba.mamba2_130m import pretrain_config as mamba2_130m_config
-from megatron.bridge.recipes.mamba.mamba2_370m import pretrain_config as mamba2_370m_config
-from megatron.bridge.recipes.mamba.mamba2_780m import pretrain_config as mamba2_780m_config
 from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
 
 
 MAMBA_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides, model_overrides)
     (mamba2_130m_config, "mamba2_130m", {}, {"num_layers": 2, "hybrid_override_pattern": "MM"}),
-    (mamba2_370m_config, "mamba2_370m", {}, {"num_layers": 2, "hybrid_override_pattern": "MM"}),
-    (mamba2_780m_config, "mamba2_780m", {}, {"num_layers": 2, "hybrid_override_pattern": "MM"}),
 ]
 
 

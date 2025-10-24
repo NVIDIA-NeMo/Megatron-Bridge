@@ -61,9 +61,11 @@ from typing import Iterable, Iterator
 
 import torch
 import torch.nn.functional as F
+from megatron.core.pipeline_parallel import get_forward_backward_func
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -75,9 +77,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.optim import setup_optimizer
-from megatron.core.pipeline_parallel import get_forward_backward_func
 
 
 @dataclass
@@ -163,12 +163,19 @@ def make_microbatch_iterator(batch: dict, num_microbatches: int) -> Iterator[dic
     def _gen() -> Iterable[dict]:
         for _ in range(num_microbatches):
             yield batch
+
     return iter(_gen())
 
 
 @torch.no_grad()
-def refit_hf_from_megatron(bridge: AutoBridge, megatron_models: list, hf_model: AutoModelForCausalLM,
-                           *, show_progress: bool = False, cpu: bool = False) -> None:
+def refit_hf_from_megatron(
+    bridge: AutoBridge,
+    megatron_models: list,
+    hf_model: AutoModelForCausalLM,
+    *,
+    show_progress: bool = False,
+    cpu: bool = False,
+) -> None:
     """Update the in-memory HF policy with current Megatron weights.
 
     This avoids writing to disk and lets the next rollout use the latest policy.
@@ -237,9 +244,10 @@ def main() -> None:
     # Ensure pad_token_id is set on model config/generation config
     if getattr(hf_gen_model.config, "pad_token_id", None) is None:
         hf_gen_model.config.pad_token_id = gen_tokenizer.pad_token_id
-    if getattr(hf_gen_model, "generation_config", None) is not None and getattr(
-        hf_gen_model.generation_config, "pad_token_id", None
-    ) is None:
+    if (
+        getattr(hf_gen_model, "generation_config", None) is not None
+        and getattr(hf_gen_model.generation_config, "pad_token_id", None) is None
+    ):
         hf_gen_model.generation_config.pad_token_id = gen_tokenizer.pad_token_id
     hf_gen_model.to(local_device)
 
@@ -375,12 +383,10 @@ def main() -> None:
         refit_hf_from_megatron(bridge, model_list, hf_gen_model, show_progress=False, cpu=True)
 
         if (step + 1) % 1 == 0:
-            print(f"Step {step+1}/{args.train_iters} | mean reward: {rewards_t.mean().item():.4f}")
+            print(f"Step {step + 1}/{args.train_iters} | mean reward: {rewards_t.mean().item():.4f}")
 
 
 if __name__ == "__main__":
     # Helpful default when running locally without torchrun
     os.environ.setdefault("WORLD_SIZE", "1")
     main()
-
-

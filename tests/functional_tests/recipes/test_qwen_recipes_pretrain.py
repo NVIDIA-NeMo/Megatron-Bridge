@@ -17,7 +17,7 @@
 import pytest
 
 from megatron.bridge.recipes.qwen import (
-    qwen2_500m_pretrain_config as qwen2_500m_config,
+    qwen3_600m_pretrain_config as qwen3_600m_config,
 )
 from megatron.bridge.recipes.qwen import (
     qwen25_500m_pretrain_config as qwen25_500m_config,
@@ -27,8 +27,8 @@ from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
 
 QWEN_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides, model_overrides)
-    (qwen2_500m_config, "qwen2_500m", {}, {"num_layers": 2}),
     (qwen25_500m_config, "qwen25_500m", {}, {"num_layers": 2}),
+    (qwen3_600m_config, "qwen3_600m", {}, {"num_layers": 2}),
 ]
 
 
