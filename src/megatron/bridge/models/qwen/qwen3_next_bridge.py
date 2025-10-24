@@ -135,8 +135,8 @@ class Qwen3NextBridge(MegatronModelBridge):
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
         AutoMapping.register_module_type("Conv1d", "column")
-        AutoMapping.register_module_type('SharedExpertMLP', 'column')
-        AutoMapping.register_module_type('GatedDeltaNet', 'column')
+        AutoMapping.register_module_type("SharedExpertMLP", "column")
+        AutoMapping.register_module_type("GatedDeltaNet", "column")
 
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(
@@ -213,7 +213,8 @@ class Qwen3NextBridge(MegatronModelBridge):
                 # while other norms are regular zero-centered RMSNorms.
                 # To correctly load the output norm weight, we need to subtract 1 from it.
                 RMSNorm2ZeroCenteredRMSNormMapping(
-                    "decoder.layers.*.self_attention.out_norm.weight", "model.layers.*.linear_attn.norm.weight",
+                    "decoder.layers.*.self_attention.out_norm.weight",
+                    "model.layers.*.linear_attn.norm.weight",
                 ),
             ]
         )

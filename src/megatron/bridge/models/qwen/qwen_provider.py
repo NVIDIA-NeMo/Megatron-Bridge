@@ -17,12 +17,12 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Callable, List, Optional, Union
 
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-
 import torch
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
 
 try:
     import transformer_engine  # type: ignore  # noqa: F401

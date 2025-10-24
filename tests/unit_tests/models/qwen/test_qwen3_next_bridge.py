@@ -35,9 +35,7 @@ class TestQwen3NextBridge:
     def qwen3_next_80b_a3b_config_dict(self):
         """Create a sample Qwen3 Next 80B configuration matching the expected model structure."""
         return {
-            "architectures": [
-                "Qwen3NextForCausalLM"
-            ],
+            "architectures": ["Qwen3NextForCausalLM"],
             "attention_dropout": 0.0,
             "bos_token_id": 151643,
             "decoder_sparse_step": 1,
@@ -367,7 +365,7 @@ class TestQwen3NextBridge:
 
         # Extract MTP mappings
         auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
-        
+
         # Check for critical parameter mappings
         hf_params = [mapping.hf_param for mapping in auto_mappings]
         megatron_params = [mapping.megatron_param for mapping in auto_mappings]

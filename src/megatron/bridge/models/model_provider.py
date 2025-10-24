@@ -162,8 +162,6 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         if not parallel_state.is_initialized():
             print("Model parallel not initialized, initializing...")
             self.initialize_model_parallel(seed=0)
-        else:
-            model_parallel_cuda_manual_seed(seed=0)
 
         # Convert list of hooks to a single composed callable
         if isinstance(pre_wrap_hook, list):

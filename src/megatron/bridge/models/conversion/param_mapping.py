@@ -1840,7 +1840,7 @@ class RMSNorm2ZeroCenteredRMSNormMapping(AutoMapping):
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         hf_weights.data = hf_weights.data - 1
         return super().hf_to_megatron(hf_weights, megatron_module)
-    
+
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         hf_weights = super().megatron_to_hf(megatron_weights, megatron_module)
         assert isinstance(hf_weights, dict) and len(hf_weights) == 1, (
@@ -1918,10 +1918,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(
-                total_heads_per_group * i,
-                total_heads_per_group * i + heads_per_group
-            )
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
             for i in range(num_query_groups)
         ]
     )
@@ -1998,8 +1995,7 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
     qkv = torch.cat(qkv_weights, dim=0)
 
     assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
-        f"QKV weights are not correctly merged, "
-        f"{q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
+        f"QKV weights are not correctly merged, {q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
     )
 
     # Final reshape
@@ -2044,10 +2040,7 @@ def split_qkv_weights(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(
-                total_heads_per_group * i,
-                total_heads_per_group * i + heads_per_group
-            )
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
             for i in range(num_query_groups)
         ]
     )
@@ -2072,8 +2065,7 @@ def split_qkv_weights(
     v = qkv_reshaped[v_slice]
 
     assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
-        f"QKV weights are not correctly merged, "
-        f"{q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
+        f"QKV weights are not correctly merged, {q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
     )
 
     if is_bias:
@@ -2089,8 +2081,7 @@ def split_qkv_weights(
 
 
 def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba: torch.Tensor) -> torch.Tensor:
-    """TODO: add comments
-    """
+    """merge gdn linear weights"""
     hidden_size = provider.hidden_size
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
@@ -2103,34 +2094,37 @@ def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba
     # Reshape to expose head dimension
     qkvz_reshaped = qkvz.reshape(num_qk_heads, (qk_dim * 2 + v_dim * 2) // num_qk_heads, hidden_size)
     ba_reshaped = ba.reshape(num_qk_heads, 2 * num_v_heads // num_qk_heads, hidden_size)
-    q, k, v, z = torch.split(qkvz_reshaped, [
-        qk_head_dim,
-        qk_head_dim,
-        num_v_heads // num_qk_heads * v_head_dim,
-        num_v_heads // num_qk_heads * v_head_dim,
-    ], dim=1)
-    b, a = torch.split(ba_reshaped, [
-        num_v_heads // num_qk_heads,
-        num_v_heads // num_qk_heads,
-    ], dim=1)
+    q, k, v, z = torch.split(
+        qkvz_reshaped,
+        [
+            qk_head_dim,
+            qk_head_dim,
+            num_v_heads // num_qk_heads * v_head_dim,
+            num_v_heads // num_qk_heads * v_head_dim,
+        ],
+        dim=1,
+    )
+    b, a = torch.split(
+        ba_reshaped,
+        [
+            num_v_heads // num_qk_heads,
+            num_v_heads // num_qk_heads,
+        ],
+        dim=1,
+    )
 
-    q, k, v, z, b, a = [
-        weight.reshape(-1, hidden_size)
-        for weight in [q, k, v, z, b, a]
-    ]
+    q, k, v, z, b, a = [weight.reshape(-1, hidden_size) for weight in [q, k, v, z, b, a]]
     in_proj = torch.cat([q, k, v, z, b, a], dim=0)
 
     assert in_proj.numel() == qkvz.numel() + ba.numel(), (
-        f"QKVZBA weights are not correctly merged, "
-        f"{qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
+        f"QKVZBA weights are not correctly merged, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
     )
 
     return in_proj
 
 
 def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor) -> torch.Tensor:
-    """TODO: add comments
-    """
+    """TODO: add comments"""
     hidden_size = provider.hidden_size
     qk_head_dim = provider.linear_key_head_dim
     v_head_dim = provider.linear_value_head_dim
@@ -2140,28 +2134,28 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor)
     v_dim = v_head_dim * num_v_heads
     in_proj_dim = qk_dim * 2 + v_dim * 2 + num_v_heads * 2
 
-    q, k, v, z, b, a = torch.split(in_proj, [
-        qk_dim,
-        qk_dim,
-        v_dim,
-        v_dim,
-        num_v_heads,
-        num_v_heads,
-    ], dim=0)
+    q, k, v, z, b, a = torch.split(
+        in_proj,
+        [
+            qk_dim,
+            qk_dim,
+            v_dim,
+            v_dim,
+            num_v_heads,
+            num_v_heads,
+        ],
+        dim=0,
+    )
 
-    q, k, v, z, b, a = [
-        weight.reshape(num_qk_heads, -1, hidden_size)
-        for weight in [q, k, v, z, b, a]
-    ]
+    q, k, v, z, b, a = [weight.reshape(num_qk_heads, -1, hidden_size) for weight in [q, k, v, z, b, a]]
     qkvz = torch.cat([q, k, v, z], dim=1)
     ba = torch.cat([b, a], dim=1)
-    
+
     qkvz = qkvz.reshape(-1, hidden_size)
     ba = ba.reshape(-1, hidden_size)
 
     assert qkvz.numel() + ba.numel() == in_proj.numel(), (
-        f"QKVZBA weights are not correctly split, "
-        f"{qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
+        f"QKVZBA weights are not correctly split, {qkvz.numel()=}, {ba.numel()=}, {in_proj.numel()=}"
     )
 
     return qkvz, ba
