@@ -66,6 +66,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
+    "transformers==4.57.1",
     "datasets",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
@@ -94,6 +95,7 @@ no-build-isolation-package = [
     "causal-conv1d",
     "nv-grouped-gemm",
     "flash_mla",
+    "flash-linear-attention",
 ]
 prerelease = "allow"
 override-dependencies = [
