@@ -58,10 +58,10 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
+from megatron.bridge.examples.quantization.utils import has_modelopt_state
 from megatron.bridge.recipes.llama import llama3_8b_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
