@@ -24,6 +24,8 @@ from megatron.bridge.data.vlm_datasets import (
     MockVLMConversationProvider,
     PreloadedVLMConversationProvider,
 )
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -82,17 +84,34 @@ class Qwen25VLCommonKwargs(TypedDict, total=False):
     freeze_vision_projection: bool
     # Checkpoint options
     pretrained_checkpoint: Optional[str]
+    # PEFT options
+    peft: Optional[Union[str, PEFT]]
+    finetune_lr: float
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
 
 
 def qwen25_vl_3b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Qwen2.5-VL 3B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+
     See `_qwen25_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-3B-Instruct",
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -101,12 +120,22 @@ def qwen25_vl_3b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) ->
 def qwen25_vl_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Qwen2.5-VL 7B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=2, PP=1, LR=5e-6
+
     See `_qwen25_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-7B-Instruct",
-        "tensor_parallelism": 2,
+        "tensor_parallelism": 2 if is_full_sft else 1,
         "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -115,13 +144,23 @@ def qwen25_vl_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) ->
 def qwen25_vl_32b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Qwen2.5-VL 32B Instruct.
 
+    Default configuration: 2 nodes, 16 GPUs total
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=2, LR=5e-6
+
     See `_qwen25_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-32B-Instruct",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_parallelism": 8 if is_full_sft else 1,
+        "pipeline_parallelism": 2 if is_full_sft else 1,
+        "pipeline_parallelism_dtype": torch.bfloat16 if is_full_sft else None,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -130,13 +169,23 @@ def qwen25_vl_32b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
 def qwen25_vl_72b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Qwen2.5-VL 72B Instruct.
 
+    Default configuration: 4 nodes, 32 GPUs total
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=4, LR=5e-6
+
     See `_qwen25_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-72B-Instruct",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_parallelism": 8 if is_full_sft else 1,
+        "pipeline_parallelism": 4 if is_full_sft else 1,
+        "pipeline_parallelism_dtype": torch.bfloat16 if is_full_sft else None,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -180,6 +229,13 @@ def _qwen25_vl_common(
     freeze_language_model: bool = False,
     freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
+    # PEFT options
+    peft: Optional[Union[str, PEFT]] = None,
+    finetune_lr: Optional[float] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """
     Create a fine-tuning configuration for Qwen2.5-VL models using a given HuggingFace path.
@@ -206,13 +262,17 @@ def _qwen25_vl_common(
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
 
-    # Optimizer and scheduler
+    # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
+    effective_lr = finetune_lr if finetune_lr is not None else lr
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=lr,
+        max_lr=effective_lr,
         min_lr=min_lr,
     )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
     _dataset_choice = dataset_type or "mock"
@@ -288,6 +348,9 @@ def _qwen25_vl_common(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
@@ -299,6 +362,7 @@ def _qwen25_vl_common(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        peft=peft_config,
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )

@@ -205,6 +205,7 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
@@ -230,6 +231,7 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
