@@ -58,6 +58,11 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
+
+# Add examples directory to path for local imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from quantization.utils import has_modelopt_state
+
 from megatron.bridge.recipes.llama import llama3_8b_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
@@ -163,6 +168,11 @@ def main() -> None:
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
+
+    # Check for ModelOpt state
+    checkpoint_to_check = cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load
+    if checkpoint_to_check and has_modelopt_state(checkpoint_to_check):
+        cfg.model.restore_modelopt_state = True
 
     # Display final configuration
     if get_rank_safe() == 0:
