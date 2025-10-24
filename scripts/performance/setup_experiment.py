@@ -19,11 +19,11 @@ from omegaconf import OmegaConf
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.common import get_perf_matrix_overrides
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.common import get_perf_matrix_overrides
     from .utils.executors import slurm_executor
 
@@ -40,6 +40,12 @@ if HAS_NEMO_RUN:
         from perf_plugins import NsysPlugin, PerfEnvPlugin
     except (ImportError, ModuleNotFoundError):
         from .perf_plugins import NsysPlugin, PerfEnvPlugin
+
+    # TEMPORARY WORKAROUND - Remove in next release when upstream srun issue is fixed
+    try:
+        from utils.slurm_exit_code_override import *  # Monkey-patch for false-positive job failures
+    except (ImportError, ModuleNotFoundError):
+        from .utils.slurm_exit_code_override import *  # Monkey-patch for false-positive job failures
 
 import logging
 
@@ -102,7 +108,7 @@ if __name__ == "__main__":
             PerfEnvPlugin(
                 enable_vboost=args.enable_vboost,
                 nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
-                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
+                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200", "gb300"],
                 layernorm_sm_margin=20 if enable_deepep else 16,
                 tp_size=tp,
                 cp_size=cp,
@@ -129,7 +135,16 @@ if __name__ == "__main__":
         start_step = profile_cfg["profile_step_start"]
         end_step = profile_cfg["profile_step_end"]
         ranks = list(range(num_nodes * args.gpus_per_node))
-        plugins.append(NsysPlugin(profile_step_start=start_step, profile_step_end=end_step, profile_ranks=ranks, nsys_gpu_metrics=args.profiling_gpu_metrics))
+        plugins.append(NsysPlugin(profile_step_start=start_step,
+            profile_step_end=end_step,
+            profile_ranks=ranks,
+            nsys_gpu_metrics=args.profiling_gpu_metrics,
+            nsys_trace=['cuda']))
+
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
 
     executor = slurm_executor(
         args.gpu.lower(),
@@ -145,12 +160,14 @@ if __name__ == "__main__":
         hf_token=args.hf_token,
         nemo_home=args.nemo_home,
         wandb_key=args.wandb_key,
+        additional_slurm_params=additional_slurm_params,
     )
 
-    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
+    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200", "gb300"]:
         if args.compute_dtype == "fp8" and args.fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
+            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
+    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"] and args.num_gpus == 128:
         if args.compute_dtype == "bf16" and (not args.use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
@@ -178,7 +195,7 @@ if __name__ == "__main__":
         str(config_filepath),
     ]
     # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
+    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop", "micro_batch_size", "global_batch_size", "tensor_parallel_size", "pipeline_parallel_size", "virtual_pipeline_parallel_size", "context_parallel_size", "expert_parallel_size", "expert_tensor_parallel_size"]
     for arg_name in args_to_forward:
         if hasattr(args, arg_name):
             arg_value = getattr(args, arg_name)
@@ -192,11 +209,20 @@ if __name__ == "__main__":
         args=target_script_args,
     )
 
-    perf_matrix = yaml_overrides_omega["perf_matrix"][args.gpu][f"num_gpus_{args.num_gpus}"]
-    base_config = perf_matrix["common"]
-    extra_config = perf_matrix[dtype]
+    base_config = preset["common"]
+    extra_config = preset[dtype]
     train_config = OmegaConf.merge(base_config, extra_config) if extra_config else base_config
-    exp_config = f"gpus{args.num_gpus}_tp{train_config["tp"]}_pp{train_config["pp"]}_cp{train_config["cp"]}_vp{train_config["vp"]}_ep{train_config["ep"]}_mbs{train_config["mbs"]}_gbs{train_config["gbs"]}"
+
+    exp_config = (
+        f"gpus{args.num_gpus}_"
+        f"tp{train_config['tp']}_"
+        f"pp{train_config['pp']}_"
+        f"cp{train_config['cp']}_"
+        f"vp{train_config['vp']}_"
+        f"ep{train_config['ep']}_"
+        f"mbs{train_config['mbs']}_"
+        f"gbs{train_config['gbs']}"
+    )
     exp_name = f"pretrain_{args.model_name}_{args.model_size}_{dtype}_{exp_config}"
 
     run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True, name=exp_name)

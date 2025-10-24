@@ -22,7 +22,7 @@ ConfigContainer:
     recompute_granularity: "selective"
 
   train:
-    train_iters: 100
+    train_iters: 50
     eval_iters: 0
 
   rerun_state_machine:
@@ -49,8 +49,8 @@ ConfigContainer:
     # For optional fields in the config, specify the target to instantiate the object.
     _target_: megatron.bridge.training.config.ProfilingConfig
     use_nsys_profiler: true
-    profile_step_start: 5
-    profile_step_end: 6
+    profile_step_start: 45
+    profile_step_end: 50
     profile_ranks: [0]
     record_shapes: false
     use_pytorch_profiler: false
@@ -91,8 +91,62 @@ perf_matrix:
         cuda_graphs: false
       bf16:
       fp8_cs:
+        cuda_graphs: false
       fp8_mx:
+        cuda_graphs: false
   gb200:
+    num_gpus_128:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 4096
+        mbs: 1
+        gbs: 1024
+        tp: 1
+        pp: 4
+        cp: 1
+        vp: null
+        ep: 32
+        etp: 1
+        use_megatron_fsdp: false
+        cuda_graphs: false
+      bf16:
+      fp8_cs:
+      fp8_mx:
+    num_gpus_256:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 4096
+        mbs: 1
+        gbs: 2048
+        tp: 1
+        pp: 4
+        cp: 1
+        vp: 4
+        ep: 64
+        etp: 1
+        use_megatron_fsdp: false
+        cuda_graphs: false
+      bf16:
+      fp8_cs:
+      fp8_mx:
+  gb300:
+    num_gpus_128:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 4096
+        mbs: 1
+        gbs: 1024
+        tp: 1
+        pp: 4
+        cp: 1
+        vp: 4
+        ep: 32
+        etp: 1
+        use_megatron_fsdp: false
+        cuda_graphs: false
+      bf16:
+      fp8_cs:
+      fp8_mx:
     num_gpus_256:
       common:
         num_gpus_per_node: 4

@@ -48,7 +48,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 def main():
     """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
-
+    
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
 
     if args.model_name == "llama3" and args.model_size == "8b":
@@ -59,16 +59,24 @@ def main():
         recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
         enable_deepep = bool(args.gpu.lower() in ["h100"])
-        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200", "gb300"])
         use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
         if use_tokendrop:
             enable_deepep = False
             logger.info("Using token drop, disabling DeepEP")
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
 
-        pp_vp_map = {"h100": (8, 4), "b200": (16, 1), "gb200": (4, 4)}
-        pp, vp = pp_vp_map[args.gpu.lower()] if args.gpu.lower() in pp_vp_map else (1, 1)
-        layout = "Et|(tt|)*30mL" if args.gpu.lower() in ["h100"] else None
+        layout = None
+        if args.gpu.lower() in ["gb300"]:
+            pp, vp = (4, 4)
+        elif args.gpu.lower() in ["gb200"]:
+            # VP=4 does not work in 128 GPUs
+            pp, vp = (4, 1) if args.num_gpus == 128 else (4, 4)
+        elif args.gpu.lower() in ["b200"]:
+            pp, vp = (16, 1)
+        elif args.gpu.lower() in ["h100"]:
+            pp, vp = (8, 4)
+            layout = "Et|(tt|)*30mL"
         recipe = deepseek_v3_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -92,7 +100,7 @@ def main():
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
             recipe.comm_overlap.delay_wgrad_compute = False
             recipe.model.moe_shared_expert_overlap = True
-        if args.gpu.lower() in ["h100"]:
+        if args.gpu.lower() in ["h100", "b200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         if args.gpu.lower() == "b200":
             recipe.model.recompute_modules = ["mla_up_proj"]
@@ -101,7 +109,7 @@ def main():
                 recipe.model.recompute_modules = ["mla_up_proj"]
             else:
                 recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
-        if args.gpu.lower() in ["gb200", "b200"]:
+        if args.gpu.lower() in ["gb300", "gb200", "b200"]:
             recipe.comm_overlap.overlap_grad_reduce = True
         elif args.gpu.lower() in ["h100"]:
             recipe.comm_overlap.overlap_grad_reduce = False
@@ -182,7 +190,7 @@ def main():
             recipe.ddp.suggested_communication_unit_size = 800000000
     recipe.model.apply_rope_fusion = True
 
-    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
+    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200", "gb300"]:
         recipe.dataset.num_workers = 0
         recipe.dataset.pin_memory = False
 
