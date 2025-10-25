@@ -104,10 +104,10 @@ override-dependencies = [
     "transformer-engine[pytorch]>=2.9.0a0,<2.10.0",
 ]
 
-# uv.sources allows us to override dependencies with VCS commits. 
+# uv.sources allows us to override dependencies with VCS commits.
 # Lets use this only for debugging purposes, but not for production (main).
 [tool.uv.sources]
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "release_v2.8" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "release_v2.9" }
 megatron-core = { path = "3rdparty/Megatron-LM/" }
 
 [project.optional-dependencies]
