@@ -43,7 +43,7 @@ jobs:
             mcore-branch: ${{ needs.get-release-branch-names.outputs.mcore }}
           - target-branch: main
             mcore-branch: dev
-    uses: ./.github/workflows/_update_dependencies.yml@v0.65.10
+    uses: ./.github/workflows/_update_dependencies.yml
     with:
       target-branch: ${{ matrix.target-branch }}
       mcore-branch: ${{ matrix.mcore-branch }}
