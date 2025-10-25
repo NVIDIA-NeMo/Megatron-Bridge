@@ -93,12 +93,12 @@ def qwen3_next_80b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3NextCommonKwar
     """
     recommended_kwargs: Qwen3NextCommonKwargs = {
         "hf_path": "Qwen/Qwen3-Next-80B-A3B-Instruct",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 4,
         "pipeline_parallelism_dtype": torch.bfloat16,
         "context_parallelism": 1,
-        "expert_parallelism": 4,
-        "sequence_parallelism": True,
+        "expert_parallelism": 8,
+        "sequence_parallelism": False,
         "enable_recompute": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -117,6 +117,7 @@ def _qwen3_next_common(
     test_data_path: Optional[List[str]] = None,
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
+    path_to_cache: Optional[str] = None, # Path to cache the dataset
     # Model configuration
     tensor_parallelism: int = 4,
     pipeline_parallelism: int = 2,
@@ -228,12 +229,13 @@ def _qwen3_next_common(
     model_cfg.mtp_loss_scaling_factor = mtp_loss_scaling_factor
 
     # Performance optimization knobs
-    # model_cfg.moe_permute_fusion = True
-    # model_cfg.moe_router_fusion = True
-    # if enable_deepep:
-    #     model_cfg.moe_token_dispatcher_type = "flex"
-    #     model_cfg.moe_enable_deepep = True
-    #     model_cfg.moe_shared_expert_overlap = False
+    model_cfg.moe_permute_fusion = True
+    model_cfg.moe_router_fusion = True
+    model_cfg.moe_grouped_gemm = True
+    if enable_deepep:
+        model_cfg.moe_token_dispatcher_type = "flex"
+        model_cfg.moe_enable_deepep = True
+        model_cfg.moe_shared_expert_overlap = False
 
     if precision_config is None:
         precision_config = bf16_mixed()
@@ -248,9 +250,10 @@ def _qwen3_next_common(
 
     # Add recompute settings for memory optimization (used by some MoE models)
     if enable_recompute:
-        model_cfg.recompute_granularity = "full"
-        model_cfg.recompute_method = "uniform"
-        model_cfg.recompute_num_layers = 1
+        model_cfg.recompute_granularity = "selective"
+        model_cfg.recompute_modules = ["layernorm", "moe", "moe_act"]
+        model_cfg.recompute_method = None
+        model_cfg.recompute_num_layers = None
     model_cfg.seq_length = seq_length
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -296,6 +299,8 @@ def _qwen3_next_common(
             blend=blend,
             blend_per_split=blend_per_split,
             split=split,
+            path_to_cache=path_to_cache,
+            mmap_bin_files=False,
             # Dataloader config parameters
             data_sharding=True,
             dataloader_type="single",
