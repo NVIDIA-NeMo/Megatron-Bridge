@@ -60,7 +60,7 @@ main() {
     add-apt-repository ppa:deadsnakes/ppa -y
     apt-get install -y python$PYTHON_VERSION-dev python$PYTHON_VERSION-venv
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python$PYTHON_VERSION 1
-    
+
     # Install tools
     apt-get update
     apt-get install -y wget curl git cmake
@@ -73,7 +73,7 @@ main() {
         dpkg -i cuda-keyring_1.1-1_all.deb
         rm cuda-keyring_1.1-1_all.deb
         apt-get update
-        apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12 libcutlass-dev 
+        apt-get install -y cuda-toolkit-12-8 cudnn-cuda-12 libcudnn9-cuda-12 libcutlass-dev
     fi
 
     # Clean up
@@ -99,11 +99,12 @@ main() {
                 "--no-install-package" "nvidia-cusparse-cu12"
                 "--no-install-package" "nvidia-cusparselt-cu12"
                 "--no-install-package" "nvidia-nccl-cu12"
+                "--no-install-package" "nvidia-resiliency-ext"
             )
         else
             UV_ARGS=()
         fi
-    
+
         # Install uv
         UV_VERSION="0.7.2"
         curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh
