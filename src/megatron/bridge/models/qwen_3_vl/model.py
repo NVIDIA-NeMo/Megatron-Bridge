@@ -18,9 +18,9 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
-#from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
 from megatron.bridge.models.qwen_3_vl.utils import get_rope_index
 from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_3_vl.utils import split_deepstack_embs
@@ -34,7 +34,7 @@ class Qwen3VLModel(MegatronModule):
     Args:
         language_transformer_config (TransformerConfig): Transformer config for the language model.
         language_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the
-        vision_transformer_config (TransformerConfig): Transformer config for the vision model.
+        vision_transformer_config (TransformerConfig): Transformer config for the vision model, copy from HF config.
         parallel_output (bool): Do not gather the outputs, keep them split across tensor parallel ranks. This
             is typically True for training and False for inference.
         language_rotary_percent (float): Percent of rotary dimension to use for rotary position embeddings
@@ -55,8 +55,7 @@ class Qwen3VLModel(MegatronModule):
         self,
         language_transformer_config: Qwen3VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
-        vision_transformer_config: TransformerConfig,
-        pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        vision_transformer_config: Qwen3VLConfigHF,
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -82,15 +81,11 @@ class Qwen3VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = False
 
         if self.pre_process:
-            # Load the full model config to extract vision config
-            full_config = Qwen3VLConfigHF.from_pretrained(pretrained_model_name)
-        
-            # Extract vision config from the full model config
-            vision_config = full_config.vision_config
         
             # Initialize vision model with random weights from config
-            self.vision_model = Qwen3VLVisionModelHF._from_config(vision_config)
-        
+            self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
+            # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
+            hook_hf_module_setattr_for_tp_grad_sync(self.vision_model) 
             # Move to device if available
             if torch.cuda.is_available():
                 self.vision_model = self.vision_model.to('cuda')

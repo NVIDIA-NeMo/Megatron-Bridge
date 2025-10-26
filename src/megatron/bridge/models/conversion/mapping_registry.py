@@ -166,6 +166,7 @@ class MegatronMappingRegistry:
                 match = pattern.match(megatron_param_name)
                 if match:
                     # Return resolved mapping with wildcards replaced
+                    print(f"Pattern match: {pattern=} , {match.groups()=} , {megatron_param_name=}")
                     return mapping.resolve(match.groups())
         return None
 

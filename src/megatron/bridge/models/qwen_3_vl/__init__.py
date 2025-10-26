@@ -25,20 +25,11 @@ from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel  # noqa: F401
 # Dense model providers
 from megatron.bridge.models.qwen_3_vl.provider import (
     Qwen3VLModelProvider,
-    #Qwen3VLModelProvider600M,
-    #Qwen3VLModelProvider1P7B,
-    #Qwen3VLModelProvider4B,
-    #Qwen3VLModelProvider8B,
-    #Qwen3VLModelProvider14B,
-    #Qwen3VLModelProvider32B,
 )
 
 # MoE (Mixture of Experts) model providers
 from megatron.bridge.models.qwen_3_vl.moe_provider import (
     Qwen3VLMoEModelProvider,
-    #Qwen3VLMoEModelProvider30B_A3B,
-    #Qwen3VLMoEModelProvider235B_A22B,
-    #Qwen3VLMoEModelProvider48B_A8B,
 )
 
 # Bridges for HuggingFace to Megatron conversion
@@ -53,17 +44,8 @@ __all__ = [
     "Qwen3VLModel",
     # Dense models
     "Qwen3VLModelProvider",
-    #"Qwen3VLModelProvider600M",
-    #"Qwen3VLModelProvider1P7B",
-    #"Qwen3VLModelProvider4B",
-    #"Qwen3VLModelProvider8B",
-    #"Qwen3VLModelProvider14B",
-    #"Qwen3VLModelProvider32B",
     # MoE models
     "Qwen3VLMoEModelProvider",
-    #"Qwen3VLMoEModelProvider30B_A3B",
-    #"Qwen3VLMoEModelProvider235B_A22B",
-    #"Qwen3VLMoEModelProvider48B_A8B",
     # Bridges
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
