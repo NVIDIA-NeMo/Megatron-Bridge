@@ -2149,6 +2149,7 @@ dependencies = [
     { name = "hydra-core" },
     { name = "mamba-ssm" },
     { name = "megatron-core", extra = ["dev", "mlm"] },
+    { name = "nvidia-resiliency-ext" },
     { name = "omegaconf" },
     { name = "pyyaml" },
     { name = "qwen-vl-utils" },
@@ -2212,6 +2213,7 @@ requires-dist = [
     { name = "mamba-ssm", git = "https://github.com/state-spaces/mamba.git?rev=6b32be06d026e170b3fdaf3ae6282c5a6ff57b06" },
     { name = "megatron-core", extras = ["dev", "mlm"], directory = "3rdparty/Megatron-LM" },
     { name = "nemo-run", marker = "extra == 'recipes'", specifier = ">=0.5.0a0,<0.6.0" },
+    { name = "nvidia-resiliency-ext", git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=54f85fe422d296cf04ea524130014bd3a2c3add1" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "qwen-vl-utils" },
@@ -3077,7 +3079,7 @@ wheels = [
 [[package]]
 name = "nvidia-resiliency-ext"
 version = "0.4.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git?rev=54f85fe422d296cf04ea524130014bd3a2c3add1#54f85fe422d296cf04ea524130014bd3a2c3add1" }
 dependencies = [
     { name = "defusedxml" },
     { name = "nvidia-ml-py" },
@@ -3086,14 +3088,6 @@ dependencies = [
     { name = "pynvml" },
     { name = "pyyaml" },
     { name = "torch", marker = "sys_platform == 'never'" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/8c/6547d9fdea9730d4f69a19ca492ccbe221768f8473b82502a78a824acc3d/nvidia_resiliency_ext-0.4.1-cp310-cp310-manylinux_2_31_aarch64.whl", hash = "sha256:cf80599411018ebbf03da64769527dee6b37746b72b8606f919b7999633770b8", size = 442891, upload-time = "2025-07-17T03:53:38.878Z" },
-    { url = "https://files.pythonhosted.org/packages/34/0d/520cab980949ad11bd5291784fea309bcd6654a9c97943a3a87644c1d111/nvidia_resiliency_ext-0.4.1-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:0c23e621d598ba436549db83deeb3569c19df0194b89fe6169d62b6ead711be3", size = 448044, upload-time = "2025-07-17T03:48:30.851Z" },
-    { url = "https://files.pythonhosted.org/packages/46/77/8cda264b262e2868a4e6ebcddaea112200b1e34b8d5a35a2fe3b4978d137/nvidia_resiliency_ext-0.4.1-cp311-cp311-manylinux_2_31_aarch64.whl", hash = "sha256:d8ca454a8b8abef72e0ff0e33914686c263414e8891471c02a9f6af9d2d6b925", size = 443649, upload-time = "2025-07-17T03:49:16.183Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/53/029cc7493b5833cb8dfa201f15a1e422e2e1cc6308d34c5b0a90028a73fd/nvidia_resiliency_ext-0.4.1-cp311-cp311-manylinux_2_31_x86_64.whl", hash = "sha256:dde6034f29350ac6326cdd861ceec641bdd93be0eddbf034739f4cd9452a4dd9", size = 449189, upload-time = "2025-07-17T03:52:15.24Z" },
-    { url = "https://files.pythonhosted.org/packages/70/05/38d491962273c7905708762279f440520eb79f3c00b67a023497215ad023/nvidia_resiliency_ext-0.4.1-cp312-cp312-manylinux_2_31_aarch64.whl", hash = "sha256:b3bd5f01535574b16d0f38bca6e39afe3806c4a2896eee1b321cd944e00025a7", size = 444570, upload-time = "2025-07-17T03:50:58.877Z" },
-    { url = "https://files.pythonhosted.org/packages/18/8b/4cb8aa2bbdf3705d3034c3f3dacdadb03b3b7dd3dc7f5200e64663fb477f/nvidia_resiliency_ext-0.4.1-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:ca9f8de465af345952bedbea53c90c0e2323d88cfd830ded0e806fad91845c0e", size = 450280, upload-time = "2025-07-17T03:49:55.327Z" },
 ]
 
 [[package]]

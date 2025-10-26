@@ -99,7 +99,6 @@ main() {
                 "--no-install-package" "nvidia-cusparse-cu12"
                 "--no-install-package" "nvidia-cusparselt-cu12"
                 "--no-install-package" "nvidia-nccl-cu12"
-                "--no-install-package" "nvidia-resiliency-ext"
             )
         else
             UV_ARGS=()
