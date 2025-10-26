@@ -21,6 +21,22 @@ from megatron.core.rerun_state_machine import get_rerun_state_machine
 SPIKY_LOSS_FACTOR: int = 10
 
 
+def create_masked_next_token_loss_function(
+    loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool
+) -> partial:
+    """Create a partial loss function configured for masked next-token loss.
+
+    This replaces the generic helper previously in utils/loss_utils.py.
+    """
+
+    return partial(
+        masked_next_token_loss,
+        loss_mask,
+        check_for_nan_in_loss=check_for_nan_in_loss,
+        check_for_spiky_loss=check_for_spiky_loss,
+    )
+
+
 def masked_next_token_loss(
     loss_mask: torch.Tensor,
     output_tensor: torch.Tensor,

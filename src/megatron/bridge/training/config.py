@@ -704,6 +704,14 @@ class CheckpointConfig:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
 
+        # Validate ckpt_step if specified
+        if self.ckpt_step is not None:
+            if self.load is None:
+                raise ValueError(
+                    f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
+                    f"Please set checkpoint.load to the base checkpoint directory."
+                )
+
 
 @dataclass(kw_only=True)
 class LoggerConfig:

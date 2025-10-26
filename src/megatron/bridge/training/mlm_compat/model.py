@@ -52,21 +52,23 @@ def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitc
     """
     if use_te:
         return get_gpt_layer_with_transformer_engine_spec(
-            args.num_experts,
-            args.moe_grouped_gemm,
-            args.qk_layernorm,
-            args.multi_latent_attention,
-            args.moe_use_legacy_grouped_gemm,
+            num_experts=args.num_experts,
+            moe_grouped_gemm=args.moe_grouped_gemm,
+            qk_layernorm=args.qk_layernorm,
+            multi_latent_attention=args.multi_latent_attention,
+            linear_attention_type=getattr(args, "linear_attention_type", None),
+            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             qk_l2_norm=args.qk_l2_norm,
             use_kitchen=use_kitchen,
         )
     else:
         return get_gpt_layer_local_spec(
-            args.num_experts,
-            args.moe_grouped_gemm,
-            args.qk_layernorm,
-            args.multi_latent_attention,
-            args.moe_use_legacy_grouped_gemm,
+            num_experts=args.num_experts,
+            moe_grouped_gemm=args.moe_grouped_gemm,
+            qk_layernorm=args.qk_layernorm,
+            multi_latent_attention=args.multi_latent_attention,
+            linear_attention_type=getattr(args, "linear_attention_type", None),
+            moe_use_legacy_grouped_gemm=args.moe_use_legacy_grouped_gemm,
             normalization=args.normalization,
             use_kitchen=use_kitchen,
         )

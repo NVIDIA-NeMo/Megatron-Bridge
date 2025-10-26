@@ -36,7 +36,10 @@ except ImportError:
     HAS_NEMO_RUN = False
 
 if HAS_NEMO_RUN:
-    from megatron.bridge.recipes.run_plugins import NsysPlugin, PerfEnvPlugin
+    try:
+        from perf_plugins import NsysPlugin, PerfEnvPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .perf_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 

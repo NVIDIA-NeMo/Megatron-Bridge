@@ -301,10 +301,11 @@ def build_train_valid_test_data_iterators(
 
     def _get_iterator(dataloader_type, dataloader):
         """Return dataset iterator."""
-        if dataloader_type in ("single", "batch"):
-            # Both 'single' and 'batch' use single-pass iteration (no cycling)
+        if dataloader_type == "single":
+            # Single-pass iteration (no cycling)
             return RerunDataIterator(iter(dataloader))
-        elif dataloader_type == "cyclic":
+        elif dataloader_type in ("cyclic", "batch"):
+            # Cycle for finetuning: allows train_iters > dataset size without raising StopIteration
             return RerunDataIterator(iter(cyclic_iter(dataloader)))
         elif dataloader_type == "external":
             # External dataloader is passed through. User is expected to define how to iterate.

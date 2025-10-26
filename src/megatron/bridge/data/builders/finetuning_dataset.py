@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -178,7 +177,6 @@ class FinetuningDatasetBuilder:
 
         return [train_ds, valid_ds, test_ds]
 
-    @lru_cache
     def _create_dataset(
         self,
         path: Union[str, Path],

@@ -26,6 +26,7 @@ from torch import Tensor
 from transformers import AutoModel, Gemma3Model
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 from megatron.bridge.utils.import_utils import safe_import_from
 
 
@@ -84,9 +85,15 @@ class Gemma3VLModel(MegatronModule):
         if pre_process:
             self.vision_tower = AutoModel.from_config(config.vision_config)
             self.multi_modal_projector = Gemma3VLMultimodalProjector(config.vision_projector_config)
+            # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
+            hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
         self.language_model = self.config.provide_language_model(
             pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
         )
+
+        # Finalize grad requires these to be bound with module
+        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+        self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
         self.get_image_features = types.MethodType(Gemma3Model.get_image_features, self)
 

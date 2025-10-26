@@ -14,6 +14,7 @@
 
 import os
 import re
+import types
 import warnings
 
 import torch
@@ -112,6 +113,49 @@ def print_rank_last(message: str) -> None:
             print(message, flush=True)
     else:
         print(message, flush=True)
+
+
+def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn.Module:
+    """Mark params for TP grad sync and hook __setattr__ on a module and its children.
+
+    This ensures that all existing parameters under the provided module have the
+    attribute ``average_gradients_across_tp_domain=True`` and that any future
+    submodules assigned onto this module (or any of its current children) will
+    also have their parameters marked automatically.
+
+    Args:
+        module: The root module (typically a Hugging Face module instance).
+
+    Returns:
+        The same module instance for convenience.
+    """
+    if module is None:
+        return module
+
+    # Mark all existing parameters recursively
+    for param in module.parameters(recurse=True):
+        setattr(param, "average_gradients_across_tp_domain", True)
+
+    def _wrap_setattr(original_setattr):
+        def _wrapped(self, name, value):
+            original_setattr(name, value)
+            if isinstance(value, torch.nn.Module):
+                for p in value.parameters(recurse=True):
+                    setattr(p, "average_gradients_across_tp_domain", True)
+
+        return _wrapped
+
+    # Hook __setattr__ on the module and all existing submodules to catch
+    # future dynamic assignments anywhere in the hierarchy.
+    for submodule in module.modules():
+        if getattr(submodule, "_tp_grad_sync_setattr_wrapped", False):
+            continue
+        original_setattr = submodule.__setattr__
+        wrapped = _wrap_setattr(original_setattr)
+        submodule.__setattr__ = types.MethodType(wrapped, submodule)
+        setattr(submodule, "_tp_grad_sync_setattr_wrapped", True)
+
+    return module
 
 
 def extract_expert_number_from_param(param_name: str) -> int:

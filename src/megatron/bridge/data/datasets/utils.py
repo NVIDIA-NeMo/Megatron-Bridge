@@ -19,9 +19,12 @@ import logging
 import multiprocessing as mp
 import os
 import pickle
+import re
+import signal
 import time
 from functools import lru_cache, partial
-from typing import Any, Callable, List, Optional, Type
+from queue import Empty
+from typing import Any, Callable, Optional, Pattern, Type
 
 import numpy as np
 import torch
@@ -32,22 +35,24 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe
 
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
-PREFIX_STR = (
+PREFIX_STR: str = (
     "\x00"  # the prefix string used in the tokenizer to deal with the added empty token for some of the tokenizers
 )
 
-IGNORE_INDEX = -100
-SYSTEM_TOKEN = "System"
+IGNORE_INDEX: int = -100
+SYSTEM_TOKEN: str = "System"
 
-TYPE_INSTRUCTION = {
+TYPE_INSTRUCTION: dict[str, str] = {
     "TEXT_TO_VALUE": "",
     "VALUE_TO_TEXT": "",
 }
 
-__idx_version__ = "0.2"  # index file version
-__idx_suffix__ = "idx"  # index file suffix
+GENERATION_REGEX: Pattern[str] = re.compile(r"\{%-?\s+generation\s+-?%\}")
+
+__idx_version__: str = "0.2"  # index file version
+__idx_suffix__: str = "idx"  # index file suffix
 
 
 def build_index_from_memdata(fn, newline_int):
@@ -84,6 +89,89 @@ def build_index_from_memdata(fn, newline_int):
     return midx
 
 
+def safe_map(fn, iterable, workers=1, ctx="fork"):
+    """
+    Crash-resilient alternative to multiprocessing.Pool.map() that can handle
+    worker process crashes gracefully without hanging the entire operation.
+
+    This function provides robustness when processing large datasets where individual
+    workers might crash. Unlike Pool.map(), it won't hang indefinitely if a worker dies.
+
+    Args:
+        fn: Function to apply to each item
+        iterable: Items to process
+        workers: Number of worker processes
+        ctx: Multiprocessing context ("fork", "spawn", etc.)
+
+    Returns:
+        List of results (same order as iterable). Failed items are None with warning logged.
+    """
+    ctx = mp.get_context(ctx)
+    input_queue = ctx.Queue()
+    output_queue = ctx.Queue()
+    indexed_inputs = list(enumerate(iterable))
+    for job in indexed_inputs:
+        input_queue.put(job)
+    for _ in range(workers):
+        input_queue.put(None)  # poison pill
+
+    def worker_loop():
+        while True:
+            job = input_queue.get()
+            if job is None:
+                break
+            i, item = job
+            try:
+                result = fn(item)
+                output_queue.put((i, True, result, None))
+            except Exception as e:
+                output_queue.put((i, False, None, str(e)))
+
+    processes = [ctx.Process(target=worker_loop) for _ in range(workers)]
+    for p in processes:
+        p.start()
+
+    results = [None] * len(indexed_inputs)
+    seen_indices = set()
+    expected = len(indexed_inputs)
+    received = 0
+
+    # Collect whatever gets returned from live workers
+    while received < expected:
+        try:
+            i, success, result, err = output_queue.get(timeout=0.5)
+            seen_indices.add(i)
+            results[i] = result if success else None
+            if not success:
+                logger.warning(f"Item {i}: {err}")
+            received += 1
+        except Empty:
+            # Check if all workers are dead
+            if all(not p.is_alive() for p in processes):
+                logger.error("All workers exited before completing all tasks.")
+                break
+            continue
+
+    # Join and check for crashes
+    for p in processes:
+        p.join()
+        if p.exitcode is not None and p.exitcode < 0:
+            sig = -p.exitcode
+            try:
+                sig_name = signal.Signals(sig).name
+            except Exception:
+                sig_name = f"signal {sig}"
+            logger.warning(f"PID {p.pid} died from {sig_name}")
+
+    # Patch any missing results from crashed workers
+    for i in range(len(results)):
+        if i not in seen_indices:
+            logger.warning(f"No result for item {i}, likely crash")
+            results[i] = None
+
+    return results
+
+
 class _TextMemMapDataset(Dataset):
     """
     Allow per-line lazy access to multiple text files using numpy memmap.
@@ -91,14 +179,14 @@ class _TextMemMapDataset(Dataset):
 
     def __init__(
         self,
-        dataset_paths: List[str],
-        newline_int: Optional[int] = 10,
-        header_lines: Optional[int] = 0,
-        workers: Optional[int] = None,
-        tokenizer: Optional[Type["MegatronTokenizer"]] = None,
-        build_index_fn: Optional[Callable[[str, Optional[int]], bool]] = build_index_from_memdata,
-        sort_dataset_paths: Optional[bool] = True,
-        index_mapping_dir: Optional[str] = None,
+        dataset_paths: list[str],
+        newline_int: int | None = 10,
+        header_lines: int | None = 0,
+        workers: int | None = None,
+        tokenizer: Type["MegatronTokenizer"] | None = None,
+        build_index_fn: Callable[[str, int | None], bool] | None = build_index_from_memdata,
+        sort_dataset_paths: bool | None = True,
+        index_mapping_dir: str | None = None,
     ):
         """
         Args:
@@ -330,13 +418,13 @@ class _JSONLMemMapDataset(_TextMemMapDataset):
 
     def __init__(
         self,
-        dataset_paths: List[str],
-        newline_int: Optional[int] = 10,
-        header_lines: Optional[int] = 0,
-        workers: Optional[int] = None,
-        tokenizer: Optional[Type["MegatronTokenizer"]] = None,
-        sort_dataset_paths: Optional[bool] = True,
-        index_mapping_dir: Optional[str] = None,
+        dataset_paths: list[str],
+        newline_int: int | None = 10,
+        header_lines: int | None = 0,
+        workers: int | None = None,
+        tokenizer: Type["MegatronTokenizer"] | None = None,
+        sort_dataset_paths: bool | None = True,
+        index_mapping_dir: str | None = None,
     ):
         """
         Args:
@@ -565,17 +653,16 @@ def build_index_files(
     logger.info(f"Processing {len(dataset_paths)} data files using {workers} workers")
     # load all files into memmap
     start_time = time.time()
-    ctx = mp.get_context("fork")
-    with ctx.Pool(workers) as p:
-        build_status = p.map(
-            partial(
-                _build_memmap_index_files,
-                newline_int,
-                build_index_fn,
-                index_mapping_dir=index_mapping_dir,
-            ),
-            dataset_paths,
-        )
+    build_status = safe_map(
+        partial(
+            _build_memmap_index_files,
+            newline_int,
+            build_index_fn,
+            index_mapping_dir=index_mapping_dir,
+        ),
+        dataset_paths,
+        workers=workers,
+    )
 
     logger.info(
         f"Time building {sum(build_status)} / {len(build_status)} "
@@ -754,6 +841,137 @@ def _make_indexed_dataset_compatibility(dataset):
     return dataset
 
 
+def _convert_to_openai_messages(source: dict) -> list[dict]:
+    """
+    Convert input to OpenAI messages format.
+
+    Input:
+        source - HuggingFace AutoTokenizer messages format
+            {"messages": [
+                {"role": "system","content":"<text>"},
+                {"role": "user","content":"<text>"},
+                {"role": "assistant","content":"<text>"}
+            ]}
+        source - can also be conversation format, these are converted to HF messages format
+            Mask and type are ignored. Mask will apply to all non-assistant output tokens.
+            {"conversations": [
+                {"from": "User","value":"<text>"},
+                {"from": "Assistant","value":"<text>", "mask": "User", "system": "<text>", "type": "TEXT_TO_VALUE"}
+            ]}
+
+    Output:
+        [
+            {"role": "system","content":"<text>"},
+            {"role": "user","content":"<text>"},
+            {"role": "assistant","content":"<text>"}
+        ]
+    """
+    if isinstance(source, dict):
+        if source.get("conversations"):
+            # Detect if framework {"conversations": [{"from": "User/Assistant", "value": ""}]}
+            # Convert to HuggingFace chat template [{"role": "system/user/assistant", "content": ""}]
+            chat = [{"role": convo["from"].lower(), "content": convo["value"]} for convo in source["conversations"]]
+            if source.get("system"):
+                chat.insert(0, {"role": "system", "content": source["system"]})
+
+        elif source.get("messages"):
+            # HuggingFace chat template {"messages": [{"role": "system/user/assistant", "content": ""}]}
+            chat = source.get("messages")
+    else:
+        chat = source
+
+    return chat
+
+
+def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
+    """
+    Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
+
+    Input:
+        source - HuggingFace AutoTokenizer messages format
+            {"messages": [
+                {"role": "system","content":"<text>"},
+                {"role": "user","content":"<text>"},
+                {"role": "assistant","content":"<text>"}
+            ]}
+        source - can also be conversation format, these are converted to HF messages format
+            Mask and type are ignored. Mask will apply to all non-assistant output tokens.
+            {"conversations": [
+                {"from": "User","value":"<text>"},
+                {"from": "Assistant","value":"<text>", "mask": "User", "system": "<text>", "type": "TEXT_TO_VALUE"}
+            ]}
+        tokenizer - tokenizer to apply chat templates to
+        tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
+           by tools supplied with the message
+
+    Output:
+        {
+            "input_ids": torch.LongTensor(),
+            "loss_mask": torch.BoolTensor(),
+            "context_ids": torch.LongTensor(),
+            "answer_ids": torch.LongTensor(),
+        }
+
+    * input_ids contain tokenized messages with chat template applied
+    * loss_mask corresponds to tokens of input_ids where 1 represents output tokens for the role `assistant` in both
+    context and answer for multi-turn, and 0 to mask all other tokens, e.g. system, user, and tool calling.
+    * context_ids contain tokenized messages with chat template applied for all messages except assistant's last
+    * answer_ids contain tokenized messages with chat template applied for only the assistant's last generated
+    output
+    """
+    if not hasattr(tokenizer, "_tokenizer") or not hasattr(tokenizer._tokenizer, "apply_chat_template"):
+        raise ValueError(
+            "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
+            "The tokenizer must have a '_tokenizer' attribute with an 'apply_chat_template' method."
+        )
+
+    chat = _convert_to_openai_messages(source)
+    tools = None
+    if isinstance(source, dict):
+        tools = source.get("tools") or tool_schemas
+    else:
+        tools = tool_schemas
+
+    # assistant mask only works if chat template has generation keyword
+    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer._tokenizer.chat_template) is not None
+
+    tokenized_chat = tokenizer._tokenizer.apply_chat_template(
+        chat,
+        tools=tools,
+        tokenize=True,
+        return_dict=True,
+        return_assistant_tokens_mask=template_has_generation_kwd,
+    )
+
+    # Choose the last conversation as answer other history are context by finding the last masked token
+    # which indicates end of context and beginning of answer
+    input_ids = tokenized_chat.get("input_ids")
+    if template_has_generation_kwd:
+        mask = tokenized_chat["assistant_masks"]
+    else:
+        mask = [1] * len(input_ids)
+
+    if tokenizer.eos_id and input_ids[-1] != tokenizer.eos_id:
+        input_ids += [tokenizer.eos_id]
+        mask += [1]
+
+    if 0 in mask:
+        # traverse the list backward for first occurrence of masked token
+        context_end_idx = len(mask) - mask[::-1].index(0)
+    else:
+        context_end_idx = len(mask)
+
+    context_ids = input_ids[:context_end_idx]
+    answer_ids = input_ids[context_end_idx:]
+
+    return dict(
+        input_ids=torch.LongTensor(input_ids),
+        loss_mask=torch.BoolTensor(mask),
+        context_ids=torch.LongTensor(context_ids),
+        answer_ids=torch.LongTensor(answer_ids),
+    )
+
+
 def _preprocess(
     source: dict,
     tokenizer: MegatronTokenizer,
@@ -814,14 +1032,14 @@ def _preprocess(
         label_start_ids,
         num_turn_start_tokens,
     )
-    mask = (target != IGNORE_INDEX).bool()
-    assert mask.sum().item() != 0, "mask is empty"
+    loss_mask = (target != IGNORE_INDEX).bool()
+    assert loss_mask.sum().item() != 0, "loss_mask is empty"
     # Choose the last conversation as answer other history are context
     last_ignore_index_pos = torch.nonzero(target == IGNORE_INDEX)[-1].item() + 1
     context_ids = input_ids[:last_ignore_index_pos]
     answer_ids = input_ids[last_ignore_index_pos:]
 
-    return dict(input_ids=input_ids, mask=mask, context_ids=context_ids, answer_ids=answer_ids)
+    return dict(input_ids=input_ids, loss_mask=loss_mask, context_ids=context_ids, answer_ids=answer_ids)
 
 
 def _mask_targets(
@@ -843,10 +1061,10 @@ def _mask_targets(
 
     Args:
         target (Tensor): input ids
-        tokenized_lens (List[int]): array of lengths of each turns
-        speakers (List[str]): array of speakers of each turns
+        tokenized_lens (list[int]): array of lengths of each turns
+        speakers (list[str]): array of speakers of each turns
         header_len (int): the system prompt length
-        s_ids (List[Tensor]): array of tokenized ids of each turns
+        s_ids (list[Tensor]): array of tokenized ids of each turns
         tokenizer (MegatronTokenizer): tokenizer object
         mask_role (str): the speaker id to be masked from loss computation.
         gtype (str): either 'TEXT_TO_VALUE' or 'VALUE_TO_TEXT'
