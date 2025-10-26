@@ -631,7 +631,6 @@ class TestDoRAMegatronIntegration:
         # DoRA should add parameters (low-rank matrices + magnitude vectors)
         assert adapted_params > original_params
 
-    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
     def test_dora_transform_idempotent_megatron_model(self):
         """Test that DoRA transform is idempotent when applied via pre-wrap hooks."""
         # Create a minimal GPT configuration
@@ -754,7 +753,6 @@ class TestDoRAMegatronIntegration:
                 dora_count = sum(1 for _, m in chunk.named_modules() if isinstance(m, DoRALinear))
                 assert dora_count > 0, "Should have DoRA adaptations applied"
 
-    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
     def test_dora_different_targets(self):
         """Test DoRA with different target module configurations using pre-wrap hooks."""
 
