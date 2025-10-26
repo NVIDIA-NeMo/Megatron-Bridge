@@ -13,12 +13,9 @@
 # limitations under the License.
 
 
-from unittest.mock import patch
-
-import pytest
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
+from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 
 
 class DummyConfig(PretrainedConfig):
@@ -34,36 +31,23 @@ class DummyConfig(PretrainedConfig):
 
 def test_returns_none_when_auto_map_absent():
     config = DummyConfig(auto_map=None)
-    result = get_causal_lm_class_via_auto_map(model_name_or_path=None, config=config)
+    result = get_causal_lm_class_name_via_auto_map(config=config)
     assert result is None
 
 
-def test_raises_when_auto_map_present_but_missing_repo_id():
-    config = DummyConfig(auto_map={"AutoModelForCausalLM": "some.module:Class"}, name_or_path=None)
-    with pytest.raises(ValueError, match="no repository identifier"):
-        get_causal_lm_class_via_auto_map(model_name_or_path=None, config=config)
+def test_returns_class_name_when_auto_map_present():
+    config = DummyConfig(auto_map={"AutoModelForCausalLM": "some.module.Class"}, name_or_path=None)
+    result = get_causal_lm_class_name_via_auto_map(config=config)
+    assert result == "Class"
 
 
-def test_bubbles_error_when_dynamic_loading_fails():
-    config = DummyConfig(auto_map={"AutoModelForCausalLM": "some.module:Class"}, name_or_path="repo/id")
-    # Force the dynamic loader to raise
-    with patch(
-        "transformers.dynamic_module_utils.get_class_from_dynamic_module",
-        side_effect=RuntimeError("boom"),
-    ):
-        with pytest.raises(RuntimeError, match="boom"):
-            get_causal_lm_class_via_auto_map("repo/id", config)
+def test_splits_on_last_dot():
+    config = DummyConfig(auto_map={"AutoModelForCausalLM": "pkg.subpkg.module.DeepClass"}, name_or_path="repo/id")
+    result = get_causal_lm_class_name_via_auto_map(config)
+    assert result == "DeepClass"
 
 
-def test_dynamic_loading_success():
-    config = DummyConfig(auto_map={"AutoModelForCausalLM": "some.module:Class"}, name_or_path="repo/id")
-
-    class DummyModel:
-        pass
-
-    with patch(
-        "transformers.dynamic_module_utils.get_class_from_dynamic_module",
-        return_value=DummyModel,
-    ):
-        cls = get_causal_lm_class_via_auto_map("repo/id", config)
-        assert cls is DummyModel
+def test_returns_none_when_key_missing():
+    config = DummyConfig(auto_map={"AutoModel": "some.module.Class"}, name_or_path="repo/id")
+    result = get_causal_lm_class_name_via_auto_map(config)
+    assert result is None

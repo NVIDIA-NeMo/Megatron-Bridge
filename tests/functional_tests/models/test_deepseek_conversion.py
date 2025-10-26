@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from transformers import AutoConfig, AutoTokenizer
 
-from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 
 DEEPSEEK_V3_OVERRIDES = {
@@ -65,7 +65,19 @@ class TestDeepSeekConversion:
 
         # Fallback to a generic small model; for conversion flows we only need keys/config
         # Some environments may not have DeepSeek classes; we just ensure a valid HF directory
-        model_class = get_causal_lm_class_via_auto_map("deepseek-ai/DeepSeek-V3", config)
+        model_class_ref = config.auto_map["AutoModelForCausalLM"]
+        model_class = get_class_from_dynamic_module(
+            class_reference=model_class_ref,
+            pretrained_model_name_or_path="deepseek-ai/DeepSeek-V3",
+            cache_dir=None,
+            force_download=False,
+            resume_download=True,
+            proxies=None,
+            use_auth_token=None,
+            revision=None,
+            local_files_only=False,
+            repo_id="deepseek-ai/DeepSeek-V3",
+        )
         model = model_class(config)
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 

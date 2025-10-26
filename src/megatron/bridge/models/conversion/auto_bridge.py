@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion.model_bridge import (
     MegatronModelBridge,
     WeightConversionTask,
 )
-from megatron.bridge.models.conversion.utils import get_causal_lm_class_via_auto_map
+from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -823,12 +823,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
             config = self.hf_pretrained.config
-            model_name_or_path = getattr(config, "_name_or_path", None) or getattr(
-                self.hf_pretrained, "model_name_or_path", None
-            )
         else:
             config = self.hf_pretrained
-            model_name_or_path = getattr(config, "_name_or_path", None)
 
         architectures = getattr(config, "architectures", [])
 
@@ -855,11 +851,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"For other model types, use a different bridge class."
             )
 
-        # Try auto_map first
-        cls = get_causal_lm_class_via_auto_map(model_name_or_path=model_name_or_path, config=config)
-        if cls is not None:
+        # Try auto_map first (returns class name string if available)
+        cls_name = get_causal_lm_class_name_via_auto_map(config=config)
+        if cls_name is not None:
             # For auto_map models, return the class name as a string
-            return getattr(cls, "__name__", str(cls))
+            return cls_name
 
         try:
             return getattr(transformers, causal_lm_arch)
@@ -896,11 +892,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 break
 
         if architecture:
-            # Try auto_map first
-            arch_class = get_causal_lm_class_via_auto_map(model_name_or_path=path, config=config) if path else None
-            if arch_class is not None:
+            # Try auto_map first; returns a class-name string if available
+            arch_name = get_causal_lm_class_name_via_auto_map(config=config)
+            if arch_name is not None:
                 # For auto_map models, use class-name string
-                arch_key = getattr(arch_class, "__name__", str(arch_class))
+                arch_key = arch_name
             else:
                 try:
                     arch_class = getattr(transformers, architecture)
