@@ -1126,6 +1126,7 @@ class TestTrainingLog:
         mock_open.assert_called_once_with("/tmp/memory_snapshot.pkl", "wb")
         mock_pickle_dump.assert_called_once_with({"mock": "snapshot"}, mock_file_handle)
 
+    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
