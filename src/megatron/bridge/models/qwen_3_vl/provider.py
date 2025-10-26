@@ -102,7 +102,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
 
-    sequence_parallel: bool = True
+    sequence_parallel: bool = False 
     
     # QK layernorm is already True in Qwen3ModelProvider, no need to redefine
     # qk_layernorm: bool = True  # Already defined in parent

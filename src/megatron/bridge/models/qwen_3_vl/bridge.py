@@ -152,7 +152,7 @@ class Qwen3VLBridge(MegatronModelBridge):
             # Vision model weights are replicated directly
             # This handles all vision encoder layers, patch embeddings, mergers, etc.
             ReplicatedMapping(
-                megatron_param="vision_model.**",
+                megatron_param="visual_model.**",
                 hf_param="model.visual.**",
             ),
             

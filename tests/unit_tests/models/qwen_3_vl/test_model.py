@@ -269,6 +269,8 @@ class TestQwen3VLModel:
         )
 
         model.eval()
+        print("--------------------------------")
+        print(model)
         if torch.cuda.is_available():
             model.to("cuda")
 

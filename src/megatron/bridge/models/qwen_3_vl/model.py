@@ -20,11 +20,12 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
+#from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
 from megatron.bridge.models.qwen_3_vl.utils import get_rope_index
 from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_3_vl.utils import split_deepstack_embs
-
+from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 
 # Note: This is under development and may be missing features.
 class Qwen3VLModel(MegatronModule):
@@ -55,6 +56,7 @@ class Qwen3VLModel(MegatronModule):
         language_transformer_config: Qwen3VLTransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         vision_transformer_config: TransformerConfig,
+        pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -80,11 +82,18 @@ class Qwen3VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = False
 
         if self.pre_process:
-            pretrained_model_name = getattr(language_transformer_config, 'pretrained_model_name', "Qwen/Qwen3-VL-30B-A3B-Instruct")
-            self.vision_model = Qwen3VLVisionModel(
-                vision_transformer_config,
-                pretrained_model_name=pretrained_model_name,
-            )
+            # Load the full model config to extract vision config
+            full_config = Qwen3VLConfigHF.from_pretrained(pretrained_model_name)
+        
+            # Extract vision config from the full model config
+            vision_config = full_config.vision_config
+        
+            # Initialize vision model with random weights from config
+            self.vision_model = Qwen3VLVisionModelHF._from_config(vision_config)
+        
+            # Move to device if available
+            if torch.cuda.is_available():
+                self.vision_model = self.vision_model.to('cuda')
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
