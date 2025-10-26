@@ -105,6 +105,7 @@ jobs:
       matrix:
         include:
           - script: L2_Launch_training
+            timeout: 40
           - script: L2_Launch_converter
           - script: L2_Launch_models
             timeout: 40
