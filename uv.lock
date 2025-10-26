@@ -1993,8 +1993,8 @@ wheels = [
 
 [[package]]
 name = "mamba-ssm"
-version = "2.2.6.post3"
-source = { registry = "https://pypi.org/simple" }
+version = "2.2.5"
+source = { git = "https://github.com/state-spaces/mamba.git?rev=6b32be06d026e170b3fdaf3ae6282c5a6ff57b06#6b32be06d026e170b3fdaf3ae6282c5a6ff57b06" }
 dependencies = [
     { name = "einops" },
     { name = "ninja" },
@@ -2004,7 +2004,6 @@ dependencies = [
     { name = "transformers" },
     { name = "triton", marker = "sys_platform == 'never'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/0c/9373a469ff7a33bdd0644e55fa45165ba3900274dcf7fe9f10ccc232aef9/mamba_ssm-2.2.6.post3.tar.gz", hash = "sha256:826a3cdb651959f191dac64502f8a29627d9116fe6bb7c57e4f562da1aea7bf3", size = 113913, upload-time = "2025-10-10T06:00:44.939Z" }
 
 [[package]]
 name = "markdown"
@@ -2148,6 +2147,7 @@ source = { editable = "." }
 dependencies = [
     { name = "datasets" },
     { name = "hydra-core" },
+    { name = "mamba-ssm" },
     { name = "megatron-core", extra = ["dev", "mlm"] },
     { name = "omegaconf" },
     { name = "pyyaml" },
@@ -2209,6 +2209,7 @@ test = [
 requires-dist = [
     { name = "datasets" },
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
+    { name = "mamba-ssm", git = "https://github.com/state-spaces/mamba.git?rev=6b32be06d026e170b3fdaf3ae6282c5a6ff57b06" },
     { name = "megatron-core", extras = ["dev", "mlm"], directory = "3rdparty/Megatron-LM" },
     { name = "nemo-run", marker = "extra == 'recipes'", specifier = ">=0.5.0a0,<0.6.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
@@ -3014,6 +3015,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/22/836f60313a04a118382456f97905ef040667197dbedd8b0d8bb3492b7de7/nvidia_cutlass_dsl-4.3.0.dev0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9e9b5d9d4ddec47b62666e68a7a4c91811ae50ce372c3de88d05d09d488af592", size = 62492188, upload-time = "2025-10-21T09:41:02.249Z" },
     { url = "https://files.pythonhosted.org/packages/d3/73/b198c04e00858e51aaad0ced1f2a59a7ef259b582f224900715a1d3defd2/nvidia_cutlass_dsl-4.3.0.dev0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:5e3c1f20924b1abc05b47c17a716ecf3e98a00159d3c0a5579a228a364147f56", size = 58856462, upload-time = "2025-10-21T09:37:59.788Z" },
     { url = "https://files.pythonhosted.org/packages/90/53/bda935ca72a05ed84719210b38b7e10e6607066993fe185614149f191681/nvidia_cutlass_dsl-4.3.0.dev0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:cb0f87ed600efa442845dac5c7a30181351d9de80e1168cf1d090f4e0ff5e541", size = 62491878, upload-time = "2025-10-21T09:40:21.965Z" },
+]
+
+[[package]]
+name = "nvidia-mathdx"
+version = "25.1.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/00/f1a73ac224d466b31b6eb09794656112e896185678720b05668777e87db3/nvidia_mathdx-25.1.1-py3-none-any.whl", hash = "sha256:4fb948fe4842d24e679f3d0c140c8a0e8e24c3c7ae5eb6e08584253ad94a198b", size = 39894902, upload-time = "2025-05-06T22:58:32.29Z" },
 ]
 
 [[package]]
