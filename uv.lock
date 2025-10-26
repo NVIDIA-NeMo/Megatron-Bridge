@@ -3017,14 +3017,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-mathdx"
-version = "25.1.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/00/f1a73ac224d466b31b6eb09794656112e896185678720b05668777e87db3/nvidia_mathdx-25.1.1-py3-none-any.whl", hash = "sha256:4fb948fe4842d24e679f3d0c140c8a0e8e24c3c7ae5eb6e08584253ad94a198b", size = 39894902, upload-time = "2025-05-06T22:58:32.29Z" },
-]
-
-[[package]]
 name = "nvidia-ml-py"
 version = "13.580.82"
 source = { registry = "https://pypi.org/simple" }
