@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 from transformers import AutoConfig, AutoTokenizer
-
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 

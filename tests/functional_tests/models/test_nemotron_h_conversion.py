@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 
