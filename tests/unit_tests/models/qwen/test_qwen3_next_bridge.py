@@ -214,7 +214,7 @@ class TestQwen3NextBridge:
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
         # Check MTP configuration
-        assert result.mtp_num_layers == 1
+        assert result.mtp_num_layers == 0
 
     def test_provider_bridge_dtype_handling(self, qwen3_next_80b_a3b_config_dict):
         """Test dtype handling in provider_bridge."""
@@ -431,12 +431,15 @@ class TestQwen3NextBridge:
 
         # Extract all mappings
         auto_mappings = [m for m in registry.mappings if type(m).__name__ == "AutoMapping"]
+        replicated_mappings = [m for m in registry.mappings if type(m).__name__ == "ReplicatedMapping"]
         gated_mlp_mappings = [m for m in registry.mappings if type(m).__name__ == "GatedMLPMapping"]
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
         assert "model.layers.*.mlp.gate.weight" in hf_params
-        assert "model.layers.*.mlp.shared_expert_gate.weight" in hf_params
+        # shared_expert_gate is represented via ReplicatedMapping in bridge
+        replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
+        assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
 
         # Check for expert mappings in GatedMLPMapping
         assert len(gated_mlp_mappings) > 0
