@@ -447,6 +447,9 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 32
 
+    # Checkpointing
+    hetereogenous_dist_checkpoint: bool = True
+
 @dataclass
 class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     """

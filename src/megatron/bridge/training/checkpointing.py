@@ -2040,21 +2040,16 @@ def _build_sharded_state_dict_metadata(
         ckpt_fully_parallel_save: Whether to use fully parallel save.
     """
     metadata = {}
-    # if use_distributed_optimizer:
-    #     if ckpt_format == "fsdp_dtensor":
-    #         metadata["distrib_optim_sharding_type"] = "fsdp_dtensor"
-    #     elif ckpt_fully_parallel_save:
-    #         metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
-    #     else:
-    #         metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
-    if use_distributed_optimizer and ckpt_format != "fsdp_dtensor":
-        if ckpt_fully_parallel_save:
-            metadata['distrib_optim_sharding_type'] = 'fully_reshardable'
-            metadata['distrib_optim_fully_reshardable_mem_efficient'] = False
+    if use_distributed_optimizer:
+        if ckpt_format == "fsdp_dtensor":
+            metadata["distrib_optim_sharding_type"] = "fsdp_dtensor"
+        elif ckpt_fully_parallel_save:
+            metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
         else:
-            metadata['distrib_optim_sharding_type'] = 'dp_reshardable'
+            metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
+
     metadata["chained_optim_avoid_prefix"] = True
-    metadata["singleton_local_shards"] = True # False
+    metadata["singleton_local_shards"] = False
     return metadata
 
 
