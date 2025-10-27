@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_python_implementation != 'PyPy' and sys_platform == 'linux'",
@@ -1206,6 +1206,16 @@ wheels = [
 ]
 
 [[package]]
+name = "emerging-optimizers"
+version = "0.1.0"
+source = { git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=cf9909b777ffac18e05b67a6708282cadc000942#cf9909b777ffac18e05b67a6708282cadc000942" }
+dependencies = [
+    { name = "absl-py" },
+    { name = "torch", marker = "sys_platform == 'never'" },
+    { name = "typing-extensions" },
+]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2279,6 +2289,7 @@ dev = [
     { name = "av" },
     { name = "causal-conv1d" },
     { name = "einops" },
+    { name = "emerging-optimizers" },
     { name = "flash-linear-attention" },
     { name = "flashinfer-python" },
     { name = "mamba-ssm" },
@@ -2312,6 +2323,7 @@ requires-dist = [
     { name = "causal-conv1d", marker = "extra == 'dev'", specifier = "~=1.5" },
     { name = "einops", marker = "extra == 'dev'", specifier = "~=0.8" },
     { name = "einops", marker = "extra == 'lts'" },
+    { name = "emerging-optimizers", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=cf9909b777ffac18e05b67a6708282cadc000942" },
     { name = "flash-linear-attention", marker = "extra == 'dev'", specifier = "~=0.3.2" },
     { name = "flashinfer-python", marker = "extra == 'dev'" },
     { name = "flask-restful", marker = "extra == 'mlm'" },
@@ -2336,7 +2348,7 @@ requires-dist = [
     { name = "torch" },
     { name = "tqdm", marker = "extra == 'dev'" },
     { name = "tqdm", marker = "extra == 'lts'" },
-    { name = "transformer-engine", extras = ["pytorch"], marker = "extra == 'dev'", specifier = ">=2.6.0a0,<2.8.0" },
+    { name = "transformer-engine", extras = ["pytorch"], marker = "extra == 'dev'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=release_v2.8" },
     { name = "transformers", marker = "extra == 'lts'" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "wandb", marker = "extra == 'mlm'" },
@@ -2350,6 +2362,7 @@ provides-extras = ["mlm", "dev", "lts"]
 build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "hatchling" },
+    { name = "nvidia-mathdx" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "pybind11" },
     { name = "setuptools", specifier = "<80.0.0" },
@@ -2368,7 +2381,6 @@ docs = [
     { name = "sphinx-autodoc2" },
     { name = "sphinx-copybutton" },
 ]
-emerging-optimizers = [{ name = "emerging-optimizers", git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git?rev=fb1add873e7851ec34b48581ea1b15761b73d189" }]
 flash-mla = [{ name = "flash-mla", git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19" }]
 linting = [
     { name = "black", specifier = "==24.4.2" },
@@ -2379,7 +2391,7 @@ linting = [
 ]
 test = [
     { name = "coverage" },
-    { name = "nemo-run" },
+    { name = "nemo-run", git = "https://github.com/NVIDIA-NeMo/Run.git?rev=8ca8f7952a597f944985f1f1368a7acb9aa3a6c2" },
     { name = "nltk" },
     { name = "pydantic" },
     { name = "pygithub" },
