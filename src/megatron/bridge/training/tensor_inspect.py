@@ -65,7 +65,7 @@ def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: Te
         raise
 
 
-def _maybe_attach_metric_loggers(tensorboard_logger: Optional[Any], wandb_logger: Optional[Any]) -> None:
+def _maybe_attach_metric_loggers(tensorboard_logger: Any | None, wandb_logger: Any | None) -> None:
     """Attach supported metric loggers (TensorBoard, W&B raw module)."""
 
     try:
@@ -95,9 +95,9 @@ def _maybe_attach_metric_loggers(tensorboard_logger: Optional[Any], wandb_logger
 def finalize_tensor_inspect_post_model_initialization(
     tensor_inspect_config: TensorInspectConfig | None,
     model: list[MegatronModule],
-    tensorboard_logger: Optional[Any],
-    wandb_logger: Optional[Any],
-    current_training_step: Optional[int] = None,
+    tensorboard_logger: Any | None,
+    wandb_logger: Any | None,
+    current_training_step: int | None = None,
 ) -> None:
     """Finalize setup after model creation: attach loggers, set names and groups."""
 

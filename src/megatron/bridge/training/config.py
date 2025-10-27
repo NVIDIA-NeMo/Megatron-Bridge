@@ -870,15 +870,15 @@ class TensorInspectConfig:
     enabled: bool = False
     """Enable tensor inspection and statistics collection."""
 
-    features: Optional[Union[dict[str, Any], str, Path]] = None
+    features: dict[str, Any] | str | Path | None = None
     """Feature configuration as a Python dict or a YAML file path."""
 
-    feature_dirs: Optional[list[str]] = None
+    feature_dirs: list[str] | None = None
     """Directories containing feature implementations (searched recursively)."""
 
-    log_dir: Optional[str] = None
+    log_dir: str | None = None
     """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
-
+    
     init_training_step: int = 0
     """Initial training step for the inspector (used when resuming)."""
 
@@ -1086,7 +1086,7 @@ class ConfigContainer(Container):
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
-    tensor_inspect: Optional[TensorInspectConfig] = None
+    tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
