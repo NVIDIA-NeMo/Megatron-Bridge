@@ -21,7 +21,7 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from copy import deepcopy
 from functools import partial
 import torch.nn.functional as F
@@ -29,6 +29,7 @@ import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.bridge.models import Qwen3MoEModelProvider    
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
+from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -52,6 +53,9 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Vision configuration using the transformers Qwen3VLVisionConfig
     # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
+    
+
+    hf_text_config: Optional[Qwen3VLMoeTextConfig] = None
     
     pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
     
@@ -208,7 +212,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
-            vision_transformer_config=vision_transformer_config,
+            vision_transformer_config=hf_config,
             pre_process=pre_process,
             post_process=post_process
         )

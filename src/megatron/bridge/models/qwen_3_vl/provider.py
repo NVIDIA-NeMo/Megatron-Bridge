@@ -28,7 +28,7 @@ import torch.nn.functional as F
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.bridge.models import Qwen3ModelProvider
-from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig, Qwen3VLTextConfig
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 
@@ -59,9 +59,9 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     rotary_percent: float = 1.0
     apply_rope_fusion: bool = False
     
-    # Vision configuration using the transformers Qwen3VLVisionConfig
-    # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
+
+    hf_text_config: Optional[Qwen3VLTextConfig] = None
     
     
     # Vision-specific token IDs matching Qwen3VL configuration

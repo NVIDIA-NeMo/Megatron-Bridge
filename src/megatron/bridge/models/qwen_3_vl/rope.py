@@ -17,9 +17,10 @@ import torch
 from torch import Tensor
 from typing import List
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
+from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLTextRotaryEmbedding
 
 
-class Qwen3VLTextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
+class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
 
     def forward(self, position_ids: torch.Tensor, mrope_section: List[int]) -> Tensor:
         """Forward pass of multimodal RoPE embedding.
@@ -52,4 +53,27 @@ class Qwen3VLTextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
         # Apply attention scaling here since Megatron Core doesn't know about it
         # shape (seq_length, bs, 1, dim)
         emb = (freqs * self.attention_scaling)[..., None, :].transpose(0, 1).contiguous()
+        return emb
+
+
+class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
+
+    def forward(self, position_ids: torch.Tensor, mrope_section: List[int] = None) -> Tensor:
+        """Forward pass for non-MoE Qwen3-VL RoPE.
+        
+        Args:
+            position_ids: Position IDs tensor
+            mrope_section: Optional mrope section (if not provided, uses self.mrope_section)
+        """
+        # Use provided mrope_section or fall back to self.mrope_section
+        if mrope_section is None:
+            mrope_section = self.mrope_section
+            
+        if position_ids.ndim == 2:
+            position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
+        inv_freq_expanded = self.inv_freq[None, None, :, None].float().expand(3, position_ids.shape[1], -1, 1)
+        position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
+        freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
+        freqs = self.apply_interleaved_mrope(freqs, mrope_section)
+        emb = (freqs * 1.0)[..., None, :].transpose(0, 1).contiguous()
         return emb

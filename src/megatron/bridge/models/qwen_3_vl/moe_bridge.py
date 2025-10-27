@@ -94,6 +94,8 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             mlp_only_layers=getattr(text_config, "mlp_only_layers", []),  # Default to all layers using MoE
             # Vision configuration
             vision_config=hf_config.vision_config,
+            # Store the original HF text config for RoPE initialization
+            hf_text_config=text_config,
             # Vision-Language token IDs
             bos_token_id=getattr(text_config, "bos_token_id", 151643),
             eos_token_id=getattr(text_config, "eos_token_id", 151645),
