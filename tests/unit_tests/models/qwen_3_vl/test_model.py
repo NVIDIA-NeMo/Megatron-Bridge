@@ -97,19 +97,13 @@ class TestQwen3VLModel:
         parallel_state.destroy_model_parallel()
 
     @staticmethod
-    def get_vision_transformer_config():
+    def get_vision_transformer_config(hf_config):
         """Create a vision transformer config for testing.
         
         Returns:
             TransformerConfig: Configuration for the vision model.
         """
-        return TransformerConfig(
-            num_layers=2,  # not used, use HF model
-            hidden_size=128,  # not used, use HF model
-            num_attention_heads=8,  # not used, use HF model
-            bf16=False,
-            use_cpu_initialization=True,  # not used, use HF model
-        )
+        return hf_config.vision_config
 
     @staticmethod
     def get_language_transformer_config(hf_config):
@@ -253,7 +247,7 @@ class TestQwen3VLModel:
         assert parallel_state.get_expert_model_parallel_world_size() == ep_size
         assert parallel_state.get_pipeline_model_parallel_world_size() == pp_size
         
-        vision_transformer_config = self.get_vision_transformer_config()
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
         language_model_layer_spec = self.get_language_model_layer_spec()
 
