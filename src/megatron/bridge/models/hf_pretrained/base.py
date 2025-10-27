@@ -120,14 +120,12 @@ class PreTrainedBase(ABC):
                             )
                             copied_files.append(file)
                         except Exception as e:
-                            print("Error downloading file: ", e)
-                            breakpoint()
+                            print("Error downloading file: ", e, "Skipping file...")
                             # Silently skip files that can't be downloaded
                             pass
                             
             except Exception as e:
-                print("Error downloading custom modeling files: ", e)
-                breakpoint()
+                print("Error downloading custom modeling files: ", e, "Skipping custom modeling files...")
                 # If HuggingFace Hub operations fail, silently continue
                 pass
         

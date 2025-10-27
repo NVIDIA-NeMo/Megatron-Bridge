@@ -41,7 +41,7 @@ from megatron.bridge.peft.lora import VLMLoRA
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "nemotron_nano_v2_vl_pretrain",
-    hf_model_path: str = "nvidia/nemotron-nano-12b-v2-vl",
+    hf_model_path: str = "nvidia/Nemotron-Nano-12B-v2-VL-BF16",
     # Dataset configuration
     data_paths: Optional[List[str]] = None,
     data_args_path: Optional[str] = None,
@@ -245,6 +245,6 @@ def finetune_config(
 
         cfg.optimizer.lr = 5e-5
         cfg.optimizer.min_lr = 5e-6
-        cfg.model.tensor_model_parallel_size = 1
+        cfg.model.tensor_model_parallel_size = 2
 
     return cfg

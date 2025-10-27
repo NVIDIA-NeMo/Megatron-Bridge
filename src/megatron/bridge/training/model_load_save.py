@@ -352,6 +352,7 @@ def load_megatron_model(
     model_cfg.expert_tensor_parallel_size = 1
     model_cfg.moe_extended_tp = False
     model_cfg.sequence_parallel = False
+    model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
 
