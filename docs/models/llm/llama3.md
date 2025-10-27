@@ -1,6 +1,6 @@
 # Llama 3
 
-[Meta’s Llama](https://ai.meta.com/blog/meta-llama-3/) builds on the general transformer decoder framework with some key additions such as pre-normalization, SwiGLU activations, and Rotary Positional Embeddings (RoPE). More information is available in the companion paper [“Llama: Open and Efficient Foundation Language Models”](https://arxiv.org/abs/2302.13971). With a wide variety of model sizes - Llama has options for every inference budget.
+[Meta’s Llama](https://www.llama.com/models/llama-3/) builds on the general transformer decoder framework with some key additions such as pre-normalization, SwiGLU activations, and Rotary Positional Embeddings (RoPE). More information is available in the companion paper [“Llama: Open and Efficient Foundation Language Models”](https://arxiv.org/abs/2302.13971). With a wide variety of model sizes - Llama has options for every inference budget.
 
 Llama family models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
