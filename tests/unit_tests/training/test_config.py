@@ -383,7 +383,66 @@ class TestMockGPTDatasetConfig:
 
 
 class TestConfigContainerValidation:
-    """Tests for the `validate` method of the `ConfigContainer` class."""
+    def test_deterministic_mode_disallows_flash_and_ce_fusion(self, monkeypatch):
+        """Test that deterministic mode disallows flash attention and cross-entropy loss fusion."""
+        from megatron.core.transformer.enums import AttnBackend
+
+        gpt_model_cfg = create_test_gpt_config(
+            deterministic_mode=True,
+            attention_backend=AttnBackend.flash,
+            cross_entropy_loss_fusion=True,
+        )
+
+        # Ensure NCCL_ALGO present but valid, so we fail earlier on flash/ce fusion
+        monkeypatch.setenv("NCCL_ALGO", "Tree")
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            with pytest.raises(AssertionError, match="Flash attention can not be used in deterministic mode"):
+                container.validate()
+
+            # Fix attention, still CE fusion should fail
+            container.model.attention_backend = AttnBackend.local
+            with pytest.raises(AssertionError, match="Cross Entropy Fusion is currently not deterministic"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_deterministic_mode_requires_nccl_algo_and_sets_torch(self, monkeypatch):
+        """Test that deterministic mode requires NCCL_ALGO and sets torch.use_deterministic_algorithms."""
+        gpt_model_cfg = create_test_gpt_config(
+            deterministic_mode=True,
+            cross_entropy_loss_fusion=False,
+            transformer_impl="transformer_engine",
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            # Missing NCCL_ALGO
+            monkeypatch.delenv("NCCL_ALGO", raising=False)
+            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
+                container.validate()
+
+            # Invalid NCCL_ALGO
+            monkeypatch.setenv("NCCL_ALGO", "AllReduce")
+            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
+                container.validate()
+
+            # Valid NCCL_ALGO -> should pass and call torch deterministic
+            monkeypatch.setenv("NCCL_ALGO", "Ring")
+
+            called = {"det": False}
+
+            def _mock_use_deterministic(flag):
+                called["det"] = flag
+
+            with patch.object(torch, "use_deterministic_algorithms", side_effect=_mock_use_deterministic):
+                container.validate()
+                assert called["det"] is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
         "world_size, expect_assertion_error",
