@@ -82,6 +82,8 @@ from megatron.bridge.training.optim import setup_optimizer
 
 @dataclass
 class Args:
+    """Dataclass configuration for training."""
+
     hf_policy_model: str
     hf_reward_model: str
     prompts: list[str]
@@ -94,6 +96,7 @@ class Args:
 
 
 def build_config(provider, args: Args) -> ConfigContainer:
+    """Build a config for the training."""
     provider.tensor_model_parallel_size = 1
     provider.pipeline_model_parallel_size = 1
     provider.context_parallel_size = 1
@@ -160,6 +163,8 @@ def build_config(provider, args: Args) -> ConfigContainer:
 
 
 def make_microbatch_iterator(batch: dict, num_microbatches: int) -> Iterator[dict]:
+    """Make a microbatch iterator from a batch."""
+
     def _gen() -> Iterable[dict]:
         for _ in range(num_microbatches):
             yield batch
@@ -190,6 +195,7 @@ def refit_hf_from_megatron(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build a parser for the command line arguments."""
     p = argparse.ArgumentParser(description="Dummy RLHF: HF inference + Megatron training via Bridge")
     p.add_argument("--hf-policy-model", type=str, default="Qwen/Qwen3-0.6B")
     p.add_argument("--hf-reward-model", type=str, default="distilbert-base-uncased-finetuned-sst-2-english")
@@ -212,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Main function."""
     parser = build_parser()
     ns = parser.parse_args()
     args = Args(
