@@ -176,7 +176,7 @@ uv run python pretrain_llama3_8b_nemo_run_partial.py \
 
 ## Performance Benchmarks
 
-Coming soon ...
+For detailed performance benchmarks including throughput metrics across different GPU systems (DGX-GB200, DGX-B200, DGX-H100) and model configurations, see the [Performance Summary](https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-summary.html) in our documentation.
 
 ## Project Structure
 
