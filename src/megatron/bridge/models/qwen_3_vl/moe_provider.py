@@ -75,6 +75,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     eos_token_id: int = 151645
 
     head_dim: int = 128
+    qk_layernorm: bool = True
     
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
@@ -205,7 +206,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=False,
-            qk_layernorm=False,
+            qk_layernorm=self.qk_layernorm,
             fp8=False,
         )
         

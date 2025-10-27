@@ -103,8 +103,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
 
     sequence_parallel: bool = False 
     
-    # QK layernorm is already True in Qwen3ModelProvider, no need to redefine
-    # qk_layernorm: bool = True  # Already defined in parent
+    qk_layernorm: bool = True
     
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
@@ -118,7 +117,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,
             moe_grouped_gemm=False,
-            qk_layernorm=False,
+            qk_layernorm=self.qk_layernorm,
             fp8=False,
         )
         
