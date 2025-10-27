@@ -294,7 +294,7 @@ class AutoBridge(Generic[MegatronModelT]):
             pre_trained = self.hf_pretrained
         else:
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
-        self._model_bridge.load_weights_hf_to_megatron(model, pre_trained)
+        self._model_bridge.load_weights_hf_to_megatron(pre_trained, model)
 
         return model
 
