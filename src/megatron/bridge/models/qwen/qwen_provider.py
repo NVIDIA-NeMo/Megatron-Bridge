@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -31,7 +31,8 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
-
+if TYPE_CHECKING:
+    from megatron.core.transformer import ModuleSpec
 logger = logging.getLogger(__name__)
 
 

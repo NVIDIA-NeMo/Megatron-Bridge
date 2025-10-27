@@ -2089,7 +2089,6 @@ def merge_gdn_linear_weights(provider: TransformerConfig, qkvz: torch.Tensor, ba
     num_v_heads = provider.linear_num_value_heads
     qk_dim = qk_head_dim * num_qk_heads
     v_dim = v_head_dim * num_v_heads
-    in_proj_dim = qk_dim * 2 + v_dim * 2 + num_v_heads * 2
 
     # Reshape to expose head dimension
     qkvz_reshaped = qkvz.reshape(num_qk_heads, (qk_dim * 2 + v_dim * 2) // num_qk_heads, hidden_size)
@@ -2132,7 +2131,6 @@ def split_gdn_linear_weights(provider: TransformerConfig, in_proj: torch.Tensor)
     num_v_heads = provider.linear_num_value_heads
     qk_dim = qk_head_dim * num_qk_heads
     v_dim = v_head_dim * num_v_heads
-    in_proj_dim = qk_dim * 2 + v_dim * 2 + num_v_heads * 2
 
     q, k, v, z, b, a = torch.split(
         in_proj,
