@@ -97,7 +97,7 @@ jobs:
           -w /opt/Megatron-Bridge \
           -e GH_TOKEN=${{ secrets.PAT }} \
           megatron-bridge \
-          bash -c 'uv lock --upgrade'
+          bash -c 'uv lock --upgrade || (echo "Lock file corrupted, regenerating..." && rm -f uv.lock && uv lock)'
 
       - name: Install GPG
         run: sudo apt-get install -y gnupg2
@@ -111,23 +111,207 @@ jobs:
           git_user_signingkey: true
           git_commit_gpgsign: true
 
-      - name: Create Bump PR
-        uses: peter-evans/create-pull-request@v6
-        id: create-pull-request
+      - name: Create Bump PR Commit and push changes
         env:
-          title: "chore(beep boop 🤖): Bump `uv.lock` (${{ inputs.target-branch}}) (${{ needs.pre-flight.outputs.date }})"
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          echo "========================================="
+          echo "Preparing to commit changes"
+          echo "========================================="
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.signingkey ""
+          git config --global commit.gpgsign false
+          
+          # Configure remote URL with token
+          git remote set-url origin https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git
+          
+          # Show current status
+          echo "Current branch:"
+          git branch --show-current
+          echo ""
+          echo "Files modified:"
+          git status --short
+          echo ""
+          
+          # Stage all changes
+          git add -A
+          
+          echo "Staged changes:"
+          git diff --staged --stat
+          echo ""
+          
+          # Commit if there are changes
+          if ! git diff --staged --quiet; then
+            echo "Committing changes..."
+            git commit -m "chore(beep boop 🤖): Update dependencies and submodules"
+            echo ""
+            echo "Pushing to $SOURCE_BRANCH..."
+            git push origin $SOURCE_BRANCH
+            echo "✅ Changes committed and pushed to $SOURCE_BRANCH"
+          else
+            echo "⚠️ No changes to commit - this might prevent PR creation!"
+          fi
+
+  create-pr:
+    needs: [update-lockfile, pre-flight]
+    runs-on: ubuntu-latest
+    environment: main
+    outputs:
+      pr-number: ${{ steps.create-pr.outputs.pr-number }}
+    env:
+      SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
+      TARGET_BRANCH: ${{ inputs.target-branch }}
+      GH_TOKEN: ${{ secrets.PAT }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          branch: ${{ env.SOURCE_BRANCH }}
-          base: ${{ env.TARGET_BRANCH }}
-          title: ${{ env.title }}
           token: ${{ secrets.PAT }}
-          body: |
-            🚀 PR to bump `uv.lock` in `${{ inputs.target-branch }}`.  
+          ref: ${{ env.TARGET_BRANCH }}
 
-            📝 Please remember the following to-do's before merge: 
-            - [ ] Verify the presubmit CI  
+      - name: Create or update PR
+        id: create-pr
+        run: |
+          TITLE="chore(beep boop 🤖): Bump \`uv.lock\` (${{ inputs.target-branch}}) (${{ needs.pre-flight.outputs.date }})"
+          BODY="🚀 PR to bump \`uv.lock\` in \`${{ inputs.target-branch }}\`.
 
-            🙏 Please merge this PR only if the CI workflow completed successfully.
-          commit-message: ${{ env.title }}
-          signoff: true
-          committer: "${{ steps.gpg-action.outputs.name }} <${{ steps.gpg-action.outputs.email }}>"
+          📝 This PR will be automatically merged if all CI checks pass successfully.
+          If any CI checks fail, the PR will remain open for manual review.
+
+          🤖 **Auto-merge enabled** - No manual action required if CI passes."
+          
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --head "$SOURCE_BRANCH" --base "$TARGET_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING_PR" ] && [ "$EXISTING_PR" != "null" ]; then
+            echo "✅ PR #$EXISTING_PR already exists, updating it..."
+            gh pr edit "$EXISTING_PR" --title "$TITLE" --body "$BODY"
+            echo "pr-number=$EXISTING_PR" >> $GITHUB_OUTPUT
+          else
+            # Check if source branch exists and has commits
+            if git ls-remote --exit-code --heads origin "$SOURCE_BRANCH" >/dev/null 2>&1; then
+              echo "Creating new PR from $SOURCE_BRANCH to $TARGET_BRANCH..."
+              PR_URL=$(gh pr create \
+                --title "$TITLE" \
+                --body "$BODY" \
+                --base "$TARGET_BRANCH" \
+                --head "$SOURCE_BRANCH" 2>&1) || {
+                echo "Failed to create PR: $PR_URL"
+                echo "This might mean no changes exist between branches"
+                exit 0
+              }
+              
+              PR_NUMBER=$(echo "$PR_URL" | sed 's/.*\/pull\/\([0-9]*\)$/\1/')
+              echo "pr-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+              echo "✅ Created new PR #$PR_NUMBER at $PR_URL"
+            else
+              echo "⚠️ Branch $SOURCE_BRANCH does not exist on remote. No PR created."
+              exit 0
+            fi
+          fi
+
+  auto-merge:
+    needs: [create-pr, pre-flight]
+    runs-on: ubuntu-latest
+    environment: main
+    env:
+      SOURCE_BRANCH: ${{ needs.pre-flight.outputs.bump-branch }}
+      TARGET_BRANCH: ${{ inputs.target-branch }}
+      GH_TOKEN: ${{ secrets.PAT }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+          ref: ${{ env.TARGET_BRANCH }}
+
+      - name: Find PR number
+        id: find-pr
+        run: |
+          # First try to get PR number from previous job output
+          PR_NUMBER="${{ needs.create-pr.outputs.pr-number }}"
+          
+          # If not found, search for the PR by branch name
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "" ]; then
+            echo "⚠️ PR number not in output, searching by branch..."
+            PR_NUMBER=$(gh pr list --head "$SOURCE_BRANCH" --base "$TARGET_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+          fi
+          
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "" ]; then
+            echo "❌ No PR found for branch $SOURCE_BRANCH -> $TARGET_BRANCH"
+            echo "This likely means no changes were detected or the PR creation failed."
+            exit 0
+          fi
+          
+          echo "pr-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "✅ Found PR #$PR_NUMBER"
+
+      - name: Wait for CI checks and auto-merge
+        if: steps.find-pr.outputs.pr-number != ''
+        env:
+          PR_NUMBER: ${{ steps.find-pr.outputs.pr-number }}
+        run: |
+          echo "Monitoring PR #${PR_NUMBER} for CI check completion..."
+          
+          MAX_ATTEMPTS=144  # Wait up to 12 hours (144 attempts * 5 minutes)
+          ATTEMPT=0
+          
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Checking CI status..."
+            
+            # Get PR status checks
+            STATUS_JSON=$(gh pr view ${PR_NUMBER} --json statusCheckRollup)
+            
+            # Count total checks, successful checks, and failed checks
+            TOTAL_CHECKS=$(echo "$STATUS_JSON" | jq '.statusCheckRollup | length')
+            
+            if [ "$TOTAL_CHECKS" -eq 0 ]; then
+              # If no checks are required, merge immediately after a short wait
+              if [ "$ATTEMPT" -ge 3 ]; then
+                echo "✅ No CI checks configured. Auto-merging PR #${PR_NUMBER}..."
+                gh pr merge ${PR_NUMBER} --squash --delete-branch
+                echo "✅ PR #${PR_NUMBER} has been merged successfully!"
+                exit 0
+              else
+                echo "No status checks found yet. Waiting to see if checks appear..."
+                sleep 60
+                continue
+              fi
+            fi
+            
+            PENDING_CHECKS=$(echo "$STATUS_JSON" | jq '[.statusCheckRollup[] | select(.conclusion == null or .conclusion == "" or .status == "IN_PROGRESS" or .status == "PENDING" or .status == "QUEUED")] | length')
+            FAILED_CHECKS=$(echo "$STATUS_JSON" | jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT")] | length')
+            SUCCESS_CHECKS=$(echo "$STATUS_JSON" | jq '[.statusCheckRollup[] | select(.conclusion == "SUCCESS")] | length')
+            
+            echo "Status: $SUCCESS_CHECKS successful, $FAILED_CHECKS failed, $PENDING_CHECKS pending (out of $TOTAL_CHECKS total)"
+            
+            # If any checks failed, exit and leave PR open
+            if [ "$FAILED_CHECKS" -gt 0 ]; then
+              echo "❌ CI checks failed. Leaving PR open for manual review."
+              echo "Failed checks:"
+              echo "$STATUS_JSON" | jq -r '.statusCheckRollup[] | select(.conclusion == "FAILURE" or .conclusion == "CANCELLED" or .conclusion == "TIMED_OUT") | "  - \(.name): \(.conclusion)"'
+              exit 0
+            fi
+            
+            # If all checks are done and successful, merge
+            if [ "$PENDING_CHECKS" -eq 0 ] && [ "$SUCCESS_CHECKS" -gt 0 ]; then
+              echo "✅ All CI checks passed! Auto-merging PR #${PR_NUMBER}..."
+              
+              # Merge the PR with squash
+              gh pr merge ${PR_NUMBER} --squash --delete-branch
+              
+              echo "✅ PR #${PR_NUMBER} has been merged successfully!"
+              exit 0
+            fi
+            
+            # Still waiting for checks to complete
+            echo "Waiting for pending checks to complete..."
+            sleep 300
+          done
+          
+          echo "⏱️  Timeout reached. PR #${PR_NUMBER} will remain open for manual review."
+          exit 0
