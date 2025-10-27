@@ -6,6 +6,5 @@ This section documents Large Language Models supported by Megatron Bridge, with 
 :hidden:
 
 llama3.md
-qwen2.md
-qwen3.md
+qwen.md
 ```
