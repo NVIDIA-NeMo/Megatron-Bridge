@@ -234,7 +234,6 @@ def main(args) -> None:
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
-        print(model_provider)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
