@@ -14,9 +14,9 @@
 
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from megatron.core.transformer.transformer_config import TransformerConfig
-
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
 
 
 @dataclass
@@ -47,3 +47,4 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     image_token_id: int = 151655
     video_token_id: int = 151656
     vision_start_token_id: int = 151652
+    hf_text_config: Optional[Qwen3VLTextConfig] = None

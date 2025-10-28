@@ -27,8 +27,6 @@ from PIL import Image
 
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock as Qwen3VLTransformerLayer
-from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -142,7 +140,9 @@ class TestQwen3VLModel:
             rotary_base=hf_config.text_config.rope_theta,
             rotary_percent=1.0,
             mrope_section=hf_config.text_config.rope_scaling.get("mrope_section", [16, 24, 24]),
-            
+
+            hf_text_config=hf_config.text_config,
+        
             # Training settings
             normalization="RMSNorm",
             activation_func=F.silu,
