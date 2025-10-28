@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.bridge.models import Qwen3MoEModelProvider    
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
-from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoETextConfig
+from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -55,7 +55,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
     
 
-    hf_text_config: Optional[Qwen3VLMoETextConfig] = None
+    hf_text_config: Optional[Qwen3VLMoeTextConfig] = None
     
     pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
     

@@ -15,12 +15,8 @@
 """Qwen3 VL model providers and configurations."""
 
 # Core model components
-#:from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel  # noqa: F401
-from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel
-from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel  # noqa: F401
-from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock  # noqa: F401
-from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig  # noqa: F401
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel  # noqa: F401
+from megatron.bridge.models.qwen_3_vl.moe_model import Qwen3VLMoEModel  # noqa: F401
 
 # Dense model providers
 from megatron.bridge.models.qwen_3_vl.provider import (
@@ -37,10 +33,6 @@ from megatron.bridge.models.qwen_3_vl.bridge import Qwen3VLBridge
 from megatron.bridge.models.qwen_3_vl.moe_bridge import Qwen3VLMoEBridge
 
 __all__ = [
-    # Core components
-    "Qwen3VLGPTModel",
-    "Qwen3VLTransformerBlock",
-    "Qwen3VLTransformerConfig",
     "Qwen3VLModel",
     "Qwen3VLMoEModel",
     "Qwen3VLModelProvider",

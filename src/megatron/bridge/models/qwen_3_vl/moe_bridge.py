@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import torch
-from transformers.models.qwen3_vl_moe import Qwen3VLMoEForConditionalGeneration
+from transformers.models.qwen3_vl_moe import Qwen3VLMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -27,7 +27,7 @@ from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvide
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3VLMoEForConditionalGeneration, target=Qwen3VLModel)
+@MegatronModelBridge.register_bridge(source=Qwen3VLMoeForConditionalGeneration, target=Qwen3VLModel)
 class Qwen3VLMoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-VL MoE (Mixture of Experts) Conditional Generation.
@@ -186,11 +186,11 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             AutoMapping(
                 hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
             ),
-           GatedMLPMapping(
+            GatedMLPMapping(
                 megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc1.weight",
                 gate="model.language_model.layers.*.mlp.gate.weight",
                 up="model.language_model.layers.*.mlp.experts.up_proj",
-             ),
+            ),
             AutoMapping(
                 megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc2.weight",
                 hf_param="model.language_model.layers.*.mlp.experts.down_proj",

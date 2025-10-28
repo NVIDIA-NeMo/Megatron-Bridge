@@ -114,67 +114,28 @@ class Qwen3VLMoETextSparseMoeBlock(MegatronModule):
         routed_out = self.experts(hidden_states, router_weights, router_indices)
         return routed_out
 
-
 class Qwen3VLMoETextDecoderLayer(Qwen3VLTextDecoderLayer):
     """
-    A modification of Qwen3VLTextDecoderLayer to include MoE layers.
+    Qwen3VLMoETextDecoderLayer
     """
 
-    def __init__(self, config, layer_number):
-        super(Qwen3VLTextDecoderLayer, self).__init__(config=config, layer_number=layer_number)
-
-        if self.config.num_moe_experts > 0 and (layer_number) % self.config.moe_layer_freq == 0:
-            self.mlp = Qwen3VLMoETextSparseMoeBlock(config=config)
-        else:
-            # Qwen3VLTextMLP is already instantiated in the parent class
-            pass
+    def __init__(self, config, layer_idx):
+        super().__init__(config, layer_idx)
+        self.post_attention_layernorm = Qwen3VLRMSNorm(
+            config.text_config.hidden_size, eps=config.text_config.rms_norm_eps
+        )
 
 
 class Qwen3VLMoETextModel(Qwen3VLTextModel):
     """
-    A modification of Qwen3VLTextModel to use MoE decoder layers.
+    The bare Qwen3VLMoETextModel outputting raw hidden-states without any specific head on top.
     """
 
-    def _build_layers(self):
-        # build the layers
-        return nn.ModuleList(
+    def __init__(self, config: Qwen3VLConfig):
+        super(Qwen3VLTextModel, self).__init__(config)
+        self.layers = torch.nn.ModuleList(
             [
-                TransformerBlock(
-                    config=self.config,
-                    _block=TransformerLayer,
-                    layer_number=i + 1,
-                    _layer=Qwen3VLMoETextDecoderLayer,
-                )
-                for i in range(self.config.num_layers)
+                Qwen3VLMoETextDecoderLayer(config, layer_idx)
+                for layer_idx in range(config.text_config.num_hidden_layers)
             ]
-        )
-
-
-class Qwen3VLMoEModel(Qwen3VLModel):
-    """
-    Qwen3-VL MoE model.
-    """
-
-    def __init__(self, config, pre_process=True, post_process=True, vp_stage=None) -> None:
-        super(Qwen3VLModel, self).__init__(config=config)
-
-        self.pre_process = pre_process
-        self.post_process = post_process
-        self.vp_stage = vp_stage
-
-        if pre_process:
-            self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
-            # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
-            hook_hf_module_setattr_for_tp_grad_sync(self.vision_model) 
-            # Move to device if available
-            if torch.cuda.is_available():
-                self.vision_model = self.vision_model.to('cuda')
-
-        self.language_model: GPTModel = Qwen3VLMoETextModel(
-            config=config, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
-
-        self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
-        self.shared_embedding_or_output_weight = (
-            self.language_model.shared_embedding_or_output_weight
         )
