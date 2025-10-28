@@ -14,14 +14,22 @@
 
 from typing import Callable
 
-import modelopt.torch.distill as mtd
-import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
 from megatron.core import parallel_state
 from megatron.core.transformer import MegatronModule
 
 
-class ModelOptDistillConfig(mtd_mcore.DistillationConfig):
+try:
+    import modelopt.torch.distill as mtd
+    from modelopt.torch.distill.plugins.megatron import DistillationConfig as MCoreKDConfig
+
+    has_nvidia_modelopt = True
+except ImportError:
+    has_nvidia_modelopt = False
+    MCoreKDConfig = object  # allows for type-checking imports
+
+
+class ModelOptDistillConfig(MCoreKDConfig):
     """Configuration settings for Model Optimizer distillation."""
 
     pass
@@ -38,6 +46,7 @@ def loss_func_kd(
         original_loss_fn (Callable): The original loss function
         model (GPTModel): The model (can be wrapped)
     """
+    assert has_nvidia_modelopt, "nvidia-modelopt[torch] is not installed"
     assert isinstance(model, mtd.DistillationModel), "Model must be a ModelOpt DistillationModel"
 
     # Standard lm loss
