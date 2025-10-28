@@ -2127,7 +2127,9 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
         if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
             if cfg.dist_ckpt_optim_fully_reshardable:
                 metadata["distrib_optim_sharding_type"] = "fully_reshardable"
-                metadata["distrib_optim_fully_reshardable_mem_efficient"] = cfg.distrib_optim_fully_reshardable_mem_efficient
+                metadata["distrib_optim_fully_reshardable_mem_efficient"] = (
+                    cfg.distrib_optim_fully_reshardable_mem_efficient
+                )
             else:
                 metadata["distrib_optim_sharding_type"] = "dp_reshardable"
 
