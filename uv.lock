@@ -2168,8 +2168,8 @@ dependencies = [
     { name = "six" },
     { name = "tensorboard" },
     { name = "tqdm" },
-    { name = "transformers" },
     { name = "transformer-engine" },
+    { name = "transformers" },
     { name = "typing-extensions" },
     { name = "wandb" },
 ]
@@ -2234,8 +2234,8 @@ requires-dist = [
     { name = "six", specifier = ">=1.17.0" },
     { name = "tensorboard", specifier = ">=2.19.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "transformers", specifier = "==4.57.1" },
     { name = "transformer-engine", extras = ["pytorch"], git = "https://github.com/NVIDIA/TransformerEngine.git?rev=release_v2.9" },
+    { name = "transformers", specifier = ">=4.57.1" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.19.10" },
 ]
