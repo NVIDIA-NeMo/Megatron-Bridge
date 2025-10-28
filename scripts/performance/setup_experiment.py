@@ -64,6 +64,7 @@ def main(
     use_tokendrop: bool,
     executor: run.Executor,
 ):
+    """Sets up the experiment and runs it."""
     exp_name = f"{model_name}_{model_size}_{domain}_{task}"
     exp_name += "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
 
