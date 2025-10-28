@@ -51,7 +51,7 @@ def make_data_iterator_list(
         >>> batch_from_chunk1 = next(iters[1])  # Reads from cache, same data
     """
     # Single model chunk - no caching needed
-    if not isinstance(model, list) or len(model) == 1:
+    if not isinstance(model, list) or len(model) <= 1:
         return data_iterator
 
     class CachingIterator:
