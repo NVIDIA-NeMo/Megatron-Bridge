@@ -888,7 +888,7 @@ class TensorInspectConfig:
 
     log_dir: str | None = None
     """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
-    
+
     init_training_step: int = 0
     """Initial training step for the inspector (used when resuming)."""
 

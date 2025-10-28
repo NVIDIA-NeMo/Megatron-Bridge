@@ -47,8 +47,9 @@ class TestTensorInspectInitialization:
         """Test that initialization is skipped when disabled."""
         cfg = TensorInspectConfig(enabled=False)
 
-        with patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True), patch(
-            "megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api
+        with (
+            patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True),
+            patch("megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api),
         ):
             initialize_tensor_inspect_pre_model_initialization(cfg)
 
@@ -72,8 +73,9 @@ class TestTensorInspectInitialization:
             init_training_step=12,
         )
 
-        with patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True), patch(
-            "megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api
+        with (
+            patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True),
+            patch("megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api),
         ):
             initialize_tensor_inspect_pre_model_initialization(cfg)
 
@@ -95,20 +97,21 @@ class TestTensorInspectFinalize:
         cfg = TensorInspectConfig(enabled=True)
         model = [Mock()]
 
-        with patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True), patch(
-            "megatron.bridge.training.tensor_inspect._maybe_attach_metric_loggers"
-        ) as mock_attach, patch(
-            "megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api
-        ), patch(
-            "megatron.core.parallel_state.get_tensor_and_data_parallel_group",
-            return_value="mock-group",
+        with (
+            patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True),
+            patch("megatron.bridge.training.tensor_inspect._maybe_attach_metric_loggers") as mock_attach,
+            patch("megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api),
+            patch(
+                "megatron.core.parallel_state.get_tensor_and_data_parallel_group",
+                return_value="mock-group",
+            ),
         ):
             finalize_tensor_inspect_post_model_initialization(
                 cfg, model, tensorboard_logger=Mock(), wandb_logger=Mock(), current_training_step=12
             )
 
         mock_attach.assert_called_once()
-        
+
         mock_nvinspect_api.initialize_training_step.assert_called_once_with(12)
         mock_nvinspect_api.infer_and_assign_layer_names.assert_called_once_with(model)
         mock_nvinspect_api.set_tensor_reduction_group.assert_called_once_with("mock-group")
@@ -131,11 +134,12 @@ class TestTensorInspectRuntime:
         """Test that step advances nvinspect internal counter."""
         cfg = TensorInspectConfig(enabled=True)
 
-        with patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True), patch(
-            "megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api
+        with (
+            patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True),
+            patch("megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api),
         ):
             tensor_inspect_step_if_enabled(cfg)
-            
+
         mock_nvinspect_api.step.assert_called_once()
 
     def test_tensor_inspect_step_missing_dependency_raises(self):
@@ -150,10 +154,10 @@ class TestTensorInspectRuntime:
         """Test that shutdown invokes nvinspect end_debug."""
         cfg = TensorInspectConfig(enabled=True)
 
-        with patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True), patch(
-            "megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api
+        with (
+            patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True),
+            patch("megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api),
         ):
             tensor_inspect_end_if_enabled(cfg)
 
         mock_nvinspect_api.end_debug.assert_called_once()
-
