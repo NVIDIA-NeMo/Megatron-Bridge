@@ -21,7 +21,7 @@ from nemo_run.config import get_nemorun_home
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
-DEFAULT_HF_HOME = DEFAULT_NEMO_HOME / "hf_home"
+DEFAULT_HF_HOME = Path(DEFAULT_NEMO_HOME) / "hf_home"
 
 
 def parse_cli_args():
@@ -256,4 +256,5 @@ def parse_cli_args():
         dest="detach",
     )
 
-    return parser
+    args, cli_dotlist_overrides = parser.parse_known_args()
+    return args, cli_dotlist_overrides
