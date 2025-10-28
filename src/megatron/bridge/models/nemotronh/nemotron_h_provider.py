@@ -16,8 +16,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 
-import torch
-import torch.nn.functional as F
+from megatron.core.activations import squared_relu
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.utils.common_utils import get_rank_safe
@@ -35,7 +34,7 @@ class NemotronHModelProvider(MambaModelProvider):
     mamba_head_dim: int = 64
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
-    activation_func: callable = lambda x: torch.pow(F.relu(x), 2)
+    activation_func: callable = squared_relu
     masked_softmax_fusion: bool = True
     apply_query_key_layer_scaling: bool = False
     persist_layer_norm: bool = True
@@ -111,6 +110,7 @@ class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
     num_layers: int = 56
     hidden_size: int = 4480
     mamba_num_heads: int = 128
+    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 15680
     num_attention_heads: int = 40
@@ -126,6 +126,7 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     num_layers: int = 62
     hidden_size: int = 5120
     mamba_num_heads: int = 128
+    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 20480
     num_attention_heads: int = 40
