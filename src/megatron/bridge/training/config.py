@@ -681,6 +681,19 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
+    dist_ckpt_save_pre_mcore_014: bool = False
+    """Revert checkpointing simplifications introduced in Megatron-Core v0.14.
+    This option affects only checkpoint saving format and will be removed soon 
+    (checkpoint load format is determined based on checkpoint metadata)."""
+
+    dist_ckpt_optim_fully_reshardable: bool = False
+    """Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability."""
+
+    distrib_optim_fully_reshardable_mem_efficient: bool = False
+    """During distributed optimizer checkpoint save and load tries to use as little memory as possible
+    by using Gloo (instead of NCCL) and only one rank for saving. Turn on only if experiencing host or device memory
+    issues. Has affect only with `dist_ckpt_optim_fully_reshardable` flag."""
+
     save_tokenizer_assets: bool = True
     """Save tokenizer files to checkpoint directory. When enabled, saves all tokenizer artifacts
     (vocab files, special tokens, tokenizer config) to make checkpoints self-contained and portable.
@@ -713,6 +726,10 @@ class CheckpointConfig:
                     f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
                     f"Please set checkpoint.load to the base checkpoint directory."
                 )
+
+        if self.dist_ckpt_optim_fully_reshardable:
+            assert not self.distrib_optim_fully_reshardable_mem_efficient, \
+                "distrib_optim_fully_reshardable_mem_efficient requires use_gloo_process_groups"
 
 
 @dataclass(kw_only=True)

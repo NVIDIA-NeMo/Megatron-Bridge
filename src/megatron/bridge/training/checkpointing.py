@@ -45,6 +45,8 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
+from megatron.core.optimizer import DistributedOptimizer
+from megatron.core.utils import is_torch_min_version, get_torch_version
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import unwrap_model
 
@@ -541,9 +543,7 @@ def save_checkpoint(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     # Collect cfg, model, RNG.
-    sharded_sd_metadata = _build_sharded_state_dict_metadata(
-        cfg.optimizer.use_distributed_optimizer, ckpt_cfg.fully_parallel_save, ckpt_cfg.ckpt_format
-    )
+    sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
     if cfg.optimizer.use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
@@ -1363,7 +1363,8 @@ def _load_checkpoint_from_path(
                     }
                 if (
                     ckpt_tp_pp != run_tp_pp
-                    and sharded_sd_metadata["distrib_optim_sharding_type"] != "fully_sharded_model_space"
+                    and sharded_sd_metadata["distrib_optim_sharding_type"]
+                    not in DistributedOptimizer.checkpoint_fully_reshardable_formats
                 ):
                     raise RuntimeError(
                         f"{mismatch_msg}: not supported for DistributedOptimizer with sharding type"
@@ -1462,9 +1463,7 @@ def _load_checkpoint_from_path(
                 gen_sd_opt_param_scheduler = opt_param_scheduler
 
         optim_sd_kwargs = dict(
-            metadata=_build_sharded_state_dict_metadata(
-                cfg.optimizer.use_distributed_optimizer, cfg.checkpoint.fully_parallel_save, ckpt_format
-            ),
+            metadata=_build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, cfg.checkpoint),
             is_loading=True,
         )
 
@@ -2092,9 +2091,7 @@ def _load_fsdp_dtensor_base_checkpoint(
     return sharded_state_dict, checkpoint_name, release, CheckpointType.FSDP_DTENSOR
 
 
-def _build_sharded_state_dict_metadata(
-    use_distributed_optimizer: bool, ckpt_fully_parallel_save: bool, ckpt_format: str = "torch_dist"
-) -> dict:
+def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: CheckpointConfig) -> dict:
     """Builds metadata used for sharded_state_dict versioning.
 
     The whole content metadata is passed to ``shared_state_dict`` model and optimizer methods
@@ -2107,18 +2104,36 @@ def _build_sharded_state_dict_metadata(
 
     Args:
         use_distributed_optimizer: Whether to use distributed optimizer.
-        ckpt_fully_parallel_save: Whether to use fully parallel save.
+        cfg: CheckpointConfig.
     """
     metadata = {}
-    if use_distributed_optimizer:
-        if ckpt_format == "fsdp_dtensor":
-            metadata["distrib_optim_sharding_type"] = "fsdp_dtensor"
-        elif ckpt_fully_parallel_save:
-            metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
-        else:
-            metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
-    metadata["chained_optim_avoid_prefix"] = True
-    metadata["singleton_local_shards"] = False
+    if use_distributed_optimizer and cfg.ckpt_format == "fsdp_dtensor":
+        metadata['distrib_optim_sharding_type'] = 'fsdp_dtensor'
+
+    # Force pre-mcore 0.14 behavior for PyTorch versions below 2.6a0
+    force_pre_mcore_014 = not is_torch_min_version("2.6a0")
+    if force_pre_mcore_014 and not cfg.dist_ckpt_save_pre_mcore_014:
+        logger.warning(f"PyTorch version {get_torch_version()} below 2.6 detected."
+                       f" Forcing dist_ckpt_save_pre_mcore_014 behavior.")
+
+    if cfg.dist_ckpt_save_pre_mcore_014 or force_pre_mcore_014:
+        metadata['singleton_local_shards'] = False
+        if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
+            if cfg.ckpt_fully_parallel_save:
+                metadata['distrib_optim_sharding_type'] = 'fully_sharded_model_space'
+            else:
+                metadata['distrib_optim_sharding_type'] = 'dp_zero_gather_scatter'
+    else:
+        metadata['singleton_local_shards'] = True
+        if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
+            if cfg.dist_ckpt_optim_fully_reshardable:
+                metadata['distrib_optim_sharding_type'] = 'fully_reshardable'
+                metadata['distrib_optim_fully_reshardable_mem_efficient'] = cfg.distrib_optim_fully_reshardable_mem_efficient
+            else:
+                metadata['distrib_optim_sharding_type'] = 'dp_reshardable'
+
+    metadata['singleton_local_shards'] = False
+    metadata['chained_optim_avoid_prefix'] = True
     return metadata
 
 
