@@ -354,6 +354,7 @@ def _create_peft_pre_wrap_hook(cfg: ConfigContainer, state: GlobalState) -> Call
             opt_param_scheduler=None,  # Don't load scheduler - will be created after PEFT
             checkpointing_context={},
             skip_load_to_model_and_opt=False,
+            ignore_ckpt_step=True,  # ckpt_step applies only to adapter checkpoints, not pretrained base model
         )
         state.timers("load-pretrained-checkpoint").stop(barrier=True)
         state.timers.log(["load-pretrained-checkpoint"])

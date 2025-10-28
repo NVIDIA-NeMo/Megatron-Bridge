@@ -294,7 +294,7 @@ class AutoBridge(Generic[MegatronModelT]):
             pre_trained = self.hf_pretrained
         else:
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
-        self._model_bridge.load_weights_hf_to_megatron(model, pre_trained)
+        self._model_bridge.load_weights_hf_to_megatron(pre_trained, model)
 
         return model
 
@@ -701,8 +701,10 @@ class AutoBridge(Generic[MegatronModelT]):
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
-            # Skip weights initialization since we are going to load weights
-            provider.perform_initialization = False
+            # TODO(yuya): Temporary workaround: keep initialization enabled.
+            # When disabled, TP-related attributes are not added properly and TP breaks in Megatron-Core.
+            # We will fix this in the core soon; setting this to True may slow startup a bit.
+            provider.perform_initialization = True
             if hf_path is None:
                 provider.register_pre_wrap_hook(
                     partial(self._model_bridge.load_weights_hf_to_megatron, self.hf_pretrained)

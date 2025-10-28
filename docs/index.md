@@ -23,6 +23,14 @@ bridge-tech-details.md
 ```
 
 ```{toctree}
+:caption: Supported Models
+:hidden:
+
+models/llm/index.md
+models/vlm/index.md
+```
+
+```{toctree}
 :caption: Training and Customization
 :hidden:
 
@@ -48,6 +56,7 @@ training/packed-sequences.md
 :hidden:
 
 adding-new-models.md
+bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
 ```
