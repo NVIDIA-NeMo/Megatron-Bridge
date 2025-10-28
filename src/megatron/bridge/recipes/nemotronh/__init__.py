@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Nemotron Nano v2 models
+from megatron.bridge.recipes.nemotronh.nemotron_nano_v2 import (
+    nemotron_nano_9b_v2_pretrain_config,
+    nemotron_nano_12b_v2_pretrain_config,
+)
+
 # NemotronH models
 from megatron.bridge.recipes.nemotronh.nemotronh import (
     nemotronh_4b_pretrain_config,
@@ -27,4 +33,7 @@ __all__ = [
     "nemotronh_8b_pretrain_config",
     "nemotronh_47b_pretrain_config",
     "nemotronh_56b_pretrain_config",
+    # Nemotron Nano v2 models
+    "nemotron_nano_9b_v2_pretrain_config",
+    "nemotron_nano_12b_v2_pretrain_config",
 ]

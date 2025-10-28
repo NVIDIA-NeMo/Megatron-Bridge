@@ -13,14 +13,15 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -41,26 +42,25 @@ class Qwen3CommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
     tensor_parallelism: int
     pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
+    pipeline_parallelism_dtype: torch.dtype | None
+    virtual_pipeline_parallelism: int | None
     context_parallelism: int
     sequence_parallelism: bool
     use_megatron_fsdp: bool
     use_null_tokenizer: bool
-    enable_recompute: bool
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -69,12 +69,29 @@ class Qwen3CommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
+
+
+class Qwen3FinetuneKwargs(Qwen3CommonKwargs, total=False):
+    """Typed options accepted by Qwen3 finetuning recipe helper functions."""
+
+    # Core finetuning options
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
+    packed_sequence: bool
+
+    # Training params
+    finetune_lr: float
+
+    # W&B logging
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
 
 def qwen3_600m_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> ConfigContainer:
@@ -171,21 +188,21 @@ def qwen3_32b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Confi
 
 def _qwen3_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
     tensor_parallelism: int = 1,
     pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
+    pipeline_parallelism_dtype: torch.dtype | None = None,
+    virtual_pipeline_parallelism: int | None = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
     use_megatron_fsdp: bool = False,
@@ -199,12 +216,12 @@ def _qwen3_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 500,
     save_interval: int = 500,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3 models using a given HuggingFace path.
@@ -338,3 +355,256 @@ def _qwen3_common(
     )
 
     return cfg_container
+
+
+def qwen3_600m_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3 600M.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3FinetuneKwargs = {
+        "hf_path": "Qwen/Qwen3-0.6B",
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    combined_kwargs: Qwen3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_finetune_common(**combined_kwargs)
+
+
+def qwen3_1p7b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3 1.7B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3FinetuneKwargs = {
+        "hf_path": "Qwen/Qwen3-1.7B",
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    combined_kwargs: Qwen3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_finetune_common(**combined_kwargs)
+
+
+def qwen3_4b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3 4B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=2, PP=1, LR=5e-6
+    """
+    # Check if user is doing full SFT or PEFT (matches NeMo2 behavior)
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3FinetuneKwargs = {
+        "hf_path": "Qwen/Qwen3-4B",
+        "tensor_parallelism": 2 if is_full_sft else 1,  # Match NeMo2: higher TP for SFT, TP=1 for LoRA
+        "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
+    }
+    combined_kwargs: Qwen3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_finetune_common(**combined_kwargs)
+
+
+def qwen3_8b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3 8B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=4, PP=1, LR=5e-6
+    """
+    # Check if user is doing full SFT or PEFT (matches NeMo2 behavior)
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3FinetuneKwargs = {
+        "hf_path": "Qwen/Qwen3-8B",
+        "tensor_parallelism": 4 if is_full_sft else 1,  # Match NeMo2: TP=4 for SFT, TP=1 for LoRA
+        "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
+    }
+    combined_kwargs: Qwen3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_finetune_common(**combined_kwargs)
+
+
+def qwen3_14b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3 14B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=1, LR=5e-6
+    """
+    # Check if user is doing full SFT or PEFT (matches NeMo2 behavior)
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3FinetuneKwargs = {
+        "hf_path": "Qwen/Qwen3-14B",
+        "tensor_parallelism": 8 if is_full_sft else 1,  # Match NeMo2: TP=8 for SFT, TP=1 for LoRA
+        "pipeline_parallelism": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
+    }
+    combined_kwargs: Qwen3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    return _qwen3_finetune_common(**combined_kwargs)
+
+
+def qwen3_32b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3 32B.
+
+    Default configuration: 2 nodes, 16 GPUs total
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4 (with recompute)
+    - Full SFT: TP=8, PP=2, LR=5e-6 (with recompute)
+    """
+    # Check if user is doing full SFT or PEFT (matches NeMo2 behavior)
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended_kwargs: Qwen3FinetuneKwargs = {
+        "hf_path": "Qwen/Qwen3-32B",
+        "tensor_parallelism": 8 if is_full_sft else 1,  # Match NeMo2: TP=8 for SFT, TP=1 for LoRA
+        "pipeline_parallelism": 2 if is_full_sft else 1,  # PP=2 for SFT, PP=1 for LoRA
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
+    }
+    combined_kwargs: Qwen3FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
+    config = _qwen3_finetune_common(**combined_kwargs)
+
+    # Enable recompute for 32B model
+    config.model.recompute_granularity = "full"
+    config.model.recompute_method = "uniform"
+    config.model.recompute_num_layers = 1
+
+    return config
+
+
+def _qwen3_finetune_common(
+    hf_path: str,
+    dir: str | None = None,
+    name: str = "default",
+    # Core model configuration
+    tensor_parallelism: int = 1,
+    pipeline_parallelism: int = 1,
+    pipeline_parallelism_dtype: torch.dtype | None = None,
+    virtual_pipeline_parallelism: int | None = None,
+    context_parallelism: int = 1,
+    sequence_parallelism: bool = False,
+    use_megatron_fsdp: bool = False,
+    # Finetuning-specific params
+    pretrained_checkpoint: str | None = None,
+    peft: str | PEFT | None = "lora",
+    packed_sequence: bool = False,
+    # Training params
+    train_iters: int = 1000,
+    global_batch_size: int | None = None,  # Auto-select based on packed_sequence if None
+    micro_batch_size: int = 1,
+    seq_length: int = 2048,
+    eval_interval: int = 30,
+    save_interval: int = 50,
+    # Optimizer
+    finetune_lr: float = 1e-4,
+    min_lr: float = 0.0,
+    lr_warmup_iters: int = 50,
+    lr_decay_iters: int | None = None,  # Let config handle this
+    # W&B logging
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
+    # Precision
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
+) -> ConfigContainer:
+    """Common finetuning configuration for all Qwen3 models."""
+
+    # Setup directories
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Auto-select global_batch_size based on packed_sequence
+    if global_batch_size is None:
+        global_batch_size = 8 if packed_sequence else 128
+
+    # Create model config
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_parallelism
+    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
+    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    model_cfg.context_parallel_size = context_parallelism
+    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.seq_length = seq_length
+
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters,
+        max_lr=finetune_lr,
+        min_lr=min_lr,
+        adam_beta2=0.98,
+    )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
+
+    # Logger
+    logger_cfg = LoggerConfig(
+        log_interval=1,
+        tensorboard_dir=tensorboard_dir,
+        log_timers_to_tensorboard=True,
+        wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
+        wandb_exp_name=wandb_exp_name,
+    )
+
+    # Always use HF tokenizer for finetuning
+    tokenizer_cfg = TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model=hf_path,
+    )
+
+    return ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=eval_interval,
+            eval_iters=32,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+        ),
+        optimizer=opt_cfg,
+        scheduler=scheduler_cfg,
+        ddp=DistributedDataParallelConfig(check_for_nan_in_grad=True),
+        dataset=default_squad_config(seq_length, packed_sequence),
+        logger=logger_cfg,
+        tokenizer=tokenizer_cfg,
+        checkpoint=CheckpointConfig(
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=pretrained_checkpoint,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=5678),
+        peft=peft_config,
+        comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
+    )

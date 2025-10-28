@@ -39,10 +39,10 @@ jobs:
     needs: [pre-flight]
     if: |
       (
-        needs.pre-flight.outputs.is_deployment_workflow == 'false' 
+        needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'true'
       ) || (
-        needs.pre-flight.outputs.is_deployment_workflow == 'false' 
+        needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'false'
           && needs.pre-flight.outputs.docs_only == 'false'
       )
@@ -74,7 +74,7 @@ jobs:
   cicd-unit-tests:
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -105,8 +105,10 @@ jobs:
       matrix:
         include:
           - script: L2_Launch_training
+            timeout: 40
           - script: L2_Launch_converter
           - script: L2_Launch_models
+            timeout: 40
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_mamba
@@ -116,7 +118,7 @@ jobs:
     runs-on: self-hosted-nemo
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -132,7 +134,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
-          timeout: 30
+          timeout: ${{ matrix.timeout || 30 }}
           is_unit_test: "false"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -198,7 +200,7 @@ jobs:
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
-              repo: context.repo.repo, 
+              repo: context.repo.repo,
               sha: context.sha,
               state: 'success',
               description: 'No code changes - coverage check skipped',

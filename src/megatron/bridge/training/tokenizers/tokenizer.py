@@ -177,6 +177,9 @@ def build_tokenizer(tokenizer_config: TokenizerConfig, **kwargs) -> MegatronToke
             tokenizer_config.special_tokens,
             tokenizer_config.image_tag_type,
         )
+    elif tokenizer_config.tokenizer_type == "NullMultimodalTokenizer":
+        assert tokenizer_config.vocab_size is not None
+        tokenizer = _NullMultimodalTokenizer(tokenizer_config.vocab_size)
     else:
         raise NotImplementedError("{} tokenizer is not implemented.".format(tokenizer_config.tokenizer_type))
 
@@ -479,6 +482,11 @@ class _GPT2BPETokenizer(MegatronTokenizer):
         """Returns the end-of-document (<|endoftext|>) token ID."""
         return self.eod_id
 
+    @property
+    def eos(self):
+        """Returns the EOS token ID."""
+        return self.eod_id
+
 
 class _SentencePieceTokenizer(MegatronTokenizer):
     """A wrapper for SentencePiece tokenizers used with Megatron.
@@ -753,6 +761,11 @@ class _GPTSentencePieceTokenizer(_SentencePieceTokenizer):
         return self._eos_id
 
     @property
+    def eos(self):
+        """Returns the EOS token ID."""
+        return self._eos_id
+
+    @property
     def additional_special_tokens_ids(self):
         """Returns None as no additional special tokens are added by default."""
         return None
@@ -815,6 +828,11 @@ class _Llama2Tokenizer(_SentencePieceTokenizer):
     @property
     def eod(self):
         """Returns the end-of-sentence token ID, used as end-of-document."""
+        return self.eos_id
+
+    @property
+    def eos(self):
+        """Returns the EOS token ID."""
         return self.eos_id
 
     @property
@@ -1081,6 +1099,79 @@ class _NullTokenizer(MegatronTokenizer):
         return self._eod_id
 
     @property
+    def eos(self):
+        return self._eod_id
+
+    @property
     def additional_special_tokens_ids(self):
         """Returns None as no additional special tokens are used."""
+        return None
+
+
+class _NullMultimodalTokenizer(MegatronTokenizerCore):
+    def __init__(self, vocab_size, image_token=None, image_token_id=None):
+        super().__init__(None, vocab_size=vocab_size)
+        self._vocab_size = int(vocab_size)
+        self._eod_id = self._vocab_size - 1
+
+        from megatron.core.models.multimodal.llava_model import (
+            DEFAULT_IMAGE_TOKEN_INDEX,
+            IMAGE_TOKEN,
+        )
+
+        self._image_token = image_token if image_token is not None else IMAGE_TOKEN
+        self._image_token_id = image_token_id if image_token_id is not None else DEFAULT_IMAGE_TOKEN_INDEX
+
+    def tokenize(self, text):
+        return [int(x) for x in text.split(" ")]
+
+    def detokenize(self, ids):
+        text = [str(x) for x in ids]
+        return " ".join(text)
+
+    def offsets(self, ids: list[int], text: str) -> list[int]:
+        offsets, start_idx = [], 0
+        for id_ in ids:
+            offsets.append(start_idx)
+            start_idx += 1 + len(str(id_))
+        return offsets
+
+    def convert_tokens_to_ids(self, tokens):
+        ids = [(int(t) if t != self._image_token else self._image_token_id) for t in tokens.split("  ")]
+        return ids if len(ids) > 1 else ids[0]
+
+    @property
+    def vocab_size(self):
+        return self._vocab_size
+
+    @property
+    def vocab(self):
+        raise NotImplementedError
+
+    @property
+    def inv_vocab(self):
+        raise NotImplementedError
+
+    @property
+    def cls(self):
+        return -1
+
+    @property
+    def sep(self):
+        return -1
+
+    @property
+    def mask(self):
+        return -1
+
+    @property
+    def eod(self):
+        return self._eod_id
+
+    @property
+    def eos(self):
+        return self._eod_id
+
+    @property
+    def additional_special_tokens_ids(self):
         return None
