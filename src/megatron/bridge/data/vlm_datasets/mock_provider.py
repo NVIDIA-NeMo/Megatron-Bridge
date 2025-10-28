@@ -26,16 +26,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy
+from megatron.core import mpu
 from PIL import Image
+from torch.utils.data import DataLoader
 
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, DatasetBuildContext, DatasetProvider
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
-from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.core import mpu
-from torch.utils.data import DataLoader
 
 
 @dataclass(kw_only=True)

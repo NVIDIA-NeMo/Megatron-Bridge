@@ -20,8 +20,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import torch
+from megatron.core import mpu
+from torch.utils.data import DataLoader
 from transformers import AutoProcessor
 
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_cord_v2_dataset,
@@ -29,13 +32,9 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_medpix_dataset,
     make_rdr_dataset,
 )
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, DatasetBuildContext, DatasetProvider
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
-from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.core import mpu
-from torch.utils.data import DataLoader
 
 
 @dataclass(kw_only=True)
