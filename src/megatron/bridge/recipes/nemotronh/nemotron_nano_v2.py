@@ -18,10 +18,8 @@ import torch
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.nemotronh import (
-    NemotronHModel4BProvider,
-    NemotronHModel8BProvider,
-    NemotronHModel47BProvider,
-    NemotronHModel56BProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
 )
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -40,13 +38,11 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-class NemotronHCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by NemotronH recipe helper functions."""
+class NemotronNanoV2CommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Nemotron Nano v2 recipe helper functions."""
 
     # Core identifiers
-    model_provider: (
-        NemotronHModel4BProvider | NemotronHModel8BProvider | NemotronHModel47BProvider | NemotronHModel56BProvider
-    )
+    model_provider: NemotronNano9Bv2Provider | NemotronNano12Bv2Provider
     tokenizer_model: str | None
     dir: str | None
     name: str
@@ -82,99 +78,50 @@ class NemotronHCommonKwargs(TypedDict, total=False):
     enable_default_comm_overlap: bool
 
 
-def nemotronh_4b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for NemotronH 4B.
-
-    This recipe is designed for single-node training (1 node).
-    Default parallelism: TP=1, PP=1, SP=False.
-
-    See `_nemotronh_common` for the full list of parameters.
-    """
-    recommended_kwargs: NemotronHCommonKwargs = {
-        "model_provider": NemotronHModel4BProvider,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
-        "precision_config": "bf16_mixed",
-        "enable_default_comm_overlap": True,
-    }
-    combined_kwargs: NemotronHCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotronh_common(tokenizer_model="nvidia/Nemotron-H-4B-Base-8K", **combined_kwargs)
-
-
-def nemotronh_8b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for NemotronH 8B.
+def nemotron_nano_9b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Nemotron Nano 9B v2.
 
     This recipe is designed for single-node training (1 node).
     Default parallelism: TP=2, PP=1, SP=True.
 
-    See `_nemotronh_common` for the full list of parameters.
+    See `_nemotron_nano_v2_common` for the full list of parameters.
     """
-    recommended_kwargs: NemotronHCommonKwargs = {
-        "model_provider": NemotronHModel8BProvider,
+    recommended_kwargs: NemotronNanoV2CommonKwargs = {
+        "model_provider": NemotronNano9Bv2Provider,
         "tensor_parallelism": 2,
         "pipeline_parallelism": 1,
         "sequence_parallelism": True,
         "precision_config": "bf16_mixed",
         "enable_default_comm_overlap": True,
     }
-    combined_kwargs: NemotronHCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotronh_common(tokenizer_model="nvidia/Nemotron-H-8B-Base-8K", **combined_kwargs)
+    combined_kwargs: NemotronNanoV2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _nemotron_nano_v2_common(tokenizer_model="nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base", **combined_kwargs)
 
 
-def nemotronh_47b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for NemotronH 47B.
+def nemotron_nano_12b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Nemotron Nano 12B v2.
 
-    This recipe is designed for single-node training (1 node with 8 GPUs).
-    Default parallelism: TP=8, PP=1, SP=True.
+    This recipe is designed for single-node training (1 node).
+    Default parallelism: TP=4, PP=1, SP=True.
 
-    Note: Uses FP8 precision by default. Communication overlap is disabled by default
-    due to known issues with FP8 current scaling.
+    Note: Uses FP8 precision by default. Communication overlap is disabled by default.
 
-    See `_nemotronh_common` for the full list of parameters.
+    See `_nemotron_nano_v2_common` for the full list of parameters.
     """
-    recommended_kwargs: NemotronHCommonKwargs = {
-        "model_provider": NemotronHModel47BProvider,
-        "tensor_parallelism": 8,
+    recommended_kwargs: NemotronNanoV2CommonKwargs = {
+        "model_provider": NemotronNano12Bv2Provider,
+        "tensor_parallelism": 4,
         "pipeline_parallelism": 1,
         "sequence_parallelism": True,
-        "precision_config": "nemotron_h_bf16_with_fp8_current_scaling_mixed",
-        "enable_default_comm_overlap": True,
+        "precision_config": "nanov2_bf16_with_fp8_current_scaling_mixed",
+        "enable_default_comm_overlap": False,
     }
-    combined_kwargs: NemotronHCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotronh_common(tokenizer_model="nvidia/Nemotron-H-47B-Base-8K", **combined_kwargs)
+    combined_kwargs: NemotronNanoV2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _nemotron_nano_v2_common(tokenizer_model="nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base", **combined_kwargs)
 
 
-def nemotronh_56b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for NemotronH 56B.
-
-    This recipe is designed for single-node training (1 node with 8 GPUs).
-    Default parallelism: TP=8, PP=1, SP=True.
-
-    Note: Uses FP8 precision by default. Communication overlap is disabled by default
-    due to known issues with FP8 current scaling.
-
-    See `_nemotronh_common` for the full list of parameters.
-    """
-    recommended_kwargs: NemotronHCommonKwargs = {
-        "model_provider": NemotronHModel56BProvider,
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": True,
-        "precision_config": "nemotron_h_bf16_with_fp8_current_scaling_mixed",
-        "enable_default_comm_overlap": True,
-    }
-    combined_kwargs: NemotronHCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _nemotronh_common(tokenizer_model="nvidia/Nemotron-H-8B-Base-8K", **combined_kwargs)
-
-
-def _nemotronh_common(
-    model_provider: (
-        type[NemotronHModel4BProvider]
-        | type[NemotronHModel8BProvider]
-        | type[NemotronHModel47BProvider]
-        | type[NemotronHModel56BProvider]
-    ),
+def _nemotron_nano_v2_common(
+    model_provider: type[NemotronNano9Bv2Provider] | type[NemotronNano12Bv2Provider],
     tokenizer_model: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -187,12 +134,12 @@ def _nemotronh_common(
     per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
+    tensor_parallelism: int = 2,
     pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: torch.dtype | None = torch.bfloat16,
     virtual_pipeline_parallelism: int | None = None,
     context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallelism: bool = True,
     # Training hyperparameters
     train_iters: int = 1_168_251,
     global_batch_size: int = 768,
@@ -210,10 +157,10 @@ def _nemotronh_common(
     enable_default_comm_overlap: bool = True,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for NemotronH models.
+    Create a pre-training configuration for Nemotron Nano v2 models.
 
     Args:
-        model_provider: The model provider class for the specific NemotronH variant.
+        model_provider: The model provider class for the specific Nemotron Nano v2 variant.
         tokenizer_model: HuggingFace tokenizer model name (only used when use_null_tokenizer=False).
         dir: Base directory for saving logs and checkpoints.
         name: Name of the pre-training run.

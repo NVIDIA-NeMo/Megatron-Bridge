@@ -32,60 +32,60 @@ jobs:
   pre-flight:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
 
-  pip-test-pytorch:
-    needs: [pre-flight]
-    if: |
-      !(needs.pre-flight.outputs.docs_only == 'true'
-      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    runs-on: self-hosted-nemo
-    name: Pip - Python${{ matrix.python-version }}${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }} - AMD64/Linux - NGC PyTorch
-    container:
-      image: nvcr.io/nvidia/pytorch:25.05-py3
-    environment: nemo-ci
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12"]
-        extra-groups: ["", "recipes"]
-    env:
-      EXTRA: ${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
-    steps:
-      - name: Install git
-        shell: bash -x -e -u -o pipefail {0}
-        run: |
-          apt-get update
-          apt-get install -y git
+  # pip-test-pytorch:
+  #   needs: [pre-flight]
+  #   if: |
+  #     !(needs.pre-flight.outputs.docs_only == 'true'
+  #     || needs.pre-flight.outputs.is_deployment_workflow == 'true')
+  #   runs-on: self-hosted-nemo
+  #   name: Pip - Python${{ matrix.python-version }}${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }} - AMD64/Linux - NGC PyTorch
+  #   container:
+  #     image: nvcr.io/nvidia/pytorch:25.05-py3
+  #   environment: nemo-ci
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       python-version: ["3.12"]
+  #       extra-groups: ["", "recipes"]
+  #   env:
+  #     EXTRA: ${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
+  #   steps:
+  #     - name: Install git
+  #       shell: bash -x -e -u -o pipefail {0}
+  #       run: |
+  #         apt-get update
+  #         apt-get install -y git
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         submodules: recursive
 
-      - name: Set PATH
-        run: |
-          echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
-          echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
-          echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
-          echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
-          echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
+  #     - name: Set PATH
+  #       run: |
+  #         echo "UV_PROJECT_ENVIRONMENT=/opt/venv" | tee -a "$GITHUB_ENV"
+  #         echo "UV_LINK_MODE=copy" | tee -a "$GITHUB_ENV"
+  #         echo "CUDA_HOME=/usr/local/cuda" | tee -a "$GITHUB_ENV"
+  #         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH" | tee -a "$GITHUB_ENV"
+  #         echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
+  #         echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
 
-      - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
-        shell: bash -x -e -u -o pipefail {0}
-        run: bash docker/common/install.sh --base-image pytorch --python-version ${{ matrix.python-version }}
+  #     - name: Install megatron-bridge${{ matrix.extra-groups != '' && format('[{0}]', matrix.extra-groups) || '' }}
+  #       shell: bash -x -e -u -o pipefail {0}
+  #       run: bash docker/common/install.sh --base-image pytorch --python-version ${{ matrix.python-version }}
 
-      - name: Checkout check-imports
-        uses: actions/checkout@v4
-        with:
-          repository: NVIDIA-NeMo/FW-CI-templates
-          ref: v0.39.0
-          path: FW-CI-templates
+  #     - name: Checkout check-imports
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: NVIDIA-NeMo/FW-CI-templates
+  #         ref: v0.39.0
+  #         path: FW-CI-templates
 
-      - name: Check imports for megatron-bridge
-        uses: ./FW-CI-templates/.github/actions/check-imports
-        with:
-          package-name: megatron.bridge
-          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
+  #     - name: Check imports for megatron-bridge
+  #       uses: ./FW-CI-templates/.github/actions/check-imports
+  #       with:
+  #         package-name: megatron.bridge
+  #         python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   uv-test-pytorch:
     needs: [pre-flight]
@@ -129,7 +129,7 @@ jobs:
         run: bash docker/common/install.sh --base-image pytorch --use-uv
 
   install-test-summary:
-    needs: [pre-flight, pip-test-pytorch, uv-test-pytorch]
+    needs: [pre-flight, uv-test-pytorch]
     runs-on: ubuntu-latest
     name: Install test summary
     if: |

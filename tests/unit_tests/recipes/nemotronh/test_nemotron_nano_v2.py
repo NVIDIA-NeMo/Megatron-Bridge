@@ -19,36 +19,32 @@ from unittest.mock import patch
 import pytest
 
 from megatron.bridge.models.nemotronh import (
-    NemotronHModel4BProvider,
-    NemotronHModel8BProvider,
-    NemotronHModel47BProvider,
-    NemotronHModel56BProvider,
+    NemotronNano9Bv2Provider,
+    NemotronNano12Bv2Provider,
 )
 from megatron.bridge.recipes.nemotronh import (
-    nemotronh_4b_pretrain_config,
-    nemotronh_8b_pretrain_config,
-    nemotronh_47b_pretrain_config,
-    nemotronh_56b_pretrain_config,
+    nemotron_nano_9b_v2_pretrain_config,
+    nemotron_nano_12b_v2_pretrain_config,
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
 @pytest.mark.unit
-class TestNemotronH4B:
-    """Test cases for NemotronH 4B recipe."""
+class TestNemotronNano9Bv2:
+    """Test cases for Nemotron Nano 9B v2 recipe."""
 
     def test_pretrain_config_default_parameters(self):
         """Test pretrain_config with default parameters (mock mode)."""
-        config = nemotronh_4b_pretrain_config()
+        config = nemotron_nano_9b_v2_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel4BProvider)
+        assert isinstance(config.model, NemotronNano9Bv2Provider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 2
         assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is False
+        assert config.model.sequence_parallel is True
 
         # Check training configuration
         assert config.train.train_iters == 1_168_251
@@ -63,29 +59,31 @@ class TestNemotronH4B:
         assert config.tokenizer.tokenizer_type == "NullTokenizer"
         assert config.tokenizer.tokenizer_model is None
 
+        # Check precision
+        assert config.mixed_precision == "bf16_mixed"
+
         # Check comm overlap
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
-        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
-        config = nemotronh_4b_pretrain_config(
+        config = nemotron_nano_9b_v2_pretrain_config(
             tensor_parallelism=4,
             pipeline_parallelism=2,
             context_parallelism=8,
-            sequence_parallelism=True,
+            sequence_parallelism=False,
         )
 
         assert config.model.tensor_model_parallel_size == 4
         assert config.model.pipeline_model_parallel_size == 2
         assert config.model.context_parallel_size == 8
-        assert config.model.sequence_parallel is True
+        assert config.model.sequence_parallel is False
 
     def test_pretrain_config_with_data_paths(self):
         """Test pretrain_config with data paths provided."""
         data_paths = ["/path/to/data1", "/path/to/data2", "/path/to/data3"]
-        config = nemotronh_4b_pretrain_config(data_paths=data_paths)
+        config = nemotron_nano_9b_v2_pretrain_config(data_paths=data_paths)
 
         assert config.dataset.split == "9999,8,2"
         assert config.dataset.blend is not None
@@ -93,150 +91,73 @@ class TestNemotronH4B:
     @pytest.mark.parametrize("precision", ["fp16_mixed", "bf16_mixed"])
     def test_precision_recipes(self, precision):
         """Test precision configuration."""
-        cfg = nemotronh_4b_pretrain_config(precision_config=precision)
+        cfg = nemotron_nano_9b_v2_pretrain_config(precision_config=precision)
         assert cfg.mixed_precision == precision
 
     def test_huggingface_tokenizer(self):
         """Test with HuggingFace tokenizer instead of NullTokenizer."""
-        cfg = nemotronh_4b_pretrain_config(use_null_tokenizer=False)
+        cfg = nemotron_nano_9b_v2_pretrain_config(use_null_tokenizer=False)
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
-        assert cfg.tokenizer.tokenizer_model == "nvidia/Nemotron-H-4B-Base-8K"
+        assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base"
         assert cfg.tokenizer.vocab_size is None
 
 
 @pytest.mark.unit
-class TestNemotronH8B:
-    """Test cases for NemotronH 8B recipe."""
+class TestNemotronNano12Bv2:
+    """Test cases for Nemotron Nano 12B v2 recipe."""
 
     def test_pretrain_config_default_parameters(self):
         """Test pretrain_config with default parameters (mock mode)."""
-        config = nemotronh_8b_pretrain_config()
+        config = nemotron_nano_12b_v2_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel8BProvider)
+        assert isinstance(config.model, NemotronNano12Bv2Provider)
 
         # Check model configuration defaults
+        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.sequence_parallel is True
+
+        # Check tokenizer (default is NullTokenizer for pretraining)
+        assert config.tokenizer.tokenizer_type == "NullTokenizer"
+        assert config.tokenizer.tokenizer_model is None
+
+        # Check precision config (uses FP8)
+        assert config.mixed_precision == "nanov2_bf16_with_fp8_current_scaling_mixed"
+
+        # Check logger config
+        assert config.logger.log_interval == 10
+
+        # Check comm overlap is not set by default for 12B v2
+        assert config.comm_overlap is None
+
+    def test_pretrain_config_custom_parallelism(self):
+        """Test pretrain_config with custom parallelism."""
+        config = nemotron_nano_12b_v2_pretrain_config(
+            tensor_parallelism=2,
+            pipeline_parallelism=2,
+        )
+
         assert config.model.tensor_model_parallel_size == 2
-        assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is True
-
-        # Check tokenizer (default is NullTokenizer for pretraining)
-        assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.tokenizer_model is None
-
-        # Check comm overlap
-        assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
-        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
-
-    def test_pretrain_config_custom_parallelism(self):
-        """Test pretrain_config with custom parallelism."""
-        config = nemotronh_8b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            sequence_parallelism=False,
-        )
-
-        assert config.model.tensor_model_parallel_size == 4
         assert config.model.pipeline_model_parallel_size == 2
-        assert config.model.sequence_parallel is False
+
+    def test_huggingface_tokenizer(self):
+        """Test with HuggingFace tokenizer instead of NullTokenizer."""
+        cfg = nemotron_nano_12b_v2_pretrain_config(use_null_tokenizer=False)
+        assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-Nano-12B-v2-Base"
+        assert cfg.tokenizer.vocab_size is None
 
 
 @pytest.mark.unit
-class TestNemotronH47B:
-    """Test cases for NemotronH 47B recipe."""
-
-    def test_pretrain_config_default_parameters(self):
-        """Test pretrain_config with default parameters (mock mode)."""
-        config = nemotronh_47b_pretrain_config()
-
-        assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel47BProvider)
-
-        # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 8
-        assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is True
-
-        # Check tokenizer (default is NullTokenizer for pretraining)
-        assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.tokenizer_model is None
-
-        # Check precision config
-        assert config.mixed_precision == "nemotron_h_bf16_with_fp8_current_scaling_mixed"
-
-        # Check logger config
-        assert config.logger.log_interval == 10
-
-        # Check comm overlap
-        assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
-        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
-
-    def test_pretrain_config_custom_parallelism(self):
-        """Test pretrain_config with custom parallelism."""
-        config = nemotronh_47b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-        )
-
-        assert config.model.tensor_model_parallel_size == 4
-        assert config.model.pipeline_model_parallel_size == 2
-
-
-@pytest.mark.unit
-class TestNemotronH56B:
-    """Test cases for NemotronH 56B recipe."""
-
-    def test_pretrain_config_default_parameters(self):
-        """Test pretrain_config with default parameters (mock mode)."""
-        config = nemotronh_56b_pretrain_config()
-
-        assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, NemotronHModel56BProvider)
-
-        # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 8
-        assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is True
-
-        # Check tokenizer (default is NullTokenizer for pretraining)
-        assert config.tokenizer.tokenizer_type == "NullTokenizer"
-        assert config.tokenizer.tokenizer_model is None
-
-        # Check precision config
-        assert config.mixed_precision == "nemotron_h_bf16_with_fp8_current_scaling_mixed"
-
-        # Check logger config
-        assert config.logger.log_interval == 10
-
-        # Check comm overlap
-        assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
-        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
-
-    def test_pretrain_config_custom_parallelism(self):
-        """Test pretrain_config with custom parallelism."""
-        config = nemotronh_56b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-        )
-
-        assert config.model.tensor_model_parallel_size == 4
-        assert config.model.pipeline_model_parallel_size == 2
-
-
-@pytest.mark.unit
-class TestNemotronHCommon:
-    """Test cases common to all NemotronH variants."""
+class TestNemotronNanoV2Common:
+    """Test cases common to all Nemotron Nano v2 variants."""
 
     @pytest.mark.parametrize(
         "recipe_fn,provider_cls",
         [
-            (nemotronh_4b_pretrain_config, NemotronHModel4BProvider),
-            (nemotronh_8b_pretrain_config, NemotronHModel8BProvider),
-            (nemotronh_47b_pretrain_config, NemotronHModel47BProvider),
-            (nemotronh_56b_pretrain_config, NemotronHModel56BProvider),
+            (nemotron_nano_9b_v2_pretrain_config, NemotronNano9Bv2Provider),
+            (nemotron_nano_12b_v2_pretrain_config, NemotronNano12Bv2Provider),
         ],
     )
     def test_config_container_structure(self, recipe_fn, provider_cls):
@@ -249,10 +170,8 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotronh_4b_pretrain_config,
-            nemotronh_8b_pretrain_config,
-            nemotronh_47b_pretrain_config,
-            nemotronh_56b_pretrain_config,
+            nemotron_nano_9b_v2_pretrain_config,
+            nemotron_nano_12b_v2_pretrain_config,
         ],
     )
     def test_custom_training_parameters(self, recipe_fn):
@@ -277,10 +196,8 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotronh_4b_pretrain_config,
-            nemotronh_8b_pretrain_config,
-            nemotronh_47b_pretrain_config,
-            nemotronh_56b_pretrain_config,
+            nemotron_nano_9b_v2_pretrain_config,
+            nemotron_nano_12b_v2_pretrain_config,
         ],
     )
     def test_with_custom_directory(self, recipe_fn):
@@ -298,10 +215,8 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotronh_4b_pretrain_config,
-            nemotronh_8b_pretrain_config,
-            nemotronh_47b_pretrain_config,
-            nemotronh_56b_pretrain_config,
+            nemotron_nano_9b_v2_pretrain_config,
+            nemotron_nano_12b_v2_pretrain_config,
         ],
     )
     def test_ddp_configuration(self, recipe_fn):
@@ -317,10 +232,8 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotronh_4b_pretrain_config,
-            nemotronh_8b_pretrain_config,
-            nemotronh_47b_pretrain_config,
-            nemotronh_56b_pretrain_config,
+            nemotron_nano_9b_v2_pretrain_config,
+            nemotron_nano_12b_v2_pretrain_config,
         ],
     )
     def test_custom_comm_overlap(self, recipe_fn):
@@ -339,10 +252,8 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotronh_4b_pretrain_config,
-            nemotronh_8b_pretrain_config,
-            nemotronh_47b_pretrain_config,
-            nemotronh_56b_pretrain_config,
+            nemotron_nano_9b_v2_pretrain_config,
+            nemotron_nano_12b_v2_pretrain_config,
         ],
     )
     def test_with_train_valid_test_paths(self, recipe_fn):
@@ -360,10 +271,8 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn",
         [
-            nemotronh_4b_pretrain_config,
-            nemotronh_8b_pretrain_config,
-            nemotronh_47b_pretrain_config,
-            nemotronh_56b_pretrain_config,
+            nemotron_nano_9b_v2_pretrain_config,
+            nemotron_nano_12b_v2_pretrain_config,
         ],
     )
     @patch("megatron.bridge.recipes.utils.dataset_utils.get_blend_and_blend_per_split")

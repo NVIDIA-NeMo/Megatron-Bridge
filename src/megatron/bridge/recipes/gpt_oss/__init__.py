@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+from .gpt_oss import (
+    gpt_oss_20b_pretrain_config,
+    gpt_oss_120b_pretrain_config,
+)
 
-CUDA_VISIBLE_DEVICES="0,1" coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
-    --timeout=0.75 \
-    -o log_cli=true \
-    -o log_cli_level=INFO \
-    --disable-warnings \
-    -vs tests/unit_tests -m "not pleasefixme"
+
+__all__ = [
+    "gpt_oss_20b_pretrain_config",
+    "gpt_oss_120b_pretrain_config",
+]
