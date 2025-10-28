@@ -43,12 +43,10 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 )
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
-from megatron.core.optimizer import MegatronOptimizer
+from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
-from megatron.core.optimizer import DistributedOptimizer
-from megatron.core.utils import is_torch_min_version, get_torch_version
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import unwrap_model
+from megatron.core.utils import get_torch_version, is_torch_min_version, unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
@@ -2108,32 +2106,33 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     """
     metadata = {}
     if use_distributed_optimizer and cfg.ckpt_format == "fsdp_dtensor":
-        metadata['distrib_optim_sharding_type'] = 'fsdp_dtensor'
+        metadata["distrib_optim_sharding_type"] = "fsdp_dtensor"
 
     # Force pre-mcore 0.14 behavior for PyTorch versions below 2.6a0
     force_pre_mcore_014 = not is_torch_min_version("2.6a0")
     if force_pre_mcore_014 and not cfg.dist_ckpt_save_pre_mcore_014:
-        logger.warning(f"PyTorch version {get_torch_version()} below 2.6 detected."
-                       f" Forcing dist_ckpt_save_pre_mcore_014 behavior.")
+        logger.warning(
+            f"PyTorch version {get_torch_version()} below 2.6 detected. Forcing dist_ckpt_save_pre_mcore_014 behavior."
+        )
 
     if cfg.dist_ckpt_save_pre_mcore_014 or force_pre_mcore_014:
-        metadata['singleton_local_shards'] = False
+        metadata["singleton_local_shards"] = False
         if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
             if cfg.ckpt_fully_parallel_save:
-                metadata['distrib_optim_sharding_type'] = 'fully_sharded_model_space'
+                metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
             else:
-                metadata['distrib_optim_sharding_type'] = 'dp_zero_gather_scatter'
+                metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
     else:
-        metadata['singleton_local_shards'] = True
+        metadata["singleton_local_shards"] = True
         if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
             if cfg.dist_ckpt_optim_fully_reshardable:
-                metadata['distrib_optim_sharding_type'] = 'fully_reshardable'
-                metadata['distrib_optim_fully_reshardable_mem_efficient'] = cfg.distrib_optim_fully_reshardable_mem_efficient
+                metadata["distrib_optim_sharding_type"] = "fully_reshardable"
+                metadata["distrib_optim_fully_reshardable_mem_efficient"] = cfg.distrib_optim_fully_reshardable_mem_efficient
             else:
-                metadata['distrib_optim_sharding_type'] = 'dp_reshardable'
+                metadata["distrib_optim_sharding_type"] = "dp_reshardable"
 
-    metadata['singleton_local_shards'] = False
-    metadata['chained_optim_avoid_prefix'] = True
+    metadata["singleton_local_shards"] = False
+    metadata["chained_optim_avoid_prefix"] = True
     return metadata
 
 

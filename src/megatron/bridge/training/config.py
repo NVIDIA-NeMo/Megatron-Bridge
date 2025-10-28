@@ -683,7 +683,7 @@ class CheckpointConfig:
 
     dist_ckpt_save_pre_mcore_014: bool = False
     """Revert checkpointing simplifications introduced in Megatron-Core v0.14.
-    This option affects only checkpoint saving format and will be removed soon 
+    This option affects only checkpoint saving format and will be removed soon
     (checkpoint load format is determined based on checkpoint metadata)."""
 
     dist_ckpt_optim_fully_reshardable: bool = False
@@ -728,8 +728,9 @@ class CheckpointConfig:
                 )
 
         if self.dist_ckpt_optim_fully_reshardable:
-            assert not self.distrib_optim_fully_reshardable_mem_efficient, \
+            assert not self.distrib_optim_fully_reshardable_mem_efficient, (
                 "distrib_optim_fully_reshardable_mem_efficient requires use_gloo_process_groups"
+            )
 
 
 @dataclass(kw_only=True)
