@@ -70,6 +70,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 *.tmp
+scripts/moe_model_zoo/data_cache/
 
 # Translations
 *.mo
