@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from typing import Any, Optional
+from typing import Any
 
 from megatron.core.transformer import MegatronModule
 
