@@ -1290,7 +1290,7 @@ class ConfigContainer(Container):
                 data_seq_length = (
                     self.dataset.seq_length
                     if isinstance(self.dataset, FinetuningDatasetConfig)
-                    else self.dataset.sequence_length
+                    else self.dataset.seq_length
                 )
 
                 assert self.model.seq_length == data_seq_length, (

@@ -153,7 +153,7 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
 
     recipe.train.micro_batch_size = perf_overrides.get("mbs", recipe.train.micro_batch_size)
     recipe.train.global_batch_size = perf_overrides.get("gbs", recipe.train.global_batch_size)
-    recipe.dataset.sequence_length = perf_overrides.get("seq_length", recipe.dataset.sequence_length)
+    recipe.dataset.seq_length = perf_overrides.get("seq_length", recipe.dataset.seq_length)
 
     recipe.model.tensor_model_parallel_size = perf_overrides.get("tp", 1)
     recipe.model.pipeline_model_parallel_size = perf_overrides.get("pp", 1)
