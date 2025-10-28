@@ -36,14 +36,16 @@ from configs.deepseek.deepseek_v3_llm_pretrain import (
     deepseek_v3_b200_bf16_config,
     deepseek_v3_b200_fp8_config,
 )
-from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
-from megatron.bridge.recipes.llama import (
-    llama3_70b_pretrain_config,
-    llama31_405b_pretrain_config,
-)
 from megatron.bridge.recipes.qwen import (
-    qwen3_30b_a3b_pretrain_config,
     qwen3_235b_a22b_pretrain_config,
+)
+from configs.qwen3.qwen3_30b_a3b_llm_pretrain import (
+    qwen3_30b_a3b_h100_bf16_config,
+    qwen3_30b_a3b_h100_fp8_config,
+    qwen3_30b_a3b_b200_bf16_config,
+    qwen3_30b_a3b_b200_fp8_config,
+    qwen3_30b_a3b_gb200_bf16_config,
+    qwen3_30b_a3b_gb200_fp8_config,
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
@@ -85,12 +87,8 @@ def main():
             a2a_1f1b=A2A_1F1B,
         )
     elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
-        recipe = qwen3_30b_a3b_pretrain_config(
-            mock=True,
-            precision_config=precision_config,
-            comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
-        )
-        recipe.model = apply_moe_token_drop(recipe.model)
+        cfg_str = f"qwen3_30b_a3b_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
+        recipe = globals()[cfg_str](fp8_recipe=args.fp8_recipe)
     elif args.model_name == "qwen3" and args.model_size == "235b_a22b":
         recipe = qwen3_235b_a22b_pretrain_config(
             mock=True,
@@ -119,6 +117,8 @@ def main():
     if args.model_name == "deepseek" and args.model_size == "v3":
         skip_config_file = True
     elif args.model_name in ["llama3", "llama31"]:
+        skip_config_file = True
+    elif args.model_name == "qwen3" and args.model_size == "30b_a3b":
         skip_config_file = True
     if args.config_file and not skip_config_file:
         logger.debug(f"Loading YAML overrides from: {args.config_file}")

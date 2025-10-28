@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
     target_script_args = [
         "--config_file",
-        "",
+        "dummy",
     ]
     # Forward relevant args that run_script.py needs
     args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
