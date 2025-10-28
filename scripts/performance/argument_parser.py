@@ -21,7 +21,6 @@ from nemo_run.config import get_nemorun_home
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
-DEFAULT_HF_HOME = Path(DEFAULT_NEMO_HOME) / "hf_home"
 
 
 def parse_cli_args():
@@ -124,11 +123,6 @@ def parse_cli_args():
         "for models and checkpoints. This saves a lot of time (especially for bigger models) if checkpoints already",
         f"exist here. Missing files will be downloaded here from HuggingFace. Defaults to {DEFAULT_NEMO_HOME}",
     ]
-    hf_home_msg = [
-        "Sets env var `HF_HOME` (on compute node using sbatch script)- directory where HuggingFace searches",
-        "for tokenizers and checkpoints. This saves a lot of time (especially for bigger models) if checkpoints already",
-        f"exist here. Missing files will be downloaded here from HuggingFace. Defaults to {DEFAULT_NEMO_HOME}/hf_home",
-    ]
     parser.add_argument(
         "-nh",
         "--nemo_home",
@@ -177,13 +171,6 @@ def parse_cli_args():
 
     def list_of_strings(arg):
         return arg.split(",")
-
-    parser.add_argument(
-        "--hf_home",
-        type=str,
-        help=" ".join(hf_home_msg),
-        default=hf_home_msg,
-    )
 
     parser.add_argument(
         "-cm",
