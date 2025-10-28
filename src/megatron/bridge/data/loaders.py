@@ -256,17 +256,14 @@ def build_train_valid_test_data_loaders(
             global_batch_size=cfg.train.global_batch_size,
         )
 
-    # Flags to know if we need to do training/validation/testing.
-    do_train = train_dataloader is not None and cfg.train.train_iters > 0
-    do_valid = valid_dataloader is not None and cfg.train.eval_iters > 0
-    do_test = test_dataloader is not None and cfg.train.eval_iters > 0
-    flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
-
-    torch.distributed.broadcast(flags, 0)
-
-    train_state.do_train = flags[0].item()
-    train_state.do_valid = flags[1].item()
-    train_state.do_test = flags[2].item()
+    # Set flags consistently using shared helper
+    set_flags_from_dataloaders(
+        cfg=cfg,
+        train_state=train_state,
+        train_dataloader=train_dataloader,
+        valid_dataloader=valid_dataloader,
+        test_dataloader=test_dataloader,
+    )
 
     return train_dataloader, valid_dataloader, test_dataloader
 
@@ -295,20 +292,43 @@ def build_train_valid_test_data_iterators(
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
     )
 
-    # Build iterators.
+    # Build iterators using shared helper
+    return dataloaders_to_iterators(
+        cfg=cfg,
+        model_length=1,
+        train_dataloader=train_dataloader,
+        valid_dataloader=valid_dataloader,
+        test_dataloader=test_dataloader,
+    )
+
+
+def dataloaders_to_iterators(
+    cfg: ConfigContainer,
+    model_length: int,
+    train_dataloader: Optional[DataLoader],
+    valid_dataloader: Optional[DataLoader],
+    test_dataloader: Optional[DataLoader],
+):
+    """Convert dataloaders to iterators, mirroring legacy semantics.
+
+    - "single": single pass iterator
+    - "cyclic"/"batch": infinite cyclic iterator
+    - "external": pass-through (list supported)
+    - validation is always wrapped as cyclic when present
+    - supports virtual pipeline parallel size by replicating iterators per model chunk
+    """
+
     dl_type = cfg.dataset.dataloader_type
     assert dl_type in ["single", "cyclic", "batch", "external"]
 
     def _get_iterator(dataloader_type, dataloader):
-        """Return dataset iterator."""
+        if dataloader is None:
+            return None
         if dataloader_type == "single":
-            # Single-pass iteration (no cycling)
             return RerunDataIterator(iter(dataloader))
         elif dataloader_type in ("cyclic", "batch"):
-            # Cycle for finetuning: allows train_iters > dataset size without raising StopIteration
             return RerunDataIterator(iter(cyclic_iter(dataloader)))
         elif dataloader_type == "external":
-            # External dataloader is passed through. User is expected to define how to iterate.
             if isinstance(dataloader, list):
                 return [RerunDataIterator(d) for d in dataloader]
             else:
@@ -316,22 +336,38 @@ def build_train_valid_test_data_iterators(
         else:
             raise RuntimeError("unexpected dataloader type")
 
-    if train_dataloader is not None:
-        train_data_iterator = _get_iterator(dl_type, train_dataloader)
+    if cfg.model.virtual_pipeline_model_parallel_size is not None:
+        train_iterators = []
+        valid_iterators = []
+        test_iterators = []
+        for _ in range(model_length):
+            train_iterators.append(_get_iterator(dl_type, train_dataloader))
+            valid_iterators.append(_get_iterator("cyclic", valid_dataloader) if valid_dataloader is not None else None)
+            test_iterators.append(_get_iterator(dl_type, test_dataloader))
     else:
-        train_data_iterator = None
+        train_iterators = _get_iterator(dl_type, train_dataloader)
+        valid_iterators = _get_iterator("cyclic", valid_dataloader) if valid_dataloader is not None else None
+        test_iterators = _get_iterator(dl_type, test_dataloader)
 
-    if valid_dataloader is not None:
-        valid_data_iterator = _get_iterator("cyclic", valid_dataloader)
-    else:
-        valid_data_iterator = None
+    return train_iterators, valid_iterators, test_iterators
 
-    if test_dataloader is not None:
-        test_data_iterator = _get_iterator(dl_type, test_dataloader)
-    else:
-        test_data_iterator = None
 
-    return train_data_iterator, valid_data_iterator, test_data_iterator
+def set_flags_from_dataloaders(
+    cfg: ConfigContainer,
+    train_state: TrainState,
+    train_dataloader: Optional[DataLoader],
+    valid_dataloader: Optional[DataLoader],
+    test_dataloader: Optional[DataLoader],
+) -> None:
+    """Set train/valid/test flags based on dataloader availability, broadcasting across ranks."""
+    do_train = train_dataloader is not None and cfg.train.train_iters > 0
+    do_valid = valid_dataloader is not None and cfg.train.eval_iters > 0
+    do_test = test_dataloader is not None and cfg.train.eval_iters > 0
+    flags = torch.tensor([int(do_train), int(do_valid), int(do_test)], dtype=torch.long, device="cuda")
+    torch.distributed.broadcast(flags, 0)
+    train_state.do_train = flags[0].item()
+    train_state.do_valid = flags[1].item()
+    train_state.do_test = flags[2].item()
 
 
 def setup_data_iterators(

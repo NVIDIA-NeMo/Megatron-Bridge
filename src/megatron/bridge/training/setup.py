@@ -27,7 +27,12 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
-from megatron.bridge.data.loaders import setup_data_iterators
+from megatron.bridge.data.loaders import (
+    setup_data_iterators,
+    get_train_valid_test_num_samples,
+    dataloaders_to_iterators,
+    set_flags_from_dataloaders,
+)
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import (
@@ -36,7 +41,7 @@ from megatron.bridge.training.checkpointing import (
     init_checkpointing_context,
     load_checkpoint,
 )
-from megatron.bridge.training.config import ConfigContainer, runtime_config_update
+from megatron.bridge.training.config import ConfigContainer, runtime_config_update, DatasetProvider, DatasetBuildContext
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
@@ -224,12 +229,48 @@ def setup(
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
 
-    train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
-        cfg=cfg,
-        train_state=state.train_state,
-        model_length=len(model),
-        train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+    # Prefer provider-supplied dataloaders when available; otherwise fallback to legacy path
+    provider_obj = cfg.dataset
+    use_provider_dls = (
+        isinstance(provider_obj, DatasetProvider)
+        and hasattr(provider_obj, "provide_dataloaders")
+        and callable(getattr(provider_obj, "provide_dataloaders"))
     )
+
+    if use_provider_dls:
+        # Build context and get dataloaders from the provider
+        t_samples, v_samples, te_samples = get_train_valid_test_num_samples(cfg)
+        context = DatasetBuildContext(
+            train_samples=t_samples,
+            valid_samples=v_samples,
+            test_samples=te_samples,
+            tokenizer=tokenizer,
+        )
+        train_dl, valid_dl, test_dl = provider_obj.provide_dataloaders(context=context, cfg=cfg, train_state=state.train_state)  # type: ignore[arg-type]
+
+        # Convert dataloaders to iterators and set flags using shared helpers
+        train_data_iterator, valid_data_iterator, test_data_iterator = dataloaders_to_iterators(
+            cfg=cfg,
+            model_length=len(model),
+            train_dataloader=train_dl,
+            valid_dataloader=valid_dl,
+            test_dataloader=test_dl,
+        )
+        set_flags_from_dataloaders(
+            cfg=cfg,
+            train_state=state.train_state,
+            train_dataloader=train_dl,
+            valid_dataloader=valid_dl,
+            test_dataloader=test_dl,
+        )
+    else:
+        train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
+            cfg=cfg,
+            train_state=state.train_state,
+            model_length=len(model),
+            train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        )
+
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
 
