@@ -60,10 +60,8 @@ def main():
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
 
     if args.model_name == "llama3" and args.model_size == "8b":
-        recipe = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
-        if args.gpu.lower() == "h100":
-            cfg_str = f"llama3_8b_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
-            recipe = globals()[cfg_str](args.fp8_recipe)
+        cfg_str = f"llama3_8b_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
+        recipe = globals()[cfg_str](fp8_recipe=args.fp8_recipe)
     elif args.model_name == "llama3" and args.model_size == "70b":
         recipe = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "llama31" and args.model_size == "405b":
