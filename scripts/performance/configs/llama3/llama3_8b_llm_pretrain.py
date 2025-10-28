@@ -1,6 +1,6 @@
 import logging
 
-from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
 try:

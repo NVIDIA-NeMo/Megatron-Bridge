@@ -68,6 +68,9 @@ def deepseek_v3_gb200_bf16_config(
     else:
         cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
+    cfg.dataset.num_workers = 0
+    cfg.dataset.pin_memory = False
+
     return cfg
 
 
@@ -126,6 +129,9 @@ def deepseek_v3_gb200_fp8_config(
         cfg.model.recompute_modules = ["mla_up_proj"]
     else:
         cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+
+    cfg.dataset.num_workers = 0
+    cfg.dataset.pin_memory = False
 
     return cfg
 

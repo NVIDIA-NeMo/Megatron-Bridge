@@ -65,13 +65,9 @@ def main():
 
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
 
-    if args.model_name == "llama3" and args.model_size == "8b":
-        cfg_str = f"llama3_8b_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
+    if args.model_name in ["llama3", "llama31"]:
+        cfg_str = f"{args.model_name}_{args.model_size}_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
         recipe = globals()[cfg_str](fp8_recipe=args.fp8_recipe)
-    elif args.model_name == "llama3" and args.model_size == "70b":
-        recipe = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
-    elif args.model_name == "llama31" and args.model_size == "405b":
-        recipe = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
     elif args.model_name == "deepseek" and args.model_size == "v3":
         enable_deepep = bool(args.gpu.lower() in ["h100"])
         use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
@@ -122,7 +118,7 @@ def main():
     # Use dataclass configs instead of YAML overrides for deepseek v3 on H100, GB200 and B200, and llama3 8b on H100
     if args.model_name == "deepseek" and args.model_size == "v3":
         skip_config_file = True
-    elif args.model_name == "llama3" and args.model_size == "8b" and args.gpu.lower() == "h100":
+    elif args.model_name in ["llama3", "llama31"]:
         skip_config_file = True
     if args.config_file and not skip_config_file:
         logger.debug(f"Loading YAML overrides from: {args.config_file}")
@@ -158,19 +154,7 @@ def main():
             logger.warning("Disabling model.use_transformer_engine_op_fuser as it cannot work with MXFP8 or FSDP.")
             recipe.model.use_transformer_engine_op_fuser = False
 
-    if recipe.ddp.use_megatron_fsdp:
-        if args.model_name in ["llama3", "llama31"]:
-            if args.model_size in ["70b", "405b"]:
-                recipe.ddp.fsdp_double_buffer = True
-            if args.model_size in ["70b"]:
-                recipe.model.gradient_accumulation_fusion = False
-        if args.model_name in ["llama3"] and args.model_size in ["70b"]:
-            recipe.ddp.suggested_communication_unit_size = 800000000
     recipe.model.apply_rope_fusion = True
-
-    if args.model_name == "deepseek" and args.model_size == "v3" and args.gpu.lower() in ["gb200"]:
-        recipe.dataset.num_workers = 0
-        recipe.dataset.pin_memory = False
 
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size
