@@ -62,32 +62,10 @@ if __name__ == "__main__":
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
-    config_filename = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}.yaml"
-    config_filepath = SCRIPT_DIR / "configs" / f"{args.model_name}" / config_filename
-    logger.info(f"Config file path: {config_filepath}")
-    if not config_filepath.is_file():
-        logger.error(f"Specified YAML config file not found: {config_filepath}")
-        logger.error("Ensure the path passed to --config_file is correct.")
-        sys.exit(1)
 
     num_gpus_per_node = args.gpus_per_node
-    yaml_overrides_omega = OmegaConf.load(config_filepath)
-    preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
-    if not preset:
-        num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
-        logger.debug(f"No preset found for {args.gpu}.{num_gpus_yaml_key} in perf_matrix")
-
-    common = preset.get("common") or {}
     compute_dtype, fp8_recipe = args.compute_dtype.lower(), args.fp8_recipe.lower()
     compute_dtype = compute_dtype if compute_dtype == "bf16" else f"{compute_dtype}_{fp8_recipe}"
-    dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
-    # Deep-merge so dtype-specific values override common
-    merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
-    perf_overrides = OmegaConf.to_container(merged_perf, resolve=True)  #
-
-    tp = perf_overrides.get("tp", 1)
-    cp = perf_overrides.get("cp", 1)
-    pp = perf_overrides.get("pp", 1)
 
     enable_deepep, a2a_overlap = False, False
     if args.gpu.lower() in ["h100"]:
@@ -102,9 +80,6 @@ if __name__ == "__main__":
                 nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
                 gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
                 layernorm_sm_margin=20 if enable_deepep else 16,
-                tp_size=tp,
-                cp_size=cp,
-                pp_size=pp,
                 num_gpus=args.num_gpus,
                 deepep_enabled=enable_deepep,
                 a2a_overlap=a2a_overlap,
@@ -117,7 +92,6 @@ if __name__ == "__main__":
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
     custom_mounts = args.custom_mounts + [
-        f"{config_filepath}:{config_filepath}",
         f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
         f"{SCRIPT_DIR}:{SCRIPT_DIR}",
     ]
@@ -168,7 +142,7 @@ if __name__ == "__main__":
 
     target_script_args = [
         "--config_file",
-        str(config_filepath),
+        "",
     ]
     # Forward relevant args that run_script.py needs
     args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
