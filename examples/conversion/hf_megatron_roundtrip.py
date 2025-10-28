@@ -42,7 +42,7 @@ console = Console()
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
 
-def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
+def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_code: bool = False) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models."""
     model_name = hf_model_id.split("/")[-1]
     if output_dir:
@@ -50,7 +50,7 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
     else:
         save_path = model_name
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
     megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
     console.print(weights_verification_table(bridge, megatron_model))
 
@@ -67,9 +67,10 @@ if __name__ == "__main__":
         default=None,
         help="The directory where the converted model directory will be created. Defaults to the current working directory.",
     )
+    parser.add_argument("--trust-remote-code", action="store_true", help="Trust remote code")
 
     args = parser.parse_args()
-    main(args.hf_model_id, args.output_dir)
+    main(args.hf_model_id, args.output_dir, args.trust_remote_code)
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()

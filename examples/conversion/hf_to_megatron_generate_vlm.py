@@ -39,16 +39,6 @@ from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
-
-# === NEW IMPORTS FOR MEGATRON PREPROCESSING ===
-try:
-    from megatron.training.tokenizer.multimodal_tokenizer import MultimodalTokenizer
-    from examples.multimodal.image_processing import ImageTransform, find_closest_area_weighted_aspect_ratio, process_images
-except Exception:
-    # Megatron might not be available in lightweight envs – fail gracefully when the user
-    # chooses the default HF preprocessing path.
-    MultimodalTokenizer = None  # type: ignore
-
 from megatron.bridge import AutoBridge
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
@@ -141,7 +131,7 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_image_inputs(processor, image_path: Optional[str], prompt: str):
+def process_image_inputs(processor, image_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):
     """Process image inputs for vision-language model.
 
     Args:
@@ -168,14 +158,12 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         # Create messages with image and text
         messages = [
             {
-                "role": "system",
-                "content": "/no_think",
-            },
-            {
                 "role": "user",
                 "content": content,
             }
         ]
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt})
 
         # Process vision info
         image_inputs, video_inputs = process_vision_info(messages)
@@ -201,7 +189,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
         inputs = processor(text=[prompt], return_tensors="pt")
         return inputs.input_ids, None, None, None
 
-def process_video_inputs(processor, video_path: Optional[str], prompt: str):
+def process_video_inputs(processor, video_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):
     """Process video inputs for vision-language model.
     """
     from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import maybe_path_or_url_to_data_urls, pil_image_from_base64
@@ -223,10 +211,6 @@ def process_video_inputs(processor, video_path: Optional[str], prompt: str):
 
     messages = [
         {
-            "role": "system",
-            "content": "/no_think"
-        },
-        {
             "role": "user",
             "content": [
                 {
@@ -240,6 +224,8 @@ def process_video_inputs(processor, video_path: Optional[str], prompt: str):
             ],
         }
     ]
+    if system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
     prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     # Process with FPS metadata
@@ -257,87 +243,6 @@ def process_video_inputs(processor, video_path: Optional[str], prompt: str):
             return_tensors="pt",
         )
     return inputs.input_ids, inputs.pixel_values_videos, None, inputs.num_patches
-
-def process_inputs_megatron(image_path: Optional[str], prompt: str, hf_model_path: str):
-    """Pre-process using Megatron Energon TaskEncoder utilities.
-
-    Returns (input_ids, images, image_grid_thw, messages) matching the format
-    expected by `vlm_forward_step`.
-    """
-    if MultimodalTokenizer is None:
-        raise RuntimeError("Megatron libraries not available – cannot use preprocess_mode='megatron'.")
-
-    # Build an underlying HuggingFace tokenizer first, then wrap with MultimodalTokenizer.
-    base_tokenizer = AutoTokenizer.from_pretrained(hf_model_path, trust_remote_code=True)
-    if base_tokenizer.pad_token is None:
-        base_tokenizer.pad_token = base_tokenizer.eos_token
-
-    tokenizer = MultimodalTokenizer(
-        tokenizer=base_tokenizer,
-        prompt_format="nemotron-h-5p5-reasoning",  # adjust if needed
-        special_tokens=[],  # special tokens are already added
-        image_tag_type="internvl",
-        force_system_message=False,
-    )
-
-    # Basic system prompt – keep simple.
-    system_prompt = "/no_think"
-
-    messages = []
-    if image_path:
-        messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": "<image>" + prompt})
-    else:
-        messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-    # Tokenize conversation (wrapper expects list[dict])
-    input_ids = tokenizer.tokenize_conversation(messages, return_target=False, add_generation_prompt=True)
-    input_ids = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0)
-    images = None
-    if image_path:
-        pil_img = load_image(image_path).convert("RGB")
-        # Image preprocessing aligned with Megatron training (encode_llava_pretrain)
-        img_h = 512  # default tile size used during training; adjust via CLI if necessary
-        img_w = 512
-        vision_model_type = "radio"  # change if your model uses a different vision backbone
-        patch_dim = 16
-        transform_img = ImageTransform(
-            img_h,
-            vision_model_type,
-            dynamic_resolution=False,
-            res_step=patch_dim,
-            max_num_patches=img_h * img_w // (patch_dim * patch_dim),
-            pixel_shuffle=True,
-        )
-
-        img_tensors = transform_img(
-            pil_img,
-            img_h,
-            img_w,
-            use_tiling=True,
-            max_num_tiles=12,
-            use_thumbnail=True,
-            augment=False,
-            find_closest_aspect_ratio_fn=find_closest_area_weighted_aspect_ratio,
-        )
-
-        images, _, _, _ = process_images(img_tensors, patch_dim=patch_dim, dynamic_resolution=False, batch_mode=False)
-        images = images.bfloat16()  # [num_tiles, C, H, W]
-
-        # ------------------------------------------------------------------
-        # Ensure the text stream contains one <image> token per tile.
-        # Megatron's training pipeline can optionally work with a single token
-        # and expand it internally, but some checkpoints expect the count to
-        # match exactly.  We replicate the IMAGE token here if needed.
-        # ------------------------------------------------------------------
-        num_tiles = images.shape[0]
-        img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
-        img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
-        input_ids = adjust_image_tokens(input_ids, num_tiles, img_start_token_id, img_end_token_id)
-
-    return input_ids, images, messages, tokenizer._tokenizer
-
 
 def main(args) -> None:
     """Main function for vision-language generation from HuggingFace VL models.
@@ -405,34 +310,28 @@ def main(args) -> None:
         m.eval()
 
     # Initialize tokenizer and processor
-    if args.preprocess_mode == "megatron":
-        input_ids, images, _, tokenizer = process_inputs_megatron(args.image_path, args.prompt, args.hf_model_path)
-        pixel_values = None
-        image_grid_thw = None
+    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
+    img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if args.video_path:
+        input_ids, pixel_values, image_grid_thw, num_patches = process_video_inputs(processor, args.video_path, args.prompt, args.system_prompt)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
-        processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
-        img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
-        img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
+        input_ids, pixel_values, image_grid_thw, num_patches = process_image_inputs(processor, args.image_path, args.prompt, args.system_prompt)
 
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+    images = None
+    if args.use_llava_model:
+        images = pixel_values.bfloat16()
+        input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id,
+                                         img_end_token_id)
         if args.video_path:
-            input_ids, pixel_values, image_grid_thw, num_patches = process_video_inputs(processor, args.video_path, args.prompt)
-        else:
-            input_ids, pixel_values, image_grid_thw, num_patches = process_image_inputs(processor, args.image_path, args.prompt)
-
-        images = None
-        if args.use_llava_model:
-            images = pixel_values.bfloat16()
-            input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id,
-                                             img_end_token_id)
-            if args.video_path:
-                video_token_id = tokenizer.convert_tokens_to_ids("<video>")
-                image_token_id = tokenizer.convert_tokens_to_ids("<image>")
-                input_ids = torch.where(input_ids == video_token_id, image_token_id, input_ids)
-            pixel_values = None
-
+            video_token_id = tokenizer.convert_tokens_to_ids("<video>")
+            image_token_id = tokenizer.convert_tokens_to_ids("<image>")
+            input_ids = torch.where(input_ids == video_token_id, image_token_id, input_ids)
+        pixel_values = None
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -545,6 +444,12 @@ if __name__ == "__main__":
         help="Input prompt for vision-language generation.",
     )
     parser.add_argument(
+        "--system_prompt",
+        type=str,
+        default=None,
+        help="System prompt for vision-language generation.",
+    )
+    parser.add_argument(
         "--max_new_tokens",
         type=int,
         default=20,
@@ -569,14 +474,6 @@ if __name__ == "__main__":
         help="Path or URL to the video for vision-language generation (optional).",
     )
     parser.add_argument(
-        "--preprocess_mode",
-        type=str,
-        choices=["hf", "megatron"],
-        default="hf",
-        help="Choose preprocessing pipeline: 'hf' (default) uses HuggingFace AutoProcessor/Tokenizer, 'megatron' uses "
-        "MultimodalTokenizer and image utilities from Megatron Energon TaskEncoder.",
-    )
-    parser.add_argument(
         "--use_llava_model",
         action="store_true",
         default=False,
@@ -584,6 +481,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.use_llava_model:
+        args.system_prompt = "/no_think"  # Nemotron Nano V2 VL model requires this system prompt
     main(args)
 
     if torch.distributed.is_initialized():

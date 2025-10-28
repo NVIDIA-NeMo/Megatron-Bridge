@@ -779,11 +779,6 @@ class SafeTensorsStateSource(StateSource):
                 for filename in list(files_to_save.keys()):
                     keys_for_file = files_to_save[filename]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
-                    # missing_keys = set(keys_for_file) - tensors_to_save.keys()
-                    # if missing_keys:
-                    #     print(f"  - {filename}: missing {len(missing_keys)} tensors:")
-                    #     for key in sorted(list(missing_keys)):
-                    #         print(f"    - {key}")
                     output_file_path = output_path / filename
                     save_file(tensors_to_save, output_file_path)
                     

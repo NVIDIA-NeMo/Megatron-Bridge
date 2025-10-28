@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy
-import torch
 from PIL import Image
 
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset

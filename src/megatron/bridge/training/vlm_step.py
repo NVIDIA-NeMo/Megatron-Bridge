@@ -26,14 +26,12 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.loss_utils import create_loss_function as _create_loss_function
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
     pad_or_truncate_pos_to_len,
 )
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
 
 logger = logging.getLogger(__name__)

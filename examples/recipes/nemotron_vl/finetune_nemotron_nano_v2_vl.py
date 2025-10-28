@@ -15,12 +15,6 @@
 
 """
 Finetune Nemotron Nano V2 VL with YAML and CLI Configuration Overrides.
-
-This script mirrors the `pretrain_nemotron_nano_v2_vl.py` flow but invokes the
-`finetune` entry-point instead of `pretrain`. All CLI flags that apply to the
-pre-training script remain the same; an additional `--pretrained-checkpoint`
-flag specifies the Megatron-Bridge checkpoint (or HuggingFace model) to start
-from.
 """
 
 from __future__ import annotations
