@@ -3,7 +3,10 @@ import logging
 from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
-from scripts.performance.utils.helpers import get_precision_config, set_megatron_fsdp_overrides, set_basic_perf_overrides, set_cuda_graph_overrides
+try:
+    from scripts.performance.utils.helpers import get_precision_config, set_megatron_fsdp_overrides, set_basic_perf_overrides, set_cuda_graph_overrides
+except (ImportError, ModuleNotFoundError):
+    from .utils.helpers import get_precision_config, set_megatron_fsdp_overrides, set_basic_perf_overrides, set_cuda_graph_overrides
 
 logger = logging.getLogger(__name__)
 

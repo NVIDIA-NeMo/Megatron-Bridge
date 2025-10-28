@@ -20,7 +20,14 @@ import torch
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
 from utils.helpers import COMM_OVERLAP_CONFIG_MAP, apply_perf_matrix_overrides, get_precision_config
-from configs.llama3.llama3_8b_llm_pretrain import llama3_8b_h100_bf16_config, llama3_8b_h100_fp8_config
+from configs.llama3.llama3_8b_llm_pretrain import (
+    llama3_8b_h100_bf16_config, 
+    llama3_8b_h100_fp8_config,
+    llama3_8b_b200_bf16_config,
+    llama3_8b_b200_fp8_config,
+    llama3_8b_gb200_bf16_config,
+    llama3_8b_gb200_fp8_config,
+)
 from configs.deepseek.deepseek_v3_llm_pretrain import (
     deepseek_v3_gb200_bf16_config, 
     deepseek_v3_gb200_fp8_config, 
@@ -31,7 +38,6 @@ from configs.deepseek.deepseek_v3_llm_pretrain import (
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config as deepseek_v3_pretrain_config
 from megatron.bridge.recipes.llama import (
-    llama3_8b_pretrain_config,
     llama3_70b_pretrain_config,
     llama31_405b_pretrain_config,
 )
