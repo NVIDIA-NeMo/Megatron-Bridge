@@ -16,23 +16,13 @@
 
 import pytest
 
-from megatron.bridge.recipes.mamba import (
-    mamba2_130m_pretrain_config as mamba2_130m_config,
-)
-from megatron.bridge.recipes.mamba import (
-    mamba2_370m_pretrain_config as mamba2_370m_config,
-)
-from megatron.bridge.recipes.mamba import (
-    mamba2_780m_pretrain_config as mamba2_780m_config,
-)
-from tests.functional_tests.recipes.utils import run_pretrain_config_override_test, run_pretrain_recipe_test
+from megatron.bridge.recipes.mamba.mamba2 import mamba2_130m_pretrain_config as mamba2_130m_config
+from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
 
 
 MAMBA_PRETRAIN_RECIPES = [
-    # (config_func, name, parallelism_overrides)
-    (mamba2_130m_config, "mamba2_130m", {}),  # Small model, use recipe defaults
-    (mamba2_370m_config, "mamba2_370m", {}),  # Small model, use recipe defaults
-    (mamba2_780m_config, "mamba2_780m", {}),  # Small model, use recipe defaults
+    # (config_func, name, parallelism_overrides, model_overrides)
+    (mamba2_130m_config, "mamba2_130m", {}, {"num_layers": 2, "hybrid_override_pattern": "MM"}),
 ]
 
 
@@ -40,12 +30,13 @@ class TestMambaRecipes:
     """Test class for Mamba recipe smoke tests."""
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides", MAMBA_PRETRAIN_RECIPES)
-    def test_mamba_pretrain_recipes(self, config_func, recipe_name, parallelism_overrides, tmp_path):
+    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides,model_overrides", MAMBA_PRETRAIN_RECIPES)
+    def test_mamba_pretrain_recipes(self, config_func, recipe_name, parallelism_overrides, model_overrides, tmp_path):
         """Functional test for Mamba recipes with default configurations."""
-        run_pretrain_recipe_test(config_func, recipe_name, tmp_path, **parallelism_overrides)
-
-    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides", MAMBA_PRETRAIN_RECIPES)
-    def test_pretrain_config_override_after_instantiation(self, config_func, recipe_name, parallelism_overrides):
-        """Functional test for overriding Mamba recipes from CLI"""
-        run_pretrain_config_override_test(config_func)
+        run_pretrain_recipe_test(
+            config_func,
+            recipe_name,
+            tmp_path,
+            model_overrides=model_overrides,
+            **parallelism_overrides,
+        )

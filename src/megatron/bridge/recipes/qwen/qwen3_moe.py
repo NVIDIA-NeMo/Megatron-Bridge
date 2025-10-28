@@ -225,8 +225,6 @@ def _qwen3_moe_common(
 
     if precision_config is None:
         precision_config = bf16_mixed()
-    if isinstance(precision_config, MixedPrecisionConfig):
-        precision_config.grad_reduce_in_fp32 = False
 
     # MoE-specific pipeline split configurations
     if account_for_embedding_in_pipeline_split:
