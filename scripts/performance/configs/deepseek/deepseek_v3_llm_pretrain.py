@@ -4,7 +4,10 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_co
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
-from scripts.performance.utils.helpers import (get_precision_config, moe_a2a_1f1b_overrides, set_basic_perf_overrides)
+try:
+    from utils.helpers import get_precision_config, moe_a2a_1f1b_overrides, set_basic_perf_overrides
+except (ImportError, ModuleNotFoundError):
+    from ..utils.helpers import get_precision_config, moe_a2a_1f1b_overrides, set_basic_perf_overrides
 
 logger = logging.getLogger(__name__)
 
