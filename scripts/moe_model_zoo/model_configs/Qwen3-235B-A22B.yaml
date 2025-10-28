@@ -2,135 +2,133 @@ ENV_VARS:
   NVTE_ALLOW_NONDETERMINISTIC_ALGO: 1
   PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
   NCCL_NVLS_ENABLE: 0
-  NVTE_FUSED_ATTN: 1
+  NVTE_FLASH_ATTN: 1
   NVTE_NORM_FWD_USE_CUDNN: 1
   NVTE_NORM_BWD_USE_CUDNN: 1
   NCCL_DEBUG: VERSION
 
 
-ConfigContainer:
-  model:
-    # ModelParallelConfig
-    attention_backend: AttnBackend.flash_attn
-    add_bias_linear: false
-    share_embeddings_and_output_weights: false
-    seq_len_interpolation_factor: 1
-    gated_linear_unit: true
-    num_query_groups: 0
-    tensor_model_parallel_size: ${TP}
-    pipeline_model_parallel_size: ${PP}
-    expert_model_parallel_size: ${EP}
-    context_parallel_size: ${CP}
-    virtual_pipeline_model_parallel_size: ${VPP}
-    expert_tensor_parallel_size: 1
-    account_for_embedding_in_pipeline_split: true
-    account_for_loss_in_pipeline_split: true
-    cross_entropy_loss_fusion: true
-    cross_entropy_fusion_impl: te
-    sequence_parallel: true
-    # Transformer Engine args
-    transformer_impl: transformer_engine
-    # RoPE args
-    position_embedding_type: rope
-    rotary_percent: 1.0
-    rotary_base: 1000000
-    normalization: RMSNorm
-    norm_epsilon: 1e-06
-    num_layers: 94
-    hidden_size: 4096
-    ffn_hidden_size: 12288
-    num_attention_heads: 64
-    kv_channels: 128
-    num_query_groups: 4
-    qk_layernorm: true
-    seq_length: ${SEQ_LEN}
-    max_position_embeddings: 40960
-    make_vocab_size_divisible_by: 1187
-    # Regularization
-    attention_dropout: 0.0
-    hidden_dropout: 0.0
-    # Add MoE args
-    num_experts: 128 # num_moe_experts
-    moe_ffn_hidden_size: 1536
-    moe_router_load_balancing_type: aux_loss
-    moe_router_topk: 8
-    moe_router_pre_softmax: false # Different from Qwen2_MoE
-    moe_grouped_gemm: ${MOE_GROUPED_GEMM}
-    moe_aux_loss_coeff: 1e_3
-    moe_token_dispatcher_type: flex
-    moe_enable_deepep: true
-    moe_permute_fusion: true
-    moe_router_dtype: fp32
-    moe_router_fusion: true
-    # Add initialization args
-    init_method_std: 0.02
-    # Add mixed precision args
-    bf16: true
 
-  dist:
-    distributed_timeout_minutes: 220
-    enable_megatron_core_experimental: true
+model:
+  # ModelParallelConfig
+  attention_backend: AttnBackend.flash
+  add_bias_linear: false
+  share_embeddings_and_output_weights: false
+  seq_len_interpolation_factor: 1
+  gated_linear_unit: true
+  tensor_model_parallel_size: ${TP}
+  pipeline_model_parallel_size: ${PP}
+  expert_model_parallel_size: ${EP}
+  context_parallel_size: ${CP}
+  virtual_pipeline_model_parallel_size: ${VPP}
+  expert_tensor_parallel_size: 1
+  account_for_embedding_in_pipeline_split: true
+  account_for_loss_in_pipeline_split: true
+  cross_entropy_loss_fusion: true
+  cross_entropy_fusion_impl: te
+  sequence_parallel: true
+  # Transformer Engine args
+  transformer_impl: transformer_engine
+  # RoPE args
+  position_embedding_type: rope
+  rotary_percent: 1.0
+  rotary_base: 1000000
+  normalization: RMSNorm
+  layernorm_epsilon: 1e-06
+  num_layers: 94
+  hidden_size: 4096
+  ffn_hidden_size: 12288
+  num_attention_heads: 64
+  kv_channels: 128
+  num_query_groups: 4
+  qk_layernorm: true
+  seq_length: ${SEQ_LEN}
+  make_vocab_size_divisible_by: 1187
+  # Regularization
+  attention_dropout: 0.0
+  hidden_dropout: 0.0
+  # Add MoE args
+  num_moe_experts: 128 # num_moe_experts
+  moe_ffn_hidden_size: 1536
+  moe_router_load_balancing_type: aux_loss
+  moe_router_topk: 8
+  moe_router_pre_softmax: false # Different from Qwen2_MoE
+  moe_grouped_gemm: ${MOE_GROUPED_GEMM}
+  moe_aux_loss_coeff: 1e-3
+  moe_token_dispatcher_type: flex
+  moe_enable_deepep: true
+  moe_permute_fusion: true
+  moe_router_dtype: fp32
+  moe_router_fusion: true
+  # Add initialization args
+  init_method_std: 0.02
+  # Add mixed precision args
+  bf16: true
 
-  ddp:
-    use_distributed_optimizer: true
-  
-  train:
-    micro_batch_size: ${MBS}
-    global_batch_size: ${GBS}
-    manual_gc: true
-    manual_gc_interval: 5
-    train_iters: 268554688
-    exit_duration_in_mins: 230
-    # Add validation args
-    eval_iters: 32
-    eval_interval: 500
+dist:
+  distributed_timeout_minutes: 220
+  enable_megatron_core_experimental: true
 
-  tokenizer:
-    # Data args
-    tokenizer_type: HuggingFaceTokenizer 
-    tokenizer_model: Qwen/Qwen3_235B_A22B
-  
-  dataset:
-    split: 99,1,0
-    num_workers: 6
-    skip_getting_attention_mask_from_dataset: true
-    path_to_cache: ${WORKSPACE}/data_cache
+ddp:
+  use_distributed_optimizer: true
 
-  optimizer:
-    clip_grad: 1.0
-    weight_decay: 0.1
-    # Add learning rate args
-    lr: 3.9e-6
-    min_lr: 3.9e-7
-    adam_beta1: 0.9
-    adam_beta2: 0.95
-    log_num_zeros_in_grad: true
+train:
+  micro_batch_size: ${MBS}
+  global_batch_size: ${GBS}
+  manual_gc: true
+  manual_gc_interval: 5
+  train_samples: 268554688
+  exit_duration_in_mins: 230
+  # Add validation args
+  eval_iters: 32
+  eval_interval: 500
 
-  scheduler:
-    # use lr from DeepSeek_V3
-    lr_warmup_init: 3.9e-7
-    lr_decay_style: cosine
-    lr_decay_iters: 285530
-    lr_warmup_iters: 750
+tokenizer:
+  # Data args
+  tokenizer_type: HuggingFaceTokenizer 
+  tokenizer_model: Qwen/Qwen3-235B-A22B
 
-  checkpoint:
-    auto_detect_ckpt_format: true
-    load: ${LOAD_PATH}
-    save: ${OUTPUT_PATH}/checkpoints
-    save_interval: 100
-    finetune: true
-    dist_ckpt_strictness: log_all
-    no_load_rng: true # load_rng
-    no_load_optim: true # load_optim
+dataset:
+  split: 99,1,0
+  num_workers: 6
+  skip_getting_attention_mask_from_dataset: true
+  path_to_cache: ${WORKSPACE}/data_cache
 
-  logger:
-    log_timers_to_tensorboard: true
-    log_memory_to_tensorboard: true
-    log_params_norm: true
-    log_validation_ppl_to_tensorboard: true
-    log_throughput: true
-    log_interval: 1
-    logging_level: 40
-    tensorboard_dir: ${OUTPUT_PATH}/tensorboard
-    wandb_project: ${WANDB_PROJECT}
-    wandb_exp_name: Qwen3_235B_A22B_TP${TP}PP${PP}EP${EP}CP${CP}VPP${VPP}_MBS${MBS}GBS${GBS}_${COMMENT}
+optimizer:
+  clip_grad: 1.0
+  weight_decay: 0.1
+  # Add learning rate args
+  lr: 3.9e-6
+  min_lr: 3.9e-7
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  log_num_zeros_in_grad: true
+
+scheduler:
+  # use lr from DeepSeek_V3
+  lr_warmup_init: 3.9e-7
+  lr_decay_style: cosine
+  lr_decay_samples: 584765624
+  lr_warmup_samples: 1536000
+
+checkpoint:
+  auto_detect_ckpt_format: true
+  load: ${LOAD_PATH}
+  save: ${OUTPUT_PATH}/checkpoints
+  save_interval: 100
+  finetune: true
+  dist_ckpt_strictness: log_all
+  load_rng: false
+  load_optim: false
+
+logger:
+  log_timers_to_tensorboard: true
+  log_memory_to_tensorboard: true
+  log_params_norm: true
+  log_validation_ppl_to_tensorboard: true
+  log_throughput: true
+  log_interval: 1
+  logging_level: 40
+  tensorboard_dir: ${OUTPUT_PATH}/tensorboard
+  wandb_project: ${WANDB_PROJECT}
+  wandb_exp_name: Qwen3_235B_A22B_TP${TP}PP${PP}EP${EP}CP${CP}VPP${VPP}_MBS${MBS}GBS${GBS}_${COMMENT}

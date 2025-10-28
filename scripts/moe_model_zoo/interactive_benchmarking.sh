@@ -37,26 +37,25 @@ ENV_VARS=$(yq '... comments="" | .ENV_VARS | to_entries | .[] | [.key + "=" + .v
 while IFS='=' read -r KEY VALUE; do
     if [[ -n ${KEY} ]]; then
         export "${KEY}"="${VALUE}"
-        echo "${KEY}=${VALUE}"
     fi
 done < <(echo "${ENV_VARS}" | tr ' ' '\n')
 
+OPTIMIZER_OFFLOAD=${OPTIMIZER_OFFLOAD:-0}
 # FP8 arguments
-
 if [[ ${PR} == "fp8" ]]; then
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.mixed_precision.fp8_recipe=blockwise config_container.mixed_precision.fp8=e4m3"
+    TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_recipe=blockwise mixed_precision.fp8=e4m3"
     if [[ ${OPTIMIZER_OFFLOAD} == 0 ]]; then
-        TRAINING_PARAMS="${TRAINING_PARAMS} config_container.mixed_precision.fp8_param_gather=true" # Optimizer CPU offload does not support fp8 param gather now.
+        TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_param_gather=true" # Optimizer CPU offload does not support fp8 param gather now.
     fi
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.optimizer.use_precision_aware_optimizer=true config_container.optimizer.main_grads_dtype=fp32 config_container.optimizer.main_params_dtype=fp32 config_container.optimizer.exp_avg_dtype=bf16 config_container.optimizer.exp_avg_sq_dtype=bf16"
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.model.moe_router_padding_for_fp8=true"
+    TRAINING_PARAMS="${TRAINING_PARAMS} optimizer.use_precision_aware_optimizer=true optimizer.main_grads_dtype=torch.float32 optimizer.main_params_dtype=torch.float32 optimizer.exp_avg_dtype=torch.bfloat16 optimizer.exp_avg_sq_dtype=torch.bfloat16"
+    TRAINING_PARAMS="${TRAINING_PARAMS} model.moe_router_padding_for_fp8=true"
 elif [[ ${PR} == "mxfp8" ]]; then
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.mixed_precision.fp8_recipe=mxfp8 config_container.mixed_precision.fp8=e4m3"
+    TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_recipe=mxfp8 mixed_precision.fp8=e4m3"
     if [[ ${OPTIMIZER_OFFLOAD} == 0 ]]; then
-        TRAINING_PARAMS="${TRAINING_PARAMS} config_container.mixed_precision.fp8_param_gather=true config_container.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag=true" # Optimizer CPU offload does not support fp8 param gather now.
+        TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_param_gather=true mixed_precision.reuse_grad_buf_for_mxfp8_param_ag=true" # Optimizer CPU offload does not support fp8 param gather now.
     fi
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.optimizer.use_precision_aware_optimizer=true config_container.optimizer.main_grads_dtype=fp32 config_container.optimizer.main_params_dtype=fp32 config_container.optimizer.exp_avg_dtype=bf16 config_container.optimizer.exp_avg_sq_dtype=bf16"
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.model.moe_router_padding_for_fp8=true"
+    TRAINING_PARAMS="${TRAINING_PARAMS} optimizer.use_precision_aware_optimizer=true optimizer.main_grads_dtype=torch.float32 optimizer.main_params_dtype=torch.float32 optimizer.exp_avg_dtype=torch.bfloat16 optimizer.exp_avg_sq_dtype=torch.bfloat16"
+    TRAINING_PARAMS="${TRAINING_PARAMS} model.moe_router_padding_for_fp8=true"
 fi
 
 
@@ -66,17 +65,17 @@ if [[ ${A2A_OVERLAP} == 1 ]]; then
     export CUDA_DEVICE_MAX_CONNECTIONS=32
     export NVTE_FWD_LAYERNORM_SM_MARGIN=20
     export NVTE_BWD_LAYERNORM_SM_MARGIN=20
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.comm_overlap.delay_wgrad_compute=true config_container.comm_overlap.overlap_moe_expert_parallel_comm=true"
+    TRAINING_PARAMS="${TRAINING_PARAMS} comm_overlap.delay_wgrad_compute=true comm_overlap.overlap_moe_expert_parallel_comm=true"
 else
     export CUDA_DEVICE_MAX_CONNECTIONS=1
     export NVTE_FWD_LAYERNORM_SM_MARGIN=0
     export NVTE_BWD_LAYERNORM_SM_MARGIN=0
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.comm_overlap.overlap_grad_reduce=true config_container.comm_overlap.overlap_param_gather=true"
+    TRAINING_PARAMS="${TRAINING_PARAMS} comm_overlap.overlap_grad_reduce=true comm_overlap.overlap_param_gather=true"
 fi
 
 # Long context arguments
 if [[ ${SEQ_LEN} -gt 4096 ]]; then
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.model.max_position_embeddings=${SEQ_LEN}"
+    TRAINING_PARAMS="${TRAINING_PARAMS} model.max_position_embeddings=${SEQ_LEN}"
 fi
 
 # Profile command

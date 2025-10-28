@@ -430,10 +430,10 @@ class SchedulerConfig:
 
         # Validate mutual exclusivity between iteration-based and sample-based scheduler fields
         has_iter_fields = (
-            self.lr_decay_iters is not None or self.lr_warmup_iters != 0 or self.lr_wsd_decay_iters is not None
+            self.lr_decay_iters is not None or self.lr_warmup_iters is not None or self.lr_wsd_decay_iters is not None
         )
         has_sample_fields = (
-            self.lr_decay_samples is not None or self.lr_warmup_samples != 0 or self.lr_wsd_decay_samples is not None
+            self.lr_decay_samples is not None or self.lr_warmup_samples is not None or self.lr_wsd_decay_samples is not None
         )
 
         assert not (has_iter_fields and has_sample_fields), (
@@ -1264,7 +1264,7 @@ class ConfigContainer(Container):
             assert self.scheduler.lr_decay_iters is None, (
                 "Use lr_decay_samples for sample-based training, not lr_decay_iters"
             )
-            assert self.scheduler.lr_warmup_iters == 0, (
+            assert self.scheduler.lr_warmup_iters is None, (
                 "Use lr_warmup_samples for sample-based training, not lr_warmup_iters"
             )
             assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_samples != 0), (
@@ -1339,6 +1339,11 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
         cfg.mixed_precision.finalize()
         cfg.mixed_precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
+    # Setup comm overlap config if provided
+    if cfg.comm_overlap is not None:
+        if isinstance(cfg.comm_overlap, dict):
+            cfg.comm_overlap = CommOverlapConfig(**cfg.comm_overlap)
+    
     # Calculate data parallel size (needed for comm overlap methods)
     cfg.set_data_parallel_size()
 

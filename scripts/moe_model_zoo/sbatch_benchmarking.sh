@@ -12,9 +12,9 @@ export WANDB_API_KEY=${WANDB_API_KEY:-"your_own_wandb_api_key"}
 export MBRIDGE_RELEASE_VERSION=${MBRIDGE_RELEASE_VERSION:-"your_megatron_bridge_version"}
 
 # Load common configurations
-source "${WORKSPACE}/runtime_configs/benchmarking/common.conf"
+source "${WORKSPACE}/runtime_configs/common.conf"
 # Load model-specific configurations
-source "${WORKSPACE}/runtime_configs/benchmarking/runtime.conf"
+source "${WORKSPACE}/runtime_configs/runtime.conf"
 
 # Initialize training parameters
 TRAINING_PARAMS=${TRAINING_PARAMS:-""}
@@ -42,24 +42,22 @@ while IFS='=' read -r KEY VALUE; do
     fi
 done < <(echo "${ENV_VARS}" | tr ' ' '\n')
 
-
+OPTIMIZER_OFFLOAD=${OPTIMIZER_OFFLOAD:-0}
 # FP8 arguments
 if [[ ${PR} == "fp8" ]]; then
-    TRAINING_PARAMS="${TRAINING_PARAMS} --fp8-recipe blockwise --fp8-format e4m3"
+    TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_recipe=blockwise mixed_precision.fp8=e4m3"
     if [[ ${OPTIMIZER_OFFLOAD} == 0 ]]; then
-        TRAINING_PARAMS="${TRAINING_PARAMS} --fp8-param-gather" # Optimizer CPU offload does not support fp8 param gather now.
+        TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_param_gather=true" # Optimizer CPU offload does not support fp8 param gather now.
     fi
-    TRAINING_PARAMS="${TRAINING_PARAMS} --use-precision-aware-optimizer --main-grads-dtype fp32 --main-params-dtype fp32 --exp-avg-dtype bf16 --exp-avg-sq-dtype bf16"
-    TRAINING_PARAMS="${TRAINING_PARAMS} --moe-router-padding-for-fp8"
-fi
-
-if [[ ${PR} == "mxfp8" ]]; then
-    TRAINING_PARAMS="${TRAINING_PARAMS} --fp8-recipe mxfp8 --fp8-format e4m3"
+    TRAINING_PARAMS="${TRAINING_PARAMS} optimizer.use_precision_aware_optimizer=true optimizer.main_grads_dtype=torch.float32 optimizer.main_params_dtype=torch.float32 optimizer.exp_avg_dtype=torch.bfloat16 optimizer.exp_avg_sq_dtype=torch.bfloat16"
+    TRAINING_PARAMS="${TRAINING_PARAMS} model.moe_router_padding_for_fp8=true"
+elif [[ ${PR} == "mxfp8" ]]; then
+    TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_recipe=mxfp8 mixed_precision.fp8=e4m3"
     if [[ ${OPTIMIZER_OFFLOAD} == 0 ]]; then
-        TRAINING_PARAMS="${TRAINING_PARAMS} --fp8-param-gather --reuse-grad-buf-for-mxfp8-param-ag" # Optimizer CPU offload does not support fp8 param gather now.
+        TRAINING_PARAMS="${TRAINING_PARAMS} mixed_precision.fp8_param_gather=true mixed_precision.reuse_grad_buf_for_mxfp8_param_ag=true" # Optimizer CPU offload does not support fp8 param gather now.
     fi
-    TRAINING_PARAMS="${TRAINING_PARAMS} --use-precision-aware-optimizer --main-grads-dtype fp32 --main-params-dtype fp32 --exp-avg-dtype bf16 --exp-avg-sq-dtype bf16"
-    TRAINING_PARAMS="${TRAINING_PARAMS} --moe-router-padding-for-fp8"
+    TRAINING_PARAMS="${TRAINING_PARAMS} optimizer.use_precision_aware_optimizer=true optimizer.main_grads_dtype=torch.float32 optimizer.main_params_dtype=torch.float32 optimizer.exp_avg_dtype=torch.bfloat16 optimizer.exp_avg_sq_dtype=torch.bfloat16"
+    TRAINING_PARAMS="${TRAINING_PARAMS} model.moe_router_padding_for_fp8=true"
 fi
 
 # 1F1B overlapping arguments and environment variables
@@ -68,17 +66,17 @@ if [[ ${A2A_OVERLAP} == 1 ]]; then
     export CUDA_DEVICE_MAX_CONNECTIONS=32
     export NVTE_FWD_LAYERNORM_SM_MARGIN=20
     export NVTE_BWD_LAYERNORM_SM_MARGIN=20
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.comm_overlap.delay_wgrad_compute=true config_container.comm_overlap.overlap_moe_expert_parallel_comm=true"
+    TRAINING_PARAMS="${TRAINING_PARAMS} comm_overlap.delay_wgrad_compute=true comm_overlap.overlap_moe_expert_parallel_comm=true"
 else
     export CUDA_DEVICE_MAX_CONNECTIONS=1
     export NVTE_FWD_LAYERNORM_SM_MARGIN=0
     export NVTE_BWD_LAYERNORM_SM_MARGIN=0
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.comm_overlap.overlap_grad_reduce=true config_container.comm_overlap.overlap_param_gather=true"
+    TRAINING_PARAMS="${TRAINING_PARAMS} comm_overlap.overlap_grad_reduce=true comm_overlap.overlap_param_gather=true"
 fi
 
 # Long context arguments
 if [[ ${SEQ_LEN} -gt 4096 ]]; then
-    TRAINING_PARAMS="${TRAINING_PARAMS} config_container.model.max_position_embeddings=${SEQ_LEN}"
+    TRAINING_PARAMS="${TRAINING_PARAMS} model.max_position_embeddings=${SEQ_LEN}"
 fi
 
 # Profile command
@@ -92,7 +90,7 @@ if [[ ${PROFILE} -eq 1 ]]; then
         --cuda-graph-trace=node \
         -f true -x true \
         -o ${NSYS_PATH}/${MODEL}-benchmarking-${DATETIME}"
-    TRAINING_PARAMS="${TRAINING_PARAMS} --profile --profile-step-start 20 --profile-step-end 22 --profile-ranks 0 "
+    TRAINING_PARAMS="${TRAINING_PARAMS} profiling.use_nsys_profiler=true profiling.profile_step_start=20 profiling.profile_step_end=22 profiling.profile_ranks=0 "
 else
     PROFILE_CMD=""
 fi
@@ -144,13 +142,13 @@ EOF
     echo "${TRAINING_CMD}"
     echo "=== End of Full Training Command ==="
 else
-    sbatch ${SBATCH_ARG} <<EOF
+    sbatch <<EOF
 #!/bin/bash
 
 #SBATCH --nodes=${NNODES}
 #SBATCH --account=${ACCOUNT}
 #SBATCH --partition=${PARTITION}
-#SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
+#SBATCH --ntasks-per-node=8
 #SBATCH --time=${RUN_TIME}
 #SBATCH --job-name=${ACCOUNT}-moe-${RUN_NAME}-${TIMESTAMP}
 #SBATCH --output=${WORKSPACE}/slurm.log
