@@ -18,6 +18,7 @@ from functools import partial
 from typing import Callable, Optional
 import torch
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -31,6 +32,15 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+if TYPE_CHECKING:
+    from megatron.core.transformer import ModuleSpec
 logger = logging.getLogger(__name__)
 
 
@@ -255,6 +265,7 @@ class Qwen3ModelProvider(GPTModelProvider):
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
     seq_length: int = 40960
+    max_position_embeddings: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -361,6 +372,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     kv_channels: Optional[int] = 128
     num_query_groups: int = 8
     seq_length: int = 40960
+    max_position_embeddings: int = 40960
     init_method_std: int = 0.02
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -411,14 +423,15 @@ class Qwen3MoEModelProvider235B_A22B(Qwen3MoEModelProvider):
     ffn_hidden_size: int = 12288
     moe_ffn_hidden_size: int = 1536
 
+
 # =============================================================================
-# Qwen 3-Next MoE Model Provider (based on GPTProvider)
+# Qwen 3 Next Model Provider (based on Qwen3MoEModelProvider)
 # =============================================================================
 
 
 @dataclass
 class Qwen3NextModelProvider(Qwen3MoEModelProvider):
-    """Base provider for Qwen 3 MoE Models."""
+    """Base provider for Qwen 3 Next Models."""
 
     transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = partial(
         get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE

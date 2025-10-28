@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 import unittest.mock as mock
 
 import torch
@@ -100,6 +101,7 @@ class TestDataLoaders:
         data_path = ensure_test_data
         data_args_path = f"{ensure_test_data}/datasets/input/data_args.txt"
         data_path = f"{ensure_test_data}/datasets/train/test_text_document"
+        os.makedirs(os.path.dirname(data_args_path), exist_ok=True)
         with open(data_args_path, "w") as data_args_file:
             data_args_file.write(f"0.5 {data_path} 0.5 {data_path}")
         blend, blend_per_split = get_blend_and_blend_per_split(data_args_path=data_args_path)
@@ -128,6 +130,7 @@ class TestDataLoaders:
             "test": [data_path],
         }
         split_data_path = f"{ensure_test_data}/datasets/input/split_data.json"
+        os.makedirs(os.path.dirname(split_data_path), exist_ok=True)
         with open(split_data_path, "w") as f:
             json.dump(split_data, f)
 

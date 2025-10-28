@@ -904,6 +904,7 @@ class TestLoadBaseCheckpoint:
         """Fixture for base checkpoint tests."""
         mock_cfg = Mock(spec=CheckpointConfig)
         mock_cfg.exit_on_missing_checkpoint = False
+        mock_cfg.ckpt_step = None
         return mock_cfg
 
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
@@ -1377,10 +1378,10 @@ class TestMegatronLMCompatibility:
     @patch("os.path.exists")
     def test_load_base_checkpoint_legacy_tracker(self, mock_isfile, mock_read_metadata):
         """Test loading checkpoint with legacy Megatron-LM tracker file."""
-        mock_cfg = Mock()
-        mock_cfg.checkpoint = Mock()
-        mock_cfg.checkpoint.non_persistent_ckpt_type = None
-        mock_cfg.checkpoint.exit_on_missing_checkpoint = False
+        mock_cfg = Mock(spec=CheckpointConfig)
+        mock_cfg.non_persistent_ckpt_type = None
+        mock_cfg.exit_on_missing_checkpoint = False
+        mock_cfg.ckpt_step = None
 
         # Mock file existence: NeMo-LM tracker doesn't exist, legacy tracker does
         def mock_isfile_side_effect(path):
@@ -1826,6 +1827,151 @@ class TestGetTrainStateFromStateDict:
         assert result.do_train is False
         assert result.do_valid is False
         assert result.do_test is False
+
+
+class TestCheckpointIterationResolution:
+    """Test checkpoint iteration resolution logic."""
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
+    def test_loads_from_bridge_tracker(self, mock_read_train_state, mock_file_exists):
+        """Should read iteration from Bridge format tracker file."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        mock_file_exists.return_value = True
+        train_state = TrainState()
+        train_state.step = 1000
+        mock_read_train_state.return_value = train_state
+
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir="/checkpoints",
+            ckpt_step_override=None,
+        )
+
+        assert iteration == 1000
+        assert release is False
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing.read_metadata")
+    def test_fallback_to_legacy_tracker(self, mock_read_metadata, mock_file_exists):
+        """Should fallback to legacy format when Bridge format not found."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        def file_exists_side_effect(path):
+            # Bridge format doesn't exist, legacy does
+            return "latest_checkpointed_iteration.txt" in path
+
+        mock_file_exists.side_effect = file_exists_side_effect
+        mock_read_metadata.return_value = (2000, False)
+
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir="/checkpoints",
+            ckpt_step_override=None,
+        )
+
+        assert iteration == 2000
+        assert release is False
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
+    def test_ckpt_step_validates_existence(self, mock_read_train_state, mock_file_exists):
+        """ckpt_step should validate checkpoint directory exists."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        mock_file_exists.return_value = True  # Checkpoint dir exists
+
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir="/checkpoints",
+            ckpt_step_override=5000,
+        )
+
+        assert iteration == 5000
+        assert release is False
+        # Verify we checked if checkpoint dir exists (but not tracker file)
+        mock_file_exists.assert_called_once()
+        assert "/checkpoints/iter_0005000" in str(mock_file_exists.call_args)
+        mock_read_train_state.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    def test_ckpt_step_raises_if_not_exists(self, mock_file_exists):
+        """ckpt_step should raise FileNotFoundError if checkpoint directory doesn't exist."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        mock_file_exists.return_value = False  # Checkpoint dir doesn't exist
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            _resolve_checkpoint_iteration(
+                load_dir="/checkpoints",
+                ckpt_step_override=3000,
+            )
+
+        assert "ckpt_step=3000 specified but checkpoint directory does not exist" in str(exc_info.value)
+        assert "/checkpoints/iter_0003000" in str(exc_info.value)
+        assert "ls /checkpoints/iter_*" in str(exc_info.value)
+
+    def test_ckpt_step_validation_in_config_finalize(self):
+        """ckpt_step without load should raise ValueError during config finalize."""
+        from megatron.bridge.training.config import CheckpointConfig
+
+        config = CheckpointConfig(
+            ckpt_step=3000,
+            load=None,  # Missing load directory
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            config.finalize()
+
+        assert "ckpt_step=3000 specified but checkpoint.load is None" in str(exc_info.value)
+        assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
+
+    def test_ckpt_step_with_only_pretrained_raises(self):
+        """ckpt_step with only pretrained_checkpoint should raise (ckpt_step applies to load, not pretrained)."""
+        from megatron.bridge.training.config import CheckpointConfig
+
+        config = CheckpointConfig(
+            ckpt_step=5000,
+            load=None,
+            pretrained_checkpoint="/pretrained/model",  # Has pretrained but no load
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            config.finalize()
+
+        assert "ckpt_step=5000 specified but checkpoint.load is None" in str(exc_info.value)
+        assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
+
+    def test_no_load_dir_returns_default(self):
+        """When load_dir is None, should return iteration=-1."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir=None,
+            ckpt_step_override=None,
+        )
+
+        assert iteration == -1
+        assert release is False
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing.read_train_state")
+    def test_ignore_ckpt_step_loads_latest(self, mock_read_train_state, mock_file_exists):
+        """When ignore_ckpt_step=True via load path, should load latest even if ckpt_step is set in config."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        mock_file_exists.return_value = True
+        train_state = TrainState()
+        train_state.step = 9999  # Latest checkpoint
+        mock_read_train_state.return_value = train_state
+
+        # Pass None to _resolve_checkpoint_iteration (simulating ignore_ckpt_step=True)
+        iteration, release = _resolve_checkpoint_iteration(
+            load_dir="/pretrained",
+            ckpt_step_override=None,  # Passed as None when ignore_ckpt_step=True
+        )
+
+        # Should load latest (9999), not ckpt_step value
+        assert iteration == 9999
+        assert release is False
 
 
 class TestFSDPDTensorFunctionality:
