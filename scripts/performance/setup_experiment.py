@@ -182,6 +182,7 @@ if __name__ == "__main__":
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),
         entrypoint="python",
+        env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
         args=target_script_args,
     )
 

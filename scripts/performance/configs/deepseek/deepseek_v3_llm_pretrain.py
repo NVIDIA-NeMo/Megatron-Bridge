@@ -81,7 +81,7 @@ def deepseek_v3_gb200_fp8_config(
 
     cfg = pretrain_config(
         mock=True, 
-        precision_config=get_precision_config("fp8", fp8_recipe)
+        precision_config=get_precision_config("fp8", fp8_recipe),
         pipeline_parallelism=4,
         virtual_pipeline_parallelism=4,
         enable_deepep=enable_deepep,
