@@ -21,6 +21,8 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import (
     HFDatasetConversationProvider,
 )
+from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -43,6 +45,7 @@ def pretrain_config(
     name: str = "nemotron_nano_v2_vl_pretrain",
     hf_model_path: str = "nvidia/Nemotron-Nano-12B-v2-VL-BF16",
     # Dataset configuration
+    dataset_type: Optional[str] = None,
     data_paths: Optional[List[str]] = None,
     data_args_path: Optional[str] = None,
     train_data_path: Optional[List[str]] = None,
@@ -109,18 +112,31 @@ def pretrain_config(
         min_lr=min_lr,
     )
 
-    # Use HF-based VLM conversation dataset provider
-    dataset_cfg = HFDatasetConversationProvider(
-        sequence_length=seq_length,
-        hf_processor_path=hf_model_path,
-        maker_name=dataset_maker_name,
-        # Dataloader config parameters
-        num_workers=2,
-        dataloader_type="single",
-        data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
-    )
+    # Dataset provider selection
+    _dataset_choice = (dataset_type or ("mock" if mock else "hf")).lower()
+
+    if _dataset_choice == "mock":
+        dataset_cfg = MockVLMConversationProvider(
+            sequence_length=seq_length,
+            hf_processor_path=hf_model_path,
+            dataloader_type="single",
+        )
+    elif _dataset_choice == "hf":
+        dataset_cfg = HFDatasetConversationProvider(
+            sequence_length=seq_length,
+            hf_processor_path=hf_model_path,
+            maker_name=dataset_maker_name,
+            # Dataloader config parameters
+            num_workers=2,
+            dataloader_type="single",
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+        )
+    else:
+        raise ValueError(
+            f"Unknown dataset_type '{_dataset_choice}'. Expected one of: 'mock', 'hf', 'preloaded'."
+        )
 
     # Config Container
     cfg = ConfigContainer(
