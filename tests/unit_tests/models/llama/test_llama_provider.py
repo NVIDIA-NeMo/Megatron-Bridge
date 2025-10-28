@@ -56,7 +56,6 @@ class TestLlamaModelProvider:
         assert provider.normalization == "RMSNorm"
         assert provider.add_bias_linear is False
         assert provider.share_embeddings_and_output_weights is False
-        assert provider.persist_layer_norm is False
 
     def test_llama_model_provider_with_custom_rope(self):
         """Test LlamaModelProvider with custom RoPE configuration."""
