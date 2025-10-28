@@ -32,37 +32,6 @@ from .common import get_perf_matrix_overrides
 logger = logging.getLogger(__name__)
 
 
-COMM_OVERLAP_CONFIG_MAP = {
-    "llama3_70b": {
-        "h100": {
-            "bf16": userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
-            "fp8": userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192,
-        },
-        "b200": {
-            "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
-            "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
-        },
-        "gb200": {
-            "bf16": userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
-            "fp8": userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
-        },
-    },
-    "llama31_405b": {
-        "h100": {
-            "bf16": userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192,
-            "fp8": userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192,
-        },
-        "b200": {
-            "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
-            "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
-        },
-        "gb200": {
-            "bf16": userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
-            "fp8": userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192,
-        },
-    },
-}
-
 def set_basic_perf_overrides(recipe: Any) -> None:
     recipe.train.train_iters = 100
     recipe.train.eval_iters = 0

@@ -18,7 +18,7 @@ def deepseek_v3_gb200_bf16_config(
     enable_deepep: bool = False,
     a2a_1f1b: bool = False,
 ) -> ConfigContainer:
-    """GB200, 4xGPU, BF16 baseline config."""
+    """GB200, 256xGPU, BF16 baseline config."""
     if use_tokendrop and enable_deepep:
         enable_deepep = False
         logger.info("Using token drop, disabling DeepEP")
@@ -80,7 +80,7 @@ def deepseek_v3_gb200_fp8_config(
     enable_deepep: bool = False,
     a2a_1f1b: bool = False,
 ) -> ConfigContainer:
-    """GB200, 4xGPU, FP8 baseline config."""
+    """B200, 256xGPU, FP8 baseline config."""
     if use_tokendrop and enable_deepep:
         enable_deepep = False
         logger.info("Using token drop, disabling DeepEP")
@@ -141,7 +141,7 @@ def deepseek_v3_b200_bf16_config(
     enable_deepep: bool = False,
     a2a_1f1b: bool = False,
 ) -> ConfigContainer:
-    """GB200, 4xGPU, BF16 baseline config."""
+    """B200, 256xGPU, BF16 baseline config."""
     if use_tokendrop and enable_deepep:
         enable_deepep = False
         logger.info("Using token drop, disabling DeepEP")
@@ -197,7 +197,7 @@ def deepseek_v3_b200_fp8_config(
     enable_deepep: bool = True,
     a2a_1f1b: bool = True,
 ) -> ConfigContainer:
-    """GB200, 4xGPU, FP8 baseline config."""
+    """B200, 256xGPU, FP8 baseline config."""
     if use_tokendrop and enable_deepep:
         enable_deepep = False
         logger.info("Using token drop, disabling DeepEP")
@@ -252,7 +252,7 @@ def deepseek_v3_h100_bf16_config(
     enable_deepep: bool = True,
     a2a_1f1b: bool = True,
 ) -> ConfigContainer:
-    """GB200, 4xGPU, BF16 baseline config."""
+    """H100, 1024xGPU, BF16 baseline config."""
     if use_tokendrop and enable_deepep:
         enable_deepep = False
         logger.info("Using token drop, disabling DeepEP")
@@ -307,7 +307,7 @@ def deepseek_v3_h100_fp8_config(
     enable_deepep: bool = False,
     a2a_1f1b: bool = False,
 ) -> ConfigContainer:
-    """GB200, 4xGPU, FP8 baseline config."""
+    """H100, 1024xGPU, FP8 baseline config."""
     if use_tokendrop and enable_deepep:
         enable_deepep = False
         logger.info("Using token drop, disabling DeepEP")

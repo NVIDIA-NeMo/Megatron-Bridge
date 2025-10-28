@@ -140,10 +140,7 @@ if __name__ == "__main__":
         if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
             executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
-    target_script_args = [
-        "--config_file",
-        "dummy",
-    ]
+    target_script_args = []
     # Forward relevant args that run_script.py needs
     args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
     for arg_name in args_to_forward:

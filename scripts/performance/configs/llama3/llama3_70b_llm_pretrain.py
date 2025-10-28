@@ -15,6 +15,12 @@
 import logging
 
 from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+from megatron.bridge.training.comm_overlap import (
+  userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
+  userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192,
+  userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+  userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
+)
 from megatron.bridge.training.config import ConfigContainer
 
 try:
@@ -25,121 +31,8 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
-def llama3_70b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
-    """H100, 8xGPU, BF16 baseline config."""
-    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
-
-    set_basic_perf_overrides(cfg)
-
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.context_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 5
-    cfg.model.expert_model_parallel_size = 1
-    cfg.model.expert_tensor_parallel_size = None
-    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
-
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-    cfg.model.seq_length = 8192
-    cfg.dataset.sequence_length = 8192
-
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    return cfg
-
-
-def llama3_70b_h100_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
-    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
-
-    set_basic_perf_overrides(cfg)
-
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 5
-    cfg.model.expert_model_parallel_size = 1
-    cfg.model.expert_tensor_parallel_size = None
-    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
-
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-    cfg.model.seq_length = 8192
-    cfg.dataset.sequence_length = 8192
-
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    return cfg
-
-def llama3_70b_b200_bf16_config(fp8_recipe = None) -> ConfigContainer:
-    """B200, 8xGPU, BF16 baseline config."""
-    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
-
-    set_basic_perf_overrides(cfg)
-
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.context_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 5
-    cfg.model.expert_model_parallel_size = 1
-    cfg.model.expert_tensor_parallel_size = None
-    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
-
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-    cfg.model.seq_length = 8192
-    cfg.dataset.sequence_length = 8192
-
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
-
-    return cfg
-
-def llama3_70b_b200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
-    """B200, 8xGPU, FP8 cs preset."""
-    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
-
-    set_basic_perf_overrides(cfg)
-
-    if fp8_recipe == "cs":
-      cfg.model.tensor_model_parallel_size = 1
-      cfg.model.pipeline_model_parallel_size = 1
-      cfg.model.context_parallel_size = 1
-      cfg.model.virtual_pipeline_model_parallel_size = None
-
-      set_megatron_fsdp_overrides(cfg, perf_overrides={"use_megatron_fsdp": True})
-      cfg.ddp.fsdp_double_buffer = True
-      cfg.model.gradient_accumulation_fusion = False
-      cfg.ddp.suggested_communication_unit_size = 800000000
-      set_recompute_overrides(cfg, perf_overrides={"recompute_num_layers": 5})
-
-    if fp8_recipe == "mx":
-      cfg.model.tensor_model_parallel_size = 2
-      cfg.model.pipeline_model_parallel_size = 4
-      cfg.model.context_parallel_size = 1
-      cfg.model.virtual_pipeline_model_parallel_size = 5
-
-    cfg.model.expert_model_parallel_size = 1
-    cfg.model.expert_tensor_parallel_size = None
-    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
-
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-    cfg.model.seq_length = 8192
-    cfg.dataset.sequence_length = 8192
-
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    return cfg
-
 def llama3_70b_gb200_bf16_config(fp8_recipe = None) -> ConfigContainer:
-    """GB200, 4xGPU, BF16 baseline config."""
+    """GB200, 64xGPU, BF16 baseline config."""
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
     set_basic_perf_overrides(cfg)
@@ -166,10 +59,12 @@ def llama3_70b_gb200_bf16_config(fp8_recipe = None) -> ConfigContainer:
     cfg.ddp.suggested_communication_unit_size = 800000000
     set_recompute_overrides(cfg, perf_overrides={"cpu_offloading_num_layers": 20})
 
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
+
     return cfg
 
 def llama3_70b_gb200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 4xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    """GB200, 64xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     set_basic_perf_overrides(cfg)
@@ -206,5 +101,130 @@ def llama3_70b_gb200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
 
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    return cfg
+
+
+def llama3_70b_b200_bf16_config(fp8_recipe = None) -> ConfigContainer:
+    """B200, 64xGPU, BF16 baseline config."""
+    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
+
+    set_basic_perf_overrides(cfg)
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
+    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
+
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.model.seq_length = 8192
+    cfg.dataset.sequence_length = 8192
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
+
+    return cfg
+
+def llama3_70b_b200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+    """B200, 64xGPU, FP8 cs preset."""
+    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
+
+    set_basic_perf_overrides(cfg)
+
+    if fp8_recipe == "cs":
+      cfg.model.tensor_model_parallel_size = 1
+      cfg.model.pipeline_model_parallel_size = 1
+      cfg.model.context_parallel_size = 1
+      cfg.model.virtual_pipeline_model_parallel_size = None
+
+      set_megatron_fsdp_overrides(cfg, perf_overrides={"use_megatron_fsdp": True})
+      cfg.ddp.fsdp_double_buffer = True
+      cfg.model.gradient_accumulation_fusion = False
+      cfg.ddp.suggested_communication_unit_size = 800000000
+      set_recompute_overrides(cfg, perf_overrides={"recompute_num_layers": 5})
+
+    if fp8_recipe == "mx":
+      cfg.model.tensor_model_parallel_size = 2
+      cfg.model.pipeline_model_parallel_size = 4
+      cfg.model.context_parallel_size = 1
+      cfg.model.virtual_pipeline_model_parallel_size = 5
+
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
+    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
+
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.model.seq_length = 8192
+    cfg.dataset.sequence_length = 8192
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    return cfg
+
+
+def llama3_70b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
+    """H100, 64xGPU, BF16 baseline config."""
+    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
+
+    set_basic_perf_overrides(cfg)
+
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
+    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
+
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.model.seq_length = 8192
+    cfg.dataset.sequence_length = 8192
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
+
+    return cfg
+
+
+def llama3_70b_h100_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+    """H100, 64xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
+
+    set_basic_perf_overrides(cfg)
+
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
+    cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
+
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.model.seq_length = 8192
+    cfg.dataset.sequence_length = 8192
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192
 
     return cfg
