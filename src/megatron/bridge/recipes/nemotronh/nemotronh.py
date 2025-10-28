@@ -139,7 +139,7 @@ def nemotronh_47b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) 
         "pipeline_parallelism": 1,
         "sequence_parallelism": True,
         "precision_config": "nemotron_h_bf16_with_fp8_current_scaling_mixed",
-        "enable_default_comm_overlap": False,
+        "enable_default_comm_overlap": True,
     }
     combined_kwargs: NemotronHCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotronh_common(tokenizer_model="nvidia/Nemotron-H-47B-Base-8K", **combined_kwargs)
@@ -162,7 +162,7 @@ def nemotronh_56b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) 
         "pipeline_parallelism": 1,
         "sequence_parallelism": True,
         "precision_config": "nemotron_h_bf16_with_fp8_current_scaling_mixed",
-        "enable_default_comm_overlap": False,
+        "enable_default_comm_overlap": True,
     }
     combined_kwargs: NemotronHCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotronh_common(tokenizer_model="nvidia/Nemotron-H-8B-Base-8K", **combined_kwargs)

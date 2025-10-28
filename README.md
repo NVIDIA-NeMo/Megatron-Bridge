@@ -33,52 +33,20 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
   nvcr.io/nvidia/nemo:${TAG}
 ```
 
-### 📦 Bare-metal installation with Transformer Engine
-
-Transformer Engine is a required dependency for Megatron Bridge. To install on bare metal (without a container), the following system requirements must be met:
-
-- Python >= 3.10
-- PyTorch >= 2.7
-- CUDA >= 12.8
-- cuDNN >= 9.3
-
-We recommend installing the same versions that are present in the latest NGC PyTorch containers. The versions of these components for each container release are listed in the [PyTorch](https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html) and [CUDA](https://docs.nvidia.com/deeplearning/frameworks/cuda-dl-release-notes/index.html) container release notes.
-
-Please see the [instructions](https://developer.nvidia.com/cudnn-downloads) for installing cuDNN for your target platform. You can check if the CUDA toolkit and cuDNN are installed with:
-
-```bash
-dpkg -l | grep 'cuda-toolkit'
-dpkg -l | grep 'cudnn.*cuda'
-```
-
-Then install Megatron Bridge:
-
-```bash
-pip install torch setuptools pybind11 wheel_stub  # Required for TE
-pip install --no-build-isolation megatron-bridge
-```
-
-### Using uv
-
-```bash
-uv pip install torch --torch-backend=auto
-uv pip install --no-build-isolation transformer_engine[pytorch]
-uv pip install megatron-bridge
-```
-
 For development installation and additional details, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md).
-
 
 ## ⚡ Quickstart
 
 To get started, install Megatron Bridge or download a NeMo Framework container as described [above](#-installation).
 
 Log in to Hugging Face Hub:
+
 ```sh
 huggingface-cli login --token <your token>
 ```
 
 Conversion-only quickstart (✅ Core):
+
 ```python
 from megatron.bridge import AutoBridge
 
@@ -102,6 +70,7 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
 ```
 
 Training quickstart using pre-configured recipes:
+
 ```python
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
@@ -121,6 +90,7 @@ if __name__ == "__main__":
 ```
 
 You can launch the above script with:
+
 ```sh
 torchrun --nproc-per-node=<num devices> /path/to/script.py
 ```
@@ -171,7 +141,6 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [Moonlight](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek) | ✅ | Coming soon | Coming soon |
 | [GPT-oss](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/gpt_oss) | ✅ | Coming soon | Coming soon |
 
-
 #### Launching Recipes
 
 All recipes are ready to train out of the box, using mock data by default. For an example of how to override the default configuration through YAML or Hydra-style CLI overrides, please have a look at this [script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/recipes/llama/pretrain_llama3_8b.py). The script can then be launched with `torchrun`. For example, with the aforementioned script:
@@ -207,7 +176,7 @@ uv run python pretrain_llama3_8b_nemo_run_partial.py \
 
 ## Performance Benchmarks
 
-Coming soon ...
+For detailed performance benchmarks including throughput metrics across different GPU systems (DGX-GB200, DGX-B200, DGX-H100) and model configurations, see the [Performance Summary](https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-summary.html) in our documentation.
 
 ## Project Structure
 
@@ -233,6 +202,7 @@ Megatron-Bridge/
 ## Acknowledgement & Contributing
 
 Megatron-Bridge is the continuation of [MBridge](https://github.com/ISEEKYAN/mbridge) by [Yan Bai](https://github.com/ISEEKYAN). We appreciate all the contribution and adoptions by the community partners:
+
 - [veRL](https://github.com/volcengine/verl) has adopted MBridge as a connector to Megatron-Core.
 - [slime](https://github.com/THUDM/slime) has adopted MBridge as Megatron-Core checkpoint converter.
 - [SkyRL](https://github.com/NovaSky-AI/SkyRL) has adopted MBridge as Megatron-Core connector and is migrating to Megatron-Bridge.
