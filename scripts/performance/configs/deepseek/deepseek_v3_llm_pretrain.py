@@ -1,6 +1,6 @@
 import logging
 
-from megatron.bridge.recipes.deepseek.deepseek_v3 import pretrain_config
+from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
