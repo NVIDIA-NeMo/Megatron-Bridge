@@ -18,7 +18,7 @@ ConfigContainer:
     use_transformer_engine_op_fuser: false
 
   train:
-    train_iters: 25
+    train_iters: 100
     eval_iters: 0
 
   rerun_state_machine:
@@ -101,7 +101,6 @@ perf_matrix:
         seq_length: 8192
         mbs: 2
         gbs: 128
-        cuda_graphs: true
         tp: 1
         pp: 1
         cp: 1
@@ -110,6 +109,10 @@ perf_matrix:
         etp: null
         use_megatron_fsdp: false
       bf16:
+        cuda_graphs: true
       fp8_ds:
+        cuda_graphs: false
       fp8_cs:
+        cuda_graphs: false
       fp8_mx:
+        cuda_graphs: true

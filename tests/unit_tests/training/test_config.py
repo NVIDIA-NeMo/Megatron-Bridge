@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekModelProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -70,6 +71,19 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     }
     defaults.update(kwargs)
     return GPTModelProvider(**defaults)
+
+
+def create_test_deepseek_config(**kwargs: Any) -> DeepSeekModelProvider:
+    """Creates an instance of DeepSeekModelProvider for testing."""
+    defaults = {
+        "num_layers": 1,
+        "hidden_size": 128,
+        "num_attention_heads": 4,
+        "seq_length": 512,
+        "apply_rope_fusion": False,
+    }
+    defaults.update(kwargs)
+    return DeepSeekModelProvider(**defaults)
 
 
 def create_test_t5_config(**kwargs: Any) -> T5ModelProvider:
@@ -369,7 +383,66 @@ class TestMockGPTDatasetConfig:
 
 
 class TestConfigContainerValidation:
-    """Tests for the `validate` method of the `ConfigContainer` class."""
+    def test_deterministic_mode_disallows_flash_and_ce_fusion(self, monkeypatch):
+        """Test that deterministic mode disallows flash attention and cross-entropy loss fusion."""
+        from megatron.core.transformer.enums import AttnBackend
+
+        gpt_model_cfg = create_test_gpt_config(
+            deterministic_mode=True,
+            attention_backend=AttnBackend.flash,
+            cross_entropy_loss_fusion=True,
+        )
+
+        # Ensure NCCL_ALGO present but valid, so we fail earlier on flash/ce fusion
+        monkeypatch.setenv("NCCL_ALGO", "Tree")
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            with pytest.raises(AssertionError, match="Flash attention can not be used in deterministic mode"):
+                container.validate()
+
+            # Fix attention, still CE fusion should fail
+            container.model.attention_backend = AttnBackend.local
+            with pytest.raises(AssertionError, match="Cross Entropy Fusion is currently not deterministic"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_deterministic_mode_requires_nccl_algo_and_sets_torch(self, monkeypatch):
+        """Test that deterministic mode requires NCCL_ALGO and sets torch.use_deterministic_algorithms."""
+        gpt_model_cfg = create_test_gpt_config(
+            deterministic_mode=True,
+            cross_entropy_loss_fusion=False,
+            transformer_impl="transformer_engine",
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            # Missing NCCL_ALGO
+            monkeypatch.delenv("NCCL_ALGO", raising=False)
+            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
+                container.validate()
+
+            # Invalid NCCL_ALGO
+            monkeypatch.setenv("NCCL_ALGO", "AllReduce")
+            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
+                container.validate()
+
+            # Valid NCCL_ALGO -> should pass and call torch deterministic
+            monkeypatch.setenv("NCCL_ALGO", "Ring")
+
+            called = {"det": False}
+
+            def _mock_use_deterministic(flag):
+                called["det"] = flag
+
+            with patch.object(torch, "use_deterministic_algorithms", side_effect=_mock_use_deterministic):
+                container.validate()
+                assert called["det"] is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
         "world_size, expect_assertion_error",
@@ -575,7 +648,7 @@ class TestConfigContainerValidation:
     def test_scheduler_lr_warmup_steps_from_fraction(self, monkeypatch):
         """Test `lr_warmup_steps` calculation from `lr_warmup_fraction`."""
         gpt_model_cfg = create_test_gpt_config()
-        train_cfg = create_test_training_config(train_iters=1000)
+        train_cfg = create_test_training_config(train_iters=1000, global_batch_size=32)
         lr_warmup_fraction = 0.1
         sched_cfg = create_test_scheduler_config(
             lr_warmup_fraction=lr_warmup_fraction, lr_warmup_iters=0
@@ -586,8 +659,7 @@ class TestConfigContainerValidation:
         )
         try:
             container.validate()
-            # lr_decay_iters in scheduler_config defaults to train_config.train_iters
-            expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters * train_cfg.global_batch_size
+            expected_lr_warmup_steps = lr_warmup_fraction * (train_cfg.train_iters * train_cfg.global_batch_size)
             assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -609,12 +681,12 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_scheduler_lr_warmup_steps_fraction_precedence(self, monkeypatch):
-        """Test `lr_warmup_fraction` takes precedence over `lr_warmup_iters`."""
+    def test_scheduler_lr_warmup_fraction_and_iters_mutual_exclusivity(self, monkeypatch):
+        """Test that lr_warmup_fraction and lr_warmup_iters cannot both be specified."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=1000, global_batch_size=10)
         lr_warmup_fraction = 0.05
-        lr_warmup_iters = 50  # This should be ignored
+        lr_warmup_iters = 50  # This should not be allowed with lr_warmup_fraction
         sched_cfg = create_test_scheduler_config(
             lr_warmup_fraction=lr_warmup_fraction, lr_warmup_iters=lr_warmup_iters
         )
@@ -622,9 +694,9 @@ class TestConfigContainerValidation:
             world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
         )
         try:
-            container.validate()
-            expected_lr_warmup_steps = lr_warmup_fraction * train_cfg.train_iters * train_cfg.global_batch_size
-            assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
+            # This should fail validation due to mutual exclusivity at scheduler finalize level
+            with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.05 with lr_warmup_iters=50"):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -972,6 +1044,56 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("model_factory", [create_test_gpt_config, create_test_deepseek_config])
+    def test_default_pipeline_dtype(self, model_factory, monkeypatch):
+        """
+        Test pipeline_dtype is automatically set if None and PP enabled.
+        Test for both GPT and Deepseek to test both TransformerConfig types.
+        """
+
+        gpt_model_cfg1 = model_factory(params_dtype=torch.bfloat16, pipeline_model_parallel_size=2)
+
+        container1, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg1,
+        )
+
+        try:
+            container1.validate()
+            assert container1.model.pipeline_dtype == torch.bfloat16
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Do not change if already set
+        gpt_model_cfg2 = model_factory(
+            params_dtype=torch.bfloat16, pipeline_dtype=torch.float32, pipeline_model_parallel_size=2
+        )
+
+        container2, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg2,
+        )
+
+        try:
+            container2.validate()
+            assert container2.model.pipeline_dtype == torch.float32
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Do not change if no PP
+        gpt_model_cfg3 = model_factory(params_dtype=torch.bfloat16, pipeline_model_parallel_size=1)
+
+        container3, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg3,
+        )
+
+        try:
+            container3.validate()
+            assert container3.model.pipeline_dtype is None
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """
@@ -1166,6 +1288,26 @@ class TestCheckpointConfig:
                 container.validate()  # Should pass without error
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_ckpt_step_requires_load_directory(self):
+        """Test that ckpt_step requires checkpoint.load to be set."""
+        # Test that ckpt_step without load fails
+        ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load=None)
+
+        with pytest.raises(ValueError) as exc_info:
+            ckpt_cfg.finalize()
+
+        assert "ckpt_step=5000 specified but checkpoint.load is None" in str(exc_info.value)
+        assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
+
+    def test_ckpt_step_with_load_directory_passes(self):
+        """Test that ckpt_step with checkpoint.load passes validation."""
+        ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load="/checkpoints")
+
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        assert ckpt_cfg.ckpt_step == 5000
+        assert ckpt_cfg.load == "/checkpoints"
 
     def test_async_save_validation_error(self):
         """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
@@ -1777,3 +1919,277 @@ class TestDistributedOptimizerValidation:
 
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+class TestSampleBasedTraining:
+    """Tests for sample-based training configuration and validation."""
+
+    def test_sample_based_training_config_creation(self):
+        """Test creating a valid sample-based training configuration."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(
+            lr_decay_samples=8000, lr_warmup_samples=1000, lr_decay_iters=None, lr_warmup_iters=0
+        )
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            container.validate()
+            # Verify train_iters was calculated from train_samples
+            expected_train_iters = train_cfg.train_samples // train_cfg.global_batch_size
+            assert container.train.train_iters == expected_train_iters
+
+            # Verify scheduler steps for sample-based training
+            assert container.scheduler.lr_decay_steps == sched_cfg.lr_decay_samples
+            assert container.scheduler.wd_incr_steps == train_cfg.train_samples
+            assert container.scheduler.lr_warmup_steps == sched_cfg.lr_warmup_samples
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_training_with_warmup_fraction(self):
+        """Test sample-based training with lr_warmup_fraction."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(
+            lr_decay_samples=8000, lr_warmup_fraction=0.1, lr_warmup_samples=0, lr_decay_iters=None, lr_warmup_iters=0
+        )
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            container.validate()
+            # Verify warmup steps calculated from fraction of decay steps (sample count)
+            expected_lr_warmup_steps = sched_cfg.lr_warmup_fraction * sched_cfg.lr_decay_samples
+            assert container.scheduler.lr_warmup_steps == expected_lr_warmup_steps
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_training_mode_mutual_exclusivity(self):
+        """Test that train_iters and train_samples cannot both be specified."""
+        train_cfg = create_test_training_config(train_iters=1000, train_samples=10000)
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="Cannot specify both train_iters and train_samples"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_training_mode_required(self):
+        """Test that either train_iters or train_samples must be specified."""
+        train_cfg = create_test_training_config(train_iters=None)
+        # train_samples defaults to None
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="Either train_iters or train_samples must be provided"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_scheduler_field_validation(self):
+        """Test that sample-based training rejects iteration-based scheduler fields."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(lr_decay_iters=500)  # Should not be used with sample-based
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError, match="Use lr_decay_samples for sample-based training, not lr_decay_iters"
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_iteration_based_scheduler_field_validation(self):
+        """Test that iteration-based training rejects sample-based scheduler fields."""
+        train_cfg = create_test_training_config(train_iters=1000)
+        sched_cfg = create_test_scheduler_config(lr_decay_samples=8000)  # Should not be used with iteration-based
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError, match="Use lr_decay_iters for iteration-based training, not lr_decay_samples"
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_warmup_mutual_exclusivity(self):
+        """Test mutual exclusivity between lr_warmup_fraction and lr_warmup_samples."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(
+            lr_warmup_fraction=0.1,
+            lr_warmup_samples=1000,  # Both specified - should fail
+        )
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            # This should now fail at scheduler finalize level with detailed field values
+            with pytest.raises(
+                AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_with_rampup_batch_size_fails(self):
+        """Test that sample-based training with rampup_batch_size raises ValueError."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None, rampup_batch_size=[16, 8, 5000])
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="Batch size rampup not supported with sample-based training yet"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_lr_decay_samples_defaults(self):
+        """Test that lr_decay_samples defaults to train_samples."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(lr_decay_samples=None)  # Should default to train_samples
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            container.validate()
+            assert container.scheduler.lr_decay_samples == train_cfg.train_samples
+            assert container.scheduler.lr_decay_steps == train_cfg.train_samples
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_wsd_decay_steps(self):
+        """Test WSD decay steps calculation for sample-based training."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(lr_wsd_decay_samples=5000)
+
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+
+        try:
+            container.validate()
+            assert container.scheduler.wsd_decay_steps == sched_cfg.lr_wsd_decay_samples
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_vs_iteration_based_config_equivalence(self):
+        """Test that equivalent sample-based and iteration-based configs produce same scheduler steps."""
+        from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing_samples
+
+        # Sample-based config
+        sample_train_cfg = create_test_training_config(train_samples=32, train_iters=None, global_batch_size=4)
+        sample_optimizer_cfg, sample_scheduler_cfg = distributed_fused_adam_with_cosine_annealing_samples(
+            lr_warmup_samples=8,
+            lr_decay_samples=24,
+            max_lr=1e-3,
+        )
+
+        sample_model_cfg = create_test_gpt_config()
+        sample_container, og_ws1, cfg_mod1 = create_test_config_container(
+            world_size_override=1,
+            model_config=sample_model_cfg,
+            train_config=sample_train_cfg,
+            scheduler_config=sample_scheduler_cfg,
+        )
+
+        # Equivalent iteration-based config
+        iter_train_cfg = create_test_training_config(train_iters=8, global_batch_size=4)  # 32 samples / 4 batch_size
+        iter_scheduler_cfg = create_test_scheduler_config(
+            lr_warmup_iters=2,  # 8 samples / 4 batch_size
+            lr_decay_iters=6,  # 24 samples / 4 batch_size
+        )
+
+        iter_model_cfg = create_test_gpt_config()
+        iter_container, og_ws2, cfg_mod2 = create_test_config_container(
+            world_size_override=1,
+            model_config=iter_model_cfg,
+            train_config=iter_train_cfg,
+            scheduler_config=iter_scheduler_cfg,
+        )
+
+        try:
+            # Validate both configurations
+            sample_container.validate()
+            iter_container.validate()
+
+            # Both should have the same final train_iters
+            assert sample_container.train.train_iters == iter_container.train.train_iters == 8
+
+            # Both should have equivalent scheduler steps (different calculation, same result)
+            assert sample_container.scheduler.lr_decay_steps == 24  # Direct sample count
+            assert iter_container.scheduler.lr_decay_steps == 6 * 4  # lr_decay_iters * global_batch_size = 24
+            assert sample_container.scheduler.lr_decay_steps == iter_container.scheduler.lr_decay_steps
+
+            # Both should have equivalent warmup steps
+            assert sample_container.scheduler.lr_warmup_steps == 8  # Direct sample count
+            assert iter_container.scheduler.lr_warmup_steps == 2 * 4  # lr_warmup_iters * global_batch_size = 8
+            assert sample_container.scheduler.lr_warmup_steps == iter_container.scheduler.lr_warmup_steps
+
+        finally:
+            restore_get_world_size_safe(og_ws1, cfg_mod1)
+            restore_get_world_size_safe(og_ws2, cfg_mod2)
+
+    def test_scheduler_field_mixing_validation(self):
+        """Test that mixing iteration-based and sample-based scheduler fields fails in scheduler finalize."""
+        # This should fail at the SchedulerConfig.finalize() level, before cross-validation
+        sched_cfg = create_test_scheduler_config(
+            lr_decay_iters=100,  # iteration-based
+            lr_decay_samples=1000,  # sample-based - mixing not allowed
+        )
+
+        with pytest.raises(AssertionError, match="Cannot mix iteration-based and sample-based scheduler fields"):
+            sched_cfg.finalize()
+
+    def test_scheduler_warmup_fraction_with_iters_validation(self):
+        """Test that lr_warmup_fraction with lr_warmup_iters fails in scheduler finalize."""
+        sched_cfg = create_test_scheduler_config(
+            lr_warmup_fraction=0.1,
+            lr_warmup_iters=100,  # Should not be mixed with lr_warmup_fraction
+        )
+
+        with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with lr_warmup_iters=100"):
+            sched_cfg.finalize()
+
+    def test_scheduler_warmup_fraction_with_samples_validation(self):
+        """Test that lr_warmup_fraction with lr_warmup_samples fails in scheduler finalize."""
+        sched_cfg = create_test_scheduler_config(
+            lr_warmup_fraction=0.1,
+            lr_warmup_samples=1000,  # Should not be mixed with lr_warmup_fraction
+        )
+
+        with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"):
+            sched_cfg.finalize()

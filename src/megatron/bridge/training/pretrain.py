@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional
+from typing import Optional
 
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
@@ -21,6 +21,7 @@ from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.setup import setup
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train, train
@@ -32,7 +33,7 @@ from megatron.bridge.utils.decorators import experimental_fn
 @experimental_fn
 def pretrain(
     config: ConfigContainer,
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
 ) -> None:
     """Main function to run the training pipeline.
 
@@ -42,8 +43,18 @@ def pretrain(
 
     Args:
         config: The main configuration container holding all necessary parameters.
-        forward_step_func: A callable that performs a single forward and backward
-                           step, returning the loss and any computed metrics.
+        forward_step_func: A callable (function or functor) that performs a single
+                          forward and backward step, returning the loss and any computed
+                          metrics. Supports the following signatures:
+                          - 2 args: (data_iterator, model)
+                          - 3 args: (data_iterator, model, return_schedule_plan=False)
+                                   OR (state: GlobalState, data_iterator, model)
+                          - 4 args: (state: GlobalState, data_iterator, model, return_schedule_plan=False)
+
+    Note:
+        Use the signature with GlobalState type hint for full access to configuration, timers, and training state.
+        State injection is automatic based on type hints or parameter names.
+        Functors (classes with __call__) are fully supported.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
@@ -57,6 +68,16 @@ def pretrain(
     state.cfg = config
 
     if config.inprocess_restart and config.inprocess_restart.enabled:
+        if dist.is_initialized():
+            raise RuntimeError(
+                "In-process restart is incompatible with user-initialized process groups. "
+                "The in-process restart mechanism expects to manage the process group lifecycle "
+                "and will destroy it during fault recovery. Either:\n"
+                "1. Disable in-process restart and manage the process group yourself, or\n"
+                "2. Let the framework initialize the process group by not calling "
+                "torch.distributed.init_process_group() before training."
+            )
+
         # Apply in-process restart wrapper directly to _pretrain
         from megatron.bridge.training.inprocess_restart import maybe_wrap_for_inprocess_restart
 
@@ -73,7 +94,7 @@ def pretrain(
 
 def _pretrain(
     state: GlobalState,
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     store: Optional[dist.Store] = None,
     inprocess_call_wrapper: Optional[CallWrapper] = None,
 ) -> None:
@@ -81,10 +102,14 @@ def _pretrain(
 
     Args:
         state: Global training state containing the validated configuration and runtime objects
-        forward_step_func: Function that performs a single forward/backward step
+        forward_step_func: Function or functor that performs a single forward/backward step
         store: Optional distributed Store used by in-process restart for coordination
         inprocess_call_wrapper: Optional wrapper injected by nvrx to expose restart iteration
     """
+    # Determine whether the training loop will initialize the process group
+    # If the trainer creates the process group, the trainer should destroy it before returning control back to the user
+    should_destroy_process_group = not dist.is_initialized()
+
     # Handle in-process restart store prefix
     if inprocess_call_wrapper is not None:
         restart_attempt = inprocess_call_wrapper.iteration
@@ -162,3 +187,15 @@ def _pretrain(
         )
 
     _finish_train(state)
+    _maybe_destroy_process_group(should_destroy_process_group)
+
+
+def _maybe_destroy_process_group(should_destroy: bool) -> None:
+    """Destroy the process group if it was created by this training session.
+
+    Args:
+        should_destroy: Whether the process group should be destroyed
+    """
+    if should_destroy and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()

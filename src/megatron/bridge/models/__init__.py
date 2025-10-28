@@ -44,9 +44,31 @@ from megatron.bridge.models.gemma import (
     Gemma2ModelProvider2B,
     Gemma2ModelProvider9B,
     Gemma2ModelProvider27B,
+    Gemma3ModelProvider,
+    Gemma3ModelProvider1B,
+    Gemma3ModelProvider4B,
+    Gemma3ModelProvider12B,
+    Gemma3ModelProvider27B,
     GemmaModelProvider,
     GemmaModelProvider2B,
     GemmaModelProvider7B,
+)
+from megatron.bridge.models.gemma_vl import (
+    Gemma3VLBridge,
+    Gemma3VLModel,
+    Gemma3VLModelProvider,
+)
+from megatron.bridge.models.glm import (
+    GLM45AirModelProvider106B,
+    GLM45Bridge,
+    GLM45ModelProvider355B,
+    GLMMoEModelProvider,
+)
+from megatron.bridge.models.gpt_oss import (
+    GPTOSSBridge,
+    GPTOSSProvider,
+    GPTOSSProvider20B,
+    GPTOSSProvider120B,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.llama import (
@@ -71,6 +93,14 @@ from megatron.bridge.models.llama import (
     Llama32ModelProvider3B,
     LlamaModelProvider,
 )
+from megatron.bridge.models.llama_nemotron import (
+    Llama31Nemotron70BProvider,
+    Llama31NemotronNano8BProvider,
+    Llama31NemotronUltra253BProvider,
+    Llama33NemotronSuper49BProvider,
+    LlamaNemotronBridge,
+    LlamaNemotronHeterogeneousProvider,
+)
 from megatron.bridge.models.mamba.mamba_provider import (
     MambaModelProvider,
     MambaModelProvider1P3B,
@@ -88,6 +118,10 @@ from megatron.bridge.models.mamba.mamba_provider import (
     NVIDIAMambaHybridProvider8B,
     NVIDIAMambaModelProvider8B,
     NVIDIAMambaProvider8B,
+)
+from megatron.bridge.models.mistral import (
+    MistralModelProvider,
+    MistralSmall3ModelProvider24B,
 )
 from megatron.bridge.models.nemotron import (
     Nemotron3ModelProvider4B,
@@ -112,6 +146,10 @@ from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronNano12Bv2Provider,
     NemotronNanoModelProvider9Bv2,
     NemotronNanoModelProvider12Bv2,
+)
+from megatron.bridge.models.olmoe import (
+    OlMoEBridge,
+    OlMoEModelProvider,
 )
 from megatron.bridge.models.qwen import (
     Qwen2ModelProvider,
@@ -161,6 +199,11 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "Gemma3ModelProvider",
+    "Gemma3ModelProvider1B",
+    "Gemma3ModelProvider4B",
+    "Gemma3ModelProvider12B",
+    "Gemma3ModelProvider27B",
     "CodeGemmaModelProvider2B",
     "CodeGemmaModelProvider7B",
     "GemmaModelProvider",
@@ -170,7 +213,15 @@ __all__ = [
     "Gemma2ModelProvider2B",
     "Gemma2ModelProvider9B",
     "Gemma2ModelProvider27B",
+    "GLMMoEModelProvider",
+    "GLM45ModelProvider355B",
+    "GLM45AirModelProvider106B",
+    "GLM45Bridge",
     "GPTModelProvider",
+    "GPTOSSBridge",
+    "GPTOSSProvider",
+    "GPTOSSProvider20B",
+    "GPTOSSProvider120B",
     "T5ModelProvider",
     "LlamaModelProvider",
     "Llama2ModelProvider7B",
@@ -192,6 +243,15 @@ __all__ = [
     "Llama4ModelProvider",
     "Llama4Experts16ModelProvider",
     "Llama4Experts128ModelProvider",
+    "LlamaNemotronHeterogeneousProvider",
+    "Llama31NemotronNano8BProvider",
+    "Llama31Nemotron70BProvider",
+    "Llama31NemotronUltra253BProvider",
+    "Llama33NemotronSuper49BProvider",
+    "MistralModelProvider",
+    "MistralSmall3ModelProvider24B",
+    "OlMoEBridge",
+    "OlMoEModelProvider",
     "Qwen2ModelProvider",
     "Qwen2ModelProvider500M",
     "Qwen2ModelProvider1P5B",
@@ -265,7 +325,9 @@ __all__ = [
     "Qwen25VLModel",
     "Qwen25VLBridge",
     "Qwen25VLModelProvider",
-    # Nemotron VL
+    "Gemma3VLBridge",
+    "Gemma3VLModel",
+    "Gemma3VLModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronNano12Bv2VLModelProvider",

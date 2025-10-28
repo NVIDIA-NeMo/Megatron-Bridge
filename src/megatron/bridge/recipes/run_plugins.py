@@ -141,10 +141,7 @@ class PreemptionPlugin(Plugin):
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            # Enable exit signal handler in training config
-            if self.enable_exit_handler and hasattr(task, "config"):
-                task.config.train.exit_signal_handler = self.enable_exit_handler
-                task.config.train.exit_signal_handler_for_dataloader = self.enable_exit_handler_for_data_loader
+            raise NotImplementedError("PreemptionPlugin is only supported for run.Script tasks")
 
         # Apply signal configuration for both task types when using SlurmExecutor
         if isinstance(executor, SlurmExecutor):
@@ -178,6 +175,7 @@ class FaultTolerancePlugin(Plugin):
     This plugin enables workload hang detection, automatic calculation of timeouts used for hang detection,
     detection of rank(s) terminated due to an error and workload respawning in case of a failure.
 
+
     Args:
         enable_ft_package (bool): Enable the fault tolerance package. Default is True.
         calc_ft_timeouts (bool): Automatically compute timeouts. Default is True.
@@ -190,6 +188,10 @@ class FaultTolerancePlugin(Plugin):
         script_args_converter_fn (Optional[Callable]): A function that takes FaultTolerancePluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
+
+    Note:
+        This plugin is incompatible with NsysPlugin. Nsys profiling cannot be used when fault tolerance
+        is enabled.
     """
 
     enable_ft_package: bool = True
@@ -228,20 +230,7 @@ class FaultTolerancePlugin(Plugin):
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            # For run.Partial, modify the task config directly
-            # Configure fault tolerance in task config
-            if not hasattr(task.config, "ft") or task.config.ft is None:
-                from megatron.bridge.training.config import FaultToleranceConfig
-
-                task.config.ft = FaultToleranceConfig()
-
-            task.config.ft.enable_ft_package = self.enable_ft_package
-            task.config.ft.calc_ft_timeouts = self.calc_ft_timeouts
-
-            # Check if nsys profiling is enabled and warn if so
-            if hasattr(task.config, "profiling") and task.config.profiling and task.config.profiling.use_nsys_profiler:
-                logger.warning("Warning: Nsys not supported with the FaultTolerancePlugin.")
-                task.config.profiling.use_nsys_profiler = False
+            raise NotImplementedError("FaultTolerancePlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -286,6 +275,10 @@ class NsysPlugin(Plugin):
         script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
+
+    Note:
+        This plugin is incompatible with FaultTolerancePlugin. Nsys profiling cannot be used when
+        fault tolerance is enabled, as the profiler interferes with the fault tolerance mechanisms.
     """
 
     profile_step_start: int
@@ -333,18 +326,8 @@ class NsysPlugin(Plugin):
 
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
-        elif isinstance(task, Partial):
-            # For run.Partial, modify the task config directly
-            if not hasattr(task.config, "profiling") or task.config.profiling is None:
-                from megatron.bridge.training.config import ProfilingConfig
-
-                task.config.profiling = ProfilingConfig()
-
-            task.config.profiling.use_nsys_profiler = True
-            task.config.profiling.profile_step_start = self.profile_step_start
-            task.config.profiling.profile_step_end = self.profile_step_end
-            task.config.profiling.profile_ranks = self.profile_ranks or [0]
-            task.config.profiling.record_shapes = self.record_shapes
+        else:
+            raise NotImplementedError("NsysPlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -425,20 +408,7 @@ class PyTorchProfilerPlugin(Plugin):
             task.args.extend(cli_overrides)
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
-            # For run.Partial, modify the task config directly
-            # Configure profiling in task config
-            if not hasattr(task.config, "profiling") or task.config.profiling is None:
-                from megatron.bridge.training.config import ProfilingConfig
-
-                task.config.profiling = ProfilingConfig()
-
-            task.config.profiling.use_pytorch_profiler = True
-            task.config.profiling.profile_step_start = self.profile_step_start
-            task.config.profiling.profile_step_end = self.profile_step_end
-            task.config.profiling.profile_ranks = self.profile_ranks or [0]
-            task.config.profiling.record_memory_history = self.record_memory_history
-            task.config.profiling.memory_snapshot_path = self.memory_snapshot_path
-            task.config.profiling.record_shapes = self.record_shapes
+            raise NotImplementedError("NsysPlugin is only supported for run.Script tasks")
 
 
 @dataclass
@@ -516,15 +486,7 @@ class WandbPlugin(Plugin):
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             else:
-                # For run.Partial, modify the task config directly
-                if hasattr(task, "config"):
-                    # Use provided name or fall back to experiment name
-                    exp_name = self.name or task.config.logger.wandb_exp_name
-
-                    task.config.logger.wandb_project = self.project
-                    task.config.logger.wandb_entity = self.entity
-                    task.config.logger.wandb_exp_name = exp_name
-                    task.config.logger.wandb_save_dir = self.save_dir
+                raise NotImplementedError("WandbPlugin is only supported for run.Script tasks")
         else:
             logger.warning(
                 f"Warning: The {self.__class__.__name__} will have no effect as WANDB_API_KEY environment variable is not set."
@@ -581,6 +543,9 @@ class PerfEnvPlugin(Plugin):
     cp_size: int = 1
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
+    num_gpus: int = 8
+    deepep_enabled: bool = False
+    a2a_overlap: bool = False
 
     def get_vboost_srun_cmd(self, nodes, job_dir):
         """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
@@ -602,19 +567,41 @@ class PerfEnvPlugin(Plugin):
 
         return vboost_cmd
 
+    def _set_num_cuda_device_max_connections(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        self.dp_size = self.num_gpus // (self.tp_size * self.cp_size * self.pp_size)
+
+        cuda_device_max_connections = 8
+        if self.deepep_enabled:
+            cuda_device_max_connections = 32
+        if self.gpu_sm100_or_newer:
+            if (self.tp_size > 1 or self.cp_size > 1) and (self.dp_size > 1 or self.pp_size > 1):
+                """
+                We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
+                of the default device connection of 8.
+                """
+                cuda_device_max_connections = 32
+        else:
+            # Hopper or earlier generation GPUs
+            if (self.tp_size > 1 or self.cp_size > 1) and not self.a2a_overlap:
+                """
+                Set the device connection to 1 to enforce kernel queuing order from host to execution order on GPU.
+                This is needed to schedule a communication kernel before the overlapping persistent GEMM kernel.
+                Otherwise, communication kernel will be pushed to the end of the GEMM kernel, failing to overlap the
+                kernels.
+                """
+                cuda_device_max_connections = 1
+
+        executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
+        logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
 
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 
-        # Environment variables work for both task types
-
         # Force program order kernel launch for TP, CP overlap
-        if self.gpu_sm100_or_newer and (self.tp_size > 1 or self.cp_size > 1):
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
-        elif (not self.gpu_sm100_or_newer) and (self.tp_size > 1 or self.cp_size > 1):
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
+        self._set_num_cuda_device_max_connections(task, executor)
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
         if self.enable_layernorm_sm_margin:
@@ -643,9 +630,7 @@ class PerfEnvPlugin(Plugin):
                 task.args.extend(cli_overrides)
                 logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
             elif hasattr(task, "config"):
-                # For run.Partial, modify the task config directly
-                task.config.train.manual_gc = True
-                task.config.train.manual_gc_interval = self.manual_gc_interval
+                raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
         # Improve perf by steering power to tensor cores, may not work on all systems
         if self.enable_vboost and isinstance(executor, SlurmExecutor):

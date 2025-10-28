@@ -120,7 +120,7 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Check if this bridge supports the given model configuration.
 
-        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration' 
+        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration'
         or 'NemotronH_Nano_VL_V2'.
 
         Args:
@@ -299,7 +299,7 @@ class AutoBridge(Generic[MegatronModelT]):
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, 'trust_remote_code', False)
             pre_trained = PreTrainedCausalLM.from_pretrained(
-                hf_path, 
+                hf_path,
                 trust_remote_code=trust_remote_code
             )
         self._model_bridge.load_weights_hf_to_megatron(model, pre_trained)
@@ -358,13 +358,13 @@ class AutoBridge(Generic[MegatronModelT]):
     def set_custom_modeling_source(self, source_path: Union[str, Path]) -> None:
         """
         Set the source path for preserving custom modeling files.
-        
+
         This is useful when converting from Megatron checkpoints where the original
         HuggingFace model with custom modeling files needs to be referenced.
-        
+
         Args:
             source_path: Path to the directory containing custom modeling files
-            
+
         Example:
             >>> bridge = AutoBridge.from_hf_pretrained("model_path", trust_remote_code=True)
             >>> # After loading Megatron checkpoint, set the original HF source
@@ -845,11 +845,11 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Behavior:
         - If the model can be imported from transformers directly, return the actual transformers class object.
-        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g., 
+        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g.,
         "DeepseekV2ForCausalLM").
 
         Returns:
-            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a 
+            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a
             string for auto_map models.
 
         Raises:

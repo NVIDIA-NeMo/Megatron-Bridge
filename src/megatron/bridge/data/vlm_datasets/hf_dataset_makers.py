@@ -23,10 +23,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from datasets import concatenate_datasets, load_dataset
-
 from megatron.bridge.utils.path_utils import resolve_path
 
-from .token_utils import json2token
+from megatron.bridge.data.vlm_datasets.token_utils import json2token
 
 
 def make_rdr_dataset(

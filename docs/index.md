@@ -11,6 +11,7 @@ performance-summary.md
 performance-guide.md
 recipe-usage.md
 nemo2-migration-guide.md
+megatron-lm-to-megatron-bridge.md
 ```
 
 ```{toctree}
@@ -19,6 +20,14 @@ nemo2-migration-guide.md
 
 bridge-guide.md
 bridge-tech-details.md
+```
+
+```{toctree}
+:caption: Supported Models
+:hidden:
+
+models/llm/index.md
+models/vlm/index.md
 ```
 
 ```{toctree}
@@ -47,6 +56,7 @@ training/packed-sequences.md
 :hidden:
 
 adding-new-models.md
+bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
 ```

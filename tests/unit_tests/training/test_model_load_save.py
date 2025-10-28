@@ -20,6 +20,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
@@ -631,6 +632,9 @@ class TestSaveMegatronModel:
             num_floating_point_operations_so_far=0,
         )
 
+    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
@@ -647,6 +651,9 @@ class TestSaveMegatronModel:
         mock_global_state,
         mock_get_model_config,
         mock_save_checkpoint,
+        mock_build_tokenizer,
+        mock_get_checkpoint_name,
+        mock_save_tokenizer_assets,
     ):
         """Test saving megatron model with tokenizer configuration."""
         # Setup mocks
@@ -665,6 +672,11 @@ class TestSaveMegatronModel:
         # Mock the ConfigContainer to capture tokenizer config
         mock_container_instance = Mock()
         mock_config_container.return_value = mock_container_instance
+
+        # Mock tokenizer building
+        mock_tokenizer = Mock()
+        mock_build_tokenizer.return_value = mock_tokenizer
+        mock_get_checkpoint_name.return_value = "/fake/checkpoint/iter_0000000"
 
         # Test with tokenizer path
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -691,6 +703,13 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+        )
+
+        # Verify tokenizer was built and saved
+        mock_build_tokenizer.assert_called_once()
+        mock_get_checkpoint_name.assert_called_once()
+        mock_save_tokenizer_assets.assert_called_once_with(
+            mock_tokenizer, tokenizer_config, "/fake/checkpoint/iter_0000000"
         )
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
@@ -887,3 +906,37 @@ class TestLoadTokenizer:
         mock_load_args.assert_called_once_with(ckpt_path)
         mock_cfg_from_args.assert_called_once_with(mock_args)
         mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_with_kwargs(self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer):
+        """Test loading tokenizer config and overriding."""
+        # Setup mocks
+        mock_run_cfg_dict = {
+            "model": {"tensor_model_parallel_size": 1, "make_vocab_size_divisible_by": 128},
+            "tokenizer": {},
+        }
+        mock_read_cfg.return_value = mock_run_cfg_dict
+
+        mock_tokenizer_cfg = Mock(spec=TokenizerConfig)
+        mock_tokenizer_cfg.vocab_size = 32000
+        mock_tokenizer_cfg.tokenizer_model = "/path/to/tokenizer.model"
+        mock_instantiate.return_value = mock_tokenizer_cfg
+
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        # test changing asset filepath
+        new_asset_path = "/path/to/different/tokenizer.model"
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            _ = load_tokenizer(ckpt_path, tokenizer_model=new_asset_path)
+
+            assert mock_tokenizer_cfg.tokenizer_model == new_asset_path
+
+            # test setting attribute that doesn't exist
+            with pytest.raises(
+                AttributeError, match="Attempting to set a non-existent attribute 'tensor_model_parallel_size'"
+            ):
+                load_tokenizer(ckpt_path, tensor_model_parallel_size=1)

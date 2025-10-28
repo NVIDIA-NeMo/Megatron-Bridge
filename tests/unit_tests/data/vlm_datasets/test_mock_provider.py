@@ -54,27 +54,6 @@ class _Proc:
         return types.SimpleNamespace(**out)
 
 
-def test_mock_dataset_item_and_lengths(monkeypatch):
-    proc = _Proc()
-    cfg = types.SimpleNamespace(
-        _processor=proc,
-        sequence_length=8,
-        pad_to_max_length=True,
-        random_seed=0,
-        prompt="say hi",
-        image_size=(8, 8),
-        num_images=2,
-    )
-    ds = mock.MockVLMConversationDataset(size=3, config=cfg)
-    assert len(ds) == 3
-    sample = ds[0]
-    # Ensure necessary keys exist
-    for key in ["tokens", "labels", "attention_mask", "loss_mask", "position_ids"]:
-        assert key in sample
-    # Labels/tokens lengths match sequence_length
-    assert sample["tokens"].numel() == cfg.sequence_length
-
-
 def test_mock_provider_builds_splits(monkeypatch):
     import transformers
 

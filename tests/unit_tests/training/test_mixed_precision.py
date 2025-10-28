@@ -30,6 +30,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
+    bf16_with_nvfp4_mixed,
     fp16_mixed,
     fp16_with_fp8_current_scaling_mixed,
     fp16_with_fp8_delayed_scaling_mixed,
@@ -647,6 +648,19 @@ class TestMixedPrecisionRecipes:
         assert config.fp8_param_gather is False
         # Verify fp8_param is initialized from fp8_param_gather
         assert config.fp8_param is False
+
+    def test_bf16_with_nvfp4_mixed(self):
+        config = bf16_with_nvfp4_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # NVFP4 specific settings
+        assert config.fp8 is None
+        assert config.fp4 == "e2m1"
+        assert config.fp4_recipe == "nvfp4"
+        assert config.fp8_param_gather is False
 
     def test_fp16_with_fp8_subchannel_scaling_mixed(self):
         config = fp16_with_fp8_subchannel_scaling_mixed()

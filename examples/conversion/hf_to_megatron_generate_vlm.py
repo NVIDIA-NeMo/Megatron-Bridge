@@ -191,7 +191,7 @@ def process_image_inputs(processor, image_path: Optional[str], prompt: str):
             padding=processor.tokenizer.pad_token is not None,
             return_tensors="pt",
         )
-        try: 
+        try:
             image_grid_thw = inputs.image_grid_thw
         except AttributeError:
             image_grid_thw = None
@@ -382,6 +382,7 @@ def main(args) -> None:
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -458,8 +459,8 @@ def main(args) -> None:
             # The Megatron VL model only processes vision features when pixel_values is not None,
             # so we need to provide them throughout the generation process
             iterator = SingleBatchIterator(
-                input_ids, 
-                position_ids, 
+                input_ids,
+                position_ids,
                 attention_mask,
                 pixel_values=pixel_values,
                 image_grid_thw=image_grid_thw,
@@ -534,7 +535,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf_model_path",
         type=str,
-        default="Qwen/Qwen2.5-VL-3B-Instruct",
+        required=True,
         help="Path to the HuggingFace VL model.",
     )
     parser.add_argument(

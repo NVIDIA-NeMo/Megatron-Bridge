@@ -22,6 +22,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image  # noqa: F401  # may be used downstream by processors
 
+from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
 from ...models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
@@ -275,7 +276,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     """Collate function for Nemotron Nano V2 VL model."""
     skipped_tokens = extract_skipped_token_ids(processor)
     # this assumes the first message in conversation is the video message
-    is_video = examples[0]["conversation"][0]["content"][0]['type']=="video" 
+    is_video = examples[0]["conversation"][0]["content"][0]['type']=="video"
     if is_video:
         from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
             maybe_path_or_url_to_data_urls,
@@ -286,7 +287,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
         video_fps = -1
         video_nframe = 10
         video_nframe_max = -1
-        
+
         for example in examples:
             video_path = example["conversation"][0]["content"][0]["path"]
             image_urls, metadata = maybe_path_or_url_to_data_urls(
@@ -360,7 +361,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     return batch
 
 
-def default_collate_fn(examples: list, processor, start_of_response_token=None) -> dict[str, torch.Tensor]:
+def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """Default collate function for VLM models."""
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
