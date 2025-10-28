@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import torch
-from transformers.models.qwen3_vl_moe import Qwen3VLMoeForConditionalGeneration
+from transformers.models.qwen3_vl_moe import Qwen3VLMoEForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -27,12 +27,12 @@ from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvide
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3VLMoeForConditionalGeneration, target=Qwen3VLModel)
+@MegatronModelBridge.register_bridge(source=Qwen3VLMoEForConditionalGeneration, target=Qwen3VLModel)
 class Qwen3VLMoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-VL MoE (Mixture of Experts) Conditional Generation.
 
-    This bridge handles the conversion between HuggingFace Qwen3VLMoeForConditionalGeneration
+    This bridge handles the conversion between HuggingFace Qwen3VLMoEForConditionalGeneration
     and Megatron-Core Qwen3VL MoE model formats, including weight mappings and
     configuration translation for vision-language MoE models.
 
@@ -184,11 +184,15 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             # Note: Expert weights are handled specially in yan-mbridge
             # Each expert has gate_up_proj and down_proj
             AutoMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight",
                 hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
             ),
+           GatedMLPMapping(
+                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc1.weight",
+                gate="model.language_model.layers.*.mlp.gate.weight",
+                up="model.language_model.layers.*.mlp.experts.up_proj",
+             ),
             AutoMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight",
+                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc2.weight",
                 hf_param="model.language_model.layers.*.mlp.experts.down_proj",
             ),
         ])

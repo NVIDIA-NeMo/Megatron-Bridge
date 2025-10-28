@@ -42,11 +42,9 @@ __all__ = [
     "Qwen3VLTransformerBlock",
     "Qwen3VLTransformerConfig",
     "Qwen3VLModel",
-    # Dense models
+    "Qwen3VLMoEModel",
     "Qwen3VLModelProvider",
-    # MoE models
     "Qwen3VLMoEModelProvider",
-    # Bridges
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
 ]

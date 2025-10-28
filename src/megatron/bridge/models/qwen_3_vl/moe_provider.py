@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.bridge.models import Qwen3MoEModelProvider    
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
-from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
+from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoETextConfig
 
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -55,7 +55,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
     
 
-    hf_text_config: Optional[Qwen3VLMoeTextConfig] = None
+    hf_text_config: Optional[Qwen3VLMoETextConfig] = None
     
     pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
     
@@ -145,64 +145,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         vision_transformer_config = deepcopy(self)
         hf_config = self.vision_config
 
-        # Set vision-specific parameters from hf_config
-        vision_transformer_config.num_layers = hf_config.depth
-        vision_transformer_config.ffn_hidden_size = hf_config.intermediate_size
-        vision_transformer_config.num_attention_heads = hf_config.num_heads
-        vision_transformer_config.hidden_size = hf_config.hidden_size
-        if hasattr(hf_config, 'patch_size'):
-            vision_transformer_config.patch_size = hf_config.patch_size
-        if hasattr(hf_config, 'temporal_patch_size'):
-            vision_transformer_config.temporal_patch_size = hf_config.temporal_patch_size
-        if hasattr(hf_config, 'in_channels'):
-            vision_transformer_config.in_channels = hf_config.in_channels
-        if hasattr(hf_config, 'spatial_merge_size'):
-            vision_transformer_config.spatial_merge_size = hf_config.spatial_merge_size
-        if hasattr(hf_config, 'num_position_embeddings'):
-            vision_transformer_config.num_position_embeddings = hf_config.num_position_embeddings
-        if hasattr(hf_config, 'out_hidden_size'):
-            vision_transformer_config.out_hidden_size = hf_config.out_hidden_size
-        if hasattr(hf_config, 'deepstack_visual_indexes'):
-            vision_transformer_config.deepstack_visual_indexes = deepcopy(
-                hf_config.deepstack_visual_indexes
-            )
-
-        # Set other vision-specific settings
-        vision_transformer_config.add_bias_linear = True
-        vision_transformer_config.add_qkv_bias = True
-        vision_transformer_config.hidden_dropout = 0.0
-        vision_transformer_config.attention_dropout = 0.0
-        vision_transformer_config.layernorm_epsilon = 1e-6
-        vision_transformer_config.apply_rotary_pos_emb_in_fp32 = True
-        vision_transformer_config.gated_linear_unit = False
-        vision_transformer_config.activation_func = partial(F.gelu, approximate="tanh")
-        vision_transformer_config.kv_channels = (
-            vision_transformer_config.hidden_size // vision_transformer_config.num_attention_heads
-        )
-        vision_transformer_config.num_query_groups = vision_transformer_config.num_attention_heads
-        vision_transformer_config.layernorm_zero_centered_gamma = False
-        vision_transformer_config.apply_query_key_layer_scaling = False
-        vision_transformer_config.bias_activation_fusion = False
-        vision_transformer_config.bias_dropout_fusion = False
-        vision_transformer_config.attention_softmax_in_fp32 = True
-        vision_transformer_config.normalization = "LayerNorm"
-
-        # Disable MoE for vision encoder
-        if hasattr(vision_transformer_config, 'num_moe_experts'):
-            vision_transformer_config.num_moe_experts = None
-        if hasattr(vision_transformer_config, 'expert_model_parallel_size'):
-            vision_transformer_config.expert_model_parallel_size = 1
-        if hasattr(vision_transformer_config, 'moe_ffn_hidden_size'):
-            vision_transformer_config.moe_ffn_hidden_size = None
-
-        # Set parallelism settings for vision
-        vision_transformer_config.tp_comm_overlap = False
-        vision_transformer_config.sequence_parallel = False
-        vision_transformer_config.context_parallel_size = 1
-        vision_transformer_config.pipeline_model_parallel_size = 1
-        vision_transformer_config.num_layers_in_first_pipeline_stage = None
-        vision_transformer_config.num_layers_in_last_pipeline_stage = None
-        
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
             moe_grouped_gemm=False,
@@ -210,7 +152,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             fp8=False,
         )
         
-        model = Qwen3VLModel(
+        model = Qwen3VLMoEModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_config,
@@ -242,122 +184,3 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
         """
         # Use parent class to create standard MoE language model
         return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-
-
-
-@dataclass
-class Qwen3VLMoEModelProvider30B_A3B(Qwen3VLMoEModelProvider):
-    """
-    Config for Qwen 3 VL 30B-A3B MoE model.
-    Language config from Qwen3MoEModelProvider30B_A3B.
-    Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
-    
-    This model has 30B total parameters with 3B active parameters per token.
-    """
-    # Language model configuration from Qwen3MoEModelProvider30B_A3B
-    # Verified against HuggingFace config
-    num_layers: int = 48
-    hidden_size: int = 2048
-    num_attention_heads: int = 32
-    num_query_groups: int = 4  # num_key_value_heads=4 in HF config (GQA)
-    ffn_hidden_size: int = 6144  # Dense FFN size
-    moe_ffn_hidden_size: int = 768  # Expert FFN size (moe_intermediate_size)
-    
-    # MoE specific parameters for 30B-A3B model
-    # Based on configuration_qwen3_vl_moe.py defaults
-    num_moe_experts: int = 60  # Total number of experts
-    moe_router_topk: int = 4  # num_experts_per_tok in HF config
-    decoder_sparse_step: int = 1  # Every layer is MoE
-    
-    # Shared embeddings for smaller model
-    share_embeddings_and_output_weights: bool = True
-    
-    # Vision configuration adjusted for 30B-A3B model
-    # Using transformers Qwen3VLVisionConfig with custom parameters
-    vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig(
-        depth=27,  # Standard depth
-        hidden_size=1152,  # Standard vision hidden size
-        intermediate_size=4304,  # Standard intermediate size
-        num_heads=16,  # Standard attention heads
-        out_hidden_size=2048,  # Match language hidden size
-    ))
-    
-    # Override some MoE defaults for this model size
-    moe_aux_loss_coeff: float = 1e-3  # Auxiliary loss for load balancing
-
-
-@dataclass
-class Qwen3VLMoEModelProvider235B_A22B(Qwen3VLMoEModelProvider):
-    """
-    Config for Qwen 3 VL 235B-A22B MoE model.
-    Language config from Qwen3MoEModelProvider235B_A22B.
-    
-    This model has 235B total parameters with 22B active parameters per token.
-    Note: This is a hypothetical VL variant as no official model exists yet.
-    """
-    # Language model configuration from Qwen3MoEModelProvider235B_A22B
-    num_layers: int = 94
-    hidden_size: int = 4096
-    num_attention_heads: int = 64
-    num_query_groups: int = 4  # num_key_value_heads=4 in base config (GQA)
-    ffn_hidden_size: int = 12288  # Dense FFN size
-    moe_ffn_hidden_size: int = 1536  # Expert FFN size
-    
-    # MoE specific parameters for 235B-A22B model
-    num_moe_experts: int = 128  # Total number of experts (default from base)
-    moe_router_topk: int = 8  # num_experts_per_tok (default from base)
-    decoder_sparse_step: int = 1  # Every layer is MoE
-    
-    # No shared embeddings for large model
-    share_embeddings_and_output_weights: bool = False
-    
-    # Vision configuration for large model
-    # Using transformers Qwen3VLVisionConfig with enhanced parameters
-    vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig(
-        depth=32,  # Increased depth for larger model
-        hidden_size=1536,  # Larger vision hidden size
-        intermediate_size=6144,  # Larger intermediate size
-        num_heads=24,  # More attention heads
-        out_hidden_size=4096,  # Match language hidden size
-    ))
-    
-    # Override some MoE defaults for this model size
-    moe_aux_loss_coeff: float = 1e-3  # Auxiliary loss for load balancing
-
-
-@dataclass
-class Qwen3VLMoEModelProvider48B_A8B(Qwen3VLMoEModelProvider):
-    """
-    Config for a hypothetical Qwen 3 VL 48B-A8B MoE model.
-    Custom configuration between 30B and 235B models.
-    
-    This model would have 48B total parameters with 8B active parameters per token.
-    """
-    # Custom language model configuration
-    num_layers: int = 56
-    hidden_size: int = 3072
-    num_attention_heads: int = 48
-    num_query_groups: int = 6  # num_key_value_heads for GQA
-    ffn_hidden_size: int = 8192  # Dense FFN size
-    moe_ffn_hidden_size: int = 1024  # Expert FFN size
-    
-    # MoE specific parameters
-    num_moe_experts: int = 64  # Total number of experts
-    moe_router_topk: int = 4  # num_experts_per_tok
-    decoder_sparse_step: int = 1  # Every layer is MoE
-    
-    # Shared embeddings for medium model
-    share_embeddings_and_output_weights: bool = True
-    
-    # Vision configuration for medium model
-    # Using transformers Qwen3VLVisionConfig with balanced parameters
-    vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig(
-        depth=30,  # Medium depth
-        hidden_size=1280,  # Medium vision hidden size
-        intermediate_size=5120,  # Medium intermediate size
-        num_heads=20,  # Balanced attention heads
-        out_hidden_size=3072,  # Match language hidden size
-    ))
-    
-    # Override some MoE defaults for this model size
-    moe_aux_loss_coeff: float = 1e-3  # Auxiliary loss for load balancing
