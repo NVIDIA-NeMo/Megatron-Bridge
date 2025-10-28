@@ -41,6 +41,16 @@ from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelK
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
 
+# Supported HuggingFace architecture suffixes for causal generation models
+SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
+    "ForCausalLM",
+    "ForConditionalGeneration",
+    "NemotronH_Nano_VL_V2",
+)
+
+# Preformatted display string for error/help messages
+SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
+
 
 class AutoBridge(Generic[MegatronModelT]):
     """
@@ -120,8 +130,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Check if this bridge supports the given model configuration.
 
-        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration'
-        or 'NemotronH_Nano_VL_V2'.
+        A model is supported if it has at least one architecture ending with one of the
+        suffixes listed in SUPPORTED_HF_ARCHITECTURES.
 
         Args:
             config: HuggingFace model config object
@@ -132,9 +142,7 @@ class AutoBridge(Generic[MegatronModelT]):
         architectures = getattr(config, "architectures", [])
         if not architectures:
             return False
-        return any(
-            arch.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL_V2")) for arch in architectures
-        )
+        return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -876,7 +884,7 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL_V2")):
+            if architecture_name.endswith(SUPPORTED_HF_ARCHITECTURES):
                 causal_lm_arch = architecture_name
                 break
 
@@ -884,8 +892,7 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(
                 f"\n✗ No CausalLM architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
-                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration' or"
-                f"'NemotronH_Nano_VL_V2'.\n"
+                f"None of the architectures end with {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
                 f"This bridge only supports causal language models.\n"
                 f"For other model types, use a different bridge class."
             )
@@ -917,8 +924,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"\n✗ Model architecture not supported by AutoBridge\n\n"
                 f"Model: {path}\n"
                 f"Architectures: {architectures}\n\n"
-                f"AutoBridge only supports models with architectures ending in 'ForCausalLM' or"
-                f"'ForConditionalGeneration' or 'NemotronH_Nano_VL_V2'.\n"
+                f"AutoBridge only supports models with architectures ending in {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
                 f"Found architectures that don't match this pattern.\n\n"
                 f"If this is a different model type (e.g., Vision, Sequence-to-Sequence),\n"
                 f"you may need to use a different bridge class."
@@ -927,7 +933,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith(("ForCausalLM", "ForConditionalGeneration", "NemotronH_Nano_VL_V2")):
+            if arch_name.endswith(SUPPORTED_HF_ARCHITECTURES):
                 architecture = arch_name
                 break
 
