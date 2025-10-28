@@ -100,7 +100,7 @@ def _assert_basic_config(cfg):
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.sequence_length >= 1
+    assert cfg.dataset.seq_length >= 1
 
 
 @pytest.mark.parametrize("recipe_func", _GEMMA3_RECIPE_FUNCS)
