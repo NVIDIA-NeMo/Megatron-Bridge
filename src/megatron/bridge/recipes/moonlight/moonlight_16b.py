@@ -17,9 +17,8 @@ import os
 from typing import List, Optional, Union
 
 import torch
-from typing_extensions import TypedDict, Unpack
-
 from megatron.core.distributed import DistributedDataParallelConfig
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.deepseek import MoonlightModelProvider16B
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -309,7 +308,7 @@ def _moonlight_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-    
+
     if apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
@@ -366,7 +365,7 @@ def _model_config(
         context_parallel_size=context_parallelism,
         expert_model_parallel_size=expert_parallelism,
         sequence_parallel=sequence_parallelism,
-        expert_tensor_parallel_size=1, # Do not use ETP
+        expert_tensor_parallel_size=1,  # Do not use ETP
         # Recomputation
         recompute_granularity=recompute_granularity,
         recompute_modules=recompute_modules,
@@ -414,4 +413,3 @@ def _model_config(
         cfg.moe_shared_expert_overlap = False
 
     return cfg
-

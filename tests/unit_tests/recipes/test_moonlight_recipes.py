@@ -62,12 +62,12 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeMoonlightModelProvider16B:
     """Fake MoonlightModelProvider16B for testing without model I/O."""
-    
+
     def __init__(self, *args, **kwargs):
         # Store all the kwargs that would be passed to the real provider
         for key, value in kwargs.items():
             setattr(self, key, value)
-        
+
         # Set required attributes
         self.vocab_size = 151936  # Default vocab size for Moonlight
         self.account_for_embedding_in_pipeline_split = False
@@ -80,7 +80,7 @@ class _FakeMoonlightModelProvider16B:
         self.moe_token_dispatcher_type = "alltoall"
         self.moe_enable_deepep = False
         self.moe_shared_expert_overlap = True
-        
+
         # Set parallelism defaults if not provided
         if not hasattr(self, "tensor_model_parallel_size"):
             self.tensor_model_parallel_size = 1
@@ -90,7 +90,7 @@ class _FakeMoonlightModelProvider16B:
             self.context_parallel_size = 1
         if not hasattr(self, "expert_model_parallel_size"):
             self.expert_model_parallel_size = 1
-    
+
     def finalize(self):
         return None
 
@@ -118,7 +118,7 @@ def _assert_basic_config(cfg):
 def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    
+
     # Monkeypatch the MoonlightModelProvider16B class
     monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
 
@@ -136,4 +136,3 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
-

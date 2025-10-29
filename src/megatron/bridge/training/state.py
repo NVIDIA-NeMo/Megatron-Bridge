@@ -192,12 +192,12 @@ class GlobalState:
                 import wandb
 
                 save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
-                
+
                 # Sanitize config for WandB by doing a JSON round-trip
                 # This ensures all objects are converted to basic Python types that WandB can handle
                 def safe_serialize(obj):
                     """Safely convert any object to a JSON-serializable type.
-                    
+
                     Handles objects with broken __str__ or __repr__ methods that return
                     non-string types (e.g., PipelineParallelLayerLayout returns list).
                     """
@@ -212,10 +212,10 @@ class GlobalState:
                     except Exception:
                         # __str__ raised an exception, use type name as fallback
                         return f"<{type(obj).__name__}>"
-                
+
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
-                
+
                 wandb_kwargs = {
                     "dir": save_dir,
                     "name": self.cfg.logger.wandb_exp_name,
