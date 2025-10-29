@@ -54,7 +54,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
     
-
     hf_text_config: Optional[Qwen3VLMoeTextConfig] = None
     
     pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
@@ -95,7 +94,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Override to disable scattering embeddings for vision insertion
     scatter_embedding_sequence_parallel: bool = False
     
-    # MoE-specific configurations from yan-mbridge
     # Router configuration
     moe_router_pre_softmax: bool = False  # Qwen3 specific
     moe_router_dtype: str = "fp32"  # Use FP32 for router computations
@@ -124,7 +122,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     
     # QK layernorm is already True in Qwen3MoEModelProvider, no need to redefine
     
-    # Additional MoE optimizations from yan-mbridge
     # These are typically set in the base class but documented here for clarity
     persist_layer_norm: bool = True  # Persist layer norm for efficiency
     bias_activation_fusion: bool = True  # Fuse bias and activation
@@ -152,7 +149,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             fp8=False,
         )
         
-        model = Qwen3VLMoEModel(
+        # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
+        model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_config,

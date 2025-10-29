@@ -33,14 +33,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.qwen_3_vl.rope import Qwen3VLTextRotaryEmbedding, Qwen3VLMoETextRotaryEmbedding
-from megatron.bridge.models.qwen_3_vl.model import (
-    Qwen3VLAttention,
-    Qwen3VLMLP,
-    Qwen3VLRMSNorm,
-)
 
 from transformers import Qwen3VLMoeTextConfig, Qwen3VLTextConfig
-
 
 class Qwen3VLGPTModel(GPTModel):
 

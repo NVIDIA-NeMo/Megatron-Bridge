@@ -16,7 +16,6 @@
 
 # Core model components
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel  # noqa: F401
-from megatron.bridge.models.qwen_3_vl.moe_model import Qwen3VLMoEModel  # noqa: F401
 
 # Dense model providers
 from megatron.bridge.models.qwen_3_vl.provider import (
@@ -34,7 +33,6 @@ from megatron.bridge.models.qwen_3_vl.moe_bridge import Qwen3VLMoEBridge
 
 __all__ = [
     "Qwen3VLModel",
-    "Qwen3VLMoEModel",
     "Qwen3VLModelProvider",
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",

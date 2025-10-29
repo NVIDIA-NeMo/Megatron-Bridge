@@ -20,6 +20,7 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
+    GatedMLPMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -180,12 +181,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                 v="model.language_model.layers.*.self_attn.v_proj.bias",
             ),
             
-            # MoE expert weights mapping
-            # Note: Expert weights are handled specially in yan-mbridge
-            # Each expert has gate_up_proj and down_proj
-            AutoMapping(
-                hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
-            ),
+            # MoE expert weights mapping, each expert has gate_up_proj and down_proj
             GatedMLPMapping(
                 megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc1.weight",
                 gate="model.language_model.layers.*.mlp.gate.weight",
