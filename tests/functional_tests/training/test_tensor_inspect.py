@@ -94,7 +94,7 @@ class TestTensorInspect:
                                 "stats": ["min", "max", "mean", "std", "l1_norm", "l2_norm"],
                                 "freq": 5,
                                 "start_step": 0,
-                                "end_step": total_iters-5,
+                                "end_step": total_iters - 5,
                             }
                         },
                     }
