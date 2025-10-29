@@ -109,6 +109,7 @@ class DeepSeekModelProvider(MLATransformerConfig, GPTModelProvider):
     bias_activation_fusion: bool = True
     bias_dropout_fusion: bool = True
     masked_softmax_fusion: bool = True
+    gradient_accumulation_fusion: bool = True
     cross_entropy_loss_fusion: bool = True
     cross_entropy_fusion_impl: str = "te"
     moe_permute_fusion: bool = is_te_min_version("2.1.0") if HAVE_TE else False
@@ -180,6 +181,7 @@ class DeepSeekV3ModelProvider(DeepSeekModelProvider):
     moe_router_num_groups: int = 8
     moe_router_group_topk: int = 4
     moe_router_topk_scaling_factor: float = 2.5
+    moe_aux_loss_coeff: float = 1e-4
     make_vocab_size_divisible_by: int = 1280
     moe_router_score_function: str = "sigmoid"
     moe_router_enable_expert_bias: bool = True

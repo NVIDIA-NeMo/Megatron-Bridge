@@ -20,6 +20,9 @@ ConfigContainer:
   train:
     train_iters: 100
     eval_iters: 0
+  
+  scheduler:
+    lr_warmup_iters: 10
 
   rerun_state_machine:
     check_for_nan_in_loss: false

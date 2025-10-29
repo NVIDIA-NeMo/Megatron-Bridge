@@ -66,6 +66,7 @@ class TestNemotronH4B:
         # Check comm overlap
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
@@ -126,6 +127,7 @@ class TestNemotronH8B:
         # Check comm overlap
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
@@ -166,9 +168,10 @@ class TestNemotronH47B:
         # Check logger config
         assert config.logger.log_interval == 10
 
-        # Check comm overlap is not set by default for 47B
-        # (due to issues with fp8 current scaling)
-        assert config.comm_overlap is None
+        # Check comm overlap
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
@@ -207,8 +210,10 @@ class TestNemotronH56B:
         # Check logger config
         assert config.logger.log_interval == 10
 
-        # Check comm overlap is not set by default for 56B
-        assert config.comm_overlap is None
+        # Check comm overlap
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
