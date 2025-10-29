@@ -62,6 +62,7 @@ class SetupOutput(NamedTuple):
         test_data_iterator: The data iterator for the testing dataset, if applicable.
         checkpointing_context: A dictionary holding context for checkpointing operations,
                                especially for non-persistent local checkpointing.
+        pg_collection: The process group collection initialized for this run.
     """
 
     state: GlobalState
@@ -72,6 +73,7 @@ class SetupOutput(NamedTuple):
     valid_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpointing_context: dict[str, Any]
+    pg_collection: ProcessGroupCollection
 
 def setup(
     state: GlobalState,
@@ -146,10 +148,8 @@ def setup(
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
 
-    # (M4-refactor): Retrieve PGCollection from legacy globals via parallel_state
+    # Initialize process group collection once and pass through
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
-    # Surface it on state for downstream wiring in later phases
-    state.pg_collection = pg_collection
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -223,7 +223,7 @@ def setup(
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
-        pg_collection=state.pg_collection,
+        pg_collection=pg_collection,
     )
 
     # Data stuff.
@@ -263,6 +263,7 @@ def setup(
         valid_data_iterator,
         test_data_iterator,
         checkpointing_context,
+        pg_collection,
     )
 
 

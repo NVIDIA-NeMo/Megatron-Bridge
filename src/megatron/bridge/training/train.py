@@ -38,6 +38,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -78,6 +79,7 @@ def train(
     valid_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     global_state: GlobalState,
     checkpointing_context: dict[str, Any],
+    pg_collection: ProcessGroupCollection,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
 ) -> None:
@@ -276,13 +278,13 @@ def train(
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
         # Completely skip iteration if needed.
-        if _should_skip_and_handle_iteration(global_state, train_data_iterator):
+        if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
+            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state, pg_collection
         )
         fault_tolerance.on_training_step_end(global_state)
         if config.logger.log_throughput_to_tensorboard:
@@ -323,7 +325,7 @@ def train(
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
-        dp_size = global_state.pg_collection.dp.size()
+        dp_size = pg_collection.dp.size()
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
@@ -481,6 +483,7 @@ def train_step(
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
     global_state: GlobalState,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -592,7 +595,7 @@ def train_step(
                 # there is one dict per microbatch. in new reporting, we average
                 # over the total number of tokens across the global batch.
                 val = torch.vstack(val).sum(dim=0)
-                dp_cp_group = global_state.pg_collection.dp_cp
+                dp_cp_group = pg_collection.dp_cp
                 torch.distributed.all_reduce(val, group=dp_cp_group)
                 loss_reduced[key] = val[0] / val[1]
             elif val[0].numel() == 1:
@@ -1043,7 +1046,9 @@ def _finish_train(global_state: GlobalState):
 
 
 def _should_skip_and_handle_iteration(
-    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+    global_state: GlobalState,
+    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    pg_collection: ProcessGroupCollection,
 ) -> bool:
     """Check if the current iteration should be skipped and handle it if so.
 
@@ -1066,7 +1071,7 @@ def _should_skip_and_handle_iteration(
 
     # Update step and sample counters
     global_state.train_state.step += 1
-    dp_size = global_state.pg_collection.dp.size()
+    dp_size = pg_collection.dp.size()
     batch_size = dp_size * cfg.train.micro_batch_size * get_num_microbatches()
     global_state.train_state.consumed_train_samples += batch_size
     global_state.train_state.skipped_train_samples += batch_size
