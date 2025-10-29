@@ -790,7 +790,8 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-
+        if target_param.device.type == "cpu":
+            target_param = target_param.to(torch.cuda.current_device())
         # On rank 0, check for divisibility and split
         if self.tp_rank == 0:
             if hf_weights is None:
