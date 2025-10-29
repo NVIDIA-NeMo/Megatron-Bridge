@@ -488,7 +488,7 @@ def main():
 
     # Dump json
     import json
-    path2save = f"/lustre/fsw/coreai_dlalgl_llm/aot/exp/long_convergence/final_config_{args.exp_name}.json"
+    path2save = f"/lustre/fsw/coreai_dlalgo_llm/aot/exp/long_convergence/final_config_{args.exp_name}.json"
     json.dump(final_config.to_dict(), open(path2save, "w", indent=2, default=str))
 
 
