@@ -30,6 +30,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
+    bf16_with_nvfp4_mixed,
     fp16_mixed,
     fp16_with_fp8_current_scaling_mixed,
     fp16_with_fp8_delayed_scaling_mixed,
@@ -648,6 +649,19 @@ class TestMixedPrecisionRecipes:
         # Verify fp8_param is initialized from fp8_param_gather
         assert config.fp8_param is False
 
+    def test_bf16_with_nvfp4_mixed(self):
+        config = bf16_with_nvfp4_mixed()
+
+        # Should inherit BF16 settings
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+
+        # NVFP4 specific settings
+        assert config.fp8 is None
+        assert config.fp4 == "e2m1"
+        assert config.fp4_recipe == "nvfp4"
+        assert config.fp8_param_gather is False
+
     def test_fp16_with_fp8_subchannel_scaling_mixed(self):
         config = fp16_with_fp8_subchannel_scaling_mixed()
 
@@ -748,9 +762,86 @@ class TestRegisterAndGetMixedPrecisionConfig:
         assert cfg_from_dict is not cfg_from_helper
         assert cfg_from_helper.fp32 is True
 
+    def test_register_decorator_adds_hyphen_alias(self):
+        """Ensure that the `register` decorator adds both underscore and hyphen versions."""
+        from megatron.bridge.training.mixed_precision import (
+            MIXED_PRECISION_RECIPES,
+            MixedPrecisionConfig,
+            register,
+        )
+
+        @register  # noqa: WPS430 – intentional decorator usage inside test
+        def test_mixed_config() -> MixedPrecisionConfig:  # pylint: disable=missing-docstring
+            return MixedPrecisionConfig(bf16=True)
+
+        # Both underscore and hyphen versions should be registered
+        assert "test_mixed_config" in MIXED_PRECISION_RECIPES
+        assert "test-mixed-config" in MIXED_PRECISION_RECIPES
+
+        # Both should point to the same function
+        assert MIXED_PRECISION_RECIPES["test_mixed_config"] is MIXED_PRECISION_RECIPES["test-mixed-config"]
+
+    def test_get_mixed_precision_config_with_hyphens(self):
+        """Verify that recipes can be retrieved using hyphen separators (NeMo2 compatibility)."""
+        # Test with built-in recipes
+        config_underscore = get_mixed_precision_config("bf16_mixed")
+        config_hyphen = get_mixed_precision_config("bf16-mixed")
+
+        # Both should be valid MixedPrecisionConfig instances
+        assert isinstance(config_underscore, MixedPrecisionConfig)
+        assert isinstance(config_hyphen, MixedPrecisionConfig)
+
+        # They should have the same configuration (but be different instances)
+        assert config_underscore is not config_hyphen
+        assert config_underscore.bf16 == config_hyphen.bf16
+        assert config_underscore.params_dtype == config_hyphen.params_dtype
+        assert config_underscore.pipeline_dtype == config_hyphen.pipeline_dtype
+
+    def test_get_mixed_precision_config_with_hyphens_and_underscores(self):
+        """Edge case user input."""
+        config_underscore = get_mixed_precision_config("fp16_with_mxfp8_mixed")
+        config_both = get_mixed_precision_config("fp16-with-mxfp8_mixed")
+
+        # Both should be valid MixedPrecisionConfig instances
+        assert isinstance(config_both, MixedPrecisionConfig)
+        assert isinstance(config_underscore, MixedPrecisionConfig)
+
+        assert config_both.bf16 == config_underscore.bf16
+        assert config_both.params_dtype == config_underscore.params_dtype
+        assert config_both.pipeline_dtype == config_underscore.pipeline_dtype
+
+    def test_get_mixed_precision_config_hyphen_aliases_for_all_recipes(self):
+        """Verify that all registered recipes with underscores also work with hyphens."""
+        from megatron.bridge.training.mixed_precision import MIXED_PRECISION_RECIPES
+
+        # Get all recipe names with underscores
+        underscore_recipes = [name for name in MIXED_PRECISION_RECIPES.keys() if "_" in name]
+
+        for recipe_name in underscore_recipes:
+            hyphen_name = recipe_name.replace("_", "-")
+
+            # Both should be in the registry
+            assert recipe_name in MIXED_PRECISION_RECIPES, f"{recipe_name} should be registered"
+            assert hyphen_name in MIXED_PRECISION_RECIPES, f"{hyphen_name} should be registered"
+
+            # Both should return valid configs
+            config_underscore = get_mixed_precision_config(recipe_name)
+            config_hyphen = get_mixed_precision_config(hyphen_name)
+
+            assert isinstance(config_underscore, MixedPrecisionConfig)
+            assert isinstance(config_hyphen, MixedPrecisionConfig)
+
     def test_get_mixed_precision_config_invalid_name(self):
         """Verify that an unknown recipe name raises a clear `ValueError`."""
         with pytest.raises(ValueError) as exc_info:
             get_mixed_precision_config("does_not_exist")
 
         assert "Unknown mixed-precision recipe" in str(exc_info.value)
+
+    def test_get_mixed_precision_config_passthrough(self):
+        """Ensure an existing MixedPrecisionConfig instance is passed through unchanged."""
+        config = MixedPrecisionConfig(fp16=True)
+        result = get_mixed_precision_config(config)
+
+        assert result is config
+        assert result.fp16 is True

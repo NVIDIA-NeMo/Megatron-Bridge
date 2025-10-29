@@ -19,6 +19,7 @@ from typing import Callable, Optional
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig
+from megatron.core.utils import is_te_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
@@ -53,6 +54,9 @@ class MixedPrecisionConfig:
     fp8_multi_head_attention: bool = False
     fp8_param: Optional[bool] = None
     fp8_param_gather: bool = False
+    # fp4 related
+    fp4: Optional[str] = None
+    fp4_recipe: str = "nvfp4"
     # FP16 Loss scaling
     loss_scale: Optional[float] = None
     initial_loss_scale: Optional[float] = 4294967296  # 2**32
@@ -86,6 +90,12 @@ class MixedPrecisionConfig:
                 "When fp8_param_gather=True and fp8_recipe='mxfp8', "
                 "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
             )
+        # FP4 and FP8 are mutually exclusive
+        if self.fp4 and self.fp8:
+            raise ValueError("fp4 and fp8 cannot be used simultaneously. Please choose one.")
+
+        if self.fp4 and not is_te_min_version("2.7.0.dev0"):
+            raise ValueError("fp4 requires Transformer Engine >= 2.7.0.dev0 for NVFP4BlockScaling support.")
 
     def setup(
         self,
@@ -142,8 +152,19 @@ MIXED_PRECISION_RECIPES: dict[str, Callable[[], "MixedPrecisionConfig"]] = {}
 
 
 def register(func: Callable[[], "MixedPrecisionConfig"]):
-    """Decorator that registers a mixed-precision recipe factory by its function name."""
-    MIXED_PRECISION_RECIPES[func.__name__] = func
+    """Decorator that registers a mixed-precision recipe factory by its function name.
+
+    Automatically registers both underscore and hyphen versions (e.g., 'bf16_mixed' and 'bf16-mixed')
+    to simplify migrating from NeMo2.
+    """
+    name = func.__name__
+    MIXED_PRECISION_RECIPES[name] = func
+
+    # Also register hyphen version if the name contains underscores
+    if "_" in name:
+        hyphen_name = name.replace("_", "-")
+        MIXED_PRECISION_RECIPES[hyphen_name] = func
+
     return func
 
 
@@ -367,15 +388,33 @@ def fp16_with_fp8_subchannel_scaling_mixed() -> MixedPrecisionConfig:
     return cfg
 
 
-def get_mixed_precision_config(name: str) -> MixedPrecisionConfig:
+@register
+def bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with MXFP8.
+
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with MXFP8 mixed precision training
+    """
+    cfg = bf16_mixed()
+    cfg.fp8 = None
+    cfg.fp4 = "e2m1"
+    cfg.fp4_recipe = "nvfp4"
+    cfg.fp8_param_gather = False
+    return cfg
+
+
+def get_mixed_precision_config(name: str | MixedPrecisionConfig) -> MixedPrecisionConfig:
     """Return a :class:`MixedPrecisionConfig` for *name*.
 
     Args:
-        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES`.
+        name: Key of the recipe in :pydata:`MIXED_PRECISION_RECIPES` or a :class:`MixedPrecisionConfig` instance.
 
     Raises:
         ValueError: If *name* is not a known recipe.
     """
+    if isinstance(name, MixedPrecisionConfig):
+        return name
+    name = name.replace("-", "_")
     try:
         return MIXED_PRECISION_RECIPES[name]()
     except KeyError as err:

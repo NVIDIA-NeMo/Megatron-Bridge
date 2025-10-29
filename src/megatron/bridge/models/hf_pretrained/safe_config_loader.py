@@ -61,7 +61,7 @@ def safe_load_config_with_retry(
             Useful for multi-node setups where a shared lock directory is needed.
 
     Example:
-        >>> config = safe_load_config_with_retry("meta-llama/Llama-3-8B")
+        >>> config = safe_load_config_with_retry("meta-llama/Meta-Llama-3-8B")
         >>> print(config.model_type)
 
         >>> # With custom retry settings
@@ -75,7 +75,7 @@ def safe_load_config_with_retry(
         >>> # Multi-node setup with shared lock directory
         >>> import os
         >>> os.environ["MEGATRON_CONFIG_LOCK_DIR"] = "/shared/locks"
-        >>> config = safe_load_config_with_retry("meta-llama/Llama-3-8B")
+        >>> config = safe_load_config_with_retry("meta-llama/Meta-Llama-3-8B")
     """
     last_exception = None
 

@@ -18,7 +18,10 @@ from unittest.mock import patch
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
-from megatron.bridge.training.gpt_step import _create_loss_function, get_packed_seq_params
+from megatron.bridge.training.gpt_step import get_packed_seq_params
+from megatron.bridge.training.losses import (
+    create_masked_next_token_loss_function as _create_loss_function,
+)
 
 
 class TestGetPackedSeqParams:
@@ -215,7 +218,7 @@ class TestCreateLossFunction:
         assert loss_func.keywords["check_for_nan_in_loss"] == True
         assert loss_func.keywords["check_for_spiky_loss"] == False
 
-    @patch("megatron.bridge.training.gpt_step.masked_next_token_loss")
+    @patch("megatron.bridge.training.losses.masked_next_token_loss")
     def test_create_loss_function_callable(self, mock_loss_func):
         """Test that the created loss function can be called correctly."""
         loss_mask = torch.tensor([[1.0, 1.0, 1.0]])

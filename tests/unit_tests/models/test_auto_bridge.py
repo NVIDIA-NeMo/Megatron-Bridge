@@ -143,8 +143,8 @@ class TestAutoBridge:
         ) as mock_safe_load_config:
             mock_safe_load_config.return_value = llama_config_mock
 
-            assert AutoBridge.can_handle("meta-llama/Llama-3-8B") is True
-            mock_safe_load_config.assert_called_with("meta-llama/Llama-3-8B", trust_remote_code=False)
+            assert AutoBridge.can_handle("meta-llama/Meta-Llama-3-8B") is True
+            mock_safe_load_config.assert_called_with("meta-llama/Meta-Llama-3-8B", trust_remote_code=False)
 
     def test_can_handle_unsupported_model(self, bert_config):
         """Test can_handle returns False for unsupported models."""
@@ -415,7 +415,7 @@ class TestAutoBridge:
             bridge = AutoBridge(mock_hf_model)
             bridge.load_hf_weights(mock_megatron_model)
 
-            mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(mock_megatron_model, mock_hf_model)
+            mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(mock_hf_model, mock_megatron_model)
 
     def test_load_hf_weights_from_path(self):
         """Test loading weights from a different path."""
@@ -444,7 +444,8 @@ class TestAutoBridge:
 
                 mock_from_pretrained.assert_called_once_with("./custom_model")
                 mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
-                    mock_megatron_model, mock_loaded_model
+                    mock_loaded_model,
+                    mock_megatron_model,
                 )
 
     def test_load_hf_weights_no_path_config_only(self):
@@ -685,13 +686,13 @@ class TestAutoBridge:
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt
-        AutoBridge.import_ckpt("meta-llama/Llama-3-8B", "./megatron_checkpoint")
+        AutoBridge.import_ckpt("meta-llama/Meta-Llama-3-8B", "./megatron_checkpoint")
 
         # Assertions
-        mock_from_hf_pretrained.assert_called_once_with("meta-llama/Llama-3-8B")
+        mock_from_hf_pretrained.assert_called_once_with("meta-llama/Meta-Llama-3-8B")
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
-            mock_megatron_model, "./megatron_checkpoint", hf_tokenizer_path="meta-llama/Llama-3-8B"
+            mock_megatron_model, "./megatron_checkpoint", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
         )
 
     @patch.object(AutoBridge, "save_megatron_model")
@@ -800,11 +801,11 @@ class TestAutoBridge:
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Llama-3-8B"
+                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
             )
 
             mock_save_megatron_model.assert_called_once_with(
-                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Llama-3-8B"
+                mock_megatron_model, "./checkpoint_path", hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
             )
 
     def test_save_megatron_model_import_error(self):
@@ -885,3 +886,52 @@ class TestAutoBridge:
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
                 # Should use the latest iteration (iter_0000020)
+
+    def test_load_megatron_model_with_mp_overrides(self):
+        """Test load_megatron_model with model-parallel overrides argument."""
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        # Create model-parallel overrides
+        mp_overrides = {
+            "tensor_model_parallel_size": 2,
+            "pipeline_model_parallel_size": 1,
+        }
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
+            with patch("torch.distributed.is_available", return_value=False):
+                with patch("torch.distributed.is_initialized", return_value=False):
+                    from pathlib import Path
+
+                    with patch.object(Path, "iterdir") as mock_iterdir:
+                        # Setup mocks
+                        mock_model = Mock()
+                        mock_load_megatron_model.return_value = mock_model
+
+                        # Mock iterdir to return empty list (no iter_ folders)
+                        mock_iterdir.return_value = []
+
+                        # Call load_megatron_model with model-parallel overrides
+                        result = bridge.load_megatron_model(
+                            "checkpoint_path", mp_overrides=mp_overrides, wrap_with_ddp=False
+                        )
+
+                        # Verify the result
+                        assert result == [mock_model]
+
+                        # Verify that load_megatron_model was called with mp_overrides
+                        mock_load_megatron_model.assert_called_once()
+                        call_args = mock_load_megatron_model.call_args
+
+                        # Check that mp_overrides was passed correctly
+                        assert call_args.kwargs["mp_overrides"] == mp_overrides
+
+                        # Check other expected arguments
+                        assert call_args.args[0] == "checkpoint_path"  # path argument
+                        assert "skip_temp_dist_context" in call_args.kwargs

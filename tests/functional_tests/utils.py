@@ -18,6 +18,13 @@ from pathlib import Path
 
 import torch
 
+from megatron.bridge.training.utils.checkpoint_utils import (
+    TRACKER_PREFIX,
+    get_checkpoint_name,
+    get_checkpoint_tracker_filename,
+    get_checkpoint_train_state_filename,
+)
+
 
 def initialize_distributed() -> None:
     """Initialize global process group for distributed execution."""
@@ -107,10 +114,22 @@ def verify_checkpoint_files(checkpoint_dir: str, iteration_count: int, ckpt_form
         torch.distributed.barrier()
 
     if torch.distributed.get_rank() == 0:
-        latest_tracker_file = os.path.join(checkpoint_dir, "latest_train_state.pt")
+        # Verify Megatron-Bridge tracker file
+        latest_tracker_file = get_checkpoint_train_state_filename(checkpoint_dir, prefix=TRACKER_PREFIX)
         assert os.path.exists(latest_tracker_file), "Latest checkpoint tracker file not found"
 
-        final_iter_dir = os.path.join(checkpoint_dir, f"iter_{iteration_count:07d}")
+        # Verify Megatron-LM compatibility tracker file
+        megatron_lm_tracker = get_checkpoint_tracker_filename(checkpoint_dir)
+        assert os.path.exists(megatron_lm_tracker), "Megatron-LM tracker file not found"
+
+        # Verify the tracker file contains the correct iteration
+        with open(megatron_lm_tracker, "r") as f:
+            saved_iteration = f.read().strip()
+        assert saved_iteration == str(iteration_count), (
+            f"Megatron-LM tracker file contains '{saved_iteration}', expected '{iteration_count}'"
+        )
+
+        final_iter_dir = get_checkpoint_name(checkpoint_dir, iteration_count, release=False)
         assert os.path.exists(final_iter_dir), f"Final checkpoint directory not found at {final_iter_dir}"
 
         metadata_file = os.path.join(final_iter_dir, ".metadata")

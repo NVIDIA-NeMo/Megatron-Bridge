@@ -237,6 +237,18 @@ Full suite (slower):
 uv run pytest -q tests | cat
 ```
 
+### 7.1) Model not found in CI Cache
+
+Megatron Bridge functional tests run with `HF_HUB_OFFLINE=1`. This means that contributions including a new bridge and tests
+for a HuggingFace model that is not cached in our CI's `$HF_HOME` directory will fail with an error similar to:
+
+```
+huggingface_hub.errors.LocalEntryNotFoundError: Cannot find the requested files in the disk cache and outgoing traffic has been disabled.
+```
+
+If such an error is encountered in the CI, please request a repo maintainer to launch the 'Cache HuggingFace model' workflow for the model(s)
+you are adding support for in your PR.
+
 ### Suggested Cursor prompt (Tests) [Expermental]
 ```text
 You are working in the Megatron Bridge repo. Add tests for a new model `<your_model>`.

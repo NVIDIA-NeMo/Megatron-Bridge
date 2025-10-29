@@ -33,8 +33,8 @@ The process is as follows:
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-torchrun --nproc_per_node 1 examples/models/hf_megatron_roundtrip_multi_gpu.py
-torchrun --nproc_per_node 1 examples/models/hf_megatron_roundtrip_multi_gpu.py --megatron-save-path ./megatron_checkpoint
+torchrun --nproc_per_node 1 examples/conversion/hf_megatron_roundtrip_multi_gpu.py
+torchrun --nproc_per_node 1 examples/conversion/hf_megatron_roundtrip_multi_gpu.py --megatron-save-path ./megatron_checkpoint
 """
 
 import argparse
@@ -89,7 +89,17 @@ def main(
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
-        megatron_model = bridge.load_megatron_model(megatron_load_path, wrap_with_ddp=False)
+        megatron_model = bridge.load_megatron_model(
+            megatron_load_path,
+            mp_overrides={
+                "tensor_model_parallel_size": tp,
+                "pipeline_model_parallel_size": pp,
+                "expert_model_parallel_size": ep,
+                "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
+            },
+            wrap_with_ddp=False,
+        )
         megatron_model = [m.cuda() for m in megatron_model]
 
     else:
@@ -98,6 +108,7 @@ def main(
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
+        model_provider.expert_tensor_parallel_size = etp
 
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()

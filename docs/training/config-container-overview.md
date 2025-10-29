@@ -1,6 +1,6 @@
 # Configuration Overview
 
-The `ConfigContainer` is the central configuration object in Megatron Bridge that orchestrates all aspects of training. It acts as a single source of truth that brings together model architecture, training parameters, data loading, optimization, checkpointing, logging, and distributed training settings.
+The `ConfigContainer` is the central configuration object in Megatron Bridge that holds all settings for training. It acts as a single source of truth that brings together model architecture, training parameters, data loading, optimization, checkpointing, logging, and distributed training settings.
 
 ## What is ConfigContainer
 
@@ -30,76 +30,159 @@ config = ConfigContainer(
 )
 ```
 
-## Configuration Attributes
+## Configuration Components
 
-The `ConfigContainer` organizes training settings into three categories—**required**, **default**, and **optional** each controlling a specific aspect of model setup, execution, and advanced features.
+| Component | Purpose | Required | Default |
+|-----------|---------|----------|---------|
+| `model` | Model architecture and parallelism strategy (GPT, T5, Mamba) | ✅ | - |
+| `train` | Training loop parameters (batch sizes, iterations, validation) | ✅ | - |
+| `optimizer` | Optimizer type and hyperparameters (from Megatron Core) | ✅ | - |
+| `scheduler` | Learning rate and weight decay scheduling | ✅ | - |
+| `dataset` | Data loading and preprocessing configuration | ✅ | - |
+| `logger` | Logging, TensorBoard, and WandB configuration | ✅ | - |
+| `tokenizer` | Tokenizer settings and vocabulary | ✅ | - |
+| `checkpoint` | Checkpointing, saving, and loading | ✅ | - |
+| `dist` | Distributed training initialization | | `DistributedInitConfig()` |
+| `ddp` | Data parallel configuration (from Megatron Core) | | `DistributedDataParallelConfig()` |
+| `rng` | Random number generation settings | | `RNGConfig()` |
+| `rerun_state_machine` | Result validation and error injection | | `RerunStateMachineConfig()` |
+| `mixed_precision` | Mixed precision training settings | | `None` |
+| `comm_overlap` | Communication overlap optimizations | | `None` |
+| `peft` | Parameter-efficient fine-tuning (LoRA, DoRA, etc.) | | `None` |
+| `profiling` | Performance profiling with nsys or PyTorch profiler | | `None` |
+| `ft` | Fault tolerance and automatic recovery | | `None` |
+| `straggler` | GPU straggler detection | | `None` |
+| `nvrx_straggler` | NVIDIA Resiliency Extension straggler detection | | `None` |
+| `inprocess_restart` | In-process restart for fault tolerance | | `None` |
 
-### Required Attributes
+## Design Philosophy
 
-The following configuration attributes must be provided when creating a `ConfigContainer` for training:
+### **Interoperability with External Config Systems**
 
-| Attribute | Purpose |
-|-----------|---------|
-| `model` | Model architecture and parallelism strategy (from model providers) |
-| `train` | Training loop parameters (batch sizes, iterations, validation) |
-| `optimizer` | Optimizer type and hyperparameters (from Megatron Core) |
-| `scheduler` | Learning rate and weight decay scheduling |
-| `dataset` | Data loading and preprocessing configuration |
-| `logger` | Logging, TensorBoard, and WandB configuration |
-| `tokenizer` | Tokenizer settings and vocabulary |
-| `checkpoint` | Checkpointing, saving, and loading |
+Megatron Bridge's Python configurations are designed to be amenable to other configuration systems you already use, such as:
 
-### Default Attributes
+- Programmatic configuration: Direct Python object manipulation
+- argparse: Command-line arguments can be easily mapped to dataclass fields
+- File-based overrides: JSON, YAML, or other config files can override Python configs
 
-These attributes have predefined defaults, but can be customized to suit specific training needs:
+All of these approaches can be translated into Python dataclass instances. The framework provides utilities as a convenience for YAML-based overrides with OmegaConf, but the framework is not tied to any particular configuration system.
 
-| Attribute | Purpose |
-|-----------|---------|
-| `dist` | Distributed training initialization |
-| `ddp` | Data parallel configuration (from Megatron Core) |
-| `rng` | Random number generation settings |
-| `rerun_state_machine` | Result validation and error injection |
+```python
+# All of these approaches work seamlessly:
 
-### Optional Attributes
+# 1. Direct Python configuration
+config = ConfigContainer(
+    model=GPTModelProvider(num_layers=24, hidden_size=2048),
+    train=TrainingConfig(global_batch_size=256, train_iters=10000),
+    # ... other configs
+)
 
-These configuration attributes are set to `None` by default and enable specific features when configured:
+# 2. YAML-based serialization and deserialization (round-trip)
+config.to_yaml("my_config.yaml")
+config = ConfigContainer.from_yaml("my_config.yaml")  # Load previously saved config
 
-| Attribute | Purpose |
-|-----------|---------|
-| `peft` | Parameter-efficient fine-tuning (LoRA, DoRA, etc.) |
-| `profiling` | Performance profiling with nsys or PyTorch profiler |
-| `mixed_precision` | Mixed precision training settings |
-| `comm_overlap` | Communication overlap optimizations |
-| `ft` | Fault tolerance and automatic recovery |
-| `straggler` | GPU straggler detection |
-| `nvrx_straggler` | NVIDIA Resiliency Extension straggler detection |
+# 3. Programmatic override after creation
+config.train.global_batch_size = 512  # Override after instantiation
+config.model.num_layers = 48          # Modify model architecture
+```
 
-## Megatron Core Integration
+### Centralized Configuration
 
-Several configuration components in `ConfigContainer` are directly derived from Megatron Core, ensuring compatibility with its optimization and data parallel frameworks:
+Megatron provides extensive flexibility through a rich set of configuration options. The `ConfigContainer` brings all these settings together in a single, organized object. This centralization makes configuration discoverable and maintainable - you have one place to understand and control all aspects of your training run.
 
-| Configuration | Purpose |
-|---------------|---------|
-| `optimizer`   | Uses `OptimizerConfig` from Megatron Core for optimization settings |
-| `ddp`         | Uses `DistributedDataParallelConfig` from Megatron Core for data parallel configuration |
+Unlike pure YAML-based configuration systems, `ConfigContainer` provides centralization with the full power of Python. You get the organizational benefits of a single configuration file combined with the programmatic flexibility of Python.
 
-These configurations provide seamless integration with the Megatron Core library.
+The configuration system is built using nested dataclasses, providing:
 
-## Automatic Configuration Processing
+- **Modularity**: Each config component is independently defined and testable
+- **Type safety**: Full static type checking
+- **IDE support**: Autocomplete and type hints in development environments  
+- **Serialization**: Easy conversion to/from YAML, JSON, or other formats
+- **Validation**: Built-in field validation
 
-At the start of training, Megatron Bridge automatically validates, adjusts, and resolves configuration settings to ensure consistency and optimal runtime behavior:
+```python
+@dataclass
+class ConfigContainer:
+    model: GPTModelProvider      # Dataclass for model architecture
+    train: TrainingConfig        # Dataclass for training parameters
+    optimizer: OptimizerConfig   # Dataclass for optimization settings
+    # ... nested dataclasses for each concern
+```
 
-1. **Validation**: All configurations are validated for consistency and compatibility.
-2. **Runtime Overrides**: Mixed precision and communication overlap configurations apply runtime overrides based on environment variables and device-specific checks.
-3. **Dependency Resolution**: Dependent values (like data parallel size and scheduler steps) are calculated automatically.
+### Lazy Configuration and Deferred Validation
 
-You do not need to manually validate configurations - this process occurs automatically at the start of training.
+For training workloads, configurations are lazy to support flexible user workflows:
+
+**Problem with Eager Validation:**
+```python
+# This would be problematic with eager validation:
+config = TrainingConfig(train_iters=1000)
+# __post_init__ calculates dependent values immediately
+
+config.train_iters = 5000  # User override
+# Dependent values are now stale and incorrect!
+```
+
+**Solution with Lazy Finalization:**
+```python
+# Megatron Bridge approach - deferred validation
+config = TrainingConfig(train_iters=1000)
+config.train_iters = 5000  # User can safely override
+
+# Validation happens automatically right when training starts
+pretrain(config, forward_step_func)  # All dependent values calculated correctly
+```
+
+**Benefits:**
+- Users can instantiate configs and subsequently override fields safely
+- Dependent values are calculated correctly after all user modifications are applied
+- Validation happens at the right time, right before training begins
+- Flexible configuration workflows are supported
+
+### **Model Independence**
+
+Model configurations are designed to be independently usable outside the full training loop provided by thr framework:
+
+```python
+# Models can be used standalone
+model_provider = GPTModelProvider(
+    num_layers=24,
+    hidden_size=2048,
+    vocab_size=50000,    # Must be explicitly set
+    seq_length=2048,     # Must be explicitly set
+)
+
+# This works independently of other configs
+model_provider.finalize()
+model = model_provider.provide()
+```
+
+**Trade-off**: The price for this flexibility is the need to explicitly set values like `seq_length` in multiple places during training. These settings are checked for consistency at the beginning of training.
+
+## Usage
+
+```python
+# Create and configure
+config = ConfigContainer(
+    model=GPTModelProvider(num_layers=24, seq_length=2048),
+    train=TrainingConfig(train_iters=1000),
+    dataset=GPTDatasetConfig(sequence_length=2048),  # Must match model seq_length
+    # ... other required configs
+)
+
+# Modify as needed
+config.train.train_iters = 5000
+config.model.hidden_size = 4096
+
+# Start training - validation happens automatically
+pretrain(config, forward_step_func)
+```
 
 ## Configuration Export and Import
 
 ### Export to YAML
 ```python
-# Print yaml configuration to console
+# Print YAML configuration to console
 config.print_yaml()
 
 # Save to file

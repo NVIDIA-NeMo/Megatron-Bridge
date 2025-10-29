@@ -19,7 +19,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3Provider
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -36,7 +36,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV3Provider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV3ModelProvider:
         hf_config = hf_pretrained.config
         configs = get_common_configs(hf_pretrained)
 
@@ -53,7 +53,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
         # TODO: mtp
 
-        provider = DeepSeekV3Provider(**configs)
+        provider = DeepSeekV3ModelProvider(**configs)
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:

@@ -258,6 +258,10 @@ def main():
     else:
         raise RuntimeError(f"Unknown command: {args.command}")
 
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+
 
 if __name__ == "__main__":
     sys.exit(main())

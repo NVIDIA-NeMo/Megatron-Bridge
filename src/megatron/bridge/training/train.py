@@ -16,6 +16,7 @@ import gc
 import os
 import sys
 import time
+from collections import deque
 from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
@@ -42,19 +43,26 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.eval import evaluate_and_print_results
+from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.nvrx_straggler import (
     check_nvrx_straggler_detection,
     safe_shutdown_nvrx_straggler_manager,
+)
+from megatron.bridge.training.profiling import (
+    TNvtxContext,
+    handle_profiling_step,
+    handle_profiling_stop,
+    initialize_pytorch_profiler,
+    should_profile_rank,
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.bridge.training.utils.train_utils import (
     calc_params_l2_norm,
-    check_forward_step_func_num_args,
     logical_and_across_model_parallel_group,
-    maybe_inject_state,
+    prepare_forward_step_func,
     reduce_max_stat_across_model_parallel_group,
     training_log,
 )
@@ -62,7 +70,7 @@ from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
 
 
 def train(
-    forward_step_func: Callable,
+    forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
@@ -101,8 +109,18 @@ def train(
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
 
-    # Check num args to forward_step_func
-    num_fw_args = check_forward_step_func_num_args(forward_step_func)
+    # Prepare forward_step_func (check signature and inject state if needed).
+    # This is done once to prevent creating new partial objects every iteration.
+    #
+    # Note on reference semantics:
+    # - functools.partial stores a reference to global_state, not a copy
+    # - When global_state.train_state.step changes, the partial sees the updated value
+    # - This is safe because GlobalState is a mutable object passed by reference
+    #
+    # For functors (classes with __call__ defined):
+    # - For functors: partial(functor_instance, state) still allows functor's internal state to work
+    # - inspect.signature() properly inspects the __call__ method of functors
+    wrapped_forward_step_func = prepare_forward_step_func(forward_step_func, global_state)
 
     # Turn on training mode which enables dropout.
     for model_module in model:
@@ -170,20 +188,12 @@ def train(
     eval_iterations = 0
 
     prof = None
+    nsys_nvtx_context = None  # NVTX context for nsys profiling
     prof_config = config.profiling
-    if prof_config and torch.distributed.get_rank() in prof_config.profile_ranks and prof_config.use_pytorch_profiler:
-        prof = torch.profiler.profile(
-            schedule=torch.profiler.schedule(
-                wait=max(prof_config.profile_step_start - 1, 0),
-                warmup=1 if prof_config.profile_step_start > 0 else 0,
-                active=prof_config.profile_step_end - prof_config.profile_step_start,
-                repeat=1,
-            ),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(config.logger.tensorboard_dir),
-            record_shapes=prof_config.record_shapes,
-            with_stack=True,
-        )
-        prof.start()
+    if prof_config and should_profile_rank(prof_config, torch.distributed.get_rank()):
+        if prof_config.use_pytorch_profiler:
+            prof = initialize_pytorch_profiler(prof_config, config.logger.tensorboard_dir)
+            prof.start()
 
     start_iteration = global_state.train_state.step
     # Megatron FSDP and FSDP2 does not have this hook
@@ -221,15 +231,21 @@ def train(
         )
         cuda_graph_helper.create_cudagraphs()
 
+    # Track train step elapsed time for throughput logging
+    history_wct = None
+    if config.logger.log_throughput_to_tensorboard:
+        history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
-        if prof_config and torch.distributed.get_rank() in prof_config.profile_ranks:
-            if prof_config.use_pytorch_profiler:
-                prof.step()
-            if prof_config.use_nsys_profiler:
-                if global_state.train_state.step == prof_config.profile_step_start:
-                    torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStart())
-                    torch.autograd.profiler.emit_nvtx(record_shapes=prof_config.record_shapes).__enter__()
+        # Handle profiling for this step
+        nvtx_ctx = handle_profiling_step(
+            prof_config,
+            global_state.train_state.step,
+            torch.distributed.get_rank(),
+            prof,
+        )
+        if nvtx_ctx is not None:
+            nsys_nvtx_context = nvtx_ctx
 
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
@@ -259,25 +275,18 @@ def train(
         num_microbatches = get_num_microbatches()
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
-        # TODO: implement dummy train_step to fast forward train_data_iterator.
         # Completely skip iteration if needed.
-        # if global_state.train_state.step in config.checkpoint.iterations_to_skip:
-        #     # Dummy train_step to fast forward train_data_iterator.
-        #     dummy_train_step(train_data_iterator)
-        #     global_state.train_state.step += 1
-        #     batch_size = (
-        #         parallel_state.get_data_parallel_world_size() * args.micro_batch_size * get_num_microbatches()
-        #     )
-        #     global_state.train_state.consumed_train_samples += batch_size
-        #     global_state.train_state.skipped_train_samples += batch_size
-        #     continue
+        if _should_skip_and_handle_iteration(global_state, train_data_iterator):
+            continue
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            forward_step_func, num_fw_args, train_data_iterator, model, optimizer, scheduler, global_state
+            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
         )
         fault_tolerance.on_training_step_end(global_state)
+        if config.logger.log_throughput_to_tensorboard:
+            history_wct.append(time.time() - global_state.start_time)
         if should_checkpoint:
             save_checkpoint_and_time(
                 global_state,
@@ -360,6 +369,8 @@ def train(
             num_zeros_in_grad,
             config,
             global_state,
+            history_wct,
+            model,
         )
 
         if (
@@ -414,6 +425,7 @@ def train(
             prof,
             config,
             should_toggle_forward_pre_hook,
+            nsys_nvtx_context,
         )
 
         # Checkpoint and decide whether to exit.
@@ -464,8 +476,7 @@ def train(
 
 
 def train_step(
-    forward_step_func: Callable,
-    num_fw_args: int,
+    forward_step_func: ForwardStepCallable,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     model: list[MegatronModule],
     optimizer: MegatronOptimizer,
@@ -475,8 +486,7 @@ def train_step(
     """Single training step.
 
     Args:
-        forward_step_func: Function that performs a forward step
-        num_fw_args: Number of arguments expected by forward_step_func
+        forward_step_func: Function that performs a forward step (already wrapped if needed)
         data_iterator: Iterator over training data
         model: list of model chunks
         optimizer: Optimizer for model parameters
@@ -506,25 +516,37 @@ def train_step(
             model_chunk.zero_grad_buffer()
         optimizer.zero_grad()
 
-        # Optionally inject state into forward step
-        wrapped_forward_step = maybe_inject_state(forward_step_func, global_state, num_fw_args=num_fw_args)
-
         _handle_mxfp8_param_buffer_copy(
             optimizer=optimizer,
             reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
             overlap_param_gather=cfg.ddp.overlap_param_gather,
         )
 
+        # Handle finetuning vs pretraining data consumption
+        seq_length = model_config.seq_length  # Default for pretraining
+        forward_backward_data_iterator = data_iterator  # Default for pretraining
+
+        if cfg.dataset.dataloader_type == "batch":
+            # Finetuning path to support variable-length sequences
+            from megatron.bridge.data.finetuning import prepare_finetuning_batch
+
+            forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+                data_iterator=data_iterator,
+                num_microbatches=get_num_microbatches(),
+                default_seq_length=model_config.seq_length,
+                seq_key="tokens",
+            )
+
         # Forward pass.
         forward_backward_func = get_forward_backward_func()
         losses_reduced = forward_backward_func(
-            forward_step_func=wrapped_forward_step,
-            data_iterator=data_iterator,
+            forward_step_func=forward_step_func,
+            data_iterator=forward_backward_data_iterator,
             model=model,
             num_microbatches=get_num_microbatches(),
-            seq_length=model_config.seq_length,
+            seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
+            decoder_seq_length=seq_length,
             forward_only=False,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
@@ -601,6 +623,7 @@ def post_training_step_callbacks(
     prof: Optional[torch.profiler.profile],
     config: ConfigContainer,
     should_toggle_forward_pre_hook: bool,
+    nsys_nvtx_context: Optional[TNvtxContext] = None,
 ) -> None:
     """Run all post-training-step functions (e.g., FT heartbeats, GC).
 
@@ -612,6 +635,7 @@ def post_training_step_callbacks(
         prof: PyTorch profiler instance
         config: Configuration container
         should_toggle_forward_pre_hook: Whether to toggle forward pre-hook
+        nsys_nvtx_context: NVTX context for nsys profiling (if active)
     """
     train_config = config.train
 
@@ -644,16 +668,13 @@ def post_training_step_callbacks(
             enable_forward_pre_hook(model)
 
     # Profiling.
-    if (
-        config.profiling
-        and iteration == config.profiling.profile_step_end
-        and torch.distributed.get_rank() in config.profiling.profile_ranks
-    ):
-        if config.profiling.use_pytorch_profiler:
-            assert prof is not None
-            prof.stop()
-        if config.profiling.use_nsys_profiler:
-            torch.cuda.check_error(torch.cuda.cudart().cudaProfilerStop())
+    handle_profiling_stop(
+        config.profiling,
+        iteration,
+        torch.distributed.get_rank(),
+        prof,
+        nsys_nvtx_context,
+    )
 
     # Manual garbage collection.
     if train_config.manual_gc:
@@ -766,7 +787,7 @@ def compute_throughputs_and_append_to_progress_log(
         return
 
     # Compute job throughput.
-    # args.num_floating_point_operations_so_far keeps track of floating-point operations
+    # num_floating_point_operations_so_far keeps track of floating-point operations
     # completed at the start of job.
     job_throughput = (num_floating_point_operations_so_far - state.train_state.floating_point_operations_so_far) / (
         (time.time() - state.start_time) * 10**12 * get_world_size_safe()
@@ -1021,6 +1042,67 @@ def _finish_train(global_state: GlobalState):
         global_state.wandb_logger.finish()
 
     destroy_global_state()
+
+
+def _should_skip_and_handle_iteration(
+    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+) -> bool:
+    """Check if the current iteration should be skipped and handle it if so.
+
+    This function checks if the current training step is in the iterations_to_skip list,
+    and if so, performs a dummy training step to consume data and update counters.
+
+    Args:
+        global_state: Global state containing training state and configuration
+        train_data_iterator: Iterator over training data
+
+    Returns:
+        bool: True if the iteration was skipped, False otherwise
+    """
+    cfg = global_state.cfg
+    if global_state.train_state.step not in cfg.train.iterations_to_skip:
+        return False
+
+    # Perform dummy train step to fast forward train_data_iterator
+    _dummy_train_step(global_state, train_data_iterator)
+
+    # Update step and sample counters
+    global_state.train_state.step += 1
+    batch_size = parallel_state.get_data_parallel_world_size() * cfg.train.micro_batch_size * get_num_microbatches()
+    global_state.train_state.consumed_train_samples += batch_size
+    global_state.train_state.skipped_train_samples += batch_size
+
+    return True
+
+
+def _dummy_train_step(
+    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+) -> None:
+    """Single dummy training step to fast forward train_data_iterator.
+
+    This function consumes data from the iterator without performing any actual computation,
+    effectively skipping the iteration while maintaining data iterator consistency.
+
+    Advance the data iterator on first and last PP stages when data_iterator is not None.
+
+    Args:
+        global_state: Global state containing configuration
+        train_data_iterator: Iterator over training data
+    """
+    cfg = global_state.cfg
+    num_microbatches = get_num_microbatches()
+    rerun_state_machine = get_rerun_state_machine()
+
+    while rerun_state_machine.should_run_forward_backward(train_data_iterator):
+        if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+            if train_data_iterator is not None:
+                if cfg.dataset.dataloader_type == "batch":
+                    # Finetuning: Consume global batch once
+                    _ = next(train_data_iterator)
+                else:
+                    # Pretrain: Consume microbatches one at a time
+                    for _ in range(num_microbatches):
+                        _ = next(train_data_iterator)
 
 
 def _handle_mxfp8_param_buffer_copy(

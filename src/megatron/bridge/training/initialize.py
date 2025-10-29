@@ -28,7 +28,7 @@ from megatron.core.num_microbatches_calculator import (
     init_num_microbatches_calculator,
 )
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
-from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_version
+from megatron.core.utils import configure_nvtx_profiling, get_te_version, is_te_min_version, is_torch_min_version
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
@@ -71,6 +71,10 @@ def initialize_megatron(
     rerun_state_machine_config = cfg.rerun_state_machine
     train_config = cfg.train
     use_inprocess_restart = cfg.inprocess_restart is not None and cfg.inprocess_restart.enabled
+
+    # Configure NVTX profiling if requested
+    if cfg.profiling is not None and cfg.profiling.nvtx_ranges:
+        configure_nvtx_profiling(enabled=True)
 
     # Prep for checkpoint conversion.
     # if args.ckpt_convert_format is not None:
@@ -298,7 +302,24 @@ def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvide
         model_config.hidden_size,
     ]
 
-    if is_te_min_version("1.9.0"):
+    if is_te_min_version("2.7.0"):
+        UserBufferQuantizationMode = te_module.base.UserBufferQuantizationMode
+        quantization_modes = [UserBufferQuantizationMode.FP8 if model_config.fp8 else UserBufferQuantizationMode.NONE]
+        if (
+            model_config.fp8 is not None
+            and model_config.first_last_layers_bf16
+            and (model_config.num_layers_at_start_in_bf16 > 0 or model_config.num_layers_at_end_in_bf16 > 0)
+        ):
+            quantization_modes.append(UserBufferQuantizationMode.NONE)
+        # The process group with the target bootstrap backend is created in Transformer Engine.
+        te_module.base.initialize_ub(
+            shape=input_shape,
+            tp_size=model_config.tensor_model_parallel_size,
+            quantization_modes=quantization_modes,
+            ub_cfgs=ub_cfgs,
+            bootstrap_backend=model_config.tp_comm_bootstrap_backend,
+        )
+    elif is_te_min_version("1.9.0"):
         # The process group with the target bootstrap backend is created in Transformer Engine.
         te_module.base.initialize_ub(
             shape=input_shape,

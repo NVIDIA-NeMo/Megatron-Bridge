@@ -15,10 +15,10 @@
 """
 Example:
   # Load from HuggingFace model:
-  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --prompt="Hello, how are you?"
 
   # Load from Megatron checkpoint:
-  python examples/models/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
+  python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path="meta-llama/Llama-3.2-1B" --megatron_model_path="/path/to/megatron/checkpoint" --prompt="Hello, how are you?"
 """
 
 import argparse
@@ -42,11 +42,10 @@ class SingleBatchIterator:
     Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask):
+    def __init__(self, input_ids, position_ids):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
-            attention_mask=attention_mask,
         )
         self._yielded = False
 
@@ -127,7 +126,17 @@ def main(args) -> None:
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
-        model = bridge.load_megatron_model(args.megatron_model_path, wrap_with_ddp=False)
+        model = bridge.load_megatron_model(
+            args.megatron_model_path,
+            mp_overrides={
+                "tensor_model_parallel_size": tp,
+                "pipeline_model_parallel_size": pp,
+                "expert_model_parallel_size": ep,
+                "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
+            },
+            wrap_with_ddp=False,
+        )
 
     else:
         # Load from HuggingFace and convert to Megatron
@@ -160,7 +169,6 @@ def main(args) -> None:
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     generated_ids = input_ids.clone()
 
     stop_tokens = [tokenizer.eos_token_id]
@@ -171,7 +179,7 @@ def main(args) -> None:
             print_rank_0(f"Generation step {step}")
 
             fwd_bwd_function = get_forward_backward_func()
-            iterator = SingleBatchIterator(input_ids, position_ids, attention_mask)
+            iterator = SingleBatchIterator(input_ids, position_ids)
 
             output = fwd_bwd_function(
                 forward_step_func=text_forward_step,
@@ -217,7 +225,6 @@ def main(args) -> None:
                 .unsqueeze(0)
                 .expand_as(input_ids)
             )
-            attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
 
             # If the generated token is the end of sequence token, stop generating
             if next_token_ids.item() in stop_tokens:
@@ -236,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf_model_path",
         type=str,
-        default="meta-llama/Llama-3.2-1B",
+        required=True,
         help="Path to the HuggingFace model.",
     )
     parser.add_argument(

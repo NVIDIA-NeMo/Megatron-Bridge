@@ -20,10 +20,9 @@ ConfigContainer:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
     recompute_granularity: "selective"
-    pipeline_model_parallel_layout: "Et|(tt|)*30mL"
 
   train:
-    train_iters: 25
+    train_iters: 100
     eval_iters: 0
 
   rerun_state_machine:
@@ -45,9 +44,6 @@ ConfigContainer:
 
   mixed_precision:
     grad_reduce_in_fp32: false
-  
-  comm_overlap:
-    overlap_grad_reduce: false # TODO: enable when 1F1B_A2A is fixed in Megatron-LM
 
   profiling:
     # For optional fields in the config, specify the target to instantiate the object.
@@ -74,7 +70,7 @@ perf_matrix:
         vp: 4
         ep: 64
         etp: 1
-        fsdp: false
+        use_megatron_fsdp: false
       bf16:
       fp8_cs:
       fp8_ss:
@@ -85,19 +81,17 @@ perf_matrix:
         seq_length: 4096
         mbs: 1
         gbs: 2048
-        tp: 2
+        tp: 1
         pp: 16
         cp: 1
         vp: null
         ep: 8
         etp: 1
-        fsdp: false
-      bf16:
+        use_megatron_fsdp: false
         cuda_graphs: false
+      bf16:
       fp8_cs:
-        cuda_graphs: true
       fp8_mx:
-        cuda_graphs: true
   gb200:
     num_gpus_256:
       common:
@@ -108,11 +102,11 @@ perf_matrix:
         tp: 1
         pp: 4
         cp: 1
-        vp: 8
+        vp: 4
         ep: 64
         etp: 1
-        fsdp: false
-        cuda_graphs: true
+        use_megatron_fsdp: false
+        cuda_graphs: false
       bf16:
       fp8_cs:
       fp8_mx:

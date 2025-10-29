@@ -23,7 +23,7 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV2Provider, DeepSeekV3Provider
+from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV2ModelProvider, DeepSeekV3ModelProvider
 from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -109,7 +109,7 @@ class TestDeepSeekV2Bridge:
     def test_provider_bridge_maps_config(self, mock_pretrained_v2):
         bridge = DeepSeekV2Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v2)
-        assert isinstance(provider, DeepSeekV2Provider)
+        assert isinstance(provider, DeepSeekV2ModelProvider)
         assert provider.hidden_size == mock_pretrained_v2.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_v2.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_v2.config.intermediate_size
@@ -207,7 +207,7 @@ class TestDeepSeekV3Bridge:
     def test_provider_bridge_maps_config(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
         provider = bridge.provider_bridge(mock_pretrained_v3)
-        assert isinstance(provider, DeepSeekV3Provider)
+        assert isinstance(provider, DeepSeekV3ModelProvider)
         assert provider.hidden_size == mock_pretrained_v3.config.hidden_size
         assert provider.num_attention_heads == mock_pretrained_v3.config.num_attention_heads
         assert provider.ffn_hidden_size == mock_pretrained_v3.config.intermediate_size

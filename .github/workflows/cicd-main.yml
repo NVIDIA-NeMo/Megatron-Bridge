@@ -10,7 +10,7 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License
+# limitations under the License.
 name: CICD NeMo
 on:
   schedule:
@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.53.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
 
   lint-check:
     name: Lint check
@@ -39,10 +39,10 @@ jobs:
     needs: [pre-flight]
     if: |
       (
-        needs.pre-flight.outputs.is_deployment_workflow == 'false' 
+        needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'true'
       ) || (
-        needs.pre-flight.outputs.is_deployment_workflow == 'false' 
+        needs.pre-flight.outputs.is_deployment_workflow == 'false'
           && needs.pre-flight.outputs.is_ci_workload == 'false'
           && needs.pre-flight.outputs.docs_only == 'false'
       )
@@ -74,7 +74,7 @@ jobs:
   cicd-unit-tests:
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -83,6 +83,9 @@ jobs:
     runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
+    env:
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -90,7 +93,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: Launch_Unit_Tests
-          timeout: 30
+          timeout: 15
           is_unit_test: "true"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -101,21 +104,24 @@ jobs:
   cicd-functional-tests:
     strategy:
       fail-fast: false
+      max-parallel: 5
       matrix:
         include:
           - script: L2_Launch_training
-            timeout: 60
+            timeout: 40
           - script: L2_Launch_converter
-            timeout: 20
           - script: L2_Launch_models
-            timeout: 60
-          - script: L2_Launch_recipes
-            timeout: 60
+            timeout: 40
+          - script: L2_Launch_recipes_llama_1b
+          - script: L2_Launch_recipes_llama_3b
+          - script: L2_Launch_recipes_mamba
+          - script: L2_Launch_recipes_qwen
+          - script: L2_Launch_data
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -124,6 +130,8 @@ jobs:
     environment: nemo-ci
     env:
       HF_HOME: /home/TestData/HF_HOME
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -131,7 +139,7 @@ jobs:
         uses: ./.github/actions/test-template
         with:
           script: ${{ matrix.script }}
-          timeout: ${{ matrix.timeout }}
+          timeout: ${{ matrix.timeout || 30 }}
           is_unit_test: "false"
           has-azure-credentials: "true"
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -197,7 +205,7 @@ jobs:
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
-              repo: context.repo.repo, 
+              repo: context.repo.repo,
               sha: context.sha,
               state: 'success',
               description: 'No code changes - coverage check skipped',

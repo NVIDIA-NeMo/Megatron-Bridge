@@ -6,7 +6,12 @@
 :caption: Guides
 :hidden:
 
+parallelisms.md
+performance-summary.md
 performance-guide.md
+recipe-usage.md
+nemo2-migration-guide.md
+megatron-lm-to-megatron-bridge.md
 ```
 
 ```{toctree}
@@ -15,6 +20,14 @@ performance-guide.md
 
 bridge-guide.md
 bridge-tech-details.md
+```
+
+```{toctree}
+:caption: Supported Models
+:hidden:
+
+models/llm/index.md
+models/vlm/index.md
 ```
 
 ```{toctree}
@@ -30,7 +43,12 @@ training/profiling.md
 training/checkpointing.md
 training/resiliency.md
 training/mixed-precision.md
+training/communication-overlap.md
+training/attention-optimizations.md
+training/activation-recomputation.md
+training/cpu-offloading.md
 training/peft.md
+training/packed-sequences.md
 ```
 
 ```{toctree}
@@ -38,6 +56,7 @@ training/peft.md
 :hidden:
 
 adding-new-models.md
+bridge-rl-integration.md
 documentation.md
 apidocs/index.rst
 ```
