@@ -1100,6 +1100,10 @@ class ConfigContainer(Container):
         if self.nvrx_straggler is not None:
             self.nvrx_straggler.finalize()
 
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
+
         # Re-run post-inits of sub-configs
         for f in fields(self):
             sub_cfg = getattr(self, f.name)
@@ -1225,10 +1229,6 @@ class ConfigContainer(Container):
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
-
-        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
-        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
-            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""

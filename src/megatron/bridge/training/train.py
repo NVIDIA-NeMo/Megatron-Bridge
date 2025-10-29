@@ -230,6 +230,7 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
+        # TODO: Fix #991
         cuda_graph_helper.create_cudagraphs()
 
     # Track train step elapsed time for throughput logging
