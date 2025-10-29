@@ -486,6 +486,12 @@ def main():
         logging.info("Final configuration:")
         final_config.print_yaml()
 
+    # Dump json
+    import json
+    path2save = f"/lustre/fsw/coreai_dlalgl_llm/aot/exp/long_convergence/final_config_{args.exp_name}.json"
+    json.dump(final_config.to_dict(), open(path2save, "w", indent=2, default=str))
+
+
     if args.pretrain:
         logging.info("Starting pretraining")
         from megatron.bridge.training.gpt_step import forward_step
