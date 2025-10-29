@@ -177,6 +177,8 @@ def apply_args_to_config(config, args):
         config.checkpoint.save_interval = args.save_interval
     if args.async_save:
         config.checkpoint.async_save = args.async_save
+    if args.most_recent_k:
+        config.checkpoint.most_recent_k = args.most_recent_k
 
     # Dataset configuration
     logging.info(f"Configuring dataset: type={args.data}")
@@ -339,6 +341,7 @@ def setup_argument_parser():
     parser.add_argument("--load-dir", type=str, help="Directory to load checkpoints")
     parser.add_argument("--save-interval", type=int, help="Number of iterations between checkpoint saves")
     parser.add_argument("--async-save", action="store_true", help="Enable async checkpoint saving", default=False)
+    parser.add_argument("--most-recent-k", type=int, help="Number of latest checkpoints to keep")
 
     # Data
     parser.add_argument(

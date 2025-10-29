@@ -20,9 +20,11 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal, Optional, Tuple, Union
 
+import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -704,6 +706,14 @@ class CheckpointConfig:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
 
+        # Validate ckpt_step if specified
+        if self.ckpt_step is not None:
+            if self.load is None:
+                raise ValueError(
+                    f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
+                    f"Please set checkpoint.load to the base checkpoint directory."
+                )
+
 
 @dataclass(kw_only=True)
 class LoggerConfig:
@@ -1076,6 +1086,59 @@ class ConfigContainer(Container):
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
+    def _validate_and_apply_deterministic_mode(self) -> None:
+        """Apply and validate deterministic mode requirements.
+
+        This enforces restrictions and settings that must hold when
+        the model is configured to run in deterministic mode.
+        """
+        if not getattr(self.model, "deterministic_mode", False):
+            return
+
+        # Disallow flash attention when running deterministically
+        if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
+            raise AssertionError("Flash attention can not be used in deterministic mode.")
+
+        # Disallow cross-entropy loss fusion as it is not deterministic
+        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
+            "Cross Entropy Fusion is currently not deterministic."
+        )
+
+        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
+        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
+            f"NCCL_ALGO must be one of {all_reduce_choices}."
+        )
+
+        # Enable deterministic algorithms in torch
+        torch.use_deterministic_algorithms(True)
+
+    def _sync_and_validate_external_cuda_graph(self) -> None:
+        """Sync necessary configs for external CUDA Graphs and and validates it."""
+
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
+
+        # Validate external_cg
+        if self.model.enable_cuda_graph or self.model.external_cuda_graph:
+            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
+                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
+            )
+            if self.model.transformer_impl == "transformer_engine" and not (
+                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
+            ):
+                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
+                warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+
+        if self.model.external_cuda_graph:
+            assert "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", ""), (
+                "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
+                "The training may crash with illegal memory access."
+            )
+            assert self.model.recompute_granularity != "full", (
+                "recompute_granularity must not be full when CUDA Graphs are enabled."
+            )
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1117,6 +1180,9 @@ class ConfigContainer(Container):
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
+
+        # Deterministic mode validations and settings
+        self._validate_and_apply_deterministic_mode()
 
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
@@ -1215,17 +1281,20 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            data_seq_length = (
-                self.dataset.seq_length
-                if isinstance(self.dataset, FinetuningDatasetConfig)
-                else self.dataset.sequence_length
-            )
+            # Only validate sequence length for GPTDatasetConfig or FinetuningDatasetConfig
+            # DatasetProvider instances may not have sequence_length attributes
+            if isinstance(self.dataset, (GPTDatasetConfig, FinetuningDatasetConfig)):
+                data_seq_length = (
+                    self.dataset.seq_length
+                    if isinstance(self.dataset, FinetuningDatasetConfig)
+                    else self.dataset.sequence_length
+                )
 
-            assert self.model.seq_length == data_seq_length, (
-                f"Please ensure sequence length configuration in model config and "
-                f"dataset config match.\nSequence length in model config: {self.model.seq_length}, "
-                f"Sequence length in dataset config: {data_seq_length}"
-            )
+                assert self.model.seq_length == data_seq_length, (
+                    f"Please ensure sequence length configuration in model config and "
+                    f"dataset config match.\nSequence length in model config: {self.model.seq_length}, "
+                    f"Sequence length in dataset config: {data_seq_length}"
+                )
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)

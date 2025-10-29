@@ -383,7 +383,66 @@ class TestMockGPTDatasetConfig:
 
 
 class TestConfigContainerValidation:
-    """Tests for the `validate` method of the `ConfigContainer` class."""
+    def test_deterministic_mode_disallows_flash_and_ce_fusion(self, monkeypatch):
+        """Test that deterministic mode disallows flash attention and cross-entropy loss fusion."""
+        from megatron.core.transformer.enums import AttnBackend
+
+        gpt_model_cfg = create_test_gpt_config(
+            deterministic_mode=True,
+            attention_backend=AttnBackend.flash,
+            cross_entropy_loss_fusion=True,
+        )
+
+        # Ensure NCCL_ALGO present but valid, so we fail earlier on flash/ce fusion
+        monkeypatch.setenv("NCCL_ALGO", "Tree")
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            with pytest.raises(AssertionError, match="Flash attention can not be used in deterministic mode"):
+                container.validate()
+
+            # Fix attention, still CE fusion should fail
+            container.model.attention_backend = AttnBackend.local
+            with pytest.raises(AssertionError, match="Cross Entropy Fusion is currently not deterministic"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_deterministic_mode_requires_nccl_algo_and_sets_torch(self, monkeypatch):
+        """Test that deterministic mode requires NCCL_ALGO and sets torch.use_deterministic_algorithms."""
+        gpt_model_cfg = create_test_gpt_config(
+            deterministic_mode=True,
+            cross_entropy_loss_fusion=False,
+            transformer_impl="transformer_engine",
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+
+        try:
+            # Missing NCCL_ALGO
+            monkeypatch.delenv("NCCL_ALGO", raising=False)
+            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
+                container.validate()
+
+            # Invalid NCCL_ALGO
+            monkeypatch.setenv("NCCL_ALGO", "AllReduce")
+            with pytest.raises(AssertionError, match="NCCL_ALGO must be one of"):
+                container.validate()
+
+            # Valid NCCL_ALGO -> should pass and call torch deterministic
+            monkeypatch.setenv("NCCL_ALGO", "Ring")
+
+            called = {"det": False}
+
+            def _mock_use_deterministic(flag):
+                called["det"] = flag
+
+            with patch.object(torch, "use_deterministic_algorithms", side_effect=_mock_use_deterministic):
+                container.validate()
+                assert called["det"] is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
         "world_size, expect_assertion_error",
@@ -1229,6 +1288,26 @@ class TestCheckpointConfig:
                 container.validate()  # Should pass without error
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_ckpt_step_requires_load_directory(self):
+        """Test that ckpt_step requires checkpoint.load to be set."""
+        # Test that ckpt_step without load fails
+        ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load=None)
+
+        with pytest.raises(ValueError) as exc_info:
+            ckpt_cfg.finalize()
+
+        assert "ckpt_step=5000 specified but checkpoint.load is None" in str(exc_info.value)
+        assert "Please set checkpoint.load to the base checkpoint directory" in str(exc_info.value)
+
+    def test_ckpt_step_with_load_directory_passes(self):
+        """Test that ckpt_step with checkpoint.load passes validation."""
+        ckpt_cfg = create_test_checkpoint_config(ckpt_step=5000, load="/checkpoints")
+
+        # Should not raise any errors
+        ckpt_cfg.finalize()
+        assert ckpt_cfg.ckpt_step == 5000
+        assert ckpt_cfg.load == "/checkpoints"
 
     def test_async_save_validation_error(self):
         """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
@@ -2114,3 +2193,149 @@ class TestSampleBasedTraining:
 
         with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"):
             sched_cfg.finalize()
+
+
+class TestDatasetSequenceLengthValidation:
+    """Tests for dataset sequence length validation with different dataset types."""
+
+    def test_custom_dataset_provider_without_seq_length_passes(self, monkeypatch):
+        """Test that custom DatasetProvider without seq_length/sequence_length attributes passes validation."""
+        from dataclasses import dataclass
+        from typing import Any, Optional, Tuple
+
+        from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+
+        @dataclass
+        class CustomDatasetProvider(DatasetProvider):
+            """Custom dataset provider without seq_length attribute."""
+
+            data_path: str = "/path/to/data"
+
+            def build_datasets(
+                self, context: DatasetBuildContext
+            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                # Mock implementation
+                return None, None, None
+
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        custom_dataset = CustomDatasetProvider()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=custom_dataset,
+        )
+
+        try:
+            # Should pass without trying to access seq_length or sequence_length
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_gpt_dataset_sequence_length_mismatch_fails(self, monkeypatch):
+        """Test that GPTDatasetConfig with mismatched sequence length fails validation."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=1024)  # Mismatch!
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError, match="sequence length configuration in model config and dataset config match"
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_gpt_dataset_sequence_length_match_passes(self, monkeypatch):
+        """Test that GPTDatasetConfig with matching sequence length passes validation."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)  # Match!
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()  # Should pass
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_finetuning_dataset_sequence_length_mismatch_fails(self, monkeypatch):
+        """Test that FinetuningDatasetConfig with mismatched sequence length fails validation."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=1024)  # Mismatch!
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                AssertionError, match="sequence length configuration in model config and dataset config match"
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_finetuning_dataset_sequence_length_match_passes(self, monkeypatch):
+        """Test that FinetuningDatasetConfig with matching sequence length passes validation."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)  # Match!
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()  # Should pass
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_custom_dataset_provider_with_seq_length_validates(self, monkeypatch):
+        """Test that custom DatasetProvider with seq_length attribute is validated if it's a FinetuningDatasetConfig."""
+        # This test ensures that if someone subclasses FinetuningDatasetConfig, it still gets validated
+        from dataclasses import dataclass
+        from typing import Any, Optional, Tuple
+
+        from megatron.bridge.training.config import DatasetBuildContext, FinetuningDatasetConfig
+
+        @dataclass
+        class CustomFinetuningDataset(FinetuningDatasetConfig):
+            """Custom finetuning dataset that extends FinetuningDatasetConfig."""
+
+            custom_field: str = "custom"
+
+            def build_datasets(
+                self, context: DatasetBuildContext
+            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                # Mock implementation
+                return None, None, None
+
+        gpt_model_cfg = create_test_gpt_config(seq_length=512)
+        custom_dataset = CustomFinetuningDataset(seq_length=1024)  # Mismatch!
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=custom_dataset,
+        )
+
+        try:
+            # Should still validate sequence length since it's a FinetuningDatasetConfig
+            with pytest.raises(
+                AssertionError, match="sequence length configuration in model config and dataset config match"
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)

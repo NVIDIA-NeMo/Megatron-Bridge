@@ -49,10 +49,13 @@ class LlamaBridge(MegatronModelBridge):
             getattr(hf_config, "rope_scaling", None) is not None
             and hf_config.rope_scaling.get("rope_type") == "llama3"
         ):
-            # Apply Llama3.1 customize rope scaling
+            # Llama 3.1/3.2 models with RoPE scaling
             cls = partial(Llama31ModelProvider, scale_factor=hf_config.rope_scaling.get("factor", 8.0))
         else:
             cls = LlamaModelProvider
+
+        # Extract kv_channels from head_dim if present (used by Llama Nemotron models)
+        kv_channels = getattr(hf_config, "head_dim", None)
 
         provider = cls(
             num_layers=hf_config.num_hidden_layers,
@@ -64,6 +67,7 @@ class LlamaBridge(MegatronModelBridge):
             num_query_groups=hf_config.num_key_value_heads,
             seq_length=hf_config.max_position_embeddings,
             rotary_base=hf_config.rope_theta,
+            kv_channels=kv_channels,
             gated_linear_unit=True,
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
             share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),

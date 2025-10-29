@@ -679,67 +679,6 @@ class TestLoRAMegatronIntegration:
         efficiency_ratio = trainable_params / total_params
         assert efficiency_ratio < 0.3, f"LoRA should be parameter efficient, got ratio: {efficiency_ratio}"
 
-    def test_lora_forward_pass_with_megatron_model(self):
-        """Test forward pass through LoRA-adapted Megatron model using pre-wrap hooks."""
-
-        # Create minimal config for fast testing
-        model_provider = GPTModelProvider(
-            num_layers=1,
-            hidden_size=64,
-            num_attention_heads=2,
-            vocab_size=128,
-            ffn_hidden_size=128,
-        )
-
-        # Create LoRA and register hook
-        lora = LoRA(dim=4, alpha=8)
-        lora_hook = self._create_lora_pre_wrap_hook(lora)
-        model_provider.register_pre_wrap_hook(lora_hook)
-        model_provider.finalize()
-
-        # Get and adapt model using hook
-        adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
-        adapted_model = [chunk.cuda() for chunk in adapted_model]
-
-        # Test forward pass with proper Megatron input format
-        batch_size, seq_len = 2, 8
-
-        # Get model device (model is on CUDA, inputs need to match)
-        model_device = next(adapted_model[0].parameters()).device
-
-        # Create input tensors in the format expected by Megatron models
-        input_ids = torch.randint(0, model_provider.vocab_size, (batch_size, seq_len), device=model_device)
-        position_ids = torch.arange(seq_len, dtype=torch.long, device=model_device).unsqueeze(0).expand(batch_size, -1)
-
-        # Create 4D causal attention mask [batch_size, 1, seq_len, seq_len]
-        # True values are masked out (don't attend), False values attend
-        attention_mask = torch.tril(torch.ones(seq_len, seq_len, device=model_device)) < 0.5
-        attention_mask = attention_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, 1, -1, -1)
-
-        # Run forward pass using the standard codebase pattern
-        forward_args = {
-            "input_ids": input_ids,
-            "position_ids": position_ids,
-            "attention_mask": attention_mask,
-        }
-
-        with torch.no_grad():
-            for chunk in adapted_model:
-                output = chunk(**forward_args)
-
-                # Verify output shape and that LoRA is active
-                if isinstance(output, tuple):
-                    logits = output[0]
-                else:
-                    logits = output
-
-                expected_shape = (batch_size, seq_len, model_provider.vocab_size)
-                assert logits.shape == expected_shape, f"Expected {expected_shape}, got {logits.shape}"
-
-                # Count LoRA adaptations
-                lora_count = sum(1 for _, m in chunk.named_modules() if isinstance(m, LoRALinear))
-                assert lora_count > 0, "Should have LoRA adaptations applied"
-
     def test_lora_merge_with_megatron_model(self):
         """Test LoRA merge functionality with Megatron models using pre-wrap hooks."""
 

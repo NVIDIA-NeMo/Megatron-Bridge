@@ -17,7 +17,8 @@
 # - Parametrize over all exported Qwen recipe functions in `megatron.bridge.recipes.qwen`.
 # - For each recipe, monkeypatch `AutoBridge` with a lightweight fake to avoid I/O.
 # - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
-# - Verify tokenizer selection honors `use_null_tokenizer`, and sanity-check parallelism fields.
+# - Verify tokenizer selection: pretrain recipes honor `use_null_tokenizer`, finetune recipes always use HF tokenizer.
+# - Sanity-check parallelism fields and finetuning-specific requirements.
 #
 
 import importlib
@@ -39,21 +40,43 @@ def _safe_overrides_for(name: str) -> dict:
     overrides = {
         "name": f"unit_{name}",
         "dir": ".",  # keep paths local
-        "mock": True,  # use mock data paths
         "train_iters": 10,
         "global_batch_size": 2,
         "micro_batch_size": 1,
         "seq_length": 64,
-        "lr": 1e-4,
-        "min_lr": 1e-5,
-        "lr_warmup_iters": 2,
         # Keep parallelism tiny so provider shaping is trivial
         "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
         "context_parallelism": 1,
-        # Prefer NullTokenizer in tests to avoid HF tokenizer I/O
-        "use_null_tokenizer": True,
     }
+
+    # Detect if this is a finetune recipe
+    is_finetune = "finetune" in name.lower()
+
+    if is_finetune:
+        # Finetuning-specific overrides
+        overrides.update(
+            {
+                "finetune_lr": 1e-4,
+                "min_lr": 1e-5,
+                "lr_warmup_iters": 2,
+                "peft": None,  # Disable PEFT for simpler testing
+                "pretrained_checkpoint": "/fake/checkpoint/path",  # Required for finetuning
+            }
+        )
+        # Note: Finetuning always uses HF tokenizer, never null tokenizer
+    else:
+        # Pretrain-specific overrides
+        overrides.update(
+            {
+                "mock": True,  # use mock data paths
+                "lr": 1e-4,
+                "min_lr": 1e-5,
+                "lr_warmup_iters": 2,
+                # Prefer NullTokenizer in tests to avoid HF tokenizer I/O
+                "use_null_tokenizer": True,
+            }
+        )
 
     # For MoE recipes, ensure expert settings are small/valid
     lname = name.lower()
@@ -107,7 +130,15 @@ def _assert_basic_config(cfg):
     # A few critical fields
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.sequence_length >= 1
+
+    # Check sequence length (different attribute names for different dataset types)
+    if hasattr(cfg.dataset, "sequence_length"):
+        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
+    elif hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    else:
+        # Some other dataset type
+        assert cfg.dataset is not None
 
 
 @pytest.mark.parametrize("recipe_func", _QWEN_RECIPE_FUNCS)
@@ -123,14 +154,30 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
 
     _assert_basic_config(cfg)
 
-    # Ensure tokenizer choice matches override
-    if overrides.get("use_null_tokenizer"):
-        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
-        assert cfg.tokenizer.vocab_size is not None
-    else:
+    # Ensure tokenizer choice matches recipe type
+    is_finetune = "finetune" in recipe_func.__name__.lower()
+    if is_finetune:
+        # Finetuning recipes always use HF tokenizer
         assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert cfg.tokenizer.tokenizer_model is not None
+    else:
+        # Pretrain recipes honor use_null_tokenizer override
+        if overrides.get("use_null_tokenizer"):
+            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+            assert cfg.tokenizer.vocab_size is not None
+        else:
+            assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+            assert cfg.tokenizer.tokenizer_model is not None
 
     # Parallelism and shaping
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+    # Finetuning-specific assertions
+    if is_finetune:
+        # Should have pretrained_checkpoint set (even if fake)
+        assert cfg.checkpoint.pretrained_checkpoint is not None
+        # Should have PEFT config (or None if disabled in test)
+        assert hasattr(cfg, "peft")  # peft field should exist
+        # Dataset should be configured (SQuAD by default)
+        assert cfg.dataset is not None

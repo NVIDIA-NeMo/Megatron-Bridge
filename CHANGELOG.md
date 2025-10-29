@@ -1,5 +1,10 @@
 # Changelog
 
+## NVIDIA Megatron-Bridge 0.1.0rc4
+
+* Fix docs build
+* Update performance scripts
+
 ## NVIDIA Megatron-Bridge 0.1.0rc3
 
 * Model Collection Support
