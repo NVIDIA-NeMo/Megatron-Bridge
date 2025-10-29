@@ -11,8 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import re
+from typing import Dict, Union
 
 import torch
+import torch.nn as nn
 from transformers.models.qwen3_vl_moe import Qwen3VLMoeForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -20,7 +23,6 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
-    GatedMLPMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -181,16 +183,65 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                 v="model.language_model.layers.*.self_attn.v_proj.bias",
             ),
             
-            # MoE expert weights mapping, each expert has gate_up_proj and down_proj
-            GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc1.weight",
-                gate="model.language_model.layers.*.mlp.gate.weight",
-                up="model.language_model.layers.*.mlp.experts.up_proj",
+            ExpertMLPGateUpProjMapping(
+                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
             ),
-            AutoMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.linear_fc2.weight",
+
+            ExpertMLPDownProjMapping(
+                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
                 hf_param="model.language_model.layers.*.mlp.experts.down_proj",
-            ),
+            ), 
         ])
 
         return MegatronMappingRegistry(*mapping_list)
+
+class ExpertMLPDownProjMapping(AutoMapping):
+    def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        return super().hf_to_megatron(hf_weights[global_expert_number].transpose(0, 1), megatron_module)
+
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+        if megatron_weights is None:
+            return super().megatron_to_hf(megatron_weights, megatron_module)
+
+        return super().megatron_to_hf(megatron_weights.transpose(0, 1).contiguous(), megatron_module)
+
+    def _validate_patterns(self, *args, **kwargs):
+        # allow number of wildcards to mismatch in this mapping
+        pass
+
+
+class ExpertMLPGateUpProjMapping(AutoMapping):
+    def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        return super().hf_to_megatron(hf_weights[global_expert_number].transpose(0, 1), megatron_module)
+
+    def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
+        if megatron_weights is None:
+            return super().megatron_to_hf(megatron_weights, megatron_module)
+
+        return super().megatron_to_hf(megatron_weights.transpose(0, 1).contiguous(), megatron_module)
+
+    def _validate_patterns(self, *args, **kwargs):
+        # allow number of wildcards to mismatch in this mapping
+        pass
+
+
+def extract_expert_number_from_param(param_name: str) -> int:
+    """Extract the expert number from a parameter name.
+
+    Args:
+        param_name: The parameter name to extract the expert number from.
+
+    Returns:
+        The expert number.
+
+    """
+    pattern = r"local_experts\.(\d+)"
+    match = re.search(pattern, param_name)
+    if not match:
+        raise ValueError(
+            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
+        )
+    return int(match.group(1))
