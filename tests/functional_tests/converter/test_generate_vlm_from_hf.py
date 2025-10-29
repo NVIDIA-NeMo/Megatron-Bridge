@@ -11,16 +11,16 @@ import pytest
 
 class TestGenerateVLMFromHF:
     @pytest.mark.run_only_on("GPU")
-    def test_generate_vlm_single_gpu(self):
+    def test_generate_vlm(self):
         """
-        Run 1-process distributed VLM generation on a small instruct model with an image URL.
+        Run distributed VLM generation on a small instruct model with an image URL.
         """
         cmd = [
             "python",
             "-m",
             "torch.distributed.run",
-            "--nproc_per_node=1",
-            "--nnodes=2",
+            "--nproc_per_node=2",
+            "--nnodes=1",
             "-m",
             "coverage",
             "run",
