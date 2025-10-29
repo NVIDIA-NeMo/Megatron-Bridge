@@ -16,11 +16,11 @@ import os
 from typing import Optional, Union
 
 import torch
+from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge.models.nemotronh import NemotronNanoNext3Bv2Provider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -34,59 +34,74 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
-def model_config(
-    tensor_model_parallel_size: int = 4,
-    pipeline_model_parallel_size: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = True,
-    enable_deepep: bool = True,
-    expert_tensor_parallelism: int = 1,
-    expert_model_parallelism: int = 8,
-) -> NemotronNanoNext3Bv2Provider:
+
+class NemotronNext3Bv2CommonKwargs(TypedDict, total=False):
+    """Typed options accepted by Nemotron Next 3B v2 recipe helper functions."""
+
+    # Core identifiers
+    model_provider: NemotronNanoNext3Bv2Provider
+    dir: Optional[str]
+    name: str
+    # Dataset configuration
+    data_paths: Optional[list[str]]
+    data_args_path: Optional[str]
+    train_data_path: Optional[list[str]]
+    valid_data_path: Optional[list[str]]
+    test_data_path: Optional[list[str]]
+    per_split_data_args_path: Optional[str]
+    path_to_cache: Optional[str]
+    mock: bool
+    # Model configuration
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_parallelism_dtype: Optional[torch.dtype]
+    virtual_pipeline_parallelism: Optional[int]
+    context_parallelism: int
+    sequence_parallelism: bool
+    expert_tensor_parallelism: int
+    expert_model_parallelism: int
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int
+    micro_batch_size: int
+    seq_length: int
+    lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+    # MoE
+    enable_deepep: bool
+
+
+def nemotron_next_3b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNext3Bv2CommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for Nemotron Next 3B v2.
+
+    This recipe is designed for multi-node training.
+    Default parallelism: TP=4, PP=1, SP=True, with DeepEP enabled.
+
+    See `_nemotron_next_3b_v2_common` for the full list of parameters.
     """
-    Configure the Nemotron Next 3B v2 model.
-
-    Args:
-        tensor_model_parallel_size: Degree of tensor model parallelism.
-        pipeline_model_parallel_size: Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype: Data type for pipeline parallelism.
-        virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism.
-        sequence_parallelism: Whether to use sequence parallelism.
-        expert_tensor_parallelism: Degree of expert tensor parallelism.
-        expert_model_parallelism: Degree of expert model parallelism.
-    Returns:
-        NemotronNanoNext3Bv2Provider: Configuration for the Nemotron Next 3B v2 model.
-    """
-    #FIXME: we are getting rid of Model Provider. It should come directly from the bridge
-    cfg = NemotronNanoNext3Bv2Provider(
-        tensor_model_parallel_size=tensor_model_parallel_size,
-        pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-        expert_tensor_parallel_size=expert_tensor_parallelism,
-        expert_model_parallel_size=expert_model_parallelism,
-        apply_rope_fusion=False,
-        async_tensor_model_parallel_allreduce=True,
-        attention_backend="fused",
-        gradient_accumulation_fusion=True,
-        init_method_std=0.0173,
-        use_fused_weighted_squared_relu=True,
-    )
-
-    if enable_deepep:
-        cfg.moe_token_dispatcher_type = "flex"
-        cfg.moe_enable_deepep = True
-        cfg.moe_shared_expert_overlap = True
-
-    return cfg
+    recommended_kwargs: NemotronNext3Bv2CommonKwargs = {
+        "model_provider": NemotronNanoNext3Bv2Provider,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
+        "pipeline_parallelism_dtype": torch.bfloat16,
+        "context_parallelism": 1,
+        "sequence_parallelism": True,
+        "enable_deepep": True,
+        "expert_tensor_parallelism": 1,
+        "expert_model_parallelism": 8,
+        "precision_config": "bf16_mixed",
+    }
+    combined_kwargs: NemotronNext3Bv2CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _nemotron_next_3b_v2_common(**combined_kwargs)
 
 
-def pretrain_config(
+def _nemotron_next_3b_v2_common(
+    model_provider: type[NemotronNanoNext3Bv2Provider],
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -126,33 +141,37 @@ def pretrain_config(
     Create a pre-training configuration for Nemotron Next 3B v2 model.
 
     Args:
-        dir (Optional[str]): Base directory for saving logs and checkpoints.
-        name (str): Name of the pre-training run.
-        data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
-        data_args_path (Optional[str]): Path to file containing data arguments.
-        train_data_path (Optional[List[str]]): List of training data paths.
-        valid_data_path (Optional[List[str]]): List of validation data paths.
-        test_data_path (Optional[List[str]]): List of test data paths.
-        per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
-        mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_model_parallel_size (int): Degree of tensor model parallelism.
-        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
-        train_iters (int): Total number of training iterations.
-        global_batch_size (int): Global batch size for training.
-        micro_batch_size (int): Micro batch size for training.
-        seq_length (int): Sequence length for training data.
-        lr (float): Learning rate.
-        min_lr (float): Minimum learning rate for cosine decay.
-        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
-        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-        comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration for the model.
-        enable_deepep (bool): Whether to enable DeepEP for MoE.
-        expert_tensor_parallelism (int): Degree of expert tensor parallelism.
-        expert_model_parallelism (int): Degree of expert model parallelism.
+        model_provider: The model provider class for the Nemotron Next 3B v2 variant.
+        dir: Base directory for saving logs and checkpoints.
+        name: Name of the pre-training run.
+        data_paths: List of paths to dataset files. If None, mock data will be used.
+        data_args_path: Path to file containing data arguments.
+        train_data_path: List of training data paths.
+        valid_data_path: List of validation data paths.
+        test_data_path: List of test data paths.
+        per_split_data_args_path: Path to JSON file with per-split data configuration.
+        path_to_cache: Path to cache directory.
+        mock: Whether to use mock data. If True, ignores data_paths.
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
+        pipeline_parallelism_dtype: Data type for pipeline parallelism.
+        virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
+        context_parallelism: Degree of context parallelism to be passed to model_config.
+        sequence_parallelism: Whether to use sequence parallelism.
+        expert_tensor_parallelism: Degree of expert tensor parallelism.
+        expert_model_parallelism: Degree of expert model parallelism.
+        train_iters: Total number of training iterations.
+        global_batch_size: Global batch size for training.
+        micro_batch_size: Micro batch size for training.
+        seq_length: Sequence length for training data.
+        lr: Learning rate.
+        min_lr: Minimum learning rate for cosine decay.
+        lr_warmup_iters: Number of warmup iterations for the learning rate.
+        lr_decay_iters: Number of iterations for learning rate decay.
+        precision_config: Precision configuration for the model.
+        comm_overlap_config: Communication overlap configuration for the model.
+        enable_deepep: Whether to enable DeepEP for MoE.
+
     Returns:
         ConfigContainer: Configuration for pre-training.
     """
@@ -165,17 +184,28 @@ def pretrain_config(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
 
-    model_cfg = model_config(
+    # Configure the model (integrating the old model_config functionality)
+    model_cfg = model_provider(
         tensor_model_parallel_size=tensor_model_parallel_size,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
-        enable_deepep=enable_deepep,
-        expert_tensor_parallelism=expert_tensor_parallelism,
-        expert_model_parallelism=expert_model_parallelism,
+        pipeline_dtype=pipeline_parallelism_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
+        context_parallel_size=context_parallelism,
+        sequence_parallel=sequence_parallelism,
+        expert_tensor_parallel_size=expert_tensor_parallelism,
+        expert_model_parallel_size=expert_model_parallelism,
+        apply_rope_fusion=False,
+        async_tensor_model_parallel_allreduce=True,
+        attention_backend="fused",
+        gradient_accumulation_fusion=True,
+        init_method_std=0.0173,
+        use_fused_weighted_squared_relu=True,
     )
+
+    if enable_deepep:
+        model_cfg.moe_token_dispatcher_type = "flex"
+        model_cfg.moe_enable_deepep = True
+        model_cfg.moe_shared_expert_overlap = True
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,

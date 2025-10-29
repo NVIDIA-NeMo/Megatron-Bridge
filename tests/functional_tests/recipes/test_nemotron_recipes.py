@@ -15,11 +15,11 @@
 """Functional smoke tests for Nemotron recipe configurations."""
 
 import pytest
-from functools import partial
 
-from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import pretrain_config as nemotron_next_3b_v2_config
+from megatron.bridge.recipes.nemotronh.nemotron_next_3b_v2 import (
+    nemotron_next_3b_v2_pretrain_config as nemotron_next_3b_v2_config,
+)
 from tests.functional_tests.recipes.utils import run_pretrain_recipe_test
-
 
 
 def patched_nemotron_next_3b_v2_config(*args, **kwargs):

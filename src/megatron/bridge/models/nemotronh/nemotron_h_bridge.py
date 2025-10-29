@@ -63,7 +63,6 @@ class NemotronHBridge(MegatronModelBridge):
                 "moe_router_num_groups": hf_config.n_group,
                 "moe_router_group_topk": hf_config.topk_group,
                 "moe_router_topk_scaling_factor": hf_config.routed_scaling_factor,
-                "kv_channels": hf_config.head_dim,
             })
 
         return NemotronHModelProvider(

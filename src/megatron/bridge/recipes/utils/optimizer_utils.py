@@ -48,6 +48,10 @@ def distributed_fused_adam_with_cosine_annealing(
         max_lr: Maximum learning rate
         min_lr: Minimum learning rate (defaults to 0.1 * max_lr)
         clip_grad: Gradient clipping value
+        start_weight_decay: Initial weight decay value for scheduler
+        end_weight_decay: Final weight decay value for scheduler
+        weight_decay_incr_style: Weight decay increment style ("constant", "linear", etc.)
+        lr_decay_style: Learning rate decay style ("cosine", "linear", etc.)
 
     Returns:
         Tuple of (OptimizerConfig, SchedulerConfig)
