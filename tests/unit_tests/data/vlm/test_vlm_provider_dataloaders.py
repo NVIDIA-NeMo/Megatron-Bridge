@@ -7,28 +7,18 @@ from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMCon
 from megatron.bridge.training.config import DatasetBuildContext
 
 
-def _cfg_stub(dataloader_type="single"):
-    cfg = types.SimpleNamespace()
-    cfg.dataset = types.SimpleNamespace(
-        dataloader_type=dataloader_type,
-        num_workers=0,
-        data_sharding=True,
-        pin_memory=False,
-        persistent_workers=False,
-    )
-    cfg.train = types.SimpleNamespace(
+def _context_stub():
+    return DatasetBuildContext(
+        train_samples=4,
+        valid_samples=4,
+        test_samples=4,
+        tokenizer=None,
         micro_batch_size=2,
         global_batch_size=4,
         eval_iters=2,
         skip_train=False,
-        exit_signal=None,
         exit_signal_handler_for_dataloader=False,
     )
-    return cfg
-
-
-def _context_stub():
-    return DatasetBuildContext(train_samples=4, valid_samples=4, test_samples=4, tokenizer=None)
 
 
 def _train_state_stub():
@@ -47,9 +37,13 @@ def test_mock_provider_provide_dataloaders_returns_dls(mock_auto_processor):
         sequence_length=16,
         hf_processor_path="dummy/model",
         num_images=0,
+        num_workers=0,
+        data_sharding=True,
+        pin_memory=False,
+        persistent_workers=False,
     )
     train_dl, valid_dl, test_dl = provider.provide_dataloaders(
-        context=_context_stub(), cfg=_cfg_stub(), train_state=_train_state_stub()
+        context=_context_stub(), train_state=_train_state_stub()
     )
 
     assert train_dl is not None
@@ -70,9 +64,13 @@ def test_preloaded_provider_handles_missing_paths(mock_auto_processor):
         train_data_path=None,
         valid_data_path=None,
         test_data_path=None,
+        num_workers=0,
+        data_sharding=True,
+        pin_memory=False,
+        persistent_workers=False,
     )
     train_dl, valid_dl, test_dl = provider.provide_dataloaders(
-        context=_context_stub(), cfg=_cfg_stub(), train_state=_train_state_stub()
+        context=_context_stub(), train_state=_train_state_stub()
     )
 
     assert train_dl is None
@@ -91,6 +89,10 @@ def test_hf_provider_provide_dataloaders_with_stub_maker(mock_auto_processor):
         sequence_length=16,
         hf_processor_path="dummy/model",
         maker_name="dummy",
+        num_workers=0,
+        data_sharding=True,
+        pin_memory=False,
+        persistent_workers=False,
     )
 
     # Replace maker registry with minimal maker that returns one example
@@ -107,7 +109,7 @@ def test_hf_provider_provide_dataloaders_with_stub_maker(mock_auto_processor):
     provider._get_maker = lambda: _fake_maker  # type: ignore[method-assign]
 
     train_dl, valid_dl, test_dl = provider.provide_dataloaders(
-        context=_context_stub(), cfg=_cfg_stub(), train_state=_train_state_stub()
+        context=_context_stub(), train_state=_train_state_stub()
     )
 
     assert train_dl is not None

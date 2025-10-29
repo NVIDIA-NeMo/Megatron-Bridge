@@ -32,7 +32,7 @@ from torch.utils.data import DataLoader
 
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
-from megatron.bridge.training.config import ConfigContainer, DatasetBuildContext, DatasetProvider
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 
@@ -120,15 +120,14 @@ class MockVLMConversationProvider(DatasetProvider):
     def provide_dataloaders(
         self,
         context: DatasetBuildContext,
-        cfg: ConfigContainer,
         train_state: TrainState,
     ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
         train_ds, valid_ds, test_ds = self.build_datasets(context)
 
         def worker_init_fn(_):
-            DistributedSignalHandler(cfg.train.exit_signal).__enter__()
+            DistributedSignalHandler(context.exit_signal).__enter__()
 
-        maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
+        maybe_worker_init_fn = worker_init_fn if context.exit_signal_handler_for_dataloader else None
 
         def _make_loader(
             ds: Optional[VLMConversationDataset],
@@ -141,39 +140,39 @@ class MockVLMConversationProvider(DatasetProvider):
                 ds,
                 consumed_samples,
                 dataloader_type,
-                cfg.train.micro_batch_size,
-                cfg.dataset.num_workers,
-                cfg.dataset.data_sharding,
+                context.micro_batch_size,
+                self.num_workers,
+                self.data_sharding,
                 worker_init_fn=maybe_worker_init_fn,
                 collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
-                pin_memory=cfg.dataset.pin_memory,
-                persistent_workers=cfg.dataset.persistent_workers,
+                pin_memory=self.pin_memory,
+                persistent_workers=self.persistent_workers,
                 data_parallel_rank=mpu.get_data_parallel_rank(),
                 data_parallel_size=mpu.get_data_parallel_world_size(),
-                global_batch_size=cfg.train.global_batch_size,
+                global_batch_size=context.global_batch_size,
             )
 
         train_loader = _make_loader(
             train_ds,
             train_state.consumed_train_samples,
-            cfg.dataset.dataloader_type,
+            self.dataloader_type,
         )
 
         valid_loader: Optional[DataLoader] = None
-        if cfg.train.eval_iters > 0:
-            valid_dl_type = cfg.dataset.dataloader_type if cfg.train.skip_train else "cyclic"
+        if context.eval_iters > 0:
+            valid_dl_type = self.dataloader_type if context.skip_train else "cyclic"
             valid_loader = _make_loader(
                 valid_ds,
-                train_state.consumed_valid_samples if not cfg.train.skip_train else 0,
+                train_state.consumed_valid_samples if not context.skip_train else 0,
                 valid_dl_type,
             )
 
         test_loader: Optional[DataLoader] = None
-        if cfg.train.eval_iters > 0:
+        if context.eval_iters > 0:
             test_loader = _make_loader(
                 test_ds,
                 0,
-                cfg.dataset.dataloader_type,
+                self.dataloader_type,
             )
 
         return train_loader, valid_loader, test_loader

@@ -245,8 +245,14 @@ def setup(
             valid_samples=v_samples,
             test_samples=te_samples,
             tokenizer=tokenizer,
+            micro_batch_size=cfg.train.micro_batch_size,
+            global_batch_size=cfg.train.global_batch_size,
+            eval_iters=cfg.train.eval_iters,
+            skip_train=cfg.train.skip_train,
+            exit_signal=cfg.train.exit_signal,
+            exit_signal_handler_for_dataloader=cfg.train.exit_signal_handler_for_dataloader,
         )
-        train_dl, valid_dl, test_dl = provider_obj.provide_dataloaders(context=context, cfg=cfg, train_state=state.train_state)  # type: ignore[arg-type]
+        train_dl, valid_dl, test_dl = provider_obj.provide_dataloaders(context=context, train_state=state.train_state)  # type: ignore[arg-type]
 
         # Convert dataloaders to iterators and set flags using shared helpers
         train_data_iterator, valid_data_iterator, test_data_iterator = dataloaders_to_iterators(
