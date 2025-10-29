@@ -43,9 +43,6 @@ dist:
 
 logger:
   log_interval: 1
-  wandb_project: mbridge-llava_video_178k
-  wandb_exp_name: nano_v2_vl_finetuning_video
-  wandb_entity: nvidia
 
 dataset:
   sequence_length: 8192

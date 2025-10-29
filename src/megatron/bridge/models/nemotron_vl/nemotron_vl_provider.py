@@ -149,7 +149,7 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
             use_vision_backbone_fp8_arch=True,  # Note: this is true in mlm code
         )
 
-        from .modeling_nemotron_vl import NemotronVLModel
+        from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 
         model = NemotronVLModel(llava_model=llava_model)
 

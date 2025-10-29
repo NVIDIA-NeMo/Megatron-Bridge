@@ -44,10 +44,6 @@ dist:
 
 logger:
   log_interval: 1
-  wandb_project: mbridge-raven
-  wandb_exp_name: nano_v2_vl_finetuning
-  wandb_entity: nvidia
-  wandb_save_dir: ???
 
 dataset:
   sequence_length: 4096

@@ -18,9 +18,9 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from .modeling_nemotron_vl import NemotronVLModel
-from .nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
-from ..conversion.param_mapping import ConcatenatedQKVMapping
+from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
+from megatron.bridge.models.conversion.param_mapping import ConcatenatedQKVMapping
 
 
 @MegatronModelBridge.register_bridge(source="NemotronH_Nano_VL_V2", target=NemotronVLModel)

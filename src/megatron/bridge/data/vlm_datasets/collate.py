@@ -25,9 +25,8 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
-from ...models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
-from ..datasets.utils import IGNORE_INDEX
-from .token_utils import extract_skipped_token_ids
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
