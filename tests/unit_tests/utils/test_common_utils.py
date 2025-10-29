@@ -357,10 +357,11 @@ class TestSLURMFallback:
         """Test MASTER_ADDR takes priority over SLURM_NODELIST."""
         assert get_master_addr_safe() == "custom.host"
 
-    @patch.dict(os.environ, {"SLURM_NTASKS": "8"}, clear=True)
+    @patch.dict(os.environ, {"SLURM_NTASKS": "8", "SLURM_JOB_ID": "123456"}, clear=True)
     def test_get_master_port_safe_slurm_default(self):
-        """Test default port for SLURM jobs."""
-        assert get_master_port_safe() == 29500
+        """Test default port for SLURM jobs derived from job ID."""
+        # Last 4 digits of job ID: "3456" + 15000 = 18456
+        assert get_master_port_safe() == 18456
 
     @patch.dict(os.environ, {"MASTER_PORT": "30000", "SLURM_NTASKS": "8"}, clear=True)
     def test_get_master_port_safe_priority(self):

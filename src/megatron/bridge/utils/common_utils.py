@@ -22,6 +22,14 @@ import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
 
+from megatron.bridge.utils.slurm_utils import (
+    resolve_slurm_local_rank,
+    resolve_slurm_master_addr,
+    resolve_slurm_master_port,
+    resolve_slurm_rank,
+    resolve_slurm_world_size,
+)
+
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
@@ -49,8 +57,9 @@ def get_rank_safe() -> int:
     if "RANK" in os.environ:
         return int(os.environ["RANK"])
 
-    if "SLURM_PROCID" in os.environ:
-        return int(os.environ["SLURM_PROCID"])
+    slurm_rank = resolve_slurm_rank()
+    if slurm_rank is not None:
+        return slurm_rank
 
     warnings.warn("Could not determine rank from torch.distributed, RANK, or SLURM_PROCID. Defaulting to rank 0.")
     return 0
@@ -74,8 +83,9 @@ def get_world_size_safe() -> int:
     if "WORLD_SIZE" in os.environ:
         return int(os.environ["WORLD_SIZE"])
 
-    if "SLURM_NTASKS" in os.environ:
-        return int(os.environ["SLURM_NTASKS"])
+    slurm_world_size = resolve_slurm_world_size()
+    if slurm_world_size is not None:
+        return slurm_world_size
 
     warnings.warn(
         "Could not determine world size from torch.distributed, WORLD_SIZE, or SLURM_NTASKS. "
@@ -102,15 +112,13 @@ def get_local_rank_preinit() -> int:
     Returns:
         The local rank of the current process.
     """
-    # 1. Check standard torchrun environment variable
     if "LOCAL_RANK" in os.environ:
         return int(os.environ["LOCAL_RANK"])
 
-    # 2. Check SLURM environment variable
-    if "SLURM_LOCALID" in os.environ:
-        return int(os.environ["SLURM_LOCALID"])
+    slurm_local_rank = resolve_slurm_local_rank()
+    if slurm_local_rank is not None:
+        return slurm_local_rank
 
-    # 3. Default with warning
     warnings.warn("Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0.")
     return 0
 
@@ -126,16 +134,13 @@ def get_master_addr_safe() -> str:
     Returns:
         The master node address.
     """
-    # 1. Check standard environment variable
     if "MASTER_ADDR" in os.environ:
         return os.environ["MASTER_ADDR"]
 
-    # 2. Check SLURM environment
-    slurm_addr = _resolve_slurm_master_addr()
+    slurm_addr = resolve_slurm_master_addr()
     if slurm_addr is not None:
         return slurm_addr
 
-    # 3. Default with warning
     warnings.warn("Could not determine master address from MASTER_ADDR or SLURM_NODELIST. Defaulting to 'localhost'.")
     return "localhost"
 
@@ -145,22 +150,19 @@ def get_master_port_safe() -> int:
 
     Fallback order:
     1. MASTER_PORT environment variable (torchrun/torchelastic)
-    2. Default SLURM port (SLURM)
+    2. SLURM job-based port (SLURM_JOB_ID derived)
     3. Default: 29500 (with warning)
 
     Returns:
         The master port.
     """
-    # 1. Check standard environment variable
     if "MASTER_PORT" in os.environ:
         return int(os.environ["MASTER_PORT"])
 
-    # 2. Check if in SLURM and use default
-    slurm_port = _resolve_slurm_master_port()
+    slurm_port = resolve_slurm_master_port()
     if slurm_port is not None:
         return slurm_port
 
-    # 3. Default with warning
     warnings.warn("Could not determine master port from MASTER_PORT or SLURM environment. Defaulting to 29500.")
     return 29500
 
@@ -262,60 +264,3 @@ def extract_expert_number_from_param(param_name: str) -> int:
             f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
         )
     return int(match.group(1))
-
-
-def _is_slurm_job() -> bool:
-    """Detect if running in a SLURM environment.
-
-    Returns:
-        True if SLURM job detected, False otherwise.
-    """
-    return "SLURM_NTASKS" in os.environ
-
-
-def _resolve_slurm_master_addr() -> str | None:
-    """Parse SLURM_NODELIST to get the master node address.
-
-    Handles common SLURM nodelist formats:
-    - Simple list: "node001,node002" -> "node001"
-    - Range: "node[001-004]" -> "node001"
-    - List in brackets: "node[001,003,005]" -> "node001"
-
-    Returns:
-        The master node address, or None if not in SLURM environment.
-    """
-    if not _is_slurm_job():
-        return None
-
-    # Try both SLURM_NODELIST and SLURM_JOB_NODELIST
-    nodelist = os.environ.get("SLURM_NODELIST") or os.environ.get("SLURM_JOB_NODELIST")
-    if not nodelist:
-        return None
-
-    # Handle bracket notation: "prefix[range]" or "prefix[list]"
-    if "[" in nodelist:
-        # Split into base and range part
-        # e.g., "node[001-004]" -> base="node", range_part="001-004"
-        base = nodelist.split("[")[0]
-        range_part = nodelist.split("[")[1].split("]")[0]
-
-        # Handle both ranges (001-004) and lists (001,003,005)
-        # Extract first element
-        first_element = range_part.split(",")[0].split("-")[0]
-
-        return f"{base}{first_element}"
-    else:
-        # Simple comma-separated list
-        # e.g., "node001,node002,node003" -> "node001"
-        return nodelist.split(",")[0].strip()
-
-
-def _resolve_slurm_master_port() -> int | None:
-    """Get master port for SLURM job.
-
-    Returns:
-        The master port (29500), or None if not in SLURM environment.
-    """
-    if not _is_slurm_job():
-        return None
-    return 29500
