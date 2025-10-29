@@ -13,14 +13,55 @@
 # limitations under the License.
 
 import argparse
+import logging
 import os
 from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
 
+logger: logging.Logger = logging.getLogger(__name__)
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
+
+
+def bool_arg(arg):
+        if arg.lower() in ["true", "1", "t", "yes", "y"]:
+            return True
+        elif arg.lower() in ["false", "0", "f", "no", "n"]:
+            return False
+        else:
+            raise ValueError(f"Invalid value for boolean argument: {arg}")
+
+
+def list_of_strings(arg):
+    return arg.split(",")
+
+
+def is_cuda_graph_impl_valid(arg):
+    choices = ["local", "te", "TE", "transformer_engine"]
+    if arg.lower() in choices:
+        arg = arg.lower()
+        if arg == "te":
+            arg = "transformer_engine"
+        return arg
+    else:
+        raise ValueError(f"Invalid value for cuda_graph_impl: {arg}. Valid options are: {choices}")
+
+
+def is_cuda_graph_scope_valid(arg):
+    choices = ["full_iteration", "full", "attn"]
+    if arg.lower() in choices:
+        if arg.lower() == "full_iteration":
+            logger.warning("Make sure cuda_graph_impl is `local`. You can set it using `--cuda_graph_impl local`")
+        return arg
+    else:
+        raise ValueError(f"Invalid value for cuda_graph_scope: {arg}. Valid options are: {choices}")
+
+
+def lower_str(arg):
+    assert isinstance(arg, str), f"Argument {arg} is not a string"
+    return arg.lower()
 
 
 def parse_cli_args():
@@ -51,7 +92,7 @@ def parse_cli_args():
         "-g",
         "--gpu",
         type=str,
-        choices=["h100", "b200", "gb200"],
+        choices=["h100", "b200", "gb200", "gb300"],
         help="Target gpu type.",
         required=True,
     )
@@ -161,17 +202,6 @@ def parse_cli_args():
         default=8,
     )
 
-    def bool_arg(arg):
-        if arg.lower() in ["true", "1", "t", "yes", "y"]:
-            return True
-        elif arg.lower() in ["false", "0", "f", "no", "n"]:
-            return False
-        else:
-            raise ValueError(f"Invalid value for boolean argument: {arg}")
-
-    def list_of_strings(arg):
-        return arg.split(",")
-
     parser.add_argument(
         "-cm",
         "--custom_mounts",
@@ -191,15 +221,15 @@ def parse_cli_args():
     parser.add_argument(
         "-m",
         "--model_name",
-        type=str,
-        help="Model to use for experiment. Default: llama3",
+        type=lower_str,
+        help="Model to use for experiment.",
         required=True,
     )
     parser.add_argument(
         "-s",
         "--model_size",
-        type=str,
-        help="Model size to use for experiment. Default: 8b",
+        type=lower_str,
+        help="Model size to use for experiment.",
         required=True,
     )
     parser.add_argument(
@@ -226,6 +256,101 @@ def parse_cli_args():
         "--use_tokendrop",
         help="Use token drop. Disabled by default. Currently only supported for DeepSeek v3",
         type=bool_arg,
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--use_megatron_fsdp",
+        help="Use Megatron FSDP. Disabled by default.",
+        type=bool_arg,
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--cuda_graph_impl",
+        help="Cuda graph implementation. Options- 'local', 'te', 'TE', 'transformer_engine'.",
+        type=is_cuda_graph_impl_valid,
+        choices=["local", "te", "TE", "transformer_engine"],
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "--cuda_graph_scope",
+        help="Cuda graph scope. Options- 'full_iteration', 'full', 'attn'.",
+        type=is_cuda_graph_scope_valid,
+        choices=["full_iteration", "full", "attn"],
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-tp",
+        "--tensor_model_parallel_size",
+        type=int,
+        help="Intra-layer model parallelism. Splits tensors across GPU ranks.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-pp",
+        "--pipeline_model_parallel_size",
+        type=int,
+        help="Inter-layer model parallelism. Splits transformer layers across GPU ranks.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-cp",
+        "--context_parallel_size",
+        type=int,
+        help="Splits network input along sequence dimension across GPU ranks.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-vp",
+        "--virtual_pipeline_model_parallel_size",
+        type=int,
+        help="Number of virtual blocks per pipeline model parallel rank is the virtual model parallel size.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-ep",
+        "--expert_model_parallel_size",
+        type=int,
+        help="Distributes Moe Experts across sub data parallel dimension.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-et",
+        "--expert_tensor_parallel_size",
+        type=lambda x: int(x) if x is not None else None,
+        nargs="?",
+        const=None,
+        help="Intra-layer tensor model parallelsm for expert layer. Splits tensors across GPU ranks.\
+            Use -et/--expert_tensor_parallel_size <space> for None or -et/--expert_tensor_parallel_size <int>",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-mb",
+        "--micro_batch_size",
+        type=int,
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-gb",
+        "--global_batch_size",
+        type=int,
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-sl",
+        "--seq_length",
+        type=int,
         required=False,
         default=None,
     )

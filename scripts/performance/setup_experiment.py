@@ -20,11 +20,9 @@ from omegaconf import OmegaConf
 
 try:
     from argument_parser import parse_cli_args
-    from utils.common import get_perf_matrix_overrides
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
-    from .utils.common import get_perf_matrix_overrides
     from .utils.executors import slurm_executor
 
 
@@ -64,11 +62,11 @@ if __name__ == "__main__":
         sys.exit(1)
 
     num_gpus_per_node = args.gpus_per_node
-    compute_dtype, fp8_recipe = args.compute_dtype.lower(), args.fp8_recipe.lower()
+    compute_dtype, fp8_recipe = args.compute_dtype, args.fp8_recipe
     compute_dtype = compute_dtype if compute_dtype == "bf16" else f"{compute_dtype}_{fp8_recipe}"
 
     enable_deepep, a2a_overlap = False, False
-    if args.gpu.lower() in ["h100"]:
+    if args.gpu in ["h100"]:
         if args.model_name == "deepseek" and args.model_size == "v3":
             enable_deepep = True
             a2a_overlap = True
@@ -78,7 +76,7 @@ if __name__ == "__main__":
             PerfEnvPlugin(
                 enable_vboost=args.enable_vboost,
                 nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
-                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
+                gpu_sm100_or_newer=args.gpu in ["b200", "gb200"],
                 layernorm_sm_margin=20 if enable_deepep else 16,
                 num_gpus=args.num_gpus,
                 deepep_enabled=enable_deepep,
@@ -99,7 +97,7 @@ if __name__ == "__main__":
 
     num_nodes = -(args.num_gpus // -num_gpus_per_node)
     executor = slurm_executor(
-        args.gpu.lower(),
+        args.gpu,
         args.account,
         args.partition,
         args.log_dir,
@@ -114,20 +112,20 @@ if __name__ == "__main__":
         wandb_key=args.wandb_key,
     )
 
-    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
+    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu in ["gb200"]:
         if args.compute_dtype == "fp8" and args.fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
+    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu in ["gb200"]:
         if args.compute_dtype == "bf16" and (not args.use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
-    if args.gpu.lower() in ["h100"]:
+    if args.gpu in ["h100"]:
         if args.model_name == "llama3" and args.model_size == "8b":
             if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
                 executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
                 executor.env_vars["NCCL_CTA_POLICY"] = "1"
                 del_cudnn_ln = False
-    if args.gpu.lower() in ["gb200"]:
+    if args.gpu in ["gb200"]:
         if args.model_name == "llama3" and args.model_size == "70b":
             if args.compute_dtype == "bf16" or (args.compute_dtype == "fp8" and args.fp8_recipe == "cs"):
                 del_cudnn_ln = False
@@ -140,15 +138,7 @@ if __name__ == "__main__":
         if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
             executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
-    target_script_args = []
-    # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
-    for arg_name in args_to_forward:
-        if hasattr(args, arg_name):
-            arg_value = getattr(args, arg_name)
-            if arg_value is not None:
-                target_script_args.extend([f"--{arg_name}", str(arg_value)])
-    target_script_args.extend(["-a", "dummy", "-p", "dummy", "-ng", str(args.num_gpus)])
+    target_script_args = list(sys.argv[1:])
 
     train_script = run.Script(
         path=str(RUN_SCRIPT_PATH),

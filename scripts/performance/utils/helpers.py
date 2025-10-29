@@ -46,6 +46,9 @@ def set_basic_perf_overrides(recipe: Any) -> None:
 
     recipe.rerun_state_machine.check_for_nan_in_loss = False
 
+    recipe.scheduler.lr_decay_iters = recipe.train.train_iters
+    recipe.scheduler.lr_warmup_iters = 10
+
 def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the mcore fsdp overrides from the performance matrix."""
     use_megatron_fsdp = perf_overrides.get("use_megatron_fsdp", False)

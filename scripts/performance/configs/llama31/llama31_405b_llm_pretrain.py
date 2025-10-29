@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 
-def llama31_405b_gb200_bf16_config(fp8_recipe = None) -> ConfigContainer:
+def llama31_405b_gb200_128gpus_bf16_config(fp8_recipe = None) -> ConfigContainer:
     """GB200, 128xGPU, BF16 baseline config."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
@@ -58,7 +58,7 @@ def llama31_405b_gb200_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     return cfg
 
-def llama31_405b_gb200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_gb200_128gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """GB200, 128xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
@@ -97,7 +97,7 @@ def llama31_405b_gb200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_b200_bf16_config(fp8_recipe = None) -> ConfigContainer:
+def llama31_405b_b200_128gpus_bf16_config(fp8_recipe = None) -> ConfigContainer:
     """B200, 128xGPU, BF16 baseline config."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
@@ -123,7 +123,7 @@ def llama31_405b_b200_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     return cfg
 
-def llama31_405b_b200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_b200_128gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """B200, 128xGPU, FP8 cs preset."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
@@ -150,7 +150,7 @@ def llama31_405b_b200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
+def llama31_405b_h100_1024gpus_bf16_config(fp8_recipe = None) -> ConfigContainer:
     """H100, 1024xGPU, BF16 baseline config."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
@@ -177,7 +177,7 @@ def llama31_405b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_h100_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_h100_1024gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """H100, 1024xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 

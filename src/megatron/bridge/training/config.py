@@ -1346,19 +1346,16 @@ class ConfigContainer(Container):
             # Iteration-based training
             if self.scheduler.lr_decay_iters is None:
                 self.scheduler.lr_decay_iters = self.train.train_iters
-            # self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
-            self.scheduler.lr_decay_steps = 149536128
+            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
             self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
 
             if self.scheduler.lr_wsd_decay_iters is not None:
                 self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
 
             if self.scheduler.lr_warmup_fraction is not None:
-                # self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
-                self.scheduler.lr_warmup_steps = 256000
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
             else:
-                # self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
-                self.scheduler.lr_warmup_steps = 256000
+                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
 
 
 def runtime_config_update(cfg: ConfigContainer) -> None:

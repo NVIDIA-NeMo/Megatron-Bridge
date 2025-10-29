@@ -28,17 +28,14 @@ logger = logging.getLogger(__name__)
 
 
 def set_qwen3_235b_a22b_specific_overrides(cfg: ConfigContainer) -> ConfigContainer:
-    cfg.model.cross_entropy_fusion_impl = "te"
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.moe_router_fusion = True
 
-    cfg.model = apply_moe_token_drop(cfg.model)
 
-
-def qwen3_235b_a22b_gb200_bf16_config(fp8_recipe = None) -> ConfigContainer:
+def qwen3_235b_a22b_gb200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = True) -> ConfigContainer:
     """GB200, 64xGPU, BF16 baseline config."""
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
@@ -67,9 +64,12 @@ def qwen3_235b_a22b_gb200_bf16_config(fp8_recipe = None) -> ConfigContainer:
     set_qwen3_235b_a22b_specific_overrides(cfg)
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
+    if use_tokendrop:
+      cfg.model = apply_moe_token_drop(cfg.model)
+
     return cfg
 
-def qwen3_235b_a22b_gb200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_gb200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop = True) -> ConfigContainer:
     """GB200, 64xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
@@ -98,10 +98,13 @@ def qwen3_235b_a22b_gb200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     set_qwen3_235b_a22b_specific_overrides(cfg)
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
+    if use_tokendrop:
+      cfg.model = apply_moe_token_drop(cfg.model)
+
     return cfg
 
 
-def qwen3_235b_a22b_b200_bf16_config(fp8_recipe = None) -> ConfigContainer:
+def qwen3_235b_a22b_b200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = True) -> ConfigContainer:
     """B200, 64xGPU, BF16 baseline config."""
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
@@ -129,9 +132,12 @@ def qwen3_235b_a22b_b200_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
+    if use_tokendrop:
+      cfg.model = apply_moe_token_drop(cfg.model)
+
     return cfg
 
-def qwen3_235b_a22b_b200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_b200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop = True) -> ConfigContainer:
     """B200, 64xGPU, FP8 cs preset."""
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
@@ -159,9 +165,12 @@ def qwen3_235b_a22b_b200_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
+    if use_tokendrop:
+      cfg.model = apply_moe_token_drop(cfg.model)
+
     return cfg
 
-def qwen3_235b_a22b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
+def qwen3_235b_a22b_h100_256gpus_bf16_config(fp8_recipe = None, use_tokendrop = True) -> ConfigContainer:
     """H100, 256xGPU, BF16 baseline config."""
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
@@ -189,10 +198,13 @@ def qwen3_235b_a22b_h100_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
+    if use_tokendrop:
+      cfg.model = apply_moe_token_drop(cfg.model)
+
     return cfg
 
 
-def qwen3_235b_a22b_h100_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_h100_256gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop = True) -> ConfigContainer:
     """H100, 256xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
@@ -219,5 +231,8 @@ def qwen3_235b_a22b_h100_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
+
+    if use_tokendrop:
+      cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg

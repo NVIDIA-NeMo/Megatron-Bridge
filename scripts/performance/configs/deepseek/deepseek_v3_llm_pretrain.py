@@ -12,7 +12,7 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
-def deepseek_v3_gb200_bf16_config(
+def deepseek_v3_gb200_256gpus_bf16_config(
     fp8_recipe = None,
     use_tokendrop: bool = True,
     enable_deepep: bool = False,
@@ -55,18 +55,15 @@ def deepseek_v3_gb200_bf16_config(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    if enable_deepep:
-        cfg.model.moe_router_force_load_balancing = True
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
+    else:
+        cfg.model.moe_router_force_load_balancing = True
 
     if a2a_1f1b:
         cfg = moe_a2a_1f1b_overrides(cfg, perf_overrides={"a2a_1f1b": a2a_1f1b})
 
-    if use_tokendrop:
-        cfg.model.recompute_modules = ["mla_up_proj"]
-    else:
-        cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+    cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
@@ -74,7 +71,7 @@ def deepseek_v3_gb200_bf16_config(
     return cfg
 
 
-def deepseek_v3_gb200_fp8_config(
+def deepseek_v3_gb200_256gpus_fp8_config(
     fp8_recipe: str = "cs",
     use_tokendrop: bool = True,
     enable_deepep: bool = False,
@@ -117,25 +114,22 @@ def deepseek_v3_gb200_fp8_config(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    if enable_deepep:
-        cfg.model.moe_router_force_load_balancing = True
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
+    else:
+        cfg.model.moe_router_force_load_balancing = True
 
     if a2a_1f1b:
         cfg = moe_a2a_1f1b_overrides(cfg, perf_overrides={"a2a_1f1b": a2a_1f1b})
 
-    if use_tokendrop:
-        cfg.model.recompute_modules = ["mla_up_proj"]
-    else:
-        cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+    cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
     return cfg
 
-def deepseek_v3_b200_bf16_config(
+def deepseek_v3_b200_256gpus_bf16_config(
     fp8_recipe = None,
     use_tokendrop: bool = True,
     enable_deepep: bool = False,
@@ -182,6 +176,8 @@ def deepseek_v3_b200_bf16_config(
         cfg.model.moe_router_force_load_balancing = True
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
+    else:
+        cfg.model.moe_router_force_load_balancing = True
 
     if a2a_1f1b:
         cfg = moe_a2a_1f1b_overrides(cfg, perf_overrides={"a2a_1f1b": a2a_1f1b})
@@ -191,7 +187,7 @@ def deepseek_v3_b200_bf16_config(
     return cfg
 
 
-def deepseek_v3_b200_fp8_config(
+def deepseek_v3_b200_256gpus_fp8_config(
     fp8_recipe: str = "cs",
     use_tokendrop: bool = False,
     enable_deepep: bool = True,
@@ -234,10 +230,10 @@ def deepseek_v3_b200_fp8_config(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    if enable_deepep:
-        cfg.model.moe_router_force_load_balancing = True
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
+    else:
+        cfg.model.moe_router_force_load_balancing = True
 
     if a2a_1f1b:
         cfg = moe_a2a_1f1b_overrides(cfg, perf_overrides={"a2a_1f1b": a2a_1f1b})
@@ -246,7 +242,7 @@ def deepseek_v3_b200_fp8_config(
 
     return cfg
 
-def deepseek_v3_h100_bf16_config(
+def deepseek_v3_h100_1024gpus_bf16_config(
     fp8_recipe = None,
     use_tokendrop: bool = False,
     enable_deepep: bool = True,
@@ -287,10 +283,10 @@ def deepseek_v3_h100_bf16_config(
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    if enable_deepep:
-        cfg.model.moe_router_force_load_balancing = True
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
+    else:
+        cfg.model.moe_router_force_load_balancing = True
 
     if a2a_1f1b:
         cfg = moe_a2a_1f1b_overrides(cfg, perf_overrides={"a2a_1f1b": a2a_1f1b})
@@ -301,7 +297,7 @@ def deepseek_v3_h100_bf16_config(
     return cfg
 
 
-def deepseek_v3_h100_fp8_config(
+def deepseek_v3_h100_1024gpus_fp8_config(
     fp8_recipe: str = "cs",
     use_tokendrop: bool = True,
     enable_deepep: bool = False,
@@ -342,10 +338,10 @@ def deepseek_v3_h100_fp8_config(
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     
 
-    if enable_deepep:
-        cfg.model.moe_router_force_load_balancing = True
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
+    else:
+        cfg.model.moe_router_force_load_balancing = True
 
     if a2a_1f1b:
         cfg = moe_a2a_1f1b_overrides(cfg, perf_overrides={"a2a_1f1b": a2a_1f1b})

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import logging
 import os
 import sys
@@ -19,38 +20,6 @@ import sys
 import torch
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
-from configs.llama3.llama3_8b_llm_pretrain import (
-    llama3_8b_h100_bf16_config, 
-    llama3_8b_h100_fp8_config,
-    llama3_8b_b200_bf16_config,
-    llama3_8b_b200_fp8_config,
-    llama3_8b_gb200_bf16_config,
-    llama3_8b_gb200_fp8_config,
-)
-from configs.deepseek.deepseek_v3_llm_pretrain import (
-    deepseek_v3_gb200_bf16_config, 
-    deepseek_v3_gb200_fp8_config, 
-    deepseek_v3_h100_bf16_config, 
-    deepseek_v3_h100_fp8_config,
-    deepseek_v3_b200_bf16_config,
-    deepseek_v3_b200_fp8_config,
-)
-from configs.qwen3.qwen3_30b_a3b_llm_pretrain import (
-    qwen3_30b_a3b_h100_bf16_config,
-    qwen3_30b_a3b_h100_fp8_config,
-    qwen3_30b_a3b_b200_bf16_config,
-    qwen3_30b_a3b_b200_fp8_config,
-    qwen3_30b_a3b_gb200_bf16_config,
-    qwen3_30b_a3b_gb200_fp8_config,
-)
-from configs.qwen3.qwen3_235b_a22b_llm_pretrain import (
-    qwen3_235b_a22b_h100_bf16_config,
-    qwen3_235b_a22b_h100_fp8_config,
-    qwen3_235b_a22b_b200_bf16_config,
-    qwen3_235b_a22b_b200_fp8_config,
-    qwen3_235b_a22b_gb200_bf16_config,
-    qwen3_235b_a22b_gb200_fp8_config,
-)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -64,33 +33,50 @@ from megatron.bridge.training.utils.omegaconf_utils import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+def get_recipe_builder(model_name: str, model_size: str, gpu: str, num_gpus: int, compute_dtype: str) -> Callable:
+    cfg_str = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
+
+    module_name = f"scripts.performance.configs.{model_name}"
+    try:
+        config_module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        raise ValueError(f"Failed to import configuration module '{module_name}' for model '{model_name}'.") from exc
+
+    try:
+        recipe_builder = getattr(config_module, cfg_str)
+    except AttributeError as exc:
+        raise ValueError(
+            f"Configuration '{cfg_str}' not found in module '{module_name}'. Ensure the config exists and is exported."
+        ) from exc
+
+    return recipe_builder
 
 def main():
     """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
 
+    recipe_builder = get_recipe_builder(args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype)
+
     if args.model_name in ["llama3", "llama31"]:
-        cfg_str = f"{args.model_name}_{args.model_size}_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
-        recipe = globals()[cfg_str](fp8_recipe=args.fp8_recipe)
+        recipe = recipe_builder(fp8_recipe=args.fp8_recipe)
     elif args.model_name == "deepseek" and args.model_size == "v3":
-        enable_deepep = bool(args.gpu.lower() in ["h100"])
-        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        enable_deepep = bool(args.gpu in ["h100"])
+        use_tokendrop = bool(args.gpu in ["b200", "gb200"])
         use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
         if use_tokendrop:
             enable_deepep = False
             logger.info("Using token drop, disabling DeepEP")
-        A2A_1F1B = bool(args.gpu.lower() in ["h100"])
-        
-        cfg_str = f"deepseek_v3_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
-        recipe = globals()[cfg_str](
+        A2A_1F1B = bool(args.gpu in ["h100"])
+
+        recipe = recipe_builder(
             fp8_recipe=args.fp8_recipe,
             use_tokendrop=use_tokendrop,
             enable_deepep=enable_deepep,
             a2a_1f1b=A2A_1F1B,
         )
     elif args.model_name == "qwen3":
-        cfg_str = f"qwen3_{args.model_size}_{args.gpu.lower()}_{args.compute_dtype.lower()}_config"
-        recipe = globals()[cfg_str](fp8_recipe=args.fp8_recipe)
+        use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else True
+        recipe = recipe_builder(fp8_recipe=args.fp8_recipe, use_tokendrop=use_tokendrop)
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
 
