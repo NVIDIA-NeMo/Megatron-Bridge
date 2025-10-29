@@ -272,11 +272,10 @@ def test_llama31_405b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For LoRA, 405B uses TP=4, PP=6, VPP=7
     assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 6
-    assert cfg.model.virtual_pipeline_model_parallel_size == 7
-    assert cfg.train.global_batch_size == 6
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.virtual_pipeline_model_parallel_size == 8
+    assert cfg.train.global_batch_size == 32
 
 
 def test_llama31_405b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -295,8 +294,8 @@ def test_llama31_405b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # For full SFT, 405B should use TP=8, PP=14
     assert cfg.model.tensor_model_parallel_size == 8
-    assert cfg.model.pipeline_model_parallel_size == 14
-    assert cfg.train.global_batch_size == 6  # 405B uses smaller batch
+    assert cfg.model.pipeline_model_parallel_size == 16
+    assert cfg.train.global_batch_size == 16
 
 
 def test_llama3_8b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
