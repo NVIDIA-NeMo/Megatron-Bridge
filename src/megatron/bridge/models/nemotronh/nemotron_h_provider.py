@@ -16,7 +16,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 
-from megatron.bridge.training.mlm_compat.activations import squared_relu
+from megatron.core.activations import squared_relu
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.utils.common_utils import get_rank_safe
@@ -110,6 +110,7 @@ class NemotronNanoModelProvider9Bv2(NemotronHModelProvider):
     num_layers: int = 56
     hidden_size: int = 4480
     mamba_num_heads: int = 128
+    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 15680
     num_attention_heads: int = 40
@@ -125,6 +126,7 @@ class NemotronNanoModelProvider12Bv2(NemotronHModelProvider):
     num_layers: int = 62
     hidden_size: int = 5120
     mamba_num_heads: int = 128
+    kv_channels: int = 128
     mamba_state_dim: int = 128
     ffn_hidden_size: int = 20480
     num_attention_heads: int = 40
