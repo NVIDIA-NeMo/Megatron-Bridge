@@ -19,8 +19,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
-# from megatron.bridge import AutoBridge
-from megatron.bridge.models.qwen.qwen_provider import Qwen3NextModelProvider80B_A3B
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -203,34 +202,22 @@ def _qwen3_next_common(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
 
-    # bridge = AutoBridge.from_hf_pretrained(hf_path)
-    # model_cfg = bridge.to_megatron_provider(load_weights=False)
-    # model_cfg.tensor_model_parallel_size = tensor_parallelism
-    # model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    # model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    # model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    # model_cfg.context_parallel_size = context_parallelism
-    # model_cfg.expert_model_parallel_size = expert_parallelism
-    # model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
-    # model_cfg.sequence_parallel = sequence_parallelism
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_parallelism
+    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
+    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
+    model_cfg.context_parallel_size = context_parallelism
+    model_cfg.expert_model_parallel_size = expert_parallelism
+    model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
 
-    ## TODO: Switch to AutoBridge for Qwen3-Next once it is supported. PR: https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/939
-    model_cfg = Qwen3NextModelProvider80B_A3B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
-        expert_model_parallel_size=expert_parallelism,
-        expert_tensor_parallel_size=expert_tensor_parallelism,
-    )
     model_cfg.mtp_num_layers = 0 if mtp_num_layers is None else mtp_num_layers
     model_cfg.mtp_loss_scaling_factor = mtp_loss_scaling_factor
 
     # Performance optimization knobs
     model_cfg.moe_permute_fusion = True
-    model_cfg.moe_router_fusion = True
     model_cfg.moe_grouped_gemm = True
     if enable_deepep:
         model_cfg.moe_token_dispatcher_type = "flex"

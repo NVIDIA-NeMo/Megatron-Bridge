@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -450,6 +450,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
     moe_router_topk: int = 10 # 10 routed experts per token
     moe_shared_expert_gate: bool = True # Qwen3-Next uses a gate for the shared expert
     moe_router_dtype: str = "fp32"
+    moe_router_load_balancing_type: str = "global_aux_loss" # Qwen3-Next uses global aux loss for load balancing
 
     # Linear Attention specific parameters
     linear_attention_type: str = "gated_delta_net" # Gated Delta Net used in 75% of the model layers

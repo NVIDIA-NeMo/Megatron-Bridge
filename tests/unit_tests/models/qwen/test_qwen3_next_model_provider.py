@@ -63,7 +63,7 @@ class TestQwen3NextModelProvider:
 
         # Check MoE-specific defaults
         assert provider.num_moe_experts == 512
-        assert provider.moe_router_load_balancing_type == "aux_loss"
+        assert provider.moe_router_load_balancing_type == "global_aux_loss"
         assert provider.moe_aux_loss_coeff == 1e-3
         assert provider.moe_router_topk == 10
         assert provider.moe_router_pre_softmax is False
@@ -478,3 +478,9 @@ class TestQwen3NextProviderArchitecturalFeatures:
         provider = Qwen3NextModelProvider80B_A3B()
 
         assert provider.linear_attention_freq == 4
+
+    def test_qwen3_next_moe_router_load_balancing_type(self):
+        """Test that Qwen3 Next models have correct Moe Router Load Balancing Type configuration."""
+        provider = Qwen3NextModelProvider80B_A3B()
+
+        assert provider.moe_router_load_balancing_type == "global_aux_loss"
