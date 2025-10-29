@@ -16,6 +16,7 @@ import importlib
 import logging
 import os
 import sys
+from typing import Callable
 
 import torch
 from argument_parser import parse_cli_args
@@ -36,7 +37,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 def get_recipe_builder(model_name: str, model_size: str, gpu: str, num_gpus: int, compute_dtype: str) -> Callable:
     cfg_str = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
 
-    module_name = f"scripts.performance.configs.{model_name}"
+    module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
     try:
         config_module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:

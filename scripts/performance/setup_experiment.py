@@ -44,6 +44,7 @@ import logging
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+
 if __name__ == "__main__":
     args, _ = parse_cli_args()
     exp_name = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}"
