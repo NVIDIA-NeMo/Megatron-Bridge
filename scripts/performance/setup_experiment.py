@@ -187,6 +187,14 @@ def main(
 
     run.run(train_script, executor=executor, plugins=plugins, dryrun=dryrun, detach=detach, name=exp_name)
 
+    experiment = run.Experiment.from_title(exp_name)
+    result_dict = experiment.status(return_dict=True)
+    for exp_name_result, job_dict in result_dict.items():
+        job_status = str(job_dict["status"])
+
+        if job_status != "SUCCEEDED":
+            raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 
