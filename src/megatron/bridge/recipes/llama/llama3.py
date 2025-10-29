@@ -38,7 +38,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
 
 class Llama3CommonKwargs(TypedDict, total=False):
@@ -790,12 +790,15 @@ def llama31_70b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> 
 def llama31_405b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
     """Return a finetuning config for Llama 3.1 405B.
 
-    Default configuration: 3 nodes (LoRA) or 12 nodes (Full SFT), 8 GPUs per node
-    - LoRA (default): TP=4, PP=4, VPP=4, CP=4, LR=1e-4, dim=16, alpha=32, GBS=6, SP=True
-    - DoRA: TP=4, PP=4, VPP=4, CP=4, LR=1e-4, dim=16, alpha=32, GBS=6, SP=True
-    - Full SFT (peft=None): TP=8, PP=14, CP=4, LR=5e-6, GBS=6, SP=True
-
-    Performance mode enabled by default.
+    Default configuration: 4 nodes (LoRA) or 16 nodes (Full SFT), 8 GPUs per node
+    - LoRA (default): TP=4, PP=8, VPP=8, CP=1, LR=1e-4, dim=16, alpha=32, GBS=32, SP=True
+      Total: 32 GPUs (4 nodes)
+      Note: 128 effective layers ÷ 8 = 16 layers/rank, VPP=8 splits into 2 layers/virtual stage
+    - DoRA: TP=4, PP=8, VPP=8, CP=1, LR=1e-4, dim=16, alpha=32, GBS=32, SP=True
+      Total: 32 GPUs (4 nodes)
+    - Full SFT (peft=None): TP=8, PP=16, VPP=None, CP=1, LR=5e-6, GBS=6, SP=True
+      Total: 128 GPUs (16 nodes)
+      Note: 128 effective layers ÷ 16 = 8 layers/rank
     """
     peft = user_kwargs.pop("peft", "lora")
     is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
@@ -804,27 +807,56 @@ def llama31_405b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) ->
         user_kwargs["finetune_lr"] = 5e-6 if is_full_sft else 1e-4
 
     if "global_batch_size" not in user_kwargs:
-        user_kwargs["global_batch_size"] = 6
+        user_kwargs["global_batch_size"] = 16 if is_full_sft else 32
+
+    if "seq_length" not in user_kwargs:
+        user_kwargs["seq_length"] = 2048
 
     config = _llama3_finetune_common(hf_path="meta-llama/Meta-Llama-3.1-405B", **user_kwargs)
 
     # Parallelism settings
     if is_full_sft:
         config.model.tensor_model_parallel_size = 8
-        config.model.pipeline_model_parallel_size = 14
+        config.model.pipeline_model_parallel_size = 16
+        config.model.virtual_pipeline_model_parallel_size = None
+        config.model.sequence_parallel = True
         config.peft = None
+        config.ddp = DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=False,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
+        )
+        config.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=True, defer_embedding_wgrad_compute=True, wgrad_deferral_limit=22
+        )
     else:
         if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
             config.peft = default_peft_config(peft)
             config.peft.dim = 16
             config.peft.alpha = 32
+            config.peft.target_modules = ["linear_qkv"]
         else:
             config.peft = peft
+
         config.optimizer.use_distributed_optimizer = False
         config.model.cross_entropy_loss_fusion = False
         config.model.tensor_model_parallel_size = 4
-        config.model.pipeline_model_parallel_size = 6
-        config.model.virtual_pipeline_model_parallel_size = 7
+        config.model.pipeline_model_parallel_size = 8
+        config.model.virtual_pipeline_model_parallel_size = 8
+        config.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    config.mixed_precision = get_mixed_precision_config(config.mixed_precision)
+    config.mixed_precision.grad_reduce_in_fp32 = False
+    config.ddp.grad_reduce_in_fp32 = False
+    config.model.sequence_parallel = True
+
+    config.train.manual_gc = True
+    config.train.manual_gc_interval = 100
+    config.train.manual_gc_eval = 100
+
+    config.optimizer.use_precision_aware_optimizer = False
 
     config.model.account_for_embedding_in_pipeline_split = True
     config.model.account_for_loss_in_pipeline_split = True
