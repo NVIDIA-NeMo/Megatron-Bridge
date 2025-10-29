@@ -184,12 +184,12 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             ),
             
             ExpertMLPGateUpProjMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
                 hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
             ),
 
             ExpertMLPDownProjMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                 hf_param="model.language_model.layers.*.mlp.experts.down_proj",
             ), 
         ])
@@ -221,6 +221,7 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
         if megatron_weights is None:
             return super().megatron_to_hf(megatron_weights, megatron_module)
 
+        print(f"ExpertMLPGateUpProjMapping module {megatron_module} weights shape {megatron_weights.shape}")
         return super().megatron_to_hf(megatron_weights.transpose(0, 1).contiguous(), megatron_module)
 
     def _validate_patterns(self, *args, **kwargs):
@@ -238,7 +239,7 @@ def extract_expert_number_from_param(param_name: str) -> int:
         The expert number.
 
     """
-    pattern = r"local_experts\.(\d+)"
+    pattern = r"(?:experts\.|weight|bias)(\d+)"
     match = re.search(pattern, param_name)
     if not match:
         raise ValueError(
