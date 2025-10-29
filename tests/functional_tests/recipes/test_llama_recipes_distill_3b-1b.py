@@ -35,7 +35,7 @@ from tests.functional_tests.utils import (
 
 LLAMA_DISTILL_RECIPES = [
     # (student_config_func, teacher_config_func, name, parallelism_overrides)
-    (llama32_1b_pretrain_config, llama32_3b_pretrain_config, "llama32_3b-1b", {}),
+    (llama32_1b_pretrain_config, llama32_3b_pretrain_config, "llama32_3b-1b", {"tensor_parallelism": 2}),
 ]
 
 
@@ -99,6 +99,8 @@ def run_distill_recipe_test(
             dir=str(shared_base_dir), name=f"{recipe_name}_teacher_functional_test", mock=True
         )
         config.model.teacher = teacher_config.model
+
+        # Set default distillation
         config.model.kd_config = ModelOptDistillConfig()
 
         config.train.train_iters = 10
