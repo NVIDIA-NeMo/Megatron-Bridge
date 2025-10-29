@@ -27,7 +27,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
 
-def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = True) -> bool:
+def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = False) -> bool:
     """Check if modelopt_state folder exists inside the checkpoint path.
 
     Args:
@@ -42,10 +42,10 @@ def has_modelopt_state(checkpoint_path: str, ignore_kd_state: bool = True) -> bo
     modelopt_state_path = os.path.join(checkpoint_path, "modelopt_state")
     if not os.path.isdir(modelopt_state_path):
         return False
-    elif not ignore_kd_state:
-        return True
+    elif ignore_kd_state:
+        return _has_only_kd_state(modelopt_state_path)
     else:
-        return not _has_only_kd_state(modelopt_state_path)
+        return True
 
 
 def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
