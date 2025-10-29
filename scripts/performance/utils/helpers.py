@@ -85,6 +85,8 @@ def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
             recipe.optimizer.use_precision_aware_optimizer = False
             logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
+        recipe.checkpoint.load = None
+
 
 def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
     """Get the precision configs for the given compute dtype and FP8 recipe."""

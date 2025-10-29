@@ -19,10 +19,13 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
-try:
-    from utils.helpers import get_precision_config, set_basic_perf_overrides, set_cuda_graph_overrides
-except (ImportError, ModuleNotFoundError):
-    from ..utils.helpers import get_precision_config, set_basic_perf_overrides, set_cuda_graph_overrides
+from utils.helpers import (
+  get_precision_config, 
+  set_basic_perf_overrides, 
+  set_cuda_graph_overrides,
+  get_user_parallelism_and_batch_size_configs,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +38,9 @@ def set_qwen3_235b_a22b_specific_overrides(cfg: ConfigContainer) -> ConfigContai
     cfg.model.moe_router_fusion = True
 
 
-def qwen3_235b_a22b_gb200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = True) -> ConfigContainer:
+def qwen3_235b_a22b_gb200_64gpus_bf16_config(**kwargs) -> ConfigContainer:
     """GB200, 64xGPU, BF16 baseline config."""
+    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
       precision_config=get_precision_config("bf16"),
@@ -45,16 +49,16 @@ def qwen3_235b_a22b_gb200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = 
 
     set_basic_perf_overrides(cfg)
 
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
+    cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
+    cfg.model.context_parallel_size = 1 if cp is None else cp
+    cfg.model.virtual_pipeline_model_parallel_size = None if vp is None else vp
+    cfg.model.expert_model_parallel_size = 8 if ep is None else ep
+    cfg.model.expert_tensor_parallel_size = 1 if etp is None else etp
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024 if gbs is None else gbs
+    cfg.train.micro_batch_size = 1 if mbs is None else mbs
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
@@ -64,13 +68,15 @@ def qwen3_235b_a22b_gb200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = 
     set_qwen3_235b_a22b_specific_overrides(cfg)
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
-    if use_tokendrop:
+    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
 
-def qwen3_235b_a22b_gb200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop = True) -> ConfigContainer:
+def qwen3_235b_a22b_gb200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
     """GB200, 64xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
+    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
       precision_config=get_precision_config("fp8", fp8_recipe),
@@ -79,16 +85,16 @@ def qwen3_235b_a22b_gb200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendro
 
     set_basic_perf_overrides(cfg)
 
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
+    cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
+    cfg.model.context_parallel_size = 1 if cp is None else cp
+    cfg.model.virtual_pipeline_model_parallel_size = None if vp is None else vp
+    cfg.model.expert_model_parallel_size = 8 if ep is None else ep
+    cfg.model.expert_tensor_parallel_size = 1 if etp is None else etp
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024 if gbs is None else gbs
+    cfg.train.micro_batch_size = 1 if mbs is None else mbs
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
@@ -98,14 +104,15 @@ def qwen3_235b_a22b_gb200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendro
     set_qwen3_235b_a22b_specific_overrides(cfg)
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
-    if use_tokendrop:
+    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
 
 
-def qwen3_235b_a22b_b200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = True) -> ConfigContainer:
+def qwen3_235b_a22b_b200_64gpus_bf16_config(**kwargs) -> ConfigContainer:
     """B200, 64xGPU, BF16 baseline config."""
+    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
       precision_config=get_precision_config("bf16"),
@@ -114,16 +121,16 @@ def qwen3_235b_a22b_b200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = T
 
     set_basic_perf_overrides(cfg)
 
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
+    cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
+    cfg.model.context_parallel_size = 1 if cp is None else cp
+    cfg.model.virtual_pipeline_model_parallel_size = 2 if vp is None else vp
+    cfg.model.expert_model_parallel_size = 8 if ep is None else ep
+    cfg.model.expert_tensor_parallel_size = 1 if etp is None else etp
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024 if gbs is None else gbs
+    cfg.train.micro_batch_size = 1 if mbs is None else mbs
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
@@ -132,13 +139,15 @@ def qwen3_235b_a22b_b200_64gpus_bf16_config(fp8_recipe = None, use_tokendrop = T
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
-    if use_tokendrop:
+    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
 
-def qwen3_235b_a22b_b200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop = True) -> ConfigContainer:
+def qwen3_235b_a22b_b200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
     """B200, 64xGPU, FP8 cs preset."""
+    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
+    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
       precision_config=get_precision_config("fp8", fp8_recipe),
@@ -147,16 +156,16 @@ def qwen3_235b_a22b_b200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop
 
     set_basic_perf_overrides(cfg)
 
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.expert_model_parallel_size = 8
-    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
+    cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
+    cfg.model.context_parallel_size = 1 if cp is None else cp
+    cfg.model.virtual_pipeline_model_parallel_size = 2 if vp is None else vp
+    cfg.model.expert_model_parallel_size = 8 if ep is None else ep
+    cfg.model.expert_tensor_parallel_size = 1 if etp is None else etp
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024 if gbs is None else gbs
+    cfg.train.micro_batch_size = 1 if mbs is None else mbs
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
@@ -165,13 +174,14 @@ def qwen3_235b_a22b_b200_64gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
-    if use_tokendrop:
+    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
 
-def qwen3_235b_a22b_h100_256gpus_bf16_config(fp8_recipe = None, use_tokendrop = True) -> ConfigContainer:
+def qwen3_235b_a22b_h100_256gpus_bf16_config(**kwargs) -> ConfigContainer:
     """H100, 256xGPU, BF16 baseline config."""
+    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
       precision_config=get_precision_config("bf16"),
@@ -180,16 +190,16 @@ def qwen3_235b_a22b_h100_256gpus_bf16_config(fp8_recipe = None, use_tokendrop = 
 
     set_basic_perf_overrides(cfg)
 
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 4
-    cfg.model.expert_model_parallel_size = 32
-    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
+    cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
+    cfg.model.context_parallel_size = 1 if cp is None else cp
+    cfg.model.virtual_pipeline_model_parallel_size = 4 if vp is None else vp
+    cfg.model.expert_model_parallel_size = 32 if ep is None else ep
+    cfg.model.expert_tensor_parallel_size = 1 if etp is None else etp
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 2048
-    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 2048 if gbs is None else gbs
+    cfg.train.micro_batch_size = 1 if mbs is None else mbs
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
@@ -198,14 +208,16 @@ def qwen3_235b_a22b_h100_256gpus_bf16_config(fp8_recipe = None, use_tokendrop = 
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
-    if use_tokendrop:
+    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
 
 
-def qwen3_235b_a22b_h100_256gpus_fp8_config(fp8_recipe: str = "cs", use_tokendrop = True) -> ConfigContainer:
+def qwen3_235b_a22b_h100_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     """H100, 256xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
+    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = qwen3_235b_a22b_pretrain_config(
       mock=True, 
       precision_config=get_precision_config("fp8", fp8_recipe),
@@ -214,16 +226,16 @@ def qwen3_235b_a22b_h100_256gpus_fp8_config(fp8_recipe: str = "cs", use_tokendro
 
     set_basic_perf_overrides(cfg)
 
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 4
-    cfg.model.expert_model_parallel_size = 32
-    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
+    cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
+    cfg.model.context_parallel_size = 1 if cp is None else cp
+    cfg.model.virtual_pipeline_model_parallel_size = 4 if vp is None else vp
+    cfg.model.expert_model_parallel_size = 32 if ep is None else ep
+    cfg.model.expert_tensor_parallel_size = 1 if etp is None else etp
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 2048
-    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 2048 if gbs is None else gbs
+    cfg.train.micro_batch_size = 1 if mbs is None else mbs
     cfg.model.seq_length = 4096
     cfg.dataset.sequence_length = 4096
 
@@ -232,7 +244,7 @@ def qwen3_235b_a22b_h100_256gpus_fp8_config(fp8_recipe: str = "cs", use_tokendro
 
     set_qwen3_235b_a22b_specific_overrides(cfg)
 
-    if use_tokendrop:
+    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg

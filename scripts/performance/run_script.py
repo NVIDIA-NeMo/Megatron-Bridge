@@ -97,7 +97,6 @@ def main():
         recipe.optimizer.use_precision_aware_optimizer = True
     if recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.gradient_accumulation_fusion = True
     recipe.model.apply_rope_fusion = True
 
     tp = recipe.model.tensor_model_parallel_size

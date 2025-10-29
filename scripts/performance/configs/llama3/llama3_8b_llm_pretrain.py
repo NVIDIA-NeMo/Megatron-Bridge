@@ -12,6 +12,7 @@ from utils.helpers import (
     get_user_parallelism_and_batch_size_configs,
 )
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +53,7 @@ def llama3_8b_gb200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
 def llama3_8b_gb200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     """GB200, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
-    fp8_recipe = kwargs.get("fp8_recipe")
+    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     set_basic_perf_overrides(cfg)
@@ -122,7 +123,7 @@ def llama3_8b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
 def llama3_8b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     """B200, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
-    fp8_recipe = kwargs.get("fp8_recipe")
+    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     set_basic_perf_overrides(cfg)
@@ -190,7 +191,7 @@ def llama3_8b_h100_8gpus_bf16_config(**kwargs) -> ConfigContainer:
 def llama3_8b_h100_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     """H100, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
-    fp8_recipe = kwargs.get("fp8_recipe")
+    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     set_basic_perf_overrides(cfg)
@@ -212,9 +213,8 @@ def llama3_8b_h100_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     if fp8_recipe == "cs":
-        use_megatron_fsdp = kwargs.get("use_megatron_fsdp", True)
+        use_megatron_fsdp = True if kwargs.get("use_megatron_fsdp") is None else kwargs.get("use_megatron_fsdp")
         set_megatron_fsdp_overrides(cfg, perf_overrides={"use_megatron_fsdp": use_megatron_fsdp})
-        cfg.ddp.keep_fp8_transpose_cache = True
         cfg.ddp.nccl_ub = True
         cfg.model.gradient_accumulation_fusion = False
     
