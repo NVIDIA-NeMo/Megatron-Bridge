@@ -2,6 +2,7 @@ import logging
 
 from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 
 try:
     from utils.helpers import get_precision_config, set_megatron_fsdp_overrides, set_basic_perf_overrides, set_cuda_graph_overrides
@@ -35,6 +36,13 @@ def llama3_8b_gb200_8gpus_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+    )
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.should_pad_vocab = True
+
     return cfg
 
 def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
@@ -60,6 +68,13 @@ def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
 
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+    )
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.should_pad_vocab = True
 
     return cfg
 
@@ -88,6 +103,13 @@ def llama3_8b_b200_8gpus_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+    )
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.should_pad_vocab = True
+
     return cfg
 
 def llama3_8b_b200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
@@ -114,6 +136,13 @@ def llama3_8b_b200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
 
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
 
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+    )
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.should_pad_vocab = True
+
     return cfg
 
 
@@ -138,6 +167,12 @@ def llama3_8b_h100_8gpus_bf16_config(fp8_recipe = None) -> ConfigContainer:
 
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+    )
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
 
     return cfg
 
@@ -169,5 +204,11 @@ def llama3_8b_h100_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
         cfg.ddp.keep_fp8_transpose_cache = True
         cfg.ddp.nccl_ub = True
         cfg.model.gradient_accumulation_fusion = False
+    
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+    )
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
 
     return cfg
