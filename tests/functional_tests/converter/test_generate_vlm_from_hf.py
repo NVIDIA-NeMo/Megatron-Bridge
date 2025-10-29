@@ -35,7 +35,7 @@ class TestGenerateVLMFromHF:
             "--prompt",
             "Describe this image.",
             "--tp",
-            "2"
+            "2",
         ]
 
         result = subprocess.run(
