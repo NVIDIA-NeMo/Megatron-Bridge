@@ -59,7 +59,7 @@ def main():
     recipe_builder = get_recipe_builder(args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype)
 
     if args.model_name in ["llama3", "llama31"]:
-        recipe = recipe_builder(fp8_recipe=args.fp8_recipe)
+        recipe = recipe_builder(**vars(args))
     elif args.model_name == "deepseek" and args.model_size == "v3":
         enable_deepep = bool(args.gpu in ["h100"])
         use_tokendrop = bool(args.gpu in ["b200", "gb200"])

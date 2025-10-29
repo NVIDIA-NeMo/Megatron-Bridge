@@ -347,13 +347,6 @@ def parse_cli_args():
         required=False,
         default=None,
     )
-    parser.add_argument(
-        "-sl",
-        "--seq_length",
-        type=int,
-        required=False,
-        default=None,
-    )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides

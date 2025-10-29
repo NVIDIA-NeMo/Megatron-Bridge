@@ -31,6 +31,18 @@ from .common import get_perf_matrix_overrides
 
 logger = logging.getLogger(__name__)
 
+def get_user_parallelism_and_batch_size_configs(kwargs: Any):
+    tp = kwargs.get("tensor_model_parallel_size", None)
+    pp = kwargs.get("pipeline_model_parallel_size", None)
+    cp = kwargs.get("context_parallel_size", None)
+    vp = kwargs.get("virtual_pipeline_model_parallel_size", None)
+    ep = kwargs.get("expert_model_parallel_size", None)
+    etp = kwargs.get("expert_tensor_parallel_size", None)
+
+    mbs = kwargs.get("micro_batch_size", None)
+    gbs = kwargs.get("global_batch_size", None)
+    return tp, pp, cp, vp, ep, etp, mbs, gbs
+
 
 def set_basic_perf_overrides(recipe: Any) -> None:
     recipe.train.train_iters = 100
