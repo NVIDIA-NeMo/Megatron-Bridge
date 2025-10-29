@@ -38,6 +38,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -67,14 +68,6 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
-
-
-try:
-    from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
-
-    has_nvidia_modelopt = True
-except Exception:
-    has_nvidia_modelopt = False
 
 
 def train(
@@ -546,15 +539,12 @@ def train_step(
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-        if has_nvidia_modelopt:
-            adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-                model,
-                seq_length=model_config.seq_length,
-                micro_batch_size=train_config.micro_batch_size,
-                decoder_seq_length=model_config.seq_length,
-            )
-        else:
-            adjust_tensor_shapes_fn = None
+        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+            model,
+            seq_length=model_config.seq_length,
+            micro_batch_size=train_config.micro_batch_size,
+            decoder_seq_length=model_config.seq_length,
+        )
 
         # Forward pass.
         forward_backward_func = get_forward_backward_func()

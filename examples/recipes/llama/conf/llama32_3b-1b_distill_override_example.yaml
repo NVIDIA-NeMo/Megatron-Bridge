@@ -31,6 +31,7 @@ model:
     context_parallel_size: 1
     sequence_parallel: true
   kd_config:
+    logit_layers: ["output_layer", "output_layer"]
     intermediate_layer_pairs: []
     skip_lm_loss: true
     kd_loss_scale: 1.0

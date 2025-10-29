@@ -16,6 +16,7 @@ import logging
 from functools import partial
 from typing import Iterable
 
+import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
@@ -27,13 +28,6 @@ from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
-
-try:
-    import modelopt.torch.distill as mtd
-
-    has_nvidia_modelopt = True
-except Exception:
-    has_nvidia_modelopt = False
 
 logger = logging.getLogger(__name__)
 
@@ -275,8 +269,6 @@ def _create_loss_function_modelopt(
     Returns:
         A partial function that can be called with output_tensor to compute the loss
     """
-    assert has_nvidia_modelopt, "nvidia-modelopt[torch] is not installed"
-
     mnt_loss_func = partial(
         masked_next_token_loss,
         loss_mask,
