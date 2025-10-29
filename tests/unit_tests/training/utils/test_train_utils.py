@@ -1384,6 +1384,74 @@ class TestTrainingLog:
         assert throughput_report["throughput/micro_batch_size"] == 4
         assert throughput_report["throughput/device/samples_per_sec"] == 51.2
 
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    def test_report_throughput_zero_elapsed_wct(self, mock_print_rank_0):
+        """Test throughput metrics when elapsed_wct is zero (identical timestamps).
+
+        This can happen during checkpoint resumption when history_wct is reinitialized
+        and the first few iterations have identical timestamps.
+        """
+        global_batch_size = 64
+        micro_batch_size = 4
+        iteration = 100
+        seq_length = 4096
+        # All timestamps are identical - elapsed_wct will be 0
+        history_wct = [1.5, 1.5, 1.5, 1.5, 1.5]
+        window_size = len(history_wct)
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+
+        throughput_report = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        # Should return empty dict when elapsed_wct is 0
+        assert throughput_report == {}
+
+        # Verify warning was printed
+        mock_print_rank_0.assert_called_once()
+        warning_message = mock_print_rank_0.call_args[0][0]
+        assert "Warning: elapsed_wct is 0" in warning_message
+        assert "skipping throughput calculation" in warning_message
+        assert f"iteration {iteration}" in warning_message
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    def test_report_throughput_negative_elapsed_wct(self, mock_print_rank_0):
+        """Test throughput metrics when elapsed_wct is negative.
+
+        This shouldn't happen in normal operation, but the code guards against it
+        to prevent division by zero or negative throughput values.
+        """
+        global_batch_size = 64
+        micro_batch_size = 4
+        iteration = 100
+        seq_length = 4096
+        # Timestamps go backwards - elapsed_wct will be negative
+        history_wct = [5.9, 4.2, 2.9, 1.7, 0.9]
+        window_size = len(history_wct)
+        train_config = MockTrainConfig(global_batch_size=global_batch_size, micro_batch_size=micro_batch_size)
+
+        throughput_report = report_throughput(
+            train_config=train_config,
+            iteration=iteration,
+            seq_length=seq_length,
+            history_wct=history_wct,
+            window_size=window_size,
+        )
+
+        # Should return empty dict when elapsed_wct is negative
+        assert throughput_report == {}
+
+        # Verify warning was printed with negative value
+        mock_print_rank_0.assert_called_once()
+        warning_message = mock_print_rank_0.call_args[0][0]
+        assert "Warning: elapsed_wct is -5.0" in warning_message
+        assert "skipping throughput calculation" in warning_message
+        assert f"iteration {iteration}" in warning_message
+
     def test_l2_norm_grad(self):
         """Test l2 norm grad metrics."""
         num_chunks = 10
