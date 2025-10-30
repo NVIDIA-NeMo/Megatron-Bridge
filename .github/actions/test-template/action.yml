@@ -59,6 +59,29 @@ runs:
         path: ${{ github.workspace }}/Megatron-Bridge
         submodules: recursive
 
+    - name: Install Azure CLI
+      if: ${{ inputs.has-azure-credentials == 'true' }}
+      shell: bash
+      run: |
+        echo "::group::Install Azure CLI"
+        # Create systemd override for proper dependencies
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        echo "::endgroup::"
+
+    - name: Azure Login
+      if: ${{ inputs.has-azure-credentials == 'true' }}
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Azure ACR Login
+      if: ${{ inputs.has-azure-credentials == 'true' }}
+      shell: bash
+      run: |
+        az acr login --name nemoci
+
     - name: Start container
       shell: bash
       env:
