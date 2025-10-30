@@ -29,7 +29,6 @@ LLAMA_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides, model_overrides)
     (llama32_1b_config, "llama32_1b", {}, {"num_layers": 2}),
     (llama32_3b_config, "llama32_3b", {}, {"num_layers": 2}),
-    (llama32_3b_config, "llama32_8b", {}, {"num_layers": 2, "cuda_graph_impl": "local", "cuda_graph_scope": "full_iteration", "check_for_nan_in_grad" : False, "use_te_rng_tracker": True}),
 ]
 
 

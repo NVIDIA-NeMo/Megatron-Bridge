@@ -110,9 +110,6 @@ def run_pretrain_recipe_test(
             for attribute_name, attribute_value in model_overrides.items():
                 setattr(config.model, attribute_name, attribute_value)
 
-        config.rng.te_rng_tracker = True
-        config.rerun_state_machine.check_for_nan_in_loss = False
-        config.ddp.check_for_nan_in_grad = False
         pretrain(config, forward_step)
 
         # Basic verification that training completed successfully
