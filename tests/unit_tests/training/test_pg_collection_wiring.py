@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import signal
 from types import SimpleNamespace
 
 
@@ -37,6 +38,7 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
         train=SimpleNamespace(
             iterations_to_skip={0},
             micro_batch_size=4,
+            exit_signal=signal.SIGTERM,
         )
     )
 
