@@ -191,7 +191,7 @@ class Qwen25VLModel(MegatronModule):
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
         # Megatron attention mask (B,1,S,S) or (1,1,S,S) boolean mask (True = masked)
-        # HuggingFase attention mask (B,S) mask (1 = keep).
+        # HuggingFace attention mask (B,S) mask (1 = keep).
         # For simplicity, we set hf_attention_mask to None.
         hf_attention_mask = None
         position_ids, rope_deltas = self.get_rope_index(
