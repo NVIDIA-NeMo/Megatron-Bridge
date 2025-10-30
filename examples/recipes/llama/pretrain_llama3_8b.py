@@ -173,7 +173,7 @@ def main() -> None:
     # Start training
     logger.debug("Starting pretraining...")
     pretrain(config=cfg, forward_step_func=forward_step)
-    
+
     # Cleanup process group
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
