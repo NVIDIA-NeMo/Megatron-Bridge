@@ -15,8 +15,6 @@
 import inspect
 from types import SimpleNamespace
 
-import pytest
-
 
 def test_train_step_accepts_pg_collection_argument():
     # Import locally to avoid import-time side effects in unrelated modules
@@ -28,8 +26,8 @@ def test_train_step_accepts_pg_collection_argument():
 
 def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     # Arrange minimal GlobalState with only the fields that are used
-    from megatron.bridge.training.state import GlobalState
     from megatron.bridge.training import train as train_module
+    from megatron.bridge.training.state import GlobalState
 
     state = GlobalState()
 
@@ -75,5 +73,3 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     expected_batch = 3 * 4 * 2
     assert state.train_state.consumed_train_samples == expected_batch
     assert state.train_state.skipped_train_samples == expected_batch
-
-
