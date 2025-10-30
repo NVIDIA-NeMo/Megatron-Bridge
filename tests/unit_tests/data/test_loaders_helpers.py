@@ -82,13 +82,15 @@ def test_dataloaders_to_iterators_vpp_replication():
 @mock.patch("megatron.bridge.data.loaders.torch.distributed.broadcast")
 def test_set_flags_from_dataloaders_sets_flags(mock_broadcast, monkeypatch):
     # Force CPU tensors to avoid GPU requirement
+    import torch
+
+    _orig_tensor = torch.tensor
+
     def _cpu_tensor(*args, **kwargs):
         # Ignore device kwarg
         if "device" in kwargs:
             kwargs = {k: v for k, v in kwargs.items() if k != "device"}
-        import torch
-
-        return torch.tensor(*args, **kwargs)
+        return _orig_tensor(*args, **kwargs)
 
     monkeypatch.setattr("megatron.bridge.data.loaders.torch.tensor", _cpu_tensor)
 
@@ -106,7 +108,7 @@ def test_set_flags_from_dataloaders_sets_flags(mock_broadcast, monkeypatch):
         test_dataloader=dl,
     )
 
-    assert train_state.do_train is True
-    assert train_state.do_valid is True
-    assert train_state.do_test is True
+    assert train_state.do_train
+    assert train_state.do_valid
+    assert train_state.do_test
     mock_broadcast.assert_called_once()

@@ -29,6 +29,7 @@ import numpy
 from megatron.core import mpu
 from PIL import Image
 from torch.utils.data import DataLoader
+from transformers import AutoProcessor
 
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
@@ -94,8 +95,6 @@ class MockVLMConversationProvider(DatasetProvider):
         return [{"conversation": messages}]
 
     def build_datasets(self, context: DatasetBuildContext):
-        from transformers import AutoProcessor
-
         # Initialize and store processor
         self._processor = AutoProcessor.from_pretrained(self.hf_processor_path, trust_remote_code=True)
 
@@ -136,6 +135,10 @@ class MockVLMConversationProvider(DatasetProvider):
         ) -> Optional[DataLoader]:
             if ds is None:
                 return None
+            dp_rank = mpu.get_data_parallel_rank()
+            dp_size = mpu.get_data_parallel_world_size()
+            if dp_size <= 0:
+                dp_rank, dp_size = 0, 1
             return build_pretraining_data_loader(
                 ds,
                 consumed_samples,
@@ -147,8 +150,8 @@ class MockVLMConversationProvider(DatasetProvider):
                 collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
                 pin_memory=self.pin_memory,
                 persistent_workers=self.persistent_workers,
-                data_parallel_rank=mpu.get_data_parallel_rank(),
-                data_parallel_size=mpu.get_data_parallel_world_size(),
+                data_parallel_rank=dp_rank,
+                data_parallel_size=dp_size,
                 global_batch_size=context.global_batch_size,
             )
 
