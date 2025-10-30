@@ -378,7 +378,7 @@ class CommOverlapConfig:
     communication overlap settings to improve training performance.
     """
 
-    tp_comm_overlap: bool
+    tp_comm_overlap: Optional[bool] = None
     tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
     tp_comm_bootstrap_backend: Optional[str] = None
     overlap_p2p_comm: Optional[bool] = None
