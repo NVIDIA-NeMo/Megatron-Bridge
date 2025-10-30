@@ -190,12 +190,16 @@ class Qwen25VLModel(MegatronModule):
             if self.config.sequence_parallel:
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
 
+        # Megatron attention mask (B,1,S,S) or (1,1,S,S) boolean mask (True = masked)
+        # HuggingFace attention mask (B,S) mask (1 = keep).
+        # For simplicity, we set hf_attention_mask to None.
+        hf_attention_mask = None
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
             image_grid_thw,
             video_grid_thw,
             second_per_grid_ts=second_per_grid_ts,
-            attention_mask=attention_mask,
+            attention_mask=hf_attention_mask,
         )
 
         outputs = self.language_model.forward(
