@@ -137,7 +137,7 @@ def llama3_70b_b200_64gpus_bf16_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 4 if pp is None else pp
