@@ -1,10 +1,10 @@
 # Knowledge Distillation
 
-Megatron-Bridge provides a streamlined setup for Knowledge Distillation (KD) training, making it easy to enable and integrate into your workflow. This section explains how to use this feature effectively.
+Megatron Bridge provides a streamlined setup for Knowledge Distillation (KD) training, making it easy to enable and integrate into your workflow. This section explains how to use this feature effectively.
 
 Knowledge Distillation is a technique where a pre-trained model (the "teacher") transfers its learned knowledge to a second model (the "student"), which is typically smaller and faster. This process helps the student model learn more efficiently by mimicking the behavior of the teacher. KD offers two key advantages over traditional training: faster convergence and higher final accuracy.
 
-In Megatron-Bridge, KD is enabled by NVIDIA TensorRT Model Optimizer (ModelOpt) — a library to optimize deep-learning models for inference on GPUs.
+In Megatron Bridge, KD is enabled by NVIDIA TensorRT Model Optimizer (ModelOpt) — a library to optimize deep-learning models for inference on GPUs.
 
 ## Knowledge Distillation Process
 
@@ -63,7 +63,7 @@ torchrun --nproc_per_node=1 examples/recipes/llama/distill_llama32_3b-1b.py \
 
 ### Using CLI Overrides
 
-Megatron-Bridge supports Hydra-style CLI overrides for flexible configuration:
+Megatron Bridge supports Hydra-style CLI overrides for flexible configuration:
 
 ```bash
 torchrun --nproc_per_node=2 examples/recipes/llama/distill_llama32_3b-1b.py \
