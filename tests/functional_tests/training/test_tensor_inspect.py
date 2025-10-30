@@ -41,6 +41,14 @@ from tests.functional_tests.utils import (
 )
 
 
+@pytest.fixture(autouse=True)
+def reset_tedebug_state():
+    """Reset TEDebugState before each test to prevent state leakage across tests."""
+    from transformer_engine.debug.pytorch.debug_state import TEDebugState
+
+    TEDebugState._reset()
+
+
 class TestTensorInspect:
     """Test tensor inspection during training."""
 
