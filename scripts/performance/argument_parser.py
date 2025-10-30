@@ -374,6 +374,7 @@ def parse_cli_args():
         required=False,
         default=50,
     )
+    parser.add_argument(
         "--detach",
         help="Detach the experiment from the terminal. Disabled by default",
         action="store_true",

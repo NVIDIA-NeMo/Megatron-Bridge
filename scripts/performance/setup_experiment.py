@@ -61,17 +61,16 @@ def main(
     enable_vboost: bool,
     enable_nsys: bool,
     use_tokendrop: bool,
+    enable_deepep: bool,
+    moe_a2a: bool,
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
-    if args.enable_deepep:
-        assert args.model_name == "deepseek" and args.model_size == "v3", "DeepEP is only supported for DeepSeek v3"
+    exp_name = f"{model_name}_{model_size}_{domain}_{task}"
+    exp_name += "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
 
-    exp_name = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}"
-    exp_name += "_bf16" if args.compute_dtype == "bf16" else f"_{args.compute_dtype}_{args.fp8_recipe}"
-
-    if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b", "235b_a22b"]:
-        assert args.hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
+    if model_name in ["qwen3"] and model_size in ["30b_a3b", "235b_a22b"]:
+        assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
 
     SCRIPT_DIR: Path = Path(__file__).parent.resolve()
     RUN_SCRIPT_FILENAME: str = "run_script.py"
@@ -82,15 +81,10 @@ def main(
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
-    num_gpus_per_node = args.gpus_per_node
-    compute_dtype, fp8_recipe = args.compute_dtype, args.fp8_recipe
-    compute_dtype = compute_dtype if compute_dtype == "bf16" else f"{compute_dtype}_{fp8_recipe}"
-
-    enable_deepep, a2a_overlap = False, False
-    if gpu.lower() in ["h100"]:
+    if gpu in ["h100"]:
         if model_name == "deepseek" and model_size == "v3":
-            enable_deepep = True
-            a2a_overlap = True
+            enable_deepep = True if enable_deepep is None else enable_deepep
+            moe_a2a = True if moe_a2a is None else moe_a2a
 
     plugins = (
         [
@@ -101,7 +95,7 @@ def main(
                 layernorm_sm_margin=20 if enable_deepep else 16,
                 num_gpus=num_gpus,
                 deepep_enabled=enable_deepep,
-                a2a_overlap=a2a_overlap,
+                a2a_overlap=moe_a2a,
             )
         ]
         if HAS_NEMO_RUN
@@ -117,20 +111,20 @@ def main(
     executor.container_mounts.extend(custom_mounts)
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    if model_name in ["llama31"] and model_size in ["405b"] and gpu.lower() in ["gb200"]:
+    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
         if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if model_name in ["deepseek"] and model_size in ["v3"] and gpu.lower() in ["gb200"]:
+    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
         if compute_dtype == "bf16" and (not use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
-    if gpu.lower() in ["h100"]:
+    if gpu in ["h100"]:
         if model_name == "llama3" and model_size == "8b":
             if compute_dtype == "fp8" and fp8_recipe == "cs":
                 executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
                 executor.env_vars["NCCL_CTA_POLICY"] = "1"
                 del_cudnn_ln = False
-    if gpu.lower() in ["gb200"]:
+    if gpu in ["gb200"]:
         if model_name == "llama3" and model_size == "70b":
             if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
                 del_cudnn_ln = False
@@ -166,6 +160,10 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     args, _ = parse_cli_args()
+
+    if args.enable_deepep:
+        assert args.model_name == "deepseek" and args.model_size == "v3", "DeepEP is only supported for DeepSeek v3"
+
     main(
         model_name=args.model_name,
         model_size=args.model_size,
@@ -183,8 +181,10 @@ if __name__ == "__main__":
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
         use_tokendrop=args.use_tokendrop,
+        enable_deepep=args.enable_deepep,
+        moe_a2a=args.moe_a2a,
         executor=slurm_executor(
-            args.gpu.lower(),
+            args.gpu,
             args.account,
             args.partition,
             args.log_dir,
