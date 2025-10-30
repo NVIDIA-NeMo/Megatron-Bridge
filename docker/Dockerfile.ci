@@ -17,6 +17,8 @@ WORKDIR /opt/Megatron-Bridge
 ENV PATH="/root/.local/bin:$PATH"
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV UV_LINK_MODE=copy
 ENV UV_VERSION="0.7.2"
 
@@ -41,4 +43,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY . /opt/Megatron-Bridge/
 
-RUN uv pip install --no-deps -e .
+RUN uv pip install -e .
