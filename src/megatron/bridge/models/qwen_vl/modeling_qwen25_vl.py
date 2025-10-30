@@ -195,7 +195,9 @@ class Qwen25VLModel(MegatronModule):
             image_grid_thw,
             video_grid_thw,
             second_per_grid_ts=second_per_grid_ts,
-            attention_mask=attention_mask,
+            # The "attention_mask" HF expects is a padding mask
+            # We pass in None here because we do not have padding in the input
+            attention_mask=None,
         )
 
         outputs = self.language_model.forward(
@@ -206,6 +208,7 @@ class Qwen25VLModel(MegatronModule):
             labels=labels,
             loss_mask=loss_mask,
             runtime_gather_output=runtime_gather_output,
+            packed_seq_params=packed_seq_params,
         )
         return outputs
 
