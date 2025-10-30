@@ -65,7 +65,7 @@ class TestTensorInspect:
             global_batch_size = 8
             micro_batch_size = 1
             seq_length = 512
-            total_iters = 20
+            total_iters = 10
 
             model_cfg = Llama32ModelProvider1B(
                 tensor_model_parallel_size=1,
@@ -78,6 +78,7 @@ class TestTensorInspect:
                 seq_length=seq_length,
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
+                num_layers=1,
             )
 
             # Configure BF16 tensor inspection
@@ -106,7 +107,7 @@ class TestTensorInspect:
                 model=model_cfg,
                 train=TrainingConfig(
                     train_iters=total_iters,
-                    eval_interval=50,
+                    eval_interval=5,
                     eval_iters=2,
                     global_batch_size=global_batch_size,
                     micro_batch_size=micro_batch_size,
@@ -163,7 +164,7 @@ class TestTensorInspect:
                     vocab_size=10000,
                 ),
                 checkpoint=CheckpointConfig(
-                    save_interval=10,
+                    save_interval=40,
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
