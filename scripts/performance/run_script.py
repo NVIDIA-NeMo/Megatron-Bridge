@@ -14,17 +14,14 @@
 
 import importlib
 import logging
-import os
-import sys
 from typing import Callable
 
 import torch
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
+
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
@@ -34,7 +31,9 @@ from megatron.bridge.training.utils.omegaconf_utils import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+
 def get_recipe_builder(model_name: str, model_size: str, gpu: str, num_gpus: int, compute_dtype: str) -> Callable:
+    """Resolve and return a config factory for the requested recipe."""
     cfg_str = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
 
     module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
@@ -51,6 +50,7 @@ def get_recipe_builder(model_name: str, model_size: str, gpu: str, num_gpus: int
         ) from exc
 
     return recipe_builder
+
 
 def main():
     """Main function to run the pretraining/finetuning script."""

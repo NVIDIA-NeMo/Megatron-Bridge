@@ -14,24 +14,25 @@
 
 import logging
 
+from utils.helpers import (
+    get_precision_config,
+    get_user_parallelism_and_batch_size_configs,
+    moe_a2a_1f1b_overrides,
+    set_basic_perf_overrides,
+    set_cuda_graph_overrides,
+)
+
 from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
-
-from utils.helpers import (
-  get_precision_config, 
-  set_basic_perf_overrides, 
-  set_cuda_graph_overrides,
-  get_user_parallelism_and_batch_size_configs,
-  moe_a2a_1f1b_overrides,
-)
 
 
 logger = logging.getLogger(__name__)
 
 
 def set_qwen3_30b_a3b_specific_overrides(cfg: ConfigContainer) -> ConfigContainer:
+    """Apply overrides specific to the Qwen3 30B A3B configuration."""
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
@@ -43,9 +44,9 @@ def qwen3_30b_a3b_gb200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     """GB200, 8xGPU, BF16 baseline config."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = qwen3_30b_a3b_pretrain_config(
-      mock=True, 
-      precision_config=get_precision_config("bf16"),
-      comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        mock=True,
+        precision_config=get_precision_config("bf16"),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
     set_basic_perf_overrides(cfg)
@@ -71,26 +72,27 @@ def qwen3_30b_a3b_gb200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
-      cfg.model = apply_moe_token_drop(cfg.model)
-    
+        cfg.model = apply_moe_token_drop(cfg.model)
+
     A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
     if A2A_1F1B:
-      moe_a2a_1f1b_overrides(cfg)
+        moe_a2a_1f1b_overrides(cfg)
 
     return cfg
+
 
 def qwen3_30b_a3b_gb200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     """GB200, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = qwen3_30b_a3b_pretrain_config(
-      mock=True, 
-      precision_config=get_precision_config("fp8", fp8_recipe),
-      comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        mock=True,
+        precision_config=get_precision_config("fp8", fp8_recipe),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
     set_basic_perf_overrides(cfg)
@@ -114,17 +116,17 @@ def qwen3_30b_a3b_gb200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
-      cfg.model = apply_moe_token_drop(cfg.model)
+        cfg.model = apply_moe_token_drop(cfg.model)
 
     A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
     if A2A_1F1B:
-      moe_a2a_1f1b_overrides(cfg)
+        moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -133,9 +135,9 @@ def qwen3_30b_a3b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     """B200, 8xGPU, BF16 baseline config."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = qwen3_30b_a3b_pretrain_config(
-      mock=True, 
-      precision_config=get_precision_config("bf16"),
-      comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        mock=True,
+        precision_config=get_precision_config("bf16"),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
     set_basic_perf_overrides(cfg)
@@ -159,28 +161,29 @@ def qwen3_30b_a3b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
-      cfg.model = apply_moe_token_drop(cfg.model)
+        cfg.model = apply_moe_token_drop(cfg.model)
 
     A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
     if A2A_1F1B:
-      moe_a2a_1f1b_overrides(cfg)
+        moe_a2a_1f1b_overrides(cfg)
 
     return cfg
+
 
 def qwen3_30b_a3b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     """B200, 8xGPU, FP8 cs preset."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = qwen3_30b_a3b_pretrain_config(
-      mock=True, 
-      precision_config=get_precision_config("fp8", fp8_recipe),
-      comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        mock=True,
+        precision_config=get_precision_config("fp8", fp8_recipe),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
     set_basic_perf_overrides(cfg)
@@ -204,17 +207,17 @@ def qwen3_30b_a3b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
-      cfg.model = apply_moe_token_drop(cfg.model)
+        cfg.model = apply_moe_token_drop(cfg.model)
 
     A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
     if A2A_1F1B:
-      moe_a2a_1f1b_overrides(cfg)
+        moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -223,9 +226,9 @@ def qwen3_30b_a3b_h100_16gpus_bf16_config(**kwargs) -> ConfigContainer:
     """H100, 16xGPU, BF16 baseline config."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = qwen3_30b_a3b_pretrain_config(
-      mock=True, 
-      precision_config=get_precision_config("bf16"),
-      comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        mock=True,
+        precision_config=get_precision_config("bf16"),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
     set_basic_perf_overrides(cfg)
@@ -249,17 +252,17 @@ def qwen3_30b_a3b_h100_16gpus_bf16_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
-      cfg.model = apply_moe_token_drop(cfg.model)
+        cfg.model = apply_moe_token_drop(cfg.model)
 
     A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
     if A2A_1F1B:
-      moe_a2a_1f1b_overrides(cfg)
+        moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -269,9 +272,9 @@ def qwen3_30b_a3b_h100_16gpus_fp8_config(**kwargs) -> ConfigContainer:
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = qwen3_30b_a3b_pretrain_config(
-      mock=True, 
-      precision_config=get_precision_config("fp8", fp8_recipe),
-      comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        mock=True,
+        precision_config=get_precision_config("fp8", fp8_recipe),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
     set_basic_perf_overrides(cfg)
@@ -295,16 +298,16 @@ def qwen3_30b_a3b_h100_16gpus_fp8_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
-      cfg.model = apply_moe_token_drop(cfg.model)
+        cfg.model = apply_moe_token_drop(cfg.model)
 
     A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
     if A2A_1F1B:
-      moe_a2a_1f1b_overrides(cfg)
+        moe_a2a_1f1b_overrides(cfg)
 
     return cfg

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from nemo_run.config import get_nemorun_home
 
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
@@ -26,19 +27,22 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 
 
 def bool_arg(arg):
-        if arg.lower() in ["true", "1", "t", "yes", "y"]:
-            return True
-        elif arg.lower() in ["false", "0", "f", "no", "n"]:
-            return False
-        else:
-            raise ValueError(f"Invalid value for boolean argument: {arg}")
+    """Convert a string CLI value to a boolean."""
+    if arg.lower() in ["true", "1", "t", "yes", "y"]:
+        return True
+    elif arg.lower() in ["false", "0", "f", "no", "n"]:
+        return False
+    else:
+        raise ValueError(f"Invalid value for boolean argument: {arg}")
 
 
 def list_of_strings(arg):
+    """Split a comma-separated string into a list of substrings."""
     return arg.split(",")
 
 
 def is_cuda_graph_impl_valid(arg):
+    """Validate and normalize the CUDA graph implementation argument."""
     choices = ["local", "te", "TE", "transformer_engine"]
     if arg.lower() in choices:
         arg = arg.lower()
@@ -50,6 +54,7 @@ def is_cuda_graph_impl_valid(arg):
 
 
 def is_cuda_graph_scope_valid(arg):
+    """Validate the CUDA graph scope argument."""
     choices = ["full_iteration", "full", "attn"]
     if arg.lower() in choices:
         if arg.lower() == "full_iteration":
@@ -60,6 +65,7 @@ def is_cuda_graph_scope_valid(arg):
 
 
 def lower_str(arg):
+    """Lowercase a CLI string argument with a runtime type check."""
     assert isinstance(arg, str), f"Argument {arg} is not a string"
     return arg.lower()
 

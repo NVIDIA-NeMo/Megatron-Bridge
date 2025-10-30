@@ -13,9 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Dict, Optional
-
-from omegaconf import OmegaConf
+from typing import Any, Optional
 
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.mixed_precision import (
@@ -26,12 +24,12 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_mxfp8_mixed,
 )
 
-from .common import get_perf_matrix_overrides
-
 
 logger = logging.getLogger(__name__)
 
+
 def get_user_parallelism_and_batch_size_configs(kwargs: Any):
+    """Extract user-specified parallelism and batch size overrides from kwargs."""
     tp = kwargs.get("tensor_model_parallel_size", None)
     pp = kwargs.get("pipeline_model_parallel_size", None)
     cp = kwargs.get("context_parallel_size", None)
@@ -45,6 +43,7 @@ def get_user_parallelism_and_batch_size_configs(kwargs: Any):
 
 
 def set_basic_perf_overrides(recipe: Any) -> None:
+    """Apply common performance overrides shared across recipes."""
     recipe.train.train_iters = 100
     recipe.train.eval_iters = 0
 
@@ -60,6 +59,7 @@ def set_basic_perf_overrides(recipe: Any) -> None:
 
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
+
 
 def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
     """Set the mcore fsdp overrides from the performance matrix."""
@@ -111,9 +111,7 @@ def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
 
 
 def set_cuda_graph_overrides(
-    recipe: Any, 
-    cuda_graph_impl: Optional[str] = None, 
-    cuda_graph_scope: Optional[str] = None
+    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str] = None
 ) -> None:
     """Set the CUDA graph overrides from the performance matrix."""
     recipe.model.cuda_graph_impl = cuda_graph_impl
@@ -122,7 +120,7 @@ def set_cuda_graph_overrides(
     if cuda_graph_impl is not None:
         recipe.model.use_te_rng_tracker = True
         recipe.rng.te_rng_tracker = True
-    
+
     if cuda_graph_impl == "transformer_engine":
         assert cuda_graph_scope in ["full", "attn"], (
             f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: full, attn"
@@ -143,7 +141,9 @@ def set_recompute_overrides(recipe: Any, perf_overrides: Any) -> None:
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
+
 def moe_a2a_1f1b_overrides(recipe: Any) -> None:
+    """Tune configuration for MoE A2A 1F1B communication overlap."""
     recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
     recipe.comm_overlap.delay_wgrad_compute = True
     recipe.model.moe_shared_expert_overlap = False
