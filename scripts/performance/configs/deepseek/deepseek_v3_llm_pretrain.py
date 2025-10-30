@@ -36,7 +36,7 @@ def deepseek_v3_gb200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
         layout=None,
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 4 if pp is None else pp
@@ -96,7 +96,7 @@ def deepseek_v3_gb200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
         layout=None,
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 4 if pp is None else pp
@@ -155,7 +155,7 @@ def deepseek_v3_b200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
         layout=None,
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 16 if pp is None else pp
@@ -214,7 +214,7 @@ def deepseek_v3_b200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
         layout=None,
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 16 if pp is None else pp
@@ -270,7 +270,7 @@ def deepseek_v3_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
         layout="Et|(tt|)*30mL",
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -328,7 +328,7 @@ def deepseek_v3_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
         layout=None,
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp

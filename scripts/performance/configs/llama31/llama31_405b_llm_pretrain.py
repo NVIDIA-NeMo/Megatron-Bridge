@@ -41,7 +41,7 @@ def llama31_405b_gb200_128gpus_bf16_config(**kwargs) -> ConfigContainer:
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
@@ -75,7 +75,7 @@ def llama31_405b_gb200_128gpus_fp8_config(**kwargs) -> ConfigContainer:
     fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
@@ -121,7 +121,7 @@ def llama31_405b_b200_128gpus_bf16_config(**kwargs) -> ConfigContainer:
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
@@ -155,7 +155,7 @@ def llama31_405b_b200_128gpus_fp8_config(**kwargs) -> ConfigContainer:
     fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
@@ -187,7 +187,7 @@ def llama31_405b_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
     """H100, 1024xGPU, BF16 baseline config."""
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
@@ -221,7 +221,7 @@ def llama31_405b_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
     fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")

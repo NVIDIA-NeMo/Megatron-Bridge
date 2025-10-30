@@ -42,9 +42,9 @@ def get_user_parallelism_and_batch_size_configs(kwargs: Any):
     return tp, pp, cp, vp, ep, etp, mbs, gbs
 
 
-def set_basic_perf_overrides(recipe: Any) -> None:
+def set_basic_perf_overrides(recipe: Any, max_steps: Optional[int] = 50) -> None:
     """Apply common performance overrides shared across recipes."""
-    recipe.train.train_iters = 100
+    recipe.train.train_iters = max_steps
     recipe.train.eval_iters = 0
 
     recipe.checkpoint.save = None

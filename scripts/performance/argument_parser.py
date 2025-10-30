@@ -366,6 +366,13 @@ def parse_cli_args():
         required=False,
         default=None,
     )
-
+    parser.add_argument(
+        "-ms",
+        "--max_steps",
+        type=int,
+        help="Maximum number of steps to run the experiment for. Defaults to 50.",
+        required=False,
+        default=50,
+    )
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides

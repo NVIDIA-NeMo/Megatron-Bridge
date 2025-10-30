@@ -49,7 +49,7 @@ def qwen3_235b_a22b_gb200_64gpus_bf16_config(**kwargs) -> ConfigContainer:
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -95,7 +95,7 @@ def qwen3_235b_a22b_gb200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -140,7 +140,7 @@ def qwen3_235b_a22b_b200_64gpus_bf16_config(**kwargs) -> ConfigContainer:
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -186,7 +186,7 @@ def qwen3_235b_a22b_b200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -231,7 +231,7 @@ def qwen3_235b_a22b_h100_256gpus_bf16_config(**kwargs) -> ConfigContainer:
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -277,7 +277,7 @@ def qwen3_235b_a22b_h100_256gpus_fp8_config(**kwargs) -> ConfigContainer:
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
     )
 
-    set_basic_perf_overrides(cfg)
+    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
 
     cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
