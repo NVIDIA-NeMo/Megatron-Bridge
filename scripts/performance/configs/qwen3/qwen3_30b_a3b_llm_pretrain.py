@@ -14,7 +14,7 @@
 
 import logging
 
-from megatron.bridge.recipes.qwen3.qwen3_moe import qwen3_30b_a3b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
