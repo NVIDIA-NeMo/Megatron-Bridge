@@ -221,8 +221,10 @@ def _qwen3_next_common(
     model_cfg.moe_grouped_gemm = True
     if enable_deepep:
         model_cfg.moe_token_dispatcher_type = "flex"
+        # TODO: Remove moe_enable_deepep since it is deprecated
         model_cfg.moe_enable_deepep = True
         model_cfg.moe_shared_expert_overlap = False
+        model_cfg.moe_flex_dispatcher_backend = "deepep"
 
     if precision_config is None:
         precision_config = bf16_mixed()
