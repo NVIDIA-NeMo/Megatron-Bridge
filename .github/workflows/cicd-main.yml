@@ -133,7 +133,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          file: ./docker/Dockerfile.ci.dev
+          file: ./docker/Dockerfile.ci
           push: true
           context: .
           target: main
