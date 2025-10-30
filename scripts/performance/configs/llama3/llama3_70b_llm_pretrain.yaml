@@ -55,6 +55,16 @@ ConfigContainer:
     record_shapes: false
     use_pytorch_profiler: false
 
+# Default GPU counts when selecting entries from the perf_matrix.
+# Values inferred from the available perf_matrix keys (e.g., num_gpus_1024).
+defaults:
+  gpu_defaults:
+    h100: 64
+    b200: 64
+    gb200: 64
+    gb300: 64
+  gbs_scaling_factor_default: 2
+
 perf_matrix:
   h100:
     num_gpus_64:
