@@ -49,10 +49,6 @@ def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: Te
         print_rank_0(MISSING_NVINSPECT_MSG)
         raise ImportError(MISSING_NVINSPECT_MSG)
 
-    from transformer_engine.debug.pytorch.debug_state import TEDebugState
-
-    TEDebugState._reset()
-
     try:
         nvinspect_api.initialize(
             config_file=tensor_inspect_config.features or "",
