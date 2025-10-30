@@ -170,7 +170,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
-    needs: [pre-flight, cicd-wait-in-queue]
+    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
     environment: nemo-ci
