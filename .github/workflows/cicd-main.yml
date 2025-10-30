@@ -99,6 +99,26 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@main
 
+      - name: Install Azure CLI
+        shell: bash
+        run: |
+          echo "::group::Install Azure CLI"
+          # Create systemd override for proper dependencies
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          echo "::endgroup::"
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure ACR Login
+        shell: bash
+        run: |
+          az acr login --name nemoci
+
       - name: Install GH CLI
         shell: bash
         run: |
