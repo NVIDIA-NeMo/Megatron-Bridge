@@ -99,16 +99,6 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@main
 
-      - name: Download test data
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          echo "::group::Download test data"
-          pip install --no-cache-dir pygithub click
-          python tests/test_utils/python_scripts/download_unit_tests_dataset.py --assets-dir ./assets
-          echo "::endgroup::"
-
       - name: Install GH CLI
         shell: bash
         run: |
