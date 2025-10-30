@@ -567,15 +567,14 @@ def get_model(
         correct_amax_history_if_needed(model)
 
     if wrap_with_ddp:
-        with torch.cuda.stream(torch.cuda.Stream()):
-            model = _ddp_wrap(
-                model,
-                data_parallel_random_init,
-                ddp_config,
-                overlap_param_gather_with_optimizer_step,
-                use_megatron_fsdp=use_megatron_fsdp,
-                use_torch_fsdp2=use_torch_fsdp2,
-            )
+        model = _ddp_wrap(
+            model,
+            data_parallel_random_init,
+            ddp_config,
+            overlap_param_gather_with_optimizer_step,
+            use_megatron_fsdp=use_megatron_fsdp,
+            use_torch_fsdp2=use_torch_fsdp2,
+        )
 
     return model
 
@@ -678,6 +677,7 @@ def _ddp_wrap(
     else:
         DP = DistributedDataParallel
 
+    # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
     with torch.cuda.stream(torch.cuda.Stream()):
         model = [
             DP(
