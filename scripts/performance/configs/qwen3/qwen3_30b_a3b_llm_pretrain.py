@@ -68,7 +68,8 @@ def qwen3_30b_a3b_gb200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
-    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
+    use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
+    if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
@@ -104,7 +105,8 @@ def qwen3_30b_a3b_gb200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
-    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
+    use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
+    if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
@@ -140,7 +142,8 @@ def qwen3_30b_a3b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
-    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
+    use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
+    if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
@@ -176,7 +179,8 @@ def qwen3_30b_a3b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
-    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
+    use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
+    if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
@@ -211,7 +215,8 @@ def qwen3_30b_a3b_h100_16gpus_bf16_config(**kwargs) -> ConfigContainer:
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
-    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
+    use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
+    if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg
@@ -247,7 +252,8 @@ def qwen3_30b_a3b_h100_16gpus_fp8_config(**kwargs) -> ConfigContainer:
 
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
-    if kwargs.get("use_tokendrop") is None or kwargs.get("use_tokendrop"):
+    use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
+    if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
 
     return cfg

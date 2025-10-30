@@ -57,29 +57,7 @@ def main():
     args, cli_overrides = parse_cli_args()
 
     recipe_builder = get_recipe_builder(args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype)
-
-    if args.model_name in ["llama3", "llama31"]:
-        recipe = recipe_builder(**vars(args))
-    elif args.model_name == "deepseek" and args.model_size == "v3":
-        enable_deepep = bool(args.gpu in ["h100"])
-        use_tokendrop = bool(args.gpu in ["b200", "gb200"])
-        use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else use_tokendrop
-        if use_tokendrop:
-            enable_deepep = False
-            logger.info("Using token drop, disabling DeepEP")
-        A2A_1F1B = bool(args.gpu in ["h100"])
-
-        recipe = recipe_builder(
-            fp8_recipe=args.fp8_recipe,
-            use_tokendrop=use_tokendrop,
-            enable_deepep=enable_deepep,
-            a2a_1f1b=A2A_1F1B,
-        )
-    elif args.model_name == "qwen3":
-        use_tokendrop = args.use_tokendrop if args.use_tokendrop is not None else True
-        recipe = recipe_builder(fp8_recipe=args.fp8_recipe, use_tokendrop=use_tokendrop)
-    else:
-        raise ValueError(f"Model {args.model_name} {args.model_size} not supported")
+    recipe = recipe_builder(**vars(args))
 
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     if cli_overrides:
