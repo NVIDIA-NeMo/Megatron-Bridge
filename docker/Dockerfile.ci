@@ -36,7 +36,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --link-mode copy \
     --locked \
     --all-extras \
-    --all-groups ${UV_ARGS[@]}
+    --all-groups ${UV_ARGS[@]} && \
+    uv cache prune
 
 COPY . /opt/Megatron-Bridge/
 
