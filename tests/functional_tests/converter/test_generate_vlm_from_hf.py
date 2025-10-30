@@ -29,7 +29,7 @@ class TestGenerateVLMFromHF:
             "--parallel-mode",
             "examples/conversion/hf_to_megatron_generate_vlm.py",
             "--hf_model_path",
-            "Qwen/Qwen2.5-3B-Instruct",
+            "Qwen/Qwen2.5-VL-3B-Instruct",
             "--image_path",
             "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
             "--prompt",
