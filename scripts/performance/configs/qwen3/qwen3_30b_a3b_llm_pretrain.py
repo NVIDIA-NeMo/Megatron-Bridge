@@ -24,6 +24,7 @@ from utils.helpers import (
   set_basic_perf_overrides, 
   set_cuda_graph_overrides,
   get_user_parallelism_and_batch_size_configs,
+  moe_a2a_1f1b_overrides,
 )
 
 
@@ -65,12 +66,20 @@ def qwen3_30b_a3b_gb200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
     set_qwen3_30b_a3b_specific_overrides(cfg)
+
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
+    
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
+    if A2A_1F1B:
+      moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -102,12 +111,20 @@ def qwen3_30b_a3b_gb200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
+
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
+    if A2A_1F1B:
+      moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -139,12 +156,20 @@ def qwen3_30b_a3b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
+
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
+    if A2A_1F1B:
+      moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -176,12 +201,20 @@ def qwen3_30b_a3b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
+
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
+    if A2A_1F1B:
+      moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -213,11 +246,20 @@ def qwen3_30b_a3b_h100_16gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
+
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
+    if A2A_1F1B:
+      moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -250,10 +292,19 @@ def qwen3_30b_a3b_h100_16gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     set_qwen3_30b_a3b_specific_overrides(cfg)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
       cfg.model = apply_moe_token_drop(cfg.model)
+
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
+    if A2A_1F1B:
+      moe_a2a_1f1b_overrides(cfg)
 
     return cfg

@@ -39,7 +39,10 @@ def llama3_8b_gb200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
@@ -74,7 +77,10 @@ def llama3_8b_gb200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
@@ -109,7 +115,10 @@ def llama3_8b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
@@ -144,7 +153,10 @@ def llama3_8b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
@@ -179,6 +191,11 @@ def llama3_8b_h100_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
     )
@@ -211,6 +228,11 @@ def llama3_8b_h100_8gpus_fp8_config(**kwargs) -> ConfigContainer:
 
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     if fp8_recipe == "cs":
         use_megatron_fsdp = True if kwargs.get("use_megatron_fsdp") is None else kwargs.get("use_megatron_fsdp")

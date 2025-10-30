@@ -18,7 +18,7 @@ def deepseek_v3_gb200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
     """GB200, 256xGPU, BF16 baseline config."""
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     enable_deepep = False if kwargs.get("enable_deepep") is None else kwargs.get("enable_deepep")
-    A2A_1F1B = False
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
 
     if use_tokendrop and enable_deepep:
         enable_deepep = False
@@ -56,6 +56,7 @@ def deepseek_v3_gb200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
     if use_tokendrop:
@@ -65,8 +66,6 @@ def deepseek_v3_gb200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
 
     if A2A_1F1B:
         moe_a2a_1f1b_overrides(cfg)
-
-    cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
@@ -78,7 +77,7 @@ def deepseek_v3_gb200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     """B200, 256xGPU, FP8 baseline config."""
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     enable_deepep = False if kwargs.get("enable_deepep") is None else kwargs.get("enable_deepep")
-    A2A_1F1B = False
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
 
     if use_tokendrop and enable_deepep:
         enable_deepep = False
@@ -117,6 +116,7 @@ def deepseek_v3_gb200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
     if use_tokendrop:
@@ -127,8 +127,6 @@ def deepseek_v3_gb200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     if A2A_1F1B:
         moe_a2a_1f1b_overrides(cfg)
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
-
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
@@ -138,7 +136,7 @@ def deepseek_v3_b200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
     """B200, 256xGPU, BF16 baseline config."""
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     enable_deepep = False if kwargs.get("enable_deepep") is None else kwargs.get("enable_deepep")
-    A2A_1F1B = False
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
 
     if use_tokendrop and enable_deepep:
         enable_deepep = False
@@ -176,6 +174,7 @@ def deepseek_v3_b200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
     if enable_deepep:
@@ -188,8 +187,6 @@ def deepseek_v3_b200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
     if A2A_1F1B:
         moe_a2a_1f1b_overrides(cfg)
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
-
     return cfg
 
 
@@ -198,7 +195,7 @@ def deepseek_v3_b200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     """B200, 256xGPU, FP8 baseline config."""
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     enable_deepep = False if kwargs.get("enable_deepep") is None else kwargs.get("enable_deepep")
-    A2A_1F1B = False
+    A2A_1F1B = False if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
 
     if use_tokendrop and enable_deepep:
         enable_deepep = False
@@ -237,6 +234,7 @@ def deepseek_v3_b200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
     if use_tokendrop:
@@ -247,15 +245,13 @@ def deepseek_v3_b200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
     if A2A_1F1B:
         moe_a2a_1f1b_overrides(cfg)
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
-
     return cfg
 
 def deepseek_v3_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
     """H100, 1024xGPU, BF16 baseline config."""
     use_tokendrop = False if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     enable_deepep = True if kwargs.get("enable_deepep") is None else kwargs.get("enable_deepep")
-    A2A_1F1B = True
+    A2A_1F1B = True if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
 
     if use_tokendrop and enable_deepep:
         enable_deepep = False
@@ -293,6 +289,8 @@ def deepseek_v3_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
     else:
@@ -301,7 +299,6 @@ def deepseek_v3_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
     if A2A_1F1B:
         moe_a2a_1f1b_overrides(cfg)
 
-    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
     cfg.comm_overlap.overlap_grad_reduce = False
 
     return cfg
@@ -311,7 +308,7 @@ def deepseek_v3_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
     """H100, 1024xGPU, FP8 baseline config."""
     use_tokendrop = False if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     enable_deepep = True if kwargs.get("enable_deepep") is None else kwargs.get("enable_deepep")
-    A2A_1F1B = True
+    A2A_1F1B = True if kwargs.get("moe_a2a") is None else kwargs.get("moe_a2a")
 
     if use_tokendrop and enable_deepep:
         enable_deepep = False
@@ -349,6 +346,7 @@ def deepseek_v3_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg.dist.enable_megatron_core_experimental = True
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
     if use_tokendrop:
         cfg.model = apply_moe_token_drop(cfg.model)
@@ -358,7 +356,6 @@ def deepseek_v3_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
     if A2A_1F1B:
         moe_a2a_1f1b_overrides(cfg)
 
-    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
     cfg.comm_overlap.overlap_grad_reduce = False
 
     return cfg

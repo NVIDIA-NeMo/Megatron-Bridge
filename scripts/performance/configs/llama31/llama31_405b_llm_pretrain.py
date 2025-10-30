@@ -42,6 +42,11 @@ def llama31_405b_gb200_128gpus_bf16_config(**kwargs) -> ConfigContainer:
 
     set_basic_perf_overrides(cfg)
 
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     cfg.model.tensor_model_parallel_size = 4 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
     cfg.model.context_parallel_size = 2 if cp is None else cp
@@ -69,6 +74,11 @@ def llama31_405b_gb200_128gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     set_basic_perf_overrides(cfg)
+
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     if fp8_recipe == "cs":
       cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
@@ -111,6 +121,11 @@ def llama31_405b_b200_128gpus_bf16_config(**kwargs) -> ConfigContainer:
 
     set_basic_perf_overrides(cfg)
 
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     cfg.model.tensor_model_parallel_size = 4 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
     cfg.model.context_parallel_size = 2 if cp is None else cp
@@ -139,6 +154,11 @@ def llama31_405b_b200_128gpus_fp8_config(**kwargs) -> ConfigContainer:
 
     set_basic_perf_overrides(cfg)
 
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+
     cfg.model.tensor_model_parallel_size = 4 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
     cfg.model.context_parallel_size = 2 if cp is None else cp
@@ -165,6 +185,11 @@ def llama31_405b_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
     tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_basic_perf_overrides(cfg)
+
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.model.tensor_model_parallel_size = 8 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp
@@ -194,6 +219,11 @@ def llama31_405b_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
     set_basic_perf_overrides(cfg)
+
+    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
+    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
+    if cuda_graph_impl is not None:
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     cfg.model.tensor_model_parallel_size = 8 if tp is None else tp
     cfg.model.pipeline_model_parallel_size = 8 if pp is None else pp

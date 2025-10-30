@@ -347,6 +347,12 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    parser.add_argument(
+        "--moe_a2a",
+        type=bool_arg,
+        required=False,
+        default=None,
+    )
 
     args, cli_dotlist_overrides = parser.parse_known_args()
     return args, cli_dotlist_overrides
