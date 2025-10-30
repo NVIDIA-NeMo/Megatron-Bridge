@@ -40,7 +40,3 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --all-extras \
     --all-groups ${UV_ARGS[@]} && \
     uv cache prune
-
-COPY . /opt/Megatron-Bridge/
-
-RUN uv pip install -e .
