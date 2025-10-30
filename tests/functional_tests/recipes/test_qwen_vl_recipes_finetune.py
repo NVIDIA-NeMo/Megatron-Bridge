@@ -23,7 +23,12 @@ from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 QWEN_VL_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides)
     # Two-GPU TP for local/CI multi-GPU runs
-    (qwen25_vl_3b_finetune_config, "qwen25_vl_3b", {"tensor_parallelism": 2, "pipeline_parallelism": 1}),
+    (
+        qwen25_vl_3b_finetune_config,
+        "qwen25_vl_3b",
+        {"tensor_parallelism": 2, "pipeline_parallelism": 1},
+        {"num_layers": 2},
+    ),
 ]
 
 
@@ -31,7 +36,11 @@ class TestQwenVLRecipes:
     """Test class for Qwen2.5-VL recipe functional tests."""
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides", QWEN_VL_PRETRAIN_RECIPES)
-    def test_qwen25_vl_pretrain_recipes(self, config_func, recipe_name, parallelism_overrides, tmp_path):
+    @pytest.mark.parametrize("config_func,recipe_name,parallelism_overrides,model_overrides", QWEN_VL_PRETRAIN_RECIPES)
+    def test_qwen25_vl_pretrain_recipes(
+        self, config_func, recipe_name, parallelism_overrides, model_overrides, tmp_path
+    ):
         """Functional test for Qwen2.5-VL recipes with appropriate parallelism configurations."""
-        run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, **parallelism_overrides)
+        run_pretrain_vl_recipe_test(
+            config_func, recipe_name, tmp_path, model_overrides=model_overrides, **parallelism_overrides
+        )
