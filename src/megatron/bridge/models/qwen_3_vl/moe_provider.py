@@ -86,7 +86,6 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # RoPE theta value specific to Qwen3-VL models
     # From HuggingFace config: rope_theta: 5000000
     rotary_base: float = 5000000.0
-    sequence_parallel: bool = False
     spatial_merge_size: int = 2
     temporal_patch_size: int = 2
     patch_size: int = 16
@@ -131,6 +130,12 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     async_tensor_model_parallel_allreduce: bool = True  # Async tensor parallel
     distribute_saved_activations: bool = False  # Don't distribute saved activations
     cp_comm_type: str = "p2p"  # Point-to-point communication for context parallel
+
+    def finalize(self) -> None:
+        if self.tensor_model_parallel_size > 1:
+            self.sequence_parallel = True
+           
+        super().finalize()
     
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
@@ -144,7 +149,7 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
 
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=self.num_moe_experts,
-            moe_grouped_gemm=False,
+            moe_grouped_gemm=True,
             qk_layernorm=self.qk_layernorm,
             fp8=False,
             normalization="RMSNorm",    
