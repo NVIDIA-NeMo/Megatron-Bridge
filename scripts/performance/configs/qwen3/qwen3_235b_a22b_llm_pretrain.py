@@ -116,7 +116,7 @@ def qwen3_235b_a22b_gb200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
     cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
     cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
     if cuda_graph_impl is not None:
-      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)set_cuda_graph_overrides(cfg, perf_overrides={"cuda_graphs": True})
+      set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     use_tokendrop = True if kwargs.get("use_tokendrop") is None else kwargs.get("use_tokendrop")
     if use_tokendrop:
