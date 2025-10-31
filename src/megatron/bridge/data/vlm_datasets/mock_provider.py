@@ -26,10 +26,16 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy
+from megatron.core import mpu
 from PIL import Image
+from torch.utils.data import DataLoader
+from transformers import AutoProcessor
 
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+from megatron.bridge.training.state import TrainState
+from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 
 
 @dataclass(kw_only=True)
@@ -89,8 +95,6 @@ class MockVLMConversationProvider(DatasetProvider):
         return [{"conversation": messages}]
 
     def build_datasets(self, context: DatasetBuildContext):
-        from transformers import AutoProcessor
-
         # Initialize and store processor
         self._processor = AutoProcessor.from_pretrained(self.hf_processor_path, trust_remote_code=True)
 
@@ -111,3 +115,67 @@ class MockVLMConversationProvider(DatasetProvider):
         test_ds = _maybe_make(context.test_samples)
 
         return train_ds, valid_ds, test_ds
+
+    def provide_dataloaders(
+        self,
+        context: DatasetBuildContext,
+        train_state: TrainState,
+    ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
+        train_ds, valid_ds, test_ds = self.build_datasets(context)
+
+        def worker_init_fn(_):
+            DistributedSignalHandler(context.exit_signal).__enter__()
+
+        maybe_worker_init_fn = worker_init_fn if context.exit_signal_handler_for_dataloader else None
+
+        def _make_loader(
+            ds: Optional[VLMConversationDataset],
+            consumed_samples: int,
+            dataloader_type: str,
+        ) -> Optional[DataLoader]:
+            if ds is None:
+                return None
+            dp_rank = mpu.get_data_parallel_rank()
+            dp_size = mpu.get_data_parallel_world_size()
+            if dp_size <= 0:
+                dp_rank, dp_size = 0, 1
+            return build_pretraining_data_loader(
+                ds,
+                consumed_samples,
+                dataloader_type,
+                context.micro_batch_size,
+                self.num_workers,
+                self.data_sharding,
+                worker_init_fn=maybe_worker_init_fn,
+                collate_fn=ds.collate_fn if hasattr(ds, "collate_fn") else None,
+                pin_memory=self.pin_memory,
+                persistent_workers=self.persistent_workers,
+                data_parallel_rank=dp_rank,
+                data_parallel_size=dp_size,
+                global_batch_size=context.global_batch_size,
+            )
+
+        train_loader = _make_loader(
+            train_ds,
+            train_state.consumed_train_samples,
+            self.dataloader_type,
+        )
+
+        valid_loader: Optional[DataLoader] = None
+        if context.eval_iters > 0:
+            valid_dl_type = self.dataloader_type if context.skip_train else "cyclic"
+            valid_loader = _make_loader(
+                valid_ds,
+                train_state.consumed_valid_samples if not context.skip_train else 0,
+                valid_dl_type,
+            )
+
+        test_loader: Optional[DataLoader] = None
+        if context.eval_iters > 0:
+            test_loader = _make_loader(
+                test_ds,
+                0,
+                self.dataloader_type,
+            )
+
+        return train_loader, valid_loader, test_loader

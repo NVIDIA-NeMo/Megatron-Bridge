@@ -241,12 +241,26 @@ class DatasetBuildContext:
         valid_samples: Number of samples for validation dataset
         test_samples: Number of samples for test dataset
         tokenizer: Optional tokenizer instance for text processing
+        micro_batch_size: Optional per-rank micro batch size from training config
+        global_batch_size: Optional global batch size from training config
+        eval_iters: Evaluation iterations from training config
+        skip_train: Whether to skip training (evaluate only)
+        exit_signal: Signal number used for dataloader worker signal handling
+        exit_signal_handler_for_dataloader: Whether to enable signal handler in dataloader workers
     """
 
     train_samples: int
     valid_samples: int
     test_samples: int
     tokenizer: Optional[MegatronTokenizer] = None
+
+    # Training fields extended into context to avoid config cycles in providers
+    micro_batch_size: Optional[int] = None
+    global_batch_size: Optional[int] = None
+    eval_iters: int = 0
+    skip_train: bool = False
+    exit_signal: int = signal.SIGTERM
+    exit_signal_handler_for_dataloader: bool = False
 
 
 @dataclass
