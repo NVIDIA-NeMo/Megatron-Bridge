@@ -150,7 +150,7 @@ def parse_cli_args():
         choices=["ds", "cs", "mx", "ss"],
         help=fp8_recipe_msg,
         required=False,
-        default="ds",
+        default="cs",
     )
     parser.add_argument(
         "--task",

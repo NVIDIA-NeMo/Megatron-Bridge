@@ -38,7 +38,7 @@ def get_model_recipe(
     """Get the model recipe factory by its name."""
     recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
     try:
-        if fp8_recipe is not None:
+        if compute_dtype == "fp8" and fp8_recipe is not None:
             return MODEL_RECIPES[recipe_name](fp8_recipe=fp8_recipe)
         else:
             return MODEL_RECIPES[recipe_name]()
