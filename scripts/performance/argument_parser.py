@@ -1,5 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -205,7 +205,7 @@ def parse_cli_args():
     parser.add_argument(
         "-en",
         "--enable_nsys",
-        help="Enable Nsys profiling. Diabled by default",
+        help="Enable Nsys profiling. Disabled by default",
         action="store_true",
     )
     parser.add_argument(
@@ -228,6 +228,19 @@ def parse_cli_args():
         type=bool_arg,
         required=False,
         default=None,
+    )
+    parser.add_argument(
+        "--detach",
+        help="Detach the experiment from the terminal. Disabled by default",
+        action="store_true",
+        dest="detach",
+        default=True,
+    )
+    parser.add_argument(
+        "--no-detach",
+        help="Do not detach the experiment from the terminal. Enabled by default",
+        action="store_false",
+        dest="detach",
     )
 
     args, cli_dotlist_overrides = parser.parse_known_args()

@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+from megatron.bridge.recipes.gemma3_vl.gemma3_vl import (
+    gemma3_vl_4b_finetune_config,
+    gemma3_vl_12b_finetune_config,
+    gemma3_vl_27b_finetune_config,
+)
 
-export CUDA_VISIBLE_DEVICES="0,1"
 
-uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
-  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/converter
-coverage combine -q
+__all__ = [
+    "gemma3_vl_4b_finetune_config",
+    "gemma3_vl_12b_finetune_config",
+    "gemma3_vl_27b_finetune_config",
+]
