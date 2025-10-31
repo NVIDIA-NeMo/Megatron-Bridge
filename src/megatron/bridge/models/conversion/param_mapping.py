@@ -790,8 +790,6 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         # not the actual value, so it is safe to do this.
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        if target_param.device.type == "cpu":
-            target_param = target_param.to(torch.cuda.current_device())
         # On rank 0, check for divisibility and split
         if self.tp_rank == 0:
             if hf_weights is None:
@@ -824,7 +822,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             splits,
             target_param.shape,
             target_param.dtype,
-            target_param.device,
+            torch.cuda.current_device(),
         )
 
     def megatron_to_hf(
@@ -1769,7 +1767,10 @@ def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor
     head_size = config.kv_channels or (config.hidden_size // head_num)
 
     # Reshape biases to expose head dimension
-    q = q.view(head_num, head_size)
+    if getattr(config, "attention_output_gate", False):
+        q, z = torch.chunk(q.view(head_num, head_size * 2), 2, dim=-1)
+    else:
+        q = q.view(head_num, head_size)
     k = k.view(num_query_groups, head_size)
     v = v.view(num_query_groups, head_size)
 
@@ -1777,6 +1778,8 @@ def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor
     qkv_biases = []
     for i in range(num_query_groups):
         qkv_biases.append(q[i * heads_per_group : (i + 1) * heads_per_group, :])
+        if getattr(config, "attention_output_gate", False):
+            qkv_biases.append(z[i * heads_per_group : (i + 1) * heads_per_group, :])
         qkv_biases.append(k[i : i + 1, :])
         qkv_biases.append(v[i : i + 1, :])
 
@@ -1800,7 +1803,12 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     num_query_groups = config.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = config.kv_channels or (config.hidden_size // head_num)
-    qkv_total_dim = head_num + 2 * num_query_groups
+    if getattr(config, "attention_output_gate", False):
+        qkv_total_dim = 2 * head_num + 2 * num_query_groups
+        total_heads_per_group = 2 * heads_per_group + 2
+    else:
+        qkv_total_dim = head_num + 2 * num_query_groups
+        total_heads_per_group = heads_per_group + 2
 
     # Reshape to expose interleaved structure
     qkv = qkv.reshape(qkv_total_dim, head_size)
@@ -1812,10 +1820,23 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(heads_per_group, qkv_total_dim, heads_per_group + 2)
-    v_slice = torch.arange(heads_per_group + 1, qkv_total_dim, heads_per_group + 2)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    q = qkv[q_slice].flatten()
+    if getattr(config, "attention_output_gate", False):
+        z_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
+        q = torch.cat([qkv[q_slice], qkv[z_slice]], dim=1).flatten()
+    else:
+        q = qkv[q_slice].flatten()
     k = qkv[k_slice].flatten()
     v = qkv[v_slice].flatten()
 
@@ -1843,6 +1864,7 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
     head_size = provider.kv_channels or (provider.hidden_size // head_num)
     hidden_size = provider.hidden_size
     is_bias = q.ndim == 1
+    q_head_size = head_size * 2 if getattr(provider, "attention_output_gate", False) else head_size
 
     # Reshape to expose head dimension
     if is_bias:
@@ -1853,6 +1875,8 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         q_reshaped = q.view(head_num, head_size, hidden_size)
         k_reshaped = k.view(num_query_groups, head_size, hidden_size)
         v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+    if getattr(provider, "attention_output_gate", False):
+        q_reshaped, z_reshaped = torch.chunk(q_reshaped, 2, dim=1)
 
     # Interleave in Megatron pattern: [q1...qn, k1, v1, q1...qn, k2, v2, ...]
     qkv_weights = []
@@ -1860,7 +1884,11 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         q_group = q_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
         k_group = k_reshaped[i : i + 1]
         v_group = v_reshaped[i : i + 1]
-        qkv_weights.extend([q_group, k_group, v_group])
+        if getattr(provider, "attention_output_gate", False):
+            z_group = z_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            qkv_weights.extend([q_group, z_group, k_group, v_group])
+        else:
+            qkv_weights.extend([q_group, k_group, v_group])
 
     qkv = torch.cat(qkv_weights, dim=0)
 
@@ -1888,7 +1916,12 @@ def split_qkv_weights(
     num_query_groups = provider.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = provider.kv_channels or (provider.hidden_size // head_num)
-    qkv_total_dim = head_num + 2 * num_query_groups
+    if getattr(provider, "attention_output_gate", False):
+        qkv_total_dim = 2 * head_num + 2 * num_query_groups
+        total_heads_per_group = 2 * heads_per_group + 2
+    else:
+        qkv_total_dim = head_num + 2 * num_query_groups
+        total_heads_per_group = heads_per_group + 2
     is_bias = qkv.ndim == 1
 
     if is_bias:
@@ -1905,10 +1938,23 @@ def split_qkv_weights(
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(heads_per_group, qkv_total_dim, heads_per_group + 2)
-    v_slice = torch.arange(heads_per_group + 1, qkv_total_dim, heads_per_group + 2)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    q = qkv_reshaped[q_slice]
+    if getattr(provider, "attention_output_gate", False):
+        z_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
+        q = torch.cat([qkv_reshaped[q_slice], qkv_reshaped[z_slice]], dim=1)
+    else:
+        q = qkv_reshaped[q_slice]
     k = qkv_reshaped[k_slice]
     v = qkv_reshaped[v_slice]
 
