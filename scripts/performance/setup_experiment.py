@@ -160,9 +160,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 if __name__ == "__main__":
     args, _ = parse_cli_args()
 
-    if args.enable_deepep:
-        assert args.model_name == "deepseek" and args.model_size == "v3", "DeepEP is only supported for DeepSeek v3"
-
     main(
         model_name=args.model_name,
         model_size=args.model_size,
