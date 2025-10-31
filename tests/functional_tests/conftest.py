@@ -147,3 +147,13 @@ def reset_env_vars():
     # After the test, restore the original environment
     os.environ.clear()
     os.environ.update(original_env)
+
+
+@pytest.fixture(autouse=True)
+def reset_te_debug_state():
+    """Ensure Transformer Engine debug state is reset after each test."""
+    from transformer_engine.debug.pytorch.debug_state import TEDebugState
+
+    yield
+
+    TEDebugState._reset()
