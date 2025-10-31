@@ -212,7 +212,7 @@ class TestTETransformerLayerAutocast:
         config.use_cpu_initialization = False
         config.bf16 = False
         config.num_layers = 12
-        config.enable_cuda_graph = False
+        config.cuda_graph_impl = "none"
         config.cpu_offloading = False
         config.recompute_granularity = None
         config.virtual_pipeline_model_parallel_size = None
@@ -248,7 +248,7 @@ class TestTETransformerLayerAutocast:
         mock_pp_world_size.return_value = 1
 
         # Ensure external_cuda_graph is False so we get tuple return
-        mock_config.external_cuda_graph = False
+        mock_config.cuda_graph_impl = "none"
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()
@@ -302,7 +302,7 @@ class TestTETransformerLayerAutocast:
         mock_tp_world_size.return_value = 1
         mock_pp_rank.return_value = 0
         mock_pp_world_size.return_value = 1
-        mock_config.enable_cuda_graph = True
+        mock_config.cuda_graph_impl = "local"
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
@@ -328,7 +328,7 @@ class TestTETransformerLayerAutocast:
         mock_tp_world_size.return_value = 1
         mock_pp_rank.return_value = 0
         mock_pp_world_size.return_value = 1
-        mock_config.external_cuda_graph = True
+        mock_config.cuda_graph_impl = "transformer_engine"
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()

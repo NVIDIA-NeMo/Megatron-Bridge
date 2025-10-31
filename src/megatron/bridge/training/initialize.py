@@ -167,7 +167,7 @@ def torch_dist_init(
             rng_config.data_parallel_random_init,
             rng_config.te_rng_tracker,
             rng_config.inference_rng_tracker,
-            use_cudagraphable_rng=model_config.enable_cuda_graph or model_config.external_cuda_graph,
+            use_cudagraphable_rng=(model_config.cuda_graph_impl != "none"),
         )
 
         if model_config.num_moe_experts is not None:
@@ -373,7 +373,7 @@ def _initialize_distributed(
                 torch.cuda.set_device(get_local_rank_preinit())
 
         # Set to non-default stream for cudagraph capturing.
-        if model_config.external_cuda_graph:
+        if model_config.cuda_graph_impl == "transformer_engine":
             torch.cuda.set_stream(torch.cuda.Stream())
 
         # Call the init process
