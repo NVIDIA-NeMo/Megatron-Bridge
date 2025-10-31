@@ -204,7 +204,7 @@ def main(
     )
     
     base_config = preset["common"]
-    extra_config = preset[dtype]
+    extra_config = preset[compute_dtype]
     train_config = OmegaConf.merge(base_config, extra_config) if extra_config else base_config
 
     exp_config = (
@@ -217,7 +217,7 @@ def main(
         f"mbs{train_config['mbs']}_"
         f"gbs{train_config['gbs']}"
     )
-    exp_name = f"pretrain_{args.model_name}_{args.model_size}_{dtype}_{exp_config}"
+    exp_name = f"pretrain_{args.model_name}_{args.model_size}_{compute_dtype}_{exp_config}"
 
     run.run(train_script, executor=executor, plugins=plugins, dryrun=dryrun, detach=detach, name=exp_name)
 
