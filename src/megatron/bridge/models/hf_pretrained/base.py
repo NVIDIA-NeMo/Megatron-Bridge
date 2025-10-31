@@ -147,7 +147,7 @@ class PreTrainedBase(ABC):
             self._config.save_pretrained(save_path)
 
         # Iterate over required artifacts to save them in a predictable order
-        breakpoint()
+
         for name in self.ARTIFACTS:
             # Access the public property to trigger lazy loading if needed
             artifact = getattr(self, name)
