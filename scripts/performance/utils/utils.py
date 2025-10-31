@@ -25,6 +25,36 @@ from megatron.bridge.training.config import ConfigContainer
 logger = logging.getLogger(__name__)
 
 
+def get_model_recipe(
+    model_name: str,
+    model_size: str,
+    gpu: str,
+    num_gpus: int,
+    compute_dtype: str,
+    fp8_recipe: Optional[str] = None,
+) -> ConfigContainer:
+    """Get the model recipe factory by its name."""
+    recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
+    module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
+    try:
+        module = importlib.import_module(module_name)
+        logger.debug("Imported configuration module '%s' to load recipe '%s'.", module_name, recipe_name)
+    except ModuleNotFoundError as exc:
+        raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
+
+    try:
+        recipe_builder = getattr(module, recipe_name)
+    except AttributeError as err:
+        raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
+
+    if compute_dtype == "fp8" and fp8_recipe is not None:
+        return recipe_builder(fp8_recipe=fp8_recipe)
+    elif compute_dtype == "bf16":
+        return recipe_builder()
+    else:
+        raise ValueError(f"Invalid compute dtype: {compute_dtype} and FP8 recipe: {fp8_recipe}")
+
+
 class _ParallelismExtractor(ast.NodeVisitor):
     _TARGET_ATTRS = {
         "tensor_model_parallel_size": "tensor_model_parallel_size",
@@ -219,45 +249,3 @@ def get_parallelism_defaults(
         "pp_size": pp_size,
         "cp_size": cp_size,
     }
-
-
-def get_model_recipe(
-    model_name: str,
-    model_size: str,
-    gpu: str,
-    num_gpus: int,
-    compute_dtype: str,
-    fp8_recipe: Optional[str] = None,
-) -> ConfigContainer:
-    """Get the model recipe factory by its name."""
-    recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
-    module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
-    try:
-        module = importlib.import_module(module_name)
-        logger.debug("Imported configuration module '%s' to load recipe '%s'.", module_name, recipe_name)
-    except ModuleNotFoundError as exc:
-        raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
-
-    try:
-        recipe_builder = getattr(module, recipe_name)
-    except AttributeError as err:
-        raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
-
-    if compute_dtype == "fp8" and fp8_recipe is not None:
-        return recipe_builder(fp8_recipe=fp8_recipe)
-    elif compute_dtype == "bf16":
-        return recipe_builder()
-    else:
-        raise ValueError(f"Invalid compute dtype: {compute_dtype} and FP8 recipe: {fp8_recipe}")
-
-
-print(
-    get_parallelism_defaults(
-        model_name="llama31", model_size="405b", gpu="gb200", num_gpus=128, compute_dtype="fp8", fp8_recipe="cs"
-    )
-)
-print(
-    get_parallelism_defaults(
-        model_name="llama31", model_size="405b", gpu="gb200", num_gpus=128, compute_dtype="fp8", fp8_recipe="mx"
-    )
-)
