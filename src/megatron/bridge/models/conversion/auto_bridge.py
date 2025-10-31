@@ -293,7 +293,9 @@ class AutoBridge(Generic[MegatronModelT]):
                 raise ValueError("hf_path is required when hf_pretrained is not a PreTrainedCausalLM instance")
             pre_trained = self.hf_pretrained
         else:
-            pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
+            # Preserve trust_remote_code setting from the original bridge instance
+            trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
+            pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
         self._model_bridge.load_weights_hf_to_megatron(pre_trained, model)
 
         return model
@@ -347,7 +349,13 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
         )
 
-    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_pretrained(
+        self,
+        model: list[MegatronModelT],
+        path: str | Path,
+        show_progress: bool = True,
+        source_path: Optional[Union[str, Path]] = None,
+    ) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
@@ -355,10 +363,19 @@ class AutoBridge(Generic[MegatronModelT]):
         and weights to a directory that can be loaded with HuggingFace's
         from_pretrained methods.
 
+        If the original model was loaded with trust_remote_code=True, any custom
+        modeling files (e.g., modeling_*.py, configuration_*.py) will be preserved
+        to ensure the saved model can be loaded properly.
+
         Args:
             model: Megatron model instance or list of instances
             path: Directory path to save the model
             show_progress: Display progress bar during weight export
+            source_path: Path to the directory containing custom modeling files to be preserved.
+                This is useful when converting from Megatron checkpoints where the original
+                HuggingFace model with custom modeling files needs to be referenced. If not specified,
+                the path will be automatically determined from the HuggingFace configuration.
+
 
         Example:
             >>> # Save model after training
@@ -376,10 +393,10 @@ class AutoBridge(Generic[MegatronModelT]):
         if dist.is_available() and dist.is_initialized():
             # Distributed training, only rank 0 saves artifacts
             if dist.get_rank() == 0:
-                self.hf_pretrained.save_artifacts(path)
+                self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
         else:
             # No distributed training, save artifacts
-            self.hf_pretrained.save_artifacts(path)
+            self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
 
         self.save_hf_weights(model, path, show_progress)
 
@@ -597,6 +614,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_path: str | Path,
         hf_path: str | Path,
         show_progress: bool = True,
+        source_path: Optional[Union[str, Path]] = None,
     ) -> None:
         """
         Export a Megatron checkpoint to HuggingFace format.
@@ -609,6 +627,10 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_path: Directory path where the HuggingFace model will be saved
             show_progress: Display progress bar during weight export
+            source_path: Path to the directory containing custom modeling files to be preserved.
+                This is useful when converting from Megatron checkpoints where the original
+                HuggingFace model with custom modeling files needs to be referenced. If not specified,
+                the path will be automatically determined from the HuggingFace configuration.
 
         Example:
             >>> # Basic export
@@ -640,7 +662,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
             # Save in HuggingFace format
-            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
+            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress, source_path=source_path)
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
