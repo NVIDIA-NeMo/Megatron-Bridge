@@ -24,6 +24,7 @@ import torch
 import torch.profiler
 from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
     get_current_running_global_batch_size,
@@ -225,7 +226,7 @@ def train(
         print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
 
     # Capture CUDA Graphs.
-    if model_config.external_cuda_graph:
+    if model_config.cuda_graph_impl == "transformer_engine":
         cuda_graph_helper = TECudaGraphHelper(
             model=model,
             config=model_config,
@@ -233,6 +234,7 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
+        # TODO: Fix #991
         cuda_graph_helper.create_cudagraphs()
 
     # Track train step elapsed time for throughput logging
@@ -328,7 +330,7 @@ def train(
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
                     # Set the manual hooks when CUDA Graphs are used.
-                    if model_config.external_cuda_graph:
+                    if model_config.cuda_graph_impl == "transformer_engine":
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
@@ -552,7 +554,13 @@ def train_step(
             )
 
         # Forward pass.
-        forward_backward_func = get_forward_backward_func()
+        if cfg.model.cuda_graph_impl == "local" and cfg.model.cuda_graph_scope == "full_iteration":
+            forward_backward_func = FullCudaGraphWrapper(
+                get_forward_backward_func(), cuda_graph_warmup_steps=cfg.model.cuda_graph_warmup_steps
+            )
+        else:
+            forward_backward_func = get_forward_backward_func()
+
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,

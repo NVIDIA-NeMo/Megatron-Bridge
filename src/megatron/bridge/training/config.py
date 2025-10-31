@@ -1152,33 +1152,6 @@ class ConfigContainer(Container):
         # Enable deterministic algorithms in torch
         torch.use_deterministic_algorithms(True)
 
-    def _sync_and_validate_external_cuda_graph(self) -> None:
-        """Sync necessary configs for external CUDA Graphs and and validates it."""
-
-        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
-        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
-            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
-
-        # Validate external_cg
-        if self.model.enable_cuda_graph or self.model.external_cuda_graph:
-            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
-                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
-            )
-            if self.model.transformer_impl == "transformer_engine" and not (
-                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
-            ):
-                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
-                warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
-
-        if self.model.external_cuda_graph:
-            assert "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", ""), (
-                "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
-                "The training may crash with illegal memory access."
-            )
-            assert self.model.recompute_granularity != "full", (
-                "recompute_granularity must not be full when CUDA Graphs are enabled."
-            )
-
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1204,6 +1177,10 @@ class ConfigContainer(Container):
             self.nvrx_straggler.finalize()
         if self.tensor_inspect is not None:
             self.tensor_inspect.finalize()
+
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
 
         # Re-run post-inits of sub-configs
         for f in fields(self):
@@ -1343,8 +1320,6 @@ class ConfigContainer(Container):
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
-
-        self._sync_and_validate_external_cuda_graph()
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""
