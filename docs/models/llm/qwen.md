@@ -1,6 +1,7 @@
 # Qwen
 
-Qwen2/2.5/3 models are supported via the Bridge with QK layernorm handling (Qwen3) and bias in QKV (Qwen2).
+Qwen2/2.5/3/3-Next models are supported via the Bridge with QK layernorm handling (Qwen3) and bias in QKV (Qwen2).
+Qwen3-Next models also support Gated-Delta Networks, Zero-Centered RMSNorm and QK Layernorm weight decay during training.
 
 ## Conversion with 🤗 Hugging Face
 
@@ -47,6 +48,7 @@ cfg = qwen3_8b_pretrain_config(
   - Qwen2 recipes: [bridge.recipes.qwen.qwen2](../../apidocs/bridge/bridge.recipes.qwen.qwen2.md)
   - Qwen3 recipes: [bridge.recipes.qwen.qwen3](../../apidocs/bridge/bridge.recipes.qwen.qwen3.md)
   - Qwen3 MoE recipes: [bridge.recipes.qwen.qwen3_moe](../../apidocs/bridge/bridge.recipes.qwen.qwen3_moe.md)
+  - Qwen3-Next recipes: [bridge.recipes.qwen.qwen3_next](../../apidocs/bridge/bridge.recipes.qwen.qwen3_next.md)
 
 ## Finetuning recipes
 - Coming soon
@@ -55,6 +57,7 @@ cfg = qwen3_8b_pretrain_config(
 - Qwen2: `https://huggingface.co/Qwen/Qwen2-7B`
 - Qwen2.5: `https://huggingface.co/Qwen/Qwen2.5-7B`
 - Qwen3: `https://huggingface.co/Qwen/Qwen3-7B`
+- Qwen3-Next `https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct` and `https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Thinking`
 
 ## Related docs
 - Recipe usage and customization: [Recipe usage](../../recipe-usage.md)
