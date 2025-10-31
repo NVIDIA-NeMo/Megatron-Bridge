@@ -805,6 +805,20 @@ class TestIterationSkipping:
 
         return mock_state
 
+    def _make_fake_pg(self, dp_size: int):
+        class _DP:
+            def __init__(self, size: int) -> None:
+                self._size = size
+
+            def size(self) -> int:
+                return self._size
+
+        class _PG:
+            def __init__(self, size: int) -> None:
+                self.dp = _DP(size)
+
+        return _PG(dp_size)
+
     @patch("megatron.bridge.training.train._dummy_train_step")
     @patch("megatron.bridge.training.train.parallel_state.get_data_parallel_world_size", return_value=2)
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
@@ -817,7 +831,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(2)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is True
@@ -837,7 +852,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(1)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is False
@@ -856,7 +872,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(1)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is False
@@ -874,7 +891,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(8)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is True
