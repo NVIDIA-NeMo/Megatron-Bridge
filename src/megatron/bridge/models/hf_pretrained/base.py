@@ -113,7 +113,7 @@ class PreTrainedBase(ABC):
                         for pattern in self.custom_file_patterns
                     ):
                         try:
-                            downloaded_file = hf_hub_download(
+                            _ = hf_hub_download(
                                 repo_id=str(source_path),
                                 filename=py_file,
                                 local_dir=target_path,
@@ -173,6 +173,19 @@ class PreTrainedBase(ABC):
 
             if original_source_path is not None:
                 source_paths.append(original_source_path)
+            else:
+                # try to automatically determine original source path
+                if getattr(self, "auto_map_model_class", None) is not None and hasattr(self, "model_name_or_path"):
+                    import sys
+
+                    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+                    model_class = get_class_from_dynamic_module(
+                        self.auto_map_model_class, self.model_name_or_path, trust_remote_code=True
+                    )
+                    src_file = sys.modules[model_class.__module__].__file__
+                    src_path = Path(src_file).parent
+                    source_paths.append(src_path)
 
             if hasattr(self, "model_name_or_path") and self.model_name_or_path:
                 source_paths.append(self.model_name_or_path)
