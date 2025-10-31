@@ -15,18 +15,14 @@
 import copy
 from dataclasses import dataclass
 from typing import Any, Optional
-from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronNano12Bv2Provider
+
+from megatron.core.activations import fast_gelu
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
-from megatron.core.models.multimodal.llava_spec import decoder_model_with_transformer_engine_default_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
-from megatron.core.jit import jit_fuser
-import torch
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 
+from megatron.bridge.models.nemotronh.nemotron_h_provider import NemotronNano12Bv2Provider
 
-@jit_fuser
-def fast_gelu(x: torch.Tensor) -> torch.Tensor:
-    return 0.5 * x * (1.0 + torch.tanh(x * 0.7978845608 * (1.0 + 0.044715 * x * x)))
 
 @dataclass
 class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
@@ -93,7 +89,7 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
         vision_cfg.layernorm_zero_centered_gamma = False
         vision_cfg.apply_query_key_layer_scaling = False
         vision_cfg.attention_softmax_in_fp32 = True
-        vision_cfg.normalization = 'LayerNorm'
+        vision_cfg.normalization = "LayerNorm"
         vision_cfg.qk_layernorm = False
         vision_cfg.layernorm_epsilon = 1e-6
 
@@ -109,7 +105,6 @@ class NemotronNano12Bv2VLModelProvider(NemotronNano12Bv2Provider):
         # Overrides for language_model_type = "nemotron5-hybrid-12b"
         vision_proj_cfg.ffn_hidden_size = 20480
         vision_proj_cfg.bias_activation_fusion = False
-
 
         language_spec = mamba_stack_spec
         vision_spec = get_vit_layer_with_transformer_engine_spec()
