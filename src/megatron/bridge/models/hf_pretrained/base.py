@@ -55,15 +55,14 @@ class PreTrainedBase(ABC):
         self._state_dict_accessor: Optional[StateDict] = None
         self.init_kwargs = kwargs
 
-        # Common custom modeling file patterns
-        self.custom_file_patterns = [
-            "modeling_*.py",
-            "configuration_*.py",
-            "tokenization_*.py",
-            "processing_*.py",
-            "feature_extraction_*.py",
-            "*.py",  # fallback for anything not captured above
-        ]
+        # File patterns used to copy files used for custom modeling, e.g.
+        # modeling_*.py, configuration_*.py, tokenization_*.py,
+        # processing_*.py, feature_extraction_*.py. HF repos
+        # may have additional python files that are imported in the
+        # aforementioned, so we just copy all python files
+        # instead of above specific prefixes.
+        # Currently, we can capture all json files via ARTIFACTS.
+        self.custom_file_patterns = ["*.py"]
 
     def get_artifacts(self) -> Dict[str, str]:
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
