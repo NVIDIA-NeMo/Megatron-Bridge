@@ -73,8 +73,8 @@ def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     cfg.model.seq_length = 8192
     cfg.dataset.sequence_length = 8192
 
-    cg_impl_map = {"cs": None, "mx": "local"}
-    cuda_graph_impl = cg_impl_map.get(fp8_recipe)
+    cg_impl_map = {"cs": "none", "mx": "local"}
+    cuda_graph_impl = cg_impl_map.get(fp8_recipe, "none")
     set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope="full_iteration")
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)

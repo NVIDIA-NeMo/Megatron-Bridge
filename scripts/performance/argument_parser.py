@@ -43,7 +43,7 @@ def list_of_strings(arg):
 
 def is_cuda_graph_impl_valid(arg):
     """Validate and normalize the CUDA graph implementation argument."""
-    choices = ["local", "te", "TE", "transformer_engine"]
+    choices = ["none", "None", "local", "te", "TE", "transformer_engine"]
     if arg.lower() in choices:
         arg = arg.lower()
         if arg == "te":
@@ -269,7 +269,7 @@ def parse_cli_args():
         "--cuda_graph_impl",
         help="Cuda graph implementation. Options- 'local', 'te', 'TE', 'transformer_engine'.",
         type=is_cuda_graph_impl_valid,
-        choices=["local", "te", "TE", "transformer_engine"],
+        choices=["none", "None", "local", "te", "TE", "transformer_engine"],
         required=False,
         default=None,
     )

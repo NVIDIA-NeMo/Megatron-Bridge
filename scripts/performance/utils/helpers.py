@@ -111,10 +111,11 @@ def set_cuda_graph_overrides(
     recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: str = "full"
 ) -> None:
     """Set the CUDA graph overrides from the performance matrix."""
-    recipe.model.cuda_graph_impl = cuda_graph_impl
+    if cuda_graph_impl is not None:
+        recipe.model.cuda_graph_impl = cuda_graph_impl
     recipe.model.cuda_graph_scope = cuda_graph_scope
 
-    if cuda_graph_impl is not None:
+    if cuda_graph_impl not in [None, "none"]:
         recipe.model.use_te_rng_tracker = True
         recipe.rng.te_rng_tracker = True
 
