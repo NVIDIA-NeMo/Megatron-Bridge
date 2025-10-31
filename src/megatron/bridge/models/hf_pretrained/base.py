@@ -62,6 +62,7 @@ class PreTrainedBase(ABC):
             "tokenization_*.py",
             "processing_*.py",
             "feature_extraction_*.py",
+            "*.py",  # fallback for anything not captured above
         ]
 
     def get_artifacts(self) -> Dict[str, str]:
