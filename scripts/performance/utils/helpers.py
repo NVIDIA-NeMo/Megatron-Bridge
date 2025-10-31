@@ -36,7 +36,7 @@ def get_user_parallelism_and_batch_size_configs(**kwargs):
     return -1, -1, -1, -1, -1, -1, -1, -1
 
 
-def set_basic_perf_overrides(recipe: Any) -> None:
+def set_basic_perf_overrides(recipe: ConfigContainer) -> None:
     """Apply common performance overrides shared across recipes."""
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
@@ -58,7 +58,7 @@ def set_basic_perf_overrides(recipe: Any) -> None:
     recipe.ddp.grad_reduce_in_fp32 = False
 
 
-def set_megatron_fsdp_overrides(recipe: Any) -> None:
+def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
     """Set the Megatron FSDP overrides."""
     recipe.ddp.use_megatron_fsdp = True
     recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
@@ -138,14 +138,14 @@ def set_recompute_overrides(
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
-def moe_a2a_1f1b_overrides(recipe: Any) -> None:
+def moe_a2a_1f1b_overrides(recipe: ConfigContainer) -> None:
     """Tune configuration for MoE A2A 1F1B communication overlap."""
     recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
     recipe.comm_overlap.delay_wgrad_compute = True
     recipe.model.moe_shared_expert_overlap = False
 
 
-def set_user_overrides(recipe: Any, kwargs: Any) -> None:
+def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     """Set the user overrides."""
     set_basic_perf_overrides(recipe)
     if kwargs.get("max_steps") is not None:
