@@ -23,7 +23,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfi
 class Qwen3VLTransformerConfig(TransformerConfig):
 
     vocab_size: int = 64000
-    language_max_sequence_length: int  = 2048# Language model maximum sequence length. This is used for positional embedding.
+    language_max_sequence_length: int  = 4096
 
 
     patch_size: int = 14

@@ -92,8 +92,11 @@ def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> C
     """
     recommended_kwargs: Qwen3VLCommonKwargs = {
         "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
-        "tensor_parallelism": 1,
+        "tensor_parallelism": 4,
         "pipeline_parallelism": 1,
+        "freeze_language_model": False,
+        "freeze_vision_model": False,
+        "freeze_vision_projection": False,
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)

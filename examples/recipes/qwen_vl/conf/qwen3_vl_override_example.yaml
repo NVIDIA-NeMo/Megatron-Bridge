@@ -19,19 +19,19 @@ model:
   # tensor_model_parallel_size: 1
   
 
-  freeze_language_model: true      # Freeze language model weights
-  freeze_vision_model: true         # Freeze vision encoder weights
+  freeze_language_model: false      # Freeze language model weights
+  freeze_vision_model: false         # Freeze vision encoder weights
   freeze_vision_projection: false    # Freeze vision-to-language projection weights
 
 train:
-  train_iters: 20
-  global_batch_size: 8
+  train_iters: 100
+  global_batch_size: 32
   micro_batch_size: 1
   eval_iters: 5
 
 optimizer:
-  lr: 0.00025
-  min_lr: 0.000025
+  lr: 2e-5
+  min_lr: 2e-6
 
 scheduler:
   lr_warmup_iters: 10

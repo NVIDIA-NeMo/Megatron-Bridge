@@ -14,9 +14,11 @@
 # limitations under the License.
 
 """
-uv run  python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen3_vl.py
+uv run  python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen3_vl.py  --recipe qwen3_vl_8b_finetune_config
 # for moe model
 uv run  python -m torch.distributed.run --nproc_per_node=8 --log-dir logs/   --redirects 3     --tee "0:3" examples/recipes/qwen_vl/finetune_qwen3_vl.py --recipe qwen3_vl_3b_active_30b_moe_finetune_config
+
+uv run  python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import --hf-model Qwen/Qwen3-VL-8B-Instruct --megatron-path ./logs/checkpoints/qwen3vl8b
 
 Qwen3-VL Finetuning Script with YAML and CLI Configuration Overrides.
 

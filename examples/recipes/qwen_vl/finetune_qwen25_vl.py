@@ -23,7 +23,7 @@ You can pick a specific recipe via `--recipe`, e.g., `qwen25_vl_3b_finetune_conf
 Examples:
     Loading pretrained weights (recommended for finetune):
         1) Import HF checkpoint to Megatron format:
-           $ python examples/conversion/convert_checkpoints.py import \
+           $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \
                --hf-model Qwen/Qwen2.5-VL-3B-Instruct \
                --megatron-path /path/to/megatron_ckpt
 
