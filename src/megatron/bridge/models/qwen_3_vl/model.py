@@ -141,32 +141,40 @@ class Qwen3VLModel(MegatronModule):
     ):
         """Freeze model modules.
 
-        Make specific modules non-trainable by setting requires_grad to False for the module's parameters.
+        Make specific modules non-trainable by setting requires_grad to False.
 
         Args:
             freeze_language_model (bool): Freeze the language model module.
-            freeze_vision_model (bool): Freeze the vision model module.
-            freeze_vision_projection (bool): Freeze the vision projection module.
+            freeze_vision_model (bool): Freeze the vision model module (patch_embed, blocks, pos_embed).
+            freeze_vision_projection (bool): Freeze the vision projection modules (merger and deepstack_merger_list).
         """
+        print(self)
         modules = []
+        
         if freeze_language_model and self.language_model is not None:
             modules.append(self.language_model)
+            
         if freeze_vision_model and self.vision_model is not None:
-            modules.append(self.vision_model)
+            # Freeze vision encoder components (patch_embed, blocks, pos_embed, rotary_pos_emb)
+            if hasattr(self.vision_model, "patch_embed"):
+                modules.append(self.vision_model.patch_embed)
+            if hasattr(self.vision_model, "blocks"):
+                modules.append(self.vision_model.blocks)
+            if hasattr(self.vision_model, "pos_embed"):
+                modules.append(self.vision_model.pos_embed)
+            if hasattr(self.vision_model, "rotary_pos_emb"):
+                modules.append(self.vision_model.rotary_pos_emb)
+                
         if freeze_vision_projection and self.vision_model is not None:
-            modules.append(self.vision_model.decoder.deepstack_merger_list)
-            modules.append(self.vision_model.merger)
+            # Freeze vision projection components (merger and deepstack_merger_list)
+            if hasattr(self.vision_model, "merger"):
+                modules.append(self.vision_model.merger)
+            if hasattr(self.vision_model, "deepstack_merger_list"):
+                modules.append(self.vision_model.deepstack_merger_list)
 
         for module in modules:
             for param in module.parameters():
                 param.requires_grad = False
-
-        if freeze_vision_model and not freeze_vision_projection:
-            if self.vision_model is not None:
-                for param in self.vision_model.decoder.deepstack_merger_list.parameters():
-                    param.requires_grad = True
-                for param in self.vision_model.merger.parameters():
-                    param.requires_grad = True
 
     def forward(
         self,
@@ -254,7 +262,6 @@ class Qwen3VLModel(MegatronModule):
                     )
                 assert video_embeds is None, "not support video now"
 
-                print(f"[rank {torch.distributed.get_rank()}] [Qwen3VLModel.forward] image_embeds shape {image_embeds.shape} combined_embeddings shape {combined_embeddings.shape} image_mask shape {image_mask.shape}")
 
                 if image_embeds is not None:
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
