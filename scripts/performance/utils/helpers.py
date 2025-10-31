@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from utils.utils import get_model_recipe
 
@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 def get_user_parallelism_and_batch_size_configs(**kwargs):
     """Get the user parallelism and batch size configs from the performance matrix."""
     return -1, -1, -1, -1, -1, -1, -1, -1
+
+
+def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
+    """Get the precision configs for the given compute dtype and FP8 recipe."""
+    if compute_dtype == "fp8":
+        if fp8_recipe == "ds":
+            return bf16_with_fp8_delayed_scaling_mixed()
+        elif fp8_recipe == "cs":
+            current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
+            # Disable BF16 Transformer layers in the performance config
+            current_scaling_cfg.first_last_layers_bf16 = False
+            return current_scaling_cfg
+        elif fp8_recipe == "mx":
+            return bf16_with_mxfp8_mixed()
+        elif fp8_recipe == "ss":
+            return bf16_with_fp8_subchannel_scaling_mixed()
+        else:
+            raise ValueError(f"Invalid FP8 recipe: {fp8_recipe}")
+    elif compute_dtype == "bf16":
+        return bf16_mixed()
+    else:
+        raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
 
 def set_basic_perf_overrides(recipe: ConfigContainer) -> None:
@@ -81,28 +103,6 @@ def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
     recipe.checkpoint.load = None
 
 
-def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
-    """Get the precision configs for the given compute dtype and FP8 recipe."""
-    if compute_dtype == "fp8":
-        if fp8_recipe == "ds":
-            return bf16_with_fp8_delayed_scaling_mixed()
-        elif fp8_recipe == "cs":
-            current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
-            # Disable BF16 Transformer layers in the performance config
-            current_scaling_cfg.first_last_layers_bf16 = False
-            return current_scaling_cfg
-        elif fp8_recipe == "mx":
-            return bf16_with_mxfp8_mixed()
-        elif fp8_recipe == "ss":
-            return bf16_with_fp8_subchannel_scaling_mixed()
-        else:
-            raise ValueError(f"Invalid FP8 recipe: {fp8_recipe}")
-    elif compute_dtype == "bf16":
-        return bf16_mixed()
-    else:
-        raise ValueError(f"Invalid compute dtype: {compute_dtype}")
-
-
 def set_cuda_graph_overrides(
     recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: str = "full"
 ) -> None:
@@ -138,7 +138,7 @@ def set_recompute_overrides(
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
-def moe_a2a_1f1b_overrides(recipe: ConfigContainer) -> None:
+def set_moe_a2a_1f1b_overrides(recipe: ConfigContainer) -> None:
     """Tune configuration for MoE A2A 1F1B communication overlap."""
     recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
     recipe.comm_overlap.delay_wgrad_compute = True
@@ -151,7 +151,9 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("max_steps") is not None:
         recipe.train.train_iters = kwargs.get("max_steps")
 
-    set_megatron_fsdp_overrides(recipe, kwargs)
+    use_megatron_fsdp = kwargs.get("use_megatron_fsdp")
+    if use_megatron_fsdp:
+        set_megatron_fsdp_overrides(recipe)
 
     cuda_graph_impl = kwargs.get("cuda_graph_impl")
     cuda_graph_scope = kwargs.get("cuda_graph_scope")
@@ -163,13 +165,13 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         recipe, recompute_num_layers=recompute_num_layers, cpu_offloading_num_layers=cpu_offloading_num_layers
     )
 
+    moe_a2a = kwargs.get("moe_a2a")
+    if moe_a2a:
+        set_moe_a2a_1f1b_overrides(recipe)
+
     use_tokendrop = kwargs.get("use_tokendrop")
     if use_tokendrop:
         recipe.model = apply_moe_token_drop(recipe.model)
-
-    moe_a2a = kwargs.get("moe_a2a")
-    if moe_a2a:
-        moe_a2a_1f1b_overrides(recipe)
 
     if kwargs.get("tensor_model_parallel_size") is not None:
         recipe.model.tensor_model_parallel_size = kwargs.get("tensor_model_parallel_size")

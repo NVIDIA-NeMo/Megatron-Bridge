@@ -17,8 +17,8 @@ import logging
 from utils.helpers import (
     get_precision_config,
     get_user_parallelism_and_batch_size_configs,
-    moe_a2a_1f1b_overrides,
     set_basic_perf_overrides,
+    set_moe_a2a_1f1b_overrides,
 )
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
@@ -80,7 +80,7 @@ def deepseek_v3_gb200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
         cfg.model.moe_router_force_load_balancing = True
 
     if A2A_1F1B:
-        moe_a2a_1f1b_overrides(cfg)
+        set_moe_a2a_1f1b_overrides(cfg)
 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
@@ -140,7 +140,7 @@ def deepseek_v3_gb200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
         cfg.model.moe_router_force_load_balancing = True
 
     if A2A_1F1B:
-        moe_a2a_1f1b_overrides(cfg)
+        set_moe_a2a_1f1b_overrides(cfg)
 
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
@@ -201,7 +201,7 @@ def deepseek_v3_b200_256gpus_bf16_config(**kwargs) -> ConfigContainer:
         cfg.model.moe_router_force_load_balancing = True
 
     if A2A_1F1B:
-        moe_a2a_1f1b_overrides(cfg)
+        set_moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -258,7 +258,7 @@ def deepseek_v3_b200_256gpus_fp8_config(**kwargs) -> ConfigContainer:
         cfg.model.moe_router_force_load_balancing = True
 
     if A2A_1F1B:
-        moe_a2a_1f1b_overrides(cfg)
+        set_moe_a2a_1f1b_overrides(cfg)
 
     return cfg
 
@@ -313,7 +313,7 @@ def deepseek_v3_h100_1024gpus_bf16_config(**kwargs) -> ConfigContainer:
         cfg.model.moe_router_force_load_balancing = True
 
     if A2A_1F1B:
-        moe_a2a_1f1b_overrides(cfg)
+        set_moe_a2a_1f1b_overrides(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = False
 
@@ -370,7 +370,7 @@ def deepseek_v3_h100_1024gpus_fp8_config(**kwargs) -> ConfigContainer:
         cfg.model.moe_router_force_load_balancing = True
 
     if A2A_1F1B:
-        moe_a2a_1f1b_overrides(cfg)
+        set_moe_a2a_1f1b_overrides(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = False
 

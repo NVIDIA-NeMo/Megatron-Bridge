@@ -19,10 +19,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Optional
 
-from parse_default_config_ast import ParallelismExtractor
 
-from megatron.bridge.training.config import ConfigContainer
-
+try:
+    from parse_default_config_ast import ParallelismExtractor
+except ImportError:
+    from .parse_default_config_ast import ParallelismExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def get_model_recipe(
     num_gpus: int,
     compute_dtype: str,
     fp8_recipe: Optional[str] = None,
-) -> ConfigContainer:
+):
     """Get the model recipe factory by its name."""
     recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
     module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
