@@ -16,9 +16,9 @@
 
 import functools
 
-from megatron.bridge.recipes import nemotron_nano_v2_vl_step
 import pytest
 
+from megatron.bridge.recipes import nemotron_nano_v2_vl_step
 from megatron.bridge.recipes.nemotron_vl import nemotron_nano_v2_vl as nemotron_recipe
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
@@ -36,7 +36,7 @@ def _finetune_wrapper(**kwargs):
 NEMOTRON_VL_FINETUNE_RECIPES = [
     # Small model, only use 2 layers
     (
-        functools.partial(_finetune_wrapper, hf_model_path="nvidia/Nemotron-Nano-12B-v2-VL-BF16"),
+        functools.partial(_finetune_wrapper, hf_model_path="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"),
         "nemotron_vl_nano_v2",
         {
             "num_layers": 3,
@@ -56,11 +56,9 @@ class TestNemotronVLRecipes:
     def test_nemotron_vl_finetune_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
         """Functional test for Nemotron VL recipes with minimal parallelism."""
         run_pretrain_vl_recipe_test(
-            config_func, 
-            recipe_name, 
+            config_func,
+            recipe_name,
             tmp_path,
             model_overrides=model_overrides,
             forward_step_func=nemotron_nano_v2_vl_step.forward_step,
         )
-
-

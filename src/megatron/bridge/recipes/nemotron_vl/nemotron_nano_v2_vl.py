@@ -22,7 +22,7 @@ from megatron.bridge.data.vlm_datasets import (
     HFDatasetConversationProvider,
 )
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
-from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+from megatron.bridge.peft.lora import VLMLoRA
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -37,13 +37,11 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
-from megatron.bridge.peft.lora import VLMLoRA
-
 
 def pretrain_config(
     dir: Optional[str] = None,
     name: str = "nemotron_nano_v2_vl_pretrain",
-    hf_model_path: str = "nvidia/Nemotron-Nano-12B-v2-VL-BF16",
+    hf_model_path: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     # Dataset configuration
     dataset_type: Optional[str] = None,
     data_paths: Optional[List[str]] = None,
@@ -134,9 +132,7 @@ def pretrain_config(
             persistent_workers=False,
         )
     else:
-        raise ValueError(
-            f"Unknown dataset_type '{_dataset_choice}'. Expected one of: 'mock', 'hf', 'preloaded'."
-        )
+        raise ValueError(f"Unknown dataset_type '{_dataset_choice}'. Expected one of: 'mock', 'hf', 'preloaded'.")
 
     # Config Container
     cfg = ConfigContainer(

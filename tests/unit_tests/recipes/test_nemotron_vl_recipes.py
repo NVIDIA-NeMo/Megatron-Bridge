@@ -26,7 +26,7 @@ def _safe_overrides() -> dict:
     return {
         "name": "unit_nemotron_vl",
         "dir": ".",
-        "hf_model_path": "nvidia/Nemotron-Nano-12B-v2-VL-BF16",
+        "hf_model_path": "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
         "train_iters": 10,
         "global_batch_size": 2,
         "micro_batch_size": 1,
@@ -191,5 +191,3 @@ def test_nemotron_vl_finetune_custom_save_dir(monkeypatch: pytest.MonkeyPatch):
 
     assert getattr(cfg.checkpoint, "save", None) == "/fake/save"
     assert getattr(cfg.checkpoint, "load", None) == "/fake/save"
-
-

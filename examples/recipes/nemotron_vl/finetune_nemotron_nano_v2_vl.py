@@ -65,8 +65,8 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--hf-model-path",
         type=str,
-        default="nvidia/Nemotron-Nano-12B-v2-VL-BF16",
-        help="Path to the HuggingFace model to load weights from. Default: nvidia/Nemotron-Nano-12B-v2-VL-BF16",
+        default="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+        help="Path to the HuggingFace model to load weights from. Default: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     )
     # Finetune-specific flags
     parser.add_argument(
