@@ -56,7 +56,7 @@ def test_dataloaders_to_iterators_basic(dl_type):
     dl = DataLoader(ds, batch_size=2)
 
     train_it, valid_it, test_it = dataloaders_to_iterators(
-        cfg=cfg, model_length=1, train_dataloader=dl, valid_dataloader=dl, test_dataloader=dl
+        cfg=cfg, train_dataloader=dl, valid_dataloader=dl, test_dataloader=dl
     )
 
     # Always returns iterators (validation is forced cyclic)
@@ -71,7 +71,7 @@ def test_dataloaders_to_iterators_vpp_replication():
     dl = DataLoader(ds, batch_size=2)
 
     train_it, valid_it, test_it = dataloaders_to_iterators(
-        cfg=cfg, model_length=2, train_dataloader=dl, valid_dataloader=dl, test_dataloader=dl
+        cfg=cfg, train_dataloader=dl, valid_dataloader=dl, test_dataloader=dl
     )
 
     assert isinstance(train_it, list) and len(train_it) == 2
