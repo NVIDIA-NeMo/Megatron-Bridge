@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 import logging
-from typing import Callable
 
 import torch
 from argument_parser import parse_cli_args
@@ -33,37 +31,11 @@ from megatron.bridge.training.utils.omegaconf_utils import (
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def get_recipe_builder(model_name: str, model_size: str, gpu: str, num_gpus: int, compute_dtype: str) -> Callable:
-    """Resolve and return a config factory for the requested recipe."""
-    cfg_str = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
-
-    module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
-    try:
-        config_module = importlib.import_module(module_name)
-    except ModuleNotFoundError as exc:
-        raise ValueError(f"Failed to import configuration module '{module_name}' for model '{model_name}'.") from exc
-
-    try:
-        recipe_builder = getattr(config_module, cfg_str)
-    except AttributeError as exc:
-        raise ValueError(
-            f"Configuration '{cfg_str}' not found in module '{module_name}'. Ensure the config exists and is exported."
-        ) from exc
-
-    return recipe_builder
-
-
 def main():
     """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
 
-    if args.model_name == "deepseek" and args.model_size == "v3":
-        recipe_builder = get_recipe_builder(
-            args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype
-        )
-        recipe = recipe_builder(**vars(args))
-    else:
-        recipe = get_model_recipe_with_user_overrides(**vars(args))
+    recipe = get_model_recipe_with_user_overrides(**vars(args))
 
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     if cli_overrides:
@@ -76,23 +48,6 @@ def main():
     final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True)
     # Apply overrides while preserving excluded fields
     apply_overrides(recipe, final_overrides_as_dict, excluded_fields)
-
-    if args.compute_dtype == "bf16":
-        recipe.optimizer.use_precision_aware_optimizer = True
-    if recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.apply_rope_fusion = True
-
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-
-    dp = int(args.num_gpus / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     pretrain(config=recipe, forward_step_func=forward_step)
 

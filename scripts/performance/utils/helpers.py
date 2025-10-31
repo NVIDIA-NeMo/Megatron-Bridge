@@ -31,11 +31,6 @@ from megatron.bridge.training.mixed_precision import (
 logger = logging.getLogger(__name__)
 
 
-def get_user_parallelism_and_batch_size_configs(**kwargs):
-    """Get the user parallelism and batch size configs from the performance matrix."""
-    return -1, -1, -1, -1, -1, -1, -1, -1
-
-
 def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
@@ -172,6 +167,8 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     use_tokendrop = kwargs.get("use_tokendrop")
     if use_tokendrop:
         recipe.model = apply_moe_token_drop(recipe.model)
+    if use_tokendrop is not None and not use_tokendrop:  # explicitly set to False by user
+        recipe.model.moe_router_force_load_balancing = True
 
     if kwargs.get("tensor_model_parallel_size") is not None:
         recipe.model.tensor_model_parallel_size = kwargs.get("tensor_model_parallel_size")
@@ -189,6 +186,23 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         recipe.train.global_batch_size = kwargs.get("global_batch_size")
     if kwargs.get("micro_batch_size") is not None:
         recipe.train.micro_batch_size = kwargs.get("micro_batch_size")
+
+    if kwargs.get("compute_dtype") == "bf16":
+        recipe.optimizer.use_precision_aware_optimizer = True
+    if recipe.model.use_transformer_engine_op_fuser:
+        recipe.model.use_transformer_engine_op_fuser = False
+    recipe.model.apply_rope_fusion = True
+
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     return recipe
 
