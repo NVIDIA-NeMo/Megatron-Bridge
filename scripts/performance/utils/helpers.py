@@ -31,6 +31,11 @@ from megatron.bridge.training.mixed_precision import (
 logger = logging.getLogger(__name__)
 
 
+def get_user_parallelism_and_batch_size_configs(**kwargs):
+    """Get the user parallelism and batch size configs from the performance matrix."""
+    return -1, -1, -1, -1, -1, -1, -1, -1
+
+
 def set_basic_perf_overrides(recipe: Any) -> None:
     """Apply common performance overrides shared across recipes."""
     recipe.train.train_iters = 50

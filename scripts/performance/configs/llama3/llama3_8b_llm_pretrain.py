@@ -21,7 +21,6 @@ from utils.helpers import (
     set_cuda_graph_overrides,
     set_megatron_fsdp_overrides,
 )
-from utils.utils import register_model_recipe
 
 from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -31,7 +30,6 @@ from megatron.bridge.training.config import ConfigContainer
 logger = logging.getLogger(__name__)
 
 
-@register_model_recipe
 def llama3_8b_gb200_8gpus_bf16_config() -> ConfigContainer:
     """GB200, 8xGPU, BF16 baseline config."""
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
@@ -58,7 +56,6 @@ def llama3_8b_gb200_8gpus_bf16_config() -> ConfigContainer:
     return cfg
 
 
-@register_model_recipe
 def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """GB200, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
