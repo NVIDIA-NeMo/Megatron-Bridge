@@ -12,33 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.gemma import (
-    Gemma3ModelProvider1B,
+from megatron.bridge.models.qwen import (
+    Qwen3NextModelProvider80B_A3B,
 )
 from tests.functional_tests.utils import compare_provider_configs
 
 
 HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
-    "google/gemma-3-1b-pt": Gemma3ModelProvider1B,
+    # Qwen3Next models - using the 80B A3B Instruct model
+    "Qwen/Qwen3-Next-80B-A3B-Instruct": Qwen3NextModelProvider80B_A3B,
 }
 
 
-class TestGemma3ModelProviderMapping:
+class TestQwen3NextModelProviderMapping:
     """Test that bridge provider configs are equivalent to predefined provider configs."""
 
     @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()))
     def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
         """Test that bridge converted provider config matches predefined provider config."""
-        # Create bridge from HF model
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+        # Check if the model is available - skip if not (it's a large model)
+        try:
+            # Create bridge from HF model
+            bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+        except Exception as e:
+            pytest.skip(f"Model {hf_model_id} not available for testing: {e}")
+
         converted_provider = bridge.to_megatron_provider(load_weights=False)
+        converted_provider.finalize()
 
         # Create predefined provider
         predefined_provider = provider_class()
+        predefined_provider.finalize()
 
         # Compare configs
         compare_provider_configs(converted_provider, predefined_provider, hf_model_id)

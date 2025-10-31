@@ -398,7 +398,7 @@ def _load_hf_model(args, is_vl_model: bool):
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
     hf_model = model_class.from_pretrained(
-        args.hf_model_path, dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
+        args.hf_model_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
@@ -490,6 +490,7 @@ def _load_megatron_model(args):
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(
             args.megatron_model_path,
@@ -503,13 +504,14 @@ def _load_megatron_model(args):
         )
     else:
         # Convert from HF to Megatron
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 

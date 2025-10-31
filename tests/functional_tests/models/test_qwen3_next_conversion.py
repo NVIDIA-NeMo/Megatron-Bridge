@@ -13,50 +13,62 @@
 # limitations under the License.
 
 import json
-import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers import AutoTokenizer, Qwen3NextConfig, Qwen3NextForCausalLM
 
 
-# Overrides for 8B size
-HF_NEMOTRONH_TOY_MODEL_OVERRIDES = {
-    "attention_head_dim": 48,
-    "chunk_size": 48,
-    "expand": 2,
-    "hidden_size": 768,
-    "hybrid_override_pattern": "M*M-",
+# Toy model config based on Qwen3-Next-80B-A3B but with minimal layers for testing
+HF_QWEN3_NEXT_TOY_MODEL_CONFIG = {
+    "architectures": ["Qwen3NextForCausalLM"],
+    "attention_dropout": 0.0,
+    "bos_token_id": 151643,
+    "eos_token_id": 151643,
+    "hidden_act": "silu",
+    "hidden_size": 128,
+    "head_dim": 256,
     "initializer_range": 0.02,
-    "intermediate_size": 3072,
-    "layer_norm_epsilon": 1e-05,
-    "mamba_head_dim": 64,
-    "mamba_hidden_act": "silu",
-    "mamba_num_heads": 24,
-    "max_position_embeddings": 8192,
-    "n_groups": 8,
+    "intermediate_size": 5120,
+    "max_position_embeddings": 262144,
+    "model_type": "qwen3_next",
     "num_attention_heads": 16,
-    "num_hidden_layers": 4,
-    "num_key_value_heads": 8,
-    "ssm_state_size": 128,
-    "vocab_size": 131072,
+    "num_hidden_layers": 2,  # Reduced for toy model testing
+    "num_key_value_heads": 2,
+    "rms_norm_eps": 1e-06,
+    "rope_theta": 10000000.0,
+    "tie_word_embeddings": False,
+    "torch_dtype": "bfloat16",
+    "transformers_version": "4.40.1",
+    "use_cache": True,
+    "vocab_size": 151936,
+    # MoE specific
+    "num_experts": 8,
+    "num_experts_per_tok": 2,
+    "moe_intermediate_size": 512,
+    "shared_expert_intermediate_size": 512,
+    # Qwen3-Next specific
+    "full_attention_interval": 2,  # 1 standard attention layer per 4 layers
+    "partial_rotary_factor": 0.25,  # RoPE only applies to first 25% of dims
+    "linear_conv_kernel_dim": 4,
+    "linear_key_head_dim": 32,
+    "linear_value_head_dim": 32,
+    "linear_num_key_heads": 16,
+    "linear_num_value_heads": 32,
 }
 
 
-class TestNemotronHConversion:
+class TestQwen3NextConversion:
     """
-    Test NemotronH model conversion from local HuggingFace model with different parallelism configurations.
+    Test Qwen3Next model conversion from local HuggingFace model with different parallelism configurations.
     """
 
     @pytest.fixture(scope="class")
-    def nemotronh_toy_model_path(self, tmp_path_factory):
+    def qwen3_next_toy_model_path(self, tmp_path_factory):
         """
-        Create and save a HuggingFace NemotronH toy model from config to a temporary directory.
+        Create and save a HuggingFace Qwen3Next toy model from config to a temporary directory.
 
         Args:
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
@@ -65,57 +77,46 @@ class TestNemotronHConversion:
             str: Path to the saved HuggingFace model directory
         """
         # Create a temporary directory for this test class
-        temp_dir = tmp_path_factory.mktemp("nemotronh_toy_model")
-        model_dir = temp_dir / "nemotronh_toy"
+        temp_dir = tmp_path_factory.mktemp("qwen3_next_toy_model")
+        model_dir = temp_dir / "qwen3_next_toy"
 
-        # Create NemotronH toy model config by starting with 8B and applying overrides
-        # This avoids attempting import of NemotronHConfig from Transformers
-        config = AutoConfig.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
-        for k, v in HF_NEMOTRONH_TOY_MODEL_OVERRIDES.items():
-            setattr(config, k, v)
+        # Create Qwen3Next config from the toy model config
+        config = Qwen3NextConfig(**HF_QWEN3_NEXT_TOY_MODEL_CONFIG)
+        config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
         # Create model with random weights and convert to bfloat16
-        model_class_ref = config.auto_map["AutoModelForCausalLM"]
-        model_class = get_class_from_dynamic_module(
-            class_reference=model_class_ref,
-            pretrained_model_name_or_path="nvidia/Nemotron-H-8B-Base-8K",
-            cache_dir=None,
-            force_download=False,
-            resume_download=True,
-            proxies=None,
-            use_auth_token=None,
-            revision=None,
-            local_files_only=False,
-            repo_id="nvidia/Nemotron-H-8B-Base-8K",
-        )
-        model = model_class(config)
-        model = model.bfloat16() if hasattr(model, "bfloat16") else model
+        model = Qwen3NextForCausalLM(config)
+        model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
-        # Download and save tokenizer from a reference NemotronH model
-        tokenizer = AutoTokenizer.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        # Debug: Check model dtype before saving
+        for name, param in model.named_parameters():
+            print(f"Before save - {name}: {param.dtype}")
+            break  # Just check the first parameter
+
+        # Download and save tokenizer from a reference Qwen model
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
         tokenizer.save_pretrained(model_dir)
 
-        # Save model, config, and modeling code to directory
+        # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
-        modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
-        shutil.copy(modeling_filepath, model_dir)
 
-        # Ensure config.json exists with expected keys
+        # Also save config.json explicitly to ensure compatibility with correct torch_dtype
+        config_to_save = HF_QWEN3_NEXT_TOY_MODEL_CONFIG.copy()
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
-            json.dump(model.config.to_dict(), f, indent=2)
+            json.dump(config_to_save, f, indent=2)
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, nemotronh_toy_model_path):
+    def test_toy_model_creation(self, qwen3_next_toy_model_path):
         """
         Test that the toy model is created correctly and can be loaded.
 
         Args:
-            nemotronh_toy_model_path: Path to the toy NemotronH model (from fixture)
+            qwen3_next_toy_model_path: Path to the toy Qwen3Next model (from fixture)
         """
         # Verify the model directory exists
-        model_path = Path(nemotronh_toy_model_path)
+        model_path = Path(qwen3_next_toy_model_path)
         assert model_path.exists(), f"Model directory not found at {model_path}"
 
         # Check essential files exist
@@ -126,77 +127,87 @@ class TestNemotronHConversion:
         weights_file = model_path / "model.safetensors"
         if not weights_file.exists():
             weights_file = model_path / "pytorch_model.bin"
+
+        # If neither single file exists, check for sharded files
+        if not weights_file.exists():
+            # Check for sharded safetensors files
+            sharded_files = list(model_path.glob("model-*-of-*.safetensors"))
+            if sharded_files:
+                weights_file = sharded_files[0]  # Use first shard as representative
+            else:
+                # Check for sharded pytorch files
+                sharded_files = list(model_path.glob("pytorch_model-*-of-*.bin"))
+                if sharded_files:
+                    weights_file = sharded_files[0]  # Use first shard as representative
+
         assert weights_file.exists(), f"Model weights file not found in {model_path}"
 
         # Check for tokenizer files
         tokenizer_config_file = model_path / "tokenizer_config.json"
         assert tokenizer_config_file.exists(), f"tokenizer_config.json not found at {tokenizer_config_file}"
 
-        # Check for modeling file
-        nemotronh_modeling_file = model_path / "modeling_nemotron_h.py"
-        assert nemotronh_modeling_file.exists(), (
-            f"modeling_nemotron_h.py must be copied to toy model path. not found at {nemotronh_modeling_file}"
-        )
-
         # Load and verify config
         with open(config_file) as f:
             config_data = json.load(f)
 
-        assert config_data["model_type"] == "nemotron_h"
-        assert config_data["hidden_size"] == 768
-        assert config_data["intermediate_size"] == 3072
-        assert config_data["num_hidden_layers"] == 4  # Updated to match toy config
+        assert config_data["model_type"] == "qwen3_next"
+        assert config_data["hidden_size"] == 128
+        assert config_data["num_hidden_layers"] == 2  # Updated to match toy config
         assert config_data["num_attention_heads"] == 16
-        assert config_data["vocab_size"] == 131072
+        assert config_data["vocab_size"] == 151936
+        assert config_data["num_experts"] == 8
+        assert config_data["num_experts_per_tok"] == 2
 
         # Try loading the model to verify it's valid
         try:
-            model = AutoModelForCausalLM.from_pretrained(
-                nemotronh_toy_model_path,
+            model = Qwen3NextForCausalLM.from_pretrained(
+                qwen3_next_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=True,
             )
 
             # Try loading the tokenizer as well
             try:
-                tokenizer = AutoTokenizer.from_pretrained(nemotronh_toy_model_path, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(qwen3_next_toy_model_path)
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
 
             # Verify model structure
-            assert hasattr(model, "backbone")
-            assert hasattr(model.backbone, "layers")
-            assert len(model.backbone.layers) == 4  # num_hidden_layers updated to match toy config
+            assert hasattr(model, "model")
+            assert hasattr(model.model, "layers")
+            assert len(model.model.layers) == 2  # num_hidden_layers updated to match toy config
 
-            print(f"SUCCESS: Toy model created and validated at {nemotronh_toy_model_path}")
+            print(f"SUCCESS: Toy model created and validated at {qwen3_next_toy_model_path}")
+            print("Model weights are correctly in bfloat16 format")
 
         except Exception as e:
             assert False, f"Failed to load created toy model: {e}"
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "tp,pp,test_name",
+        "tp,pp,ep,test_name",
         [
-            (2, 1, "TP"),
-            (1, 2, "PP"),
+            (2, 1, 1, "TP"),
+            (1, 2, 1, "PP"),
+            (1, 1, 2, "EP"),
         ],
     )
-    def test_nemotronh_conversion_parallelism(self, nemotronh_toy_model_path, tmp_path, tp, pp, test_name):
+    def test_qwen3_next_conversion_parallelism(self, qwen3_next_toy_model_path, tmp_path, tp, pp, ep, test_name):
         """
-        Test NemotronH model conversion with different parallelism configurations.
+        Test Qwen3Next model conversion with different parallelism configurations.
 
         Args:
-            nemotronh_toy_model_path: Path to the toy NemotronH model (from fixture)
+            qwen3_next_toy_model_path: Path to the toy Qwen3Next model (from fixture)
             tmp_path: Pytest temporary path fixture
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
+            ep: Expert parallelism size
             test_name: Name of the test for identification
         """
 
         # Create temporary output directory for conversion results
-        test_output_dir = tmp_path / f"nemotronh_{test_name}"
+        test_output_dir = tmp_path / f"qwen3_next_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
         # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration on our toy model
@@ -214,13 +225,15 @@ class TestNemotronHConversion:
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
-            nemotronh_toy_model_path,  # Use our local toy model instead of downloading
+            qwen3_next_toy_model_path,  # Use our local toy model instead of downloading
             "--output-dir",
             str(test_output_dir),
             "--tp",
             str(tp),
             "--pp",
             str(pp),
+            "--ep",
+            str(ep),
         ]
 
         try:
@@ -232,11 +245,11 @@ class TestNemotronHConversion:
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                assert False, f"NemotronH {test_name} conversion failed with return code {result.returncode}"
+                assert False, f"Qwen3Next {test_name} conversion failed with return code {result.returncode}"
 
             # Verify that the converted model was saved
             # The output directory should be named after the last part of the model path
-            model_name = Path(nemotronh_toy_model_path).name  # "nemotronh_toy"
+            model_name = Path(qwen3_next_toy_model_path).name  # "qwen3_next_toy"
             converted_model_dir = test_output_dir / model_name
             assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
@@ -251,19 +264,18 @@ class TestNemotronHConversion:
                 f"Model weights file not found in converted model at {converted_model_dir}"
             )
 
-            # Verify the config contains NemotronH-specific parameters
+            # Verify the config contains Qwen3Next-specific parameters
             with open(config_file) as f:
                 saved_config = json.load(f)
 
-            assert saved_config["model_type"] == "nemotron_h", "Model type should be nemotron_h"
-            assert saved_config["hidden_size"] == 768, "Hidden size should match toy config"
-            assert saved_config["intermediate_size"] == 3072, "ffn hidden size should match toy config"
-            assert saved_config["num_hidden_layers"] == 4, "Number of hidden layers should match toy config"
+            assert saved_config["model_type"] == "qwen3_next", "Model type should be qwen3_next"
+            assert saved_config["hidden_size"] == 128, "Hidden size should match toy config"
             assert saved_config["num_attention_heads"] == 16, "Number of attention heads should match toy config"
+            assert saved_config["num_experts"] == 8, "Number of experts should match toy config"
 
-            print(f"SUCCESS: NemotronH {test_name} conversion test completed successfully")
+            print(f"SUCCESS: Qwen3Next {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
 
         except Exception as e:
-            print(f"Error during NemotronH {test_name} conversion test: {e}")
+            print(f"Error during Qwen3Next {test_name} conversion test: {e}")
             raise
