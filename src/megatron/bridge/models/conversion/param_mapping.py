@@ -823,7 +823,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             splits,
             target_param.shape,
             target_param.dtype,
-            torch.cuda.current_device(),
+            target_param.device,
         )
 
     def megatron_to_hf(
