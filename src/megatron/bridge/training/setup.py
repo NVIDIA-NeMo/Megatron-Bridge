@@ -289,7 +289,6 @@ def setup(
         train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
             cfg=cfg,
             train_state=state.train_state,
-            model_length=len(model),
             train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         )
 

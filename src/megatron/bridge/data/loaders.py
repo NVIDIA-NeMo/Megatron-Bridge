@@ -293,10 +293,8 @@ def build_train_valid_test_data_iterators(
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
     )
 
-    # Build iterators using shared helper
     return dataloaders_to_iterators(
         cfg=cfg,
-        model_length=1,
         train_dataloader=train_dataloader,
         valid_dataloader=valid_dataloader,
         test_dataloader=test_dataloader,
@@ -305,7 +303,6 @@ def build_train_valid_test_data_iterators(
 
 def dataloaders_to_iterators(
     cfg: ConfigContainer,
-    model_length: int,
     train_dataloader: Optional[DataLoader],
     valid_dataloader: Optional[DataLoader],
     test_dataloader: Optional[DataLoader],
@@ -323,13 +320,17 @@ def dataloaders_to_iterators(
     assert dl_type in ["single", "cyclic", "batch", "external"]
 
     def _get_iterator(dataloader_type, dataloader):
+        """Return dataset iterator."""
         if dataloader is None:
             return None
         if dataloader_type == "single":
+            # Single-pass iteration (no cycling)
             return RerunDataIterator(iter(dataloader))
         elif dataloader_type in ("cyclic", "batch"):
+            # Cycle for finetuning: allows train_iters > dataset size without raising StopIteration
             return RerunDataIterator(iter(cyclic_iter(dataloader)))
         elif dataloader_type == "external":
+            # External dataloader is passed through. User is expected to define how to iterate.
             if isinstance(dataloader, list):
                 return [RerunDataIterator(d) for d in dataloader]
             else:
@@ -338,6 +339,7 @@ def dataloaders_to_iterators(
             raise RuntimeError("unexpected dataloader type")
 
     if cfg.model.virtual_pipeline_model_parallel_size is not None:
+        model_length = cfg.model.virtual_pipeline_model_parallel_size
         train_iterators = []
         valid_iterators = []
         test_iterators = []
@@ -374,7 +376,6 @@ def set_flags_from_dataloaders(
 def setup_data_iterators(
     cfg: ConfigContainer,
     train_state: TrainState,
-    model_length: int,
     train_valid_test_datasets_provider: Callable,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -390,7 +391,6 @@ def setup_data_iterators(
     Args:
         cfg: The main configuration container.
         train_state: The current training state.
-        model_length: The number of model chunks (used for virtual pipeline parallelism).
         train_valid_test_datasets_provider: A function to build the datasets.
 
     Returns:
@@ -398,24 +398,10 @@ def setup_data_iterators(
         Each element can be a single iterator or a list of iterators if virtual
         pipeline parallelism is enabled.
     """
-    if cfg.model.virtual_pipeline_model_parallel_size is not None:
-        train_data_iterator = []
-        valid_data_iterator = []
-        test_data_iterator = []
-        for i in range(model_length):
-            iterators = build_train_valid_test_data_iterators(
-                cfg=cfg,
-                train_state=train_state,
-                build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-            )
-            train_data_iterator.append(iterators[0])
-            valid_data_iterator.append(iterators[1])
-            test_data_iterator.append(iterators[2])
-    else:
-        train_data_iterator, valid_data_iterator, test_data_iterator = build_train_valid_test_data_iterators(
-            cfg=cfg,
-            train_state=train_state,
-            build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-        )
+    train_data_iterator, valid_data_iterator, test_data_iterator = build_train_valid_test_data_iterators(
+        cfg=cfg,
+        train_state=train_state,
+        build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+    )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator
