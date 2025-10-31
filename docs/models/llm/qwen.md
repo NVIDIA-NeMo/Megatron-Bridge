@@ -48,7 +48,7 @@ cfg = qwen3_8b_pretrain_config(
   - Qwen2 recipes: [bridge.recipes.qwen.qwen2](../../apidocs/bridge/bridge.recipes.qwen.qwen2.md)
   - Qwen3 recipes: [bridge.recipes.qwen.qwen3](../../apidocs/bridge/bridge.recipes.qwen.qwen3.md)
   - Qwen3 MoE recipes: [bridge.recipes.qwen.qwen3_moe](../../apidocs/bridge/bridge.recipes.qwen.qwen3_moe.md)
-  - Qwen3-Next recipes: [TODO]()
+  - Qwen3-Next recipes: [bridge.recipes.qwen.qwen3_next](../../apidocs/bridge/bridge.recipes.qwen.qwen3_next.md)
 
 ## Finetuning recipes
 - Coming soon
