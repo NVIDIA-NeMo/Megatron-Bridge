@@ -137,7 +137,7 @@ def main(
         profile_cfg = yaml_overrides_omega["ConfigContainer"]["profiling"]
         start_step = profile_cfg["profile_step_start"]
         end_step = profile_cfg["profile_step_end"]
-        ranks = list(range(num_nodes * args.gpus_per_node))
+        ranks = list(range(num_gpus))
         plugins.append(NsysPlugin(profile_step_start=start_step,
             profile_step_end=end_step,
             profile_ranks=ranks,
@@ -155,7 +155,7 @@ def main(
     if model_name in ["llama31"] and model_size in ["405b"] and gpu.lower() in ["gb200", "gb300"]:
         if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32
+            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
     if model_name in ["deepseek"] and model_size in ["v3"] and gpu.lower() in ["gb200"] and args.num_gpus == 128:
         if compute_dtype == "bf16" and (not use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
