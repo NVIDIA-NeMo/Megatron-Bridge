@@ -143,11 +143,6 @@ def main(
             profile_ranks=ranks,
             nsys_gpu_metrics=args.profiling_gpu_metrics,
             nsys_trace=['cuda']))
-        
-    # Parse additional SLURM parameters if provided
-    additional_slurm_params = None
-    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
-        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
@@ -234,6 +229,12 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     args, _ = parse_cli_args()
+
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+ 
     main(
         model_name=args.model_name,
         model_size=args.model_size,
