@@ -61,7 +61,6 @@ def main(
     enable_vboost: bool,
     enable_nsys: bool,
     use_tokendrop: bool,
-    enable_deepep: bool,
     moe_a2a: bool,
     executor: run.Executor,
 ):
@@ -81,10 +80,10 @@ def main(
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
-    if gpu in ["h100"]:
-        if model_name == "deepseek" and model_size == "v3":
-            enable_deepep = True if enable_deepep is None else enable_deepep
-            moe_a2a = True if moe_a2a is None else moe_a2a
+    enable_deepep = False
+    if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
+        enable_deepep = True
+        moe_a2a = True if moe_a2a is None else moe_a2a
 
     plugins = (
         [
@@ -152,7 +151,7 @@ def main(
     for exp_name_result, job_dict in result_dict.items():
         job_status = str(job_dict["status"])
 
-        if job_status != "SUCCEEDED":
+        if job_status not in ["SUCCEEDED", "SUBMITTED"]:
             raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
 
 
@@ -181,7 +180,6 @@ if __name__ == "__main__":
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
         use_tokendrop=args.use_tokendrop,
-        enable_deepep=args.enable_deepep,
         moe_a2a=args.moe_a2a,
         executor=slurm_executor(
             args.gpu,

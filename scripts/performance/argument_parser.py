@@ -245,13 +245,6 @@ def parse_cli_args():
         action="store_true",
     )
     parser.add_argument(
-        "--config_file",
-        type=str,
-        help="Path to the config yaml file to use for the experiment.",
-        required=False,
-        default=None,
-    )
-    parser.add_argument(
         "--domain",
         type=str,
         help="Domain to use for the experiment- llm, vlm, diffusion. Default: llm",
@@ -286,7 +279,7 @@ def parse_cli_args():
         type=is_cuda_graph_scope_valid,
         choices=["full_iteration", "full", "attn"],
         required=False,
-        default=None,
+        default="full",
     )
     parser.add_argument(
         "-tp",
@@ -360,19 +353,29 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
-        "--enable_deepep",
-        help="Enable DeepEP. Disabled by default.",
-        type=bool_arg,
-        required=False,
-        default=None,
-    )
-    parser.add_argument(
         "-ms",
         "--max_steps",
         type=int,
         help="Maximum number of steps to run the experiment for. Defaults to 50.",
         required=False,
-        default=50,
+        default=None,
+    )
+    parser.add_argument(
+        "-rl",
+        "--recompute_num_layers",
+        type=int,
+        help="Number of Transformer layers to recompute, where all the intermediate "
+        "activations of a Transformer layer are computed. Defaults to None",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-ol",
+        "--activation_offload_layers",
+        type=int,
+        help="Number of Transformer layers to offload to the CPU memory. Defaults to None",
+        required=False,
+        default=None,
     )
     parser.add_argument(
         "--detach",

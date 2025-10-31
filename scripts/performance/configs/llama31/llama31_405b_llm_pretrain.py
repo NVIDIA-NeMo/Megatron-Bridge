@@ -91,7 +91,7 @@ def llama31_405b_gb200_128gpus_fp8_config(**kwargs) -> ConfigContainer:
         use_megatron_fsdp = True if kwargs.get("use_megatron_fsdp") is None else kwargs.get("use_megatron_fsdp")
         set_megatron_fsdp_overrides(cfg, perf_overrides={"use_megatron_fsdp": use_megatron_fsdp})
         cfg.ddp.fsdp_double_buffer = True
-        set_recompute_overrides(cfg, perf_overrides={"cpu_offloading_num_layers": 95})
+        set_recompute_overrides(cfg, cpu_offloading_num_layers=95)
 
     if fp8_recipe == "mx":
         cfg.model.tensor_model_parallel_size = 4 if tp is None else tp

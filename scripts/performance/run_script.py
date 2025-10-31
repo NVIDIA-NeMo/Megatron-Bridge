@@ -19,6 +19,7 @@ from typing import Callable
 import torch
 from argument_parser import parse_cli_args
 from omegaconf import OmegaConf
+from utils.helpers import get_model_recipe_with_user_overrides
 
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -56,8 +57,13 @@ def main():
     """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
 
-    recipe_builder = get_recipe_builder(args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype)
-    recipe = recipe_builder(**vars(args))
+    if args.model_name != "llama3" and args.model_size != "8b" and args.gpu not in ["gb200"]:
+        recipe_builder = get_recipe_builder(
+            args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype
+        )
+        recipe = recipe_builder(**vars(args))
+    else:
+        recipe = get_model_recipe_with_user_overrides(**vars(args))
 
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
     if cli_overrides:

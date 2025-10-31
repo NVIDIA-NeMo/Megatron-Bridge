@@ -69,7 +69,7 @@ def llama3_70b_gb200_64gpus_bf16_config(**kwargs) -> ConfigContainer:
     cfg.ddp.fsdp_double_buffer = True
     cfg.model.gradient_accumulation_fusion = False
     cfg.ddp.suggested_communication_unit_size = 800000000
-    set_recompute_overrides(cfg, perf_overrides={"cpu_offloading_num_layers": 20})
+    set_recompute_overrides(cfg, cpu_offloading_num_layers=20)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -102,7 +102,7 @@ def llama3_70b_gb200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
         cfg.ddp.fsdp_double_buffer = True
         cfg.model.gradient_accumulation_fusion = False
         cfg.ddp.suggested_communication_unit_size = 800000000
-        set_recompute_overrides(cfg, perf_overrides={"cpu_offloading_num_layers": 40})
+        set_recompute_overrides(cfg, cpu_offloading_num_layers=40)
 
     if fp8_recipe == "mx":
         cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
@@ -185,7 +185,7 @@ def llama3_70b_b200_64gpus_fp8_config(**kwargs) -> ConfigContainer:
         cfg.ddp.fsdp_double_buffer = True
         cfg.model.gradient_accumulation_fusion = False
         cfg.ddp.suggested_communication_unit_size = 800000000
-        set_recompute_overrides(cfg, perf_overrides={"recompute_num_layers": 5})
+        set_recompute_overrides(cfg, recompute_num_layers=5)
 
     if fp8_recipe == "mx":
         cfg.model.tensor_model_parallel_size = 2 if tp is None else tp
