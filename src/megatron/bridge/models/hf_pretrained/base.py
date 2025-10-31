@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import shutil
 from abc import ABC, abstractmethod
 from fnmatch import fnmatch
 from pathlib import Path
-import shutil
 from typing import ClassVar, Dict, List, Optional, Union
 
 import torch
@@ -64,28 +64,24 @@ class PreTrainedBase(ABC):
 
     def _copy_custom_modeling_files(self, source_path: Union[str, Path], target_path: Union[str, Path]) -> None:
         """Copy custom modeling files from source to target directory.
-        
+
         This preserves custom modeling files that were used during model loading
         with trust_remote_code=True, ensuring the saved model can be loaded properly.
-        
+
         Args:
             source_path: Source directory containing custom modeling files
             target_path: Target directory to copy files to
         """
         source_path = Path(source_path)
         target_path = Path(target_path)
-        
+
         # Common custom modeling file patterns
         custom_file_patterns = [
             "*.py",
             "*.json",
-            "*.jpeg",
-            "*.png",
-            "*.jpg",
-            "*.mp4",
         ]
         copied_files = []
-        
+
         # First, try to copy from local directory if it exists
         if source_path.exists() and source_path.is_dir():
             for pattern in custom_file_patterns:
@@ -98,13 +94,13 @@ class PreTrainedBase(ABC):
                         except (OSError, IOError):
                             # Silently skip files that can't be copied
                             pass
-        
+
         # If no files were copied and source_path looks like a HuggingFace Hub ID,
         # try to download the custom modeling files directly from the Hub
         if not copied_files and "/" in str(source_path) and not source_path.exists():
             try:
                 from huggingface_hub import hf_hub_download, list_repo_files
-                
+
                 # Get list of Python files in the repository
                 repo_files = list_repo_files(str(source_path))
                 print("repo_files: ", repo_files)
@@ -112,23 +108,23 @@ class PreTrainedBase(ABC):
                     # Check if it matches our custom file patterns
                     if any(fnmatch(file, pattern) for pattern in custom_file_patterns):
                         try:
-                            downloaded_file = hf_hub_download(
+                            _ = hf_hub_download(
                                 repo_id=str(source_path),
                                 filename=file,
                                 local_dir=target_path,
-                                local_dir_use_symlinks=False
+                                local_dir_use_symlinks=False,
                             )
                             copied_files.append(file)
                         except Exception as e:
                             print("Error downloading file: ", e, "Skipping file...")
                             # Silently skip files that can't be downloaded
                             pass
-                            
+
             except Exception as e:
                 print("Error downloading custom modeling files: ", e, "Skipping custom modeling files...")
                 # If HuggingFace Hub operations fail, silently continue
                 pass
-        
+
         return copied_files
 
     def save_artifacts(self, save_directory: Union[str, Path]):
@@ -151,6 +147,7 @@ class PreTrainedBase(ABC):
             self._config.save_pretrained(save_path)
 
         # Iterate over required artifacts to save them in a predictable order
+        breakpoint()
         for name in self.ARTIFACTS:
             # Access the public property to trigger lazy loading if needed
             artifact = getattr(self, name)
@@ -166,14 +163,14 @@ class PreTrainedBase(ABC):
                 artifact.save_pretrained(save_path)
 
         # Preserve custom modeling files if trust_remote_code was used
-        if (hasattr(self, 'trust_remote_code') and self.trust_remote_code):
+        if hasattr(self, "trust_remote_code") and self.trust_remote_code:
             # Try original source path first, then fallback to model_name_or_path
             source_paths = []
-            if hasattr(self, '_original_source_path') and self._original_source_path:
+            if hasattr(self, "_original_source_path") and self._original_source_path:
                 source_paths.append(self._original_source_path)
-            if hasattr(self, 'model_name_or_path') and self.model_name_or_path:
+            if hasattr(self, "model_name_or_path") and self.model_name_or_path:
                 source_paths.append(self.model_name_or_path)
-                
+
             for source_path in source_paths:
                 copied_files = self._copy_custom_modeling_files(source_path, save_path)
                 if copied_files:
