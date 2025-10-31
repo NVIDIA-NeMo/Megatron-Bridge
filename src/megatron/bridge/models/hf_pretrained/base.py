@@ -55,6 +55,15 @@ class PreTrainedBase(ABC):
         self._state_dict_accessor: Optional[StateDict] = None
         self.init_kwargs = kwargs
 
+        # Common custom modeling file patterns
+        self.custom_file_patterns = [
+            "modeling_*.py",
+            "configuration_*.py",
+            "tokenization_*.py",
+            "processing_*.py",
+            "feature_extraction_*.py",
+        ]
+
     def get_artifacts(self) -> Dict[str, str]:
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
@@ -72,20 +81,11 @@ class PreTrainedBase(ABC):
         source_path = Path(source_path)
         target_path = Path(target_path)
 
-        # Common custom modeling file patterns
-        custom_file_patterns = [
-            "modeling_*.py",
-            "configuration_*.py",
-            "tokenization_*.py",
-            "processing_*.py",
-            "feature_extraction_*.py",
-        ]
-
         copied_files = []
 
         # First, try to copy from local directory if it exists
         if source_path.exists() and source_path.is_dir():
-            for pattern in custom_file_patterns:
+            for pattern in self.custom_file_patterns:
                 for file_path in source_path.glob(pattern):
                     if file_path.is_file():
                         target_file = target_path / file_path.name
@@ -110,7 +110,7 @@ class PreTrainedBase(ABC):
                     # Check if it matches our custom file patterns
                     if any(
                         py_file.startswith(pattern.replace("*.py", "").replace("*", ""))
-                        for pattern in custom_file_patterns
+                        for pattern in self.custom_file_patterns
                     ):
                         try:
                             downloaded_file = hf_hub_download(
