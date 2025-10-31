@@ -195,8 +195,11 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     gpu = kwargs.get("gpu")
     num_gpus = kwargs.get("num_gpus")
     compute_dtype = kwargs.get("compute_dtype")
+    fp8_recipe = kwargs.get("fp8_recipe")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, num_gpus, compute_dtype)
+    recipe = get_model_recipe(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
+    print(recipe.__class__.__name__)
+    logger.info(f"Using recipe: {recipe.__class__.__name__}")
 
     recipe = set_user_overrides(recipe, kwargs)
 

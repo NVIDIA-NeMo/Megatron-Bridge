@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from typing import Callable, Optional
 
 from megatron.bridge.training.config import ConfigContainer
 
@@ -33,11 +33,15 @@ def get_model_recipe(
     gpu: str,
     num_gpus: int,
     compute_dtype: str,
+    fp8_recipe: Optional[str] = None,
 ) -> ConfigContainer:
     """Get the model recipe factory by its name."""
     recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
     try:
-        return MODEL_RECIPES[recipe_name]()
+        if fp8_recipe is not None:
+            return MODEL_RECIPES[recipe_name](fp8_recipe=fp8_recipe)
+        else:
+            return MODEL_RECIPES[recipe_name]()
     except KeyError as err:
         valid = ", ".join(sorted(MODEL_RECIPES.keys()))
         raise ValueError(f"Unknown model recipe '{recipe_name}'. Available recipes: {valid}.") from err
