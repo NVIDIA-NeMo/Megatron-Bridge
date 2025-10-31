@@ -181,12 +181,15 @@ class PreTrainedBase(ABC):
 
                     from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-                    model_class = get_class_from_dynamic_module(
-                        self.auto_map_model_class, self.model_name_or_path, trust_remote_code=True
-                    )
-                    src_file = sys.modules[model_class.__module__].__file__
-                    src_path = Path(src_file).parent
-                    source_paths.append(src_path)
+                    try:
+                        model_class = get_class_from_dynamic_module(
+                            self.auto_map_model_class, self.model_name_or_path, trust_remote_code=True
+                        )
+                        src_file = sys.modules[model_class.__module__].__file__
+                        src_path = Path(src_file).parent
+                        source_paths.append(src_path)
+                    except OSError:  # ignore if model_name_or_path does not contain the modeling file
+                        pass
 
             if hasattr(self, "model_name_or_path") and self.model_name_or_path:
                 source_paths.append(self.model_name_or_path)
