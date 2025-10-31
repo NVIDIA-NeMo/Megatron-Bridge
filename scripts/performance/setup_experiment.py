@@ -20,10 +20,11 @@ from typing import List
 try:
     from argument_parser import parse_cli_args
     from utils.executors import slurm_executor
+    from utils.utils import get_parallelism_defaults
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.executors import slurm_executor
-
+    from .utils.utils import get_parallelism_defaults
 
 try:
     import nemo_run as run
@@ -62,6 +63,9 @@ def main(
     enable_nsys: bool,
     use_tokendrop: bool,
     moe_a2a: bool,
+    tp_size: int,
+    pp_size: int,
+    cp_size: int,
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
@@ -81,9 +85,15 @@ def main(
         sys.exit(1)
 
     enable_deepep = False
+    moe_a2a = False if moe_a2a is None else moe_a2a
     if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
-        enable_deepep = True
-        moe_a2a = True if moe_a2a is None else moe_a2a
+        enable_deepep, moe_a2a = True, True
+
+    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
+
+    tp_size = tp_size if tp_size is not None else parallelism_defaults["tp_size"]
+    pp_size = pp_size if pp_size is not None else parallelism_defaults["pp_size"]
+    cp_size = cp_size if cp_size is not None else parallelism_defaults["cp_size"]
 
     plugins = (
         [
@@ -95,6 +105,9 @@ def main(
                 num_gpus=num_gpus,
                 deepep_enabled=enable_deepep,
                 a2a_overlap=moe_a2a,
+                tp_size=tp_size,
+                pp_size=pp_size,
+                cp_size=cp_size,
             )
         ]
         if HAS_NEMO_RUN
@@ -178,6 +191,9 @@ if __name__ == "__main__":
         enable_nsys=args.enable_nsys,
         use_tokendrop=args.use_tokendrop,
         moe_a2a=args.moe_a2a,
+        tp_size=args.tensor_model_parallel_size,
+        pp_size=args.pipeline_model_parallel_size,
+        cp_size=args.context_parallel_size,
         executor=slurm_executor(
             args.gpu,
             args.account,

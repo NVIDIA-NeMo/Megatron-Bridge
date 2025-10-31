@@ -57,7 +57,7 @@ def main():
     """Main function to run the pretraining/finetuning script."""
     args, cli_overrides = parse_cli_args()
 
-    if args.model_name != "llama3" and args.model_size != "8b" and args.gpu not in ["gb200"]:
+    if args.model_name == "deepseek" and args.model_size == "v3":
         recipe_builder = get_recipe_builder(
             args.model_name, args.model_size, args.gpu, args.num_gpus, args.compute_dtype
         )

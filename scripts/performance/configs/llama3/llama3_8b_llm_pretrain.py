@@ -16,8 +16,6 @@ import logging
 
 from utils.helpers import (
     get_precision_config,
-    get_user_parallelism_and_batch_size_configs,
-    set_basic_perf_overrides,
     set_cuda_graph_overrides,
     set_megatron_fsdp_overrides,
 )
@@ -49,7 +47,7 @@ def llama3_8b_gb200_8gpus_bf16_config() -> ConfigContainer:
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.tokenizer.vocab_size = 128256
     cfg.model.should_pad_vocab = True
 
@@ -77,7 +75,7 @@ def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     cuda_graph_impl = cg_impl_map.get(fp8_recipe, "none")
     set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope="full_iteration")
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.tokenizer.vocab_size = 128256
     cfg.model.should_pad_vocab = True
 
@@ -86,76 +84,51 @@ def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
 
 def llama3_8b_b200_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     """B200, 8xGPU, BF16 baseline config."""
-    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
-    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
-
-    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
-    cfg.model.pipeline_model_parallel_size = 1 if pp is None else pp
-    cfg.model.context_parallel_size = 1 if cp is None else cp
-    cfg.model.virtual_pipeline_model_parallel_size = None if vp is None else vp
-    cfg.model.expert_model_parallel_size = 1 if ep is None else ep
-    cfg.model.expert_tensor_parallel_size = None if etp is None else etp
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 128 if gbs is None else gbs
-    cfg.train.micro_batch_size = 2 if mbs is None else mbs
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 2
     cfg.model.seq_length = 8192
     cfg.dataset.sequence_length = 8192
 
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
+    set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
-    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
-    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
-    if cuda_graph_impl is not None:
-        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
-
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
-    )
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.tokenizer.vocab_size = 128256
-    cfg.model.cuda_graph_scope = "full_iteration"
     cfg.model.should_pad_vocab = True
 
     return cfg
 
 
-def llama3_8b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
+def llama3_8b_b200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """B200, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
-    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
-    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
-    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
-
-    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
-    cfg.model.pipeline_model_parallel_size = 1 if pp is None else pp
-    cfg.model.context_parallel_size = 1 if cp is None else cp
-    cfg.model.virtual_pipeline_model_parallel_size = None if vp is None else vp
-    cfg.model.expert_model_parallel_size = 1 if ep is None else ep
-    cfg.model.expert_tensor_parallel_size = None if etp is None else etp
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 128 if gbs is None else gbs
-    cfg.train.micro_batch_size = 2 if mbs is None else mbs
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 2
     cfg.model.seq_length = 8192
     cfg.dataset.sequence_length = 8192
 
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
+    set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
-    cuda_graph_impl = "local" if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
-    cuda_graph_scope = "full_iteration" if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
-    if cuda_graph_impl is not None:
-        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
-
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
-    )
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.tokenizer.vocab_size = 128256
-    cfg.model.cuda_graph_scope = "full_iteration"
     cfg.model.should_pad_vocab = True
 
     return cfg
@@ -163,79 +136,51 @@ def llama3_8b_b200_8gpus_fp8_config(**kwargs) -> ConfigContainer:
 
 def llama3_8b_h100_8gpus_bf16_config(**kwargs) -> ConfigContainer:
     """H100, 8xGPU, BF16 baseline config."""
-    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
 
-    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
-
-    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
-    cfg.model.pipeline_model_parallel_size = 1 if pp is None else pp
-    cfg.model.context_parallel_size = 2 if cp is None else cp
-    cfg.model.virtual_pipeline_model_parallel_size = None if vp is None else vp
-    cfg.model.expert_model_parallel_size = 1 if ep is None else ep
-    cfg.model.expert_tensor_parallel_size = None if etp is None else etp
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 128 if gbs is None else gbs
-    cfg.train.micro_batch_size = 1 if mbs is None else mbs
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 8192
     cfg.dataset.sequence_length = 8192
 
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
-    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
-    if cuda_graph_impl is not None:
-        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
-
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
-    )
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.tokenizer.vocab_size = 128256
     cfg.model.should_pad_vocab = True
 
     return cfg
 
 
-def llama3_8b_h100_8gpus_fp8_config(**kwargs) -> ConfigContainer:
+def llama3_8b_h100_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """H100, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
-    tp, pp, cp, vp, ep, etp, mbs, gbs = get_user_parallelism_and_batch_size_configs(kwargs)
-    fp8_recipe = kwargs.get("fp8_recipe", "cs")
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
 
-    set_basic_perf_overrides(cfg, max_steps=kwargs.get("max_steps"))
-
-    cfg.model.tensor_model_parallel_size = 1 if tp is None else tp
-    cfg.model.pipeline_model_parallel_size = 1 if pp is None else pp
-    cfg.model.context_parallel_size = 1 if cp is None else cp
-    cfg.model.virtual_pipeline_model_parallel_size = None if vp is None else vp
-    cfg.model.expert_model_parallel_size = 1 if ep is None else ep
-    cfg.model.expert_tensor_parallel_size = None if etp is None else etp
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = None
     cfg.model.sequence_parallel = bool(cfg.model.tensor_model_parallel_size > 1)
 
-    cfg.train.global_batch_size = 128 if gbs is None else gbs
-    cfg.train.micro_batch_size = 1 if mbs is None else mbs
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
     cfg.model.seq_length = 8192
     cfg.dataset.sequence_length = 8192
 
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    cuda_graph_impl = None if kwargs.get("cuda_graph_impl") is None else kwargs.get("cuda_graph_impl")
-    cuda_graph_scope = None if kwargs.get("cuda_graph_scope") is None else kwargs.get("cuda_graph_scope")
-    if cuda_graph_impl is not None:
-        set_cuda_graph_overrides(cfg, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
-
     if fp8_recipe == "cs":
-        use_megatron_fsdp = True if kwargs.get("use_megatron_fsdp") is None else kwargs.get("use_megatron_fsdp")
-        set_megatron_fsdp_overrides(cfg, perf_overrides={"use_megatron_fsdp": use_megatron_fsdp})
+        set_megatron_fsdp_overrides(cfg)
         cfg.ddp.nccl_ub = True
         cfg.model.gradient_accumulation_fusion = False
 
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
-    )
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.tokenizer.vocab_size = 128256
     cfg.model.should_pad_vocab = True
 

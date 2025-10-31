@@ -58,31 +58,27 @@ def set_basic_perf_overrides(recipe: Any) -> None:
     recipe.ddp.grad_reduce_in_fp32 = False
 
 
-def set_megatron_fsdp_overrides(recipe: Any, perf_overrides: Any) -> None:
-    """Set the mcore fsdp overrides from the performance matrix."""
-    use_megatron_fsdp = perf_overrides.get("use_megatron_fsdp", False)
-    if use_megatron_fsdp:
-        recipe.ddp.use_megatron_fsdp = True
-        recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-        recipe.ddp.keep_fp8_transpose_cache = False
-        # average_in_collective is not supported with Megatron FSDP
-        recipe.ddp.average_in_collective = False
+def set_megatron_fsdp_overrides(recipe: Any) -> None:
+    """Set the Megatron FSDP overrides."""
+    recipe.ddp.use_megatron_fsdp = True
+    recipe.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    recipe.ddp.keep_fp8_transpose_cache = False
+    # average_in_collective is not supported with Megatron FSDP
+    recipe.ddp.average_in_collective = False
 
-        recipe.model.init_model_with_meta_device = True
-        recipe.model.gradient_accumulation_fusion = True
+    recipe.model.init_model_with_meta_device = True
+    recipe.model.gradient_accumulation_fusion = True
 
-        if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            if recipe.comm_overlap.defer_embedding_wgrad_compute:
-                logger.warning(
-                    "Disabling deferring embedding wgrad compute because it cannot work with FSDP together."
-                )
-                recipe.comm_overlap.defer_embedding_wgrad_compute = False
+    if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
+        if recipe.comm_overlap.defer_embedding_wgrad_compute:
+            logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
+            recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-        if recipe.optimizer.use_precision_aware_optimizer:
-            recipe.optimizer.use_precision_aware_optimizer = False
-            logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
+    if recipe.optimizer.use_precision_aware_optimizer:
+        recipe.optimizer.use_precision_aware_optimizer = False
+        logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
 
-        recipe.checkpoint.load = None
+    recipe.checkpoint.load = None
 
 
 def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
@@ -110,19 +106,20 @@ def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
 def set_cuda_graph_overrides(
     recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: str = "full"
 ) -> None:
-    """Set the CUDA graph overrides from the performance matrix."""
+    """Set the CUDA graph overrides."""
     if cuda_graph_impl is not None:
         recipe.model.cuda_graph_impl = cuda_graph_impl
-    recipe.model.cuda_graph_scope = cuda_graph_scope
-
-    if cuda_graph_impl not in [None, "none"]:
-        recipe.model.use_te_rng_tracker = True
-        recipe.rng.te_rng_tracker = True
+        if cuda_graph_impl != "none":
+            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
+        else:
+            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if cuda_graph_impl == "transformer_engine":
         assert cuda_graph_scope in ["full", "attn"], (
             f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: full, attn"
         )
+
+    recipe.model.cuda_graph_scope = cuda_graph_scope
 
 
 def set_recompute_overrides(
@@ -130,7 +127,7 @@ def set_recompute_overrides(
     recompute_num_layers: Optional[int] = None,
     cpu_offloading_num_layers: Optional[int] = None,
 ) -> None:
-    """Set the recompute num layers overrides from the performance matrix."""
+    """Set the recompute num layers overrides."""
     if recompute_num_layers is not None:
         recipe.model.recompute_granularity = "full"
         recipe.model.recompute_method = "block"
@@ -149,7 +146,7 @@ def moe_a2a_1f1b_overrides(recipe: Any) -> None:
 
 
 def set_user_overrides(recipe: Any, kwargs: Any) -> None:
-    """Set the user overrides from the performance matrix."""
+    """Set the user overrides."""
     set_basic_perf_overrides(recipe)
     if kwargs.get("max_steps") is not None:
         recipe.train.train_iters = kwargs.get("max_steps")
@@ -204,8 +201,6 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     fp8_recipe = kwargs.get("fp8_recipe")
 
     recipe = get_model_recipe(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
-    print(recipe.__class__.__name__)
-    logger.info(f"Using recipe: {recipe.__class__.__name__}")
 
     recipe = set_user_overrides(recipe, kwargs)
 
