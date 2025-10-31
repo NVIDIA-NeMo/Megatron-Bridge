@@ -261,6 +261,8 @@ def _deepseek_v3_common(
         model_cfg.moe_enable_deepep = True
         model_cfg.moe_shared_expert_overlap = False
 
+    model_cfg.cross_entropy_fusion_impl = "te"
+
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters,
