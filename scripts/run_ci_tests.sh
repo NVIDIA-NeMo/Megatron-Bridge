@@ -38,6 +38,14 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+LOG_DIR="${REPO_ROOT}/logs"
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/run_ci_tests_${TIMESTAMP}.log"
+# Mirror all output to console and file
+exec > >(tee -a "${LOG_FILE}") 2>&1
+echo "[log] Writing output to ${LOG_FILE}"
+
 MODE="local"           # local | docker
 SKIP_LINT="false"
 SKIP_UNIT="false"
@@ -46,6 +54,9 @@ USE_UV="true"
 CUDA_DEVICES_DEFAULT="0,1"
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-${CUDA_DEVICES_DEFAULT}}
 HF_HOME=${HF_HOME:-"${REPO_ROOT}/.hf_home"}
+
+# Track functional test failures while allowing subsequent groups to continue
+FUNC_FAIL=0
 
 usage() {
   cat <<EOF
@@ -162,10 +173,15 @@ run_functional_local() {
     return 0
   fi
 
+  # Allow failures within this function without exiting the script immediately
+  set +e
+  FUNC_FAIL=0
+
   echo "[functional] Training group (excluding inprocess restart)"
   ${PYTHON} -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run -a -m pytest \
-    -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+    -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
     tests/functional_tests/training -k "not test_inprocess_restart and not load_model"
+  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
 
   if command -v ft_launcher >/dev/null 2>&1; then
     echo "[functional] Inprocess restart with ft_launcher"
@@ -177,24 +193,32 @@ run_functional_local() {
       --ft-param-rank_out_of_section_timeout=300 \
       --monitor-interval=5 --max-restarts=3 \
       --ft-restart-policy=min-healthy \
-      -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+      -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
       tests/functional_tests/training/test_inprocess_restart.py
+    if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
   else
     echo "[functional] ft_launcher not found; skipping inprocess restart test"
   fi
 
   echo "[functional] Converter group"
-  ${COVERAGE} run -a -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  ${COVERAGE} run -a -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
     tests/functional_tests/converter
+  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
 
   echo "[functional] Models group"
-  ${COVERAGE} run -a -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  ${COVERAGE} run -a -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
     tests/functional_tests/models
+  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
 
   echo "[functional] Recipes group (2 GPUs)"
   ${PYTHON} -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run -a -m pytest \
-    -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+    -o log_cli=true -o log_cli_level=INFO -v -s -m "not pleasefixme" --tb=short -rA \
     tests/functional_tests/recipes
+  if [[ $? -ne 0 ]]; then FUNC_FAIL=1; fi
+
+  # Re-enable -e for the rest of the script and return success to continue pipeline
+  set -e
+  return 0
 }
 
 run_local() {
@@ -208,6 +232,11 @@ run_local() {
   echo "[coverage] Combine & report"
   ${COVERAGE} combine -q || true
   ${COVERAGE} report -i
+  # Fail overall if any functional group failed, but only after coverage is reported
+  if [[ "${FUNC_FAIL}" -ne 0 ]]; then
+    echo "[functional] One or more functional test groups failed"
+    exit 1
+  fi
 }
 
 run_docker() {
@@ -226,8 +255,8 @@ run_docker() {
   if [[ "${SKIP_FUNCTIONAL}" == "true" ]]; then
     FUNC_CMD="true"
   else
-    # Discover and run all L2_* launcher scripts with optional exclusion list (comma-separated basenames in L2_EXCLUDE)
-    FUNC_CMD="shopt -s nullglob; EXCLUDES=\"\${L2_EXCLUDE:-}\"; for f in tests/functional_tests/L2_*.sh; do bn=\$(basename \"\$f\"); if [[ \\\" ,\${EXCLUDES}, \\\" == *\\\",\${bn},\\\"* ]]; then echo \"[functional] Skipping \${bn}\"; continue; fi; echo \"[functional] Running \${bn}\"; bash \"\$f\"; done"
+    # Discover and run all L2_* launcher scripts; continue on failure, but propagate failure at the end
+    FUNC_CMD="shopt -s nullglob; EXCLUDES=\"\${L2_EXCLUDE:-}\"; rc=0; for f in tests/functional_tests/L2_*.sh; do bn=\$(basename \"\$f\"); if [[ \",\${EXCLUDES},\" == *\",\${bn},\"* ]]; then echo \"[functional] Skipping \${bn}\"; continue; fi; echo \"[functional] Running \${bn}\"; bash \"\$f\" || rc=1; done; exit \$rc"
   fi
 
   echo "[docker] Building image from docker/Dockerfile.ci"
@@ -245,7 +274,7 @@ run_docker() {
     -v "${REPO_ROOT}":/workspace \
     -v "${HOST_HF_HOME}":"${CONTAINER_HF_HOME}" \
     -w /workspace \
-    megatron-bridge bash -lc "${DOCKER_SETUP_PREFIX} && ${LINT_CMD} && ${UNIT_CMD} && ${FUNC_CMD} && ${DOCKER_COVERAGE_REPORT}"
+    megatron-bridge bash -lc "${DOCKER_SETUP_PREFIX} && ${LINT_CMD} && ${UNIT_CMD} && ( ${FUNC_CMD} ); FUNC_STATUS=\$?; ${DOCKER_COVERAGE_REPORT}; exit \${FUNC_STATUS}"
 }
 
 case "${MODE}" in
