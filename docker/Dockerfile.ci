@@ -33,10 +33,10 @@ COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatro
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --only-group build ${UV_ARGS[@]} && \
+    uv sync --locked --only-group build && \
     uv sync \
     --link-mode copy \
     --locked \
     --all-extras \
-    --all-groups ${UV_ARGS[@]} && \
+    --all-groups && \
     uv cache prune

@@ -2003,7 +2003,7 @@ wheels = [
 
 [[package]]
 name = "mamba-ssm"
-version = "2.2.5"
+version = "2.2.6.post3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "einops" },
@@ -2014,7 +2014,7 @@ dependencies = [
     { name = "transformers" },
     { name = "triton", marker = "sys_platform == 'never'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/2d/fbd909f6e6d48c491a9ed7ae68e8a890d8409aba4a6356741e2a9c6adad5/mamba_ssm-2.2.5.tar.gz", hash = "sha256:5055c8e631a22bb3cfc9958828a7a57ea14deef2ab2a98dcf425a27c87dcf6a7", size = 113753, upload-time = "2025-07-19T06:16:06.875Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/0c/9373a469ff7a33bdd0644e55fa45165ba3900274dcf7fe9f10ccc232aef9/mamba_ssm-2.2.6.post3.tar.gz", hash = "sha256:826a3cdb651959f191dac64502f8a29627d9116fe6bb7c57e4f562da1aea7bf3", size = 113913, upload-time = "2025-10-10T06:00:44.939Z" }
 
 [[package]]
 name = "markdown"
