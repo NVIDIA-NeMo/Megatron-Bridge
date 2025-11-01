@@ -24,7 +24,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
-
+from megatron.core.utils import unwrap_model
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,49 @@ class LoRA(PEFT, ModuleMatcher):
             )
             return LoRALinear(module, adapter)
         return module
+
+@dataclass
+class VLMLoRA(LoRA):
+    """
+    Implements the LoRA for Vision-Language Models.
+    VLMLoRA additionally allows the user to specify whether the language or vision
+    models should be frozen.
+    For example, a common finetuning workload for multimodal models is to apply adapters to language model and fully
+    finetune the vision model.
+
+    """
+
+    freeze_vision_model: bool = True
+    freeze_vision_projection: bool = True
+    freeze_language_model: bool = True
+
+    def freeze_model(self, model: nn.Module, training: bool = True) -> None:
+        modules_to_freeze = []
+
+        model = unwrap_model(model)[0]
+        if hasattr(model, "llava_model"):
+            model = model.llava_model
+
+        if self.freeze_vision_model and model.vision_model is not None:
+            modules_to_freeze.append(model.vision_model)
+        if self.freeze_vision_projection and model.vision_projection is not None:
+            modules_to_freeze.append(model.vision_projection)
+        if self.freeze_language_model and model.language_model is not None:
+            modules_to_freeze.append(model.language_model)
+
+
+        for module in modules_to_freeze:
+            for param in module.parameters():
+                param.requires_grad = False
+
+        if training:
+            if isinstance(model, list):
+                for model_chunk in model:
+                    model_chunk.train(mode=True)
+            elif isinstance(model, torch.nn.parallel.DistributedDataParallel):
+                model.module.train(mode=True)
+            else:
+                model.train(mode=True)
 
 
 class LoRAMerge(PEFT):

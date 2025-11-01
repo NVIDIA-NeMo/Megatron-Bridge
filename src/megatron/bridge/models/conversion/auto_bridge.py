@@ -41,6 +41,16 @@ from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelK
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
 
+# Supported HuggingFace architecture suffixes for causal generation models
+SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
+    "ForCausalLM",
+    "ForConditionalGeneration",
+    "NemotronH_Nano_VL_V2",
+)
+
+# Preformatted display string for error/help messages
+SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
+
 
 class AutoBridge(Generic[MegatronModelT]):
     """
@@ -120,7 +130,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Check if this bridge supports the given model configuration.
 
-        A model is supported if it has at least one architecture ending with 'ForCausalLM' or 'ForConditionalGeneration'.
+        A model is supported if it has at least one architecture ending with one of the
+        suffixes listed in SUPPORTED_HF_ARCHITECTURES.
 
         Args:
             config: HuggingFace model config object
@@ -131,8 +142,7 @@ class AutoBridge(Generic[MegatronModelT]):
         architectures = getattr(config, "architectures", [])
         if not architectures:
             return False
-
-        return any(arch.endswith(("ForCausalLM", "ForConditionalGeneration")) for arch in architectures)
+        return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
 
     @classmethod
     def from_hf_config(cls, config: PretrainedConfig) -> "AutoBridge":
@@ -294,7 +304,13 @@ class AutoBridge(Generic[MegatronModelT]):
             pre_trained = self.hf_pretrained
         else:
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
-        self._model_bridge.load_weights_hf_to_megatron(pre_trained, model)
+            # Preserve trust_remote_code setting from the original bridge instance
+            trust_remote_code = getattr(self.hf_pretrained, 'trust_remote_code', False)
+            pre_trained = PreTrainedCausalLM.from_pretrained(
+                hf_path,
+                trust_remote_code=trust_remote_code
+            )
+        self._model_bridge.load_weights_hf_to_megatron(model, pre_trained)
 
         return model
 
@@ -347,13 +363,36 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
         )
 
-    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
+    def set_custom_modeling_source(self, source_path: Union[str, Path]) -> None:
+        """
+        Set the source path for preserving custom modeling files.
+
+        This is useful when converting from Megatron checkpoints where the original
+        HuggingFace model with custom modeling files needs to be referenced.
+
+        Args:
+            source_path: Path to the directory containing custom modeling files
+
+        Example:
+            >>> bridge = AutoBridge.from_hf_pretrained("model_path", trust_remote_code=True)
+            >>> # After loading Megatron checkpoint, set the original HF source
+            >>> bridge.set_custom_modeling_source("/path/to/original/hf/model")
+            >>> bridge.save_hf_pretrained(megatron_model, "./output")
+        """
+        if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            self.hf_pretrained._original_source_path = source_path
+
+    def save_hf_pretrained(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
         """
         Save a Megatron model in HuggingFace format.
 
         This method exports the complete model including configuration, tokenizer,
         and weights to a directory that can be loaded with HuggingFace's
         from_pretrained methods.
+
+        If the original model was loaded with trust_remote_code=True, any custom
+        modeling files (e.g., modeling_*.py, configuration_*.py) will be preserved
+        to ensure the saved model can be loaded properly.
 
         Args:
             model: Megatron model instance or list of instances
@@ -381,9 +420,9 @@ class AutoBridge(Generic[MegatronModelT]):
             # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path)
 
-        self.save_hf_weights(model, path, show_progress)
+        self.save_hf_weights(model, path, show_progress, strict)
 
-    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True) -> None:
+    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 
@@ -429,7 +468,7 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(generator, path)
+            self.hf_pretrained.state.source.save_generator(generator, path, strict=strict)
         else:
             raise ValueError("The state source is not a SafeTensorsStateSource, cannot save in streaming mode.")
 
@@ -597,6 +636,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_path: str | Path,
         hf_path: str | Path,
         show_progress: bool = True,
+        strict: bool = False
     ) -> None:
         """
         Export a Megatron checkpoint to HuggingFace format.
@@ -640,7 +680,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
             # Save in HuggingFace format
-            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress)
+            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress, strict=strict)
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
@@ -813,10 +853,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Behavior:
         - If the model can be imported from transformers directly, return the actual transformers class object.
-        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g., "DeepseekV2ForCausalLM").
+        - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g.,
+        "DeepseekV2ForCausalLM").
 
         Returns:
-            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a string for auto_map models.
+            str | type: The transformers class for the CausalLM architecture or the architecture's class name as a
+            string for auto_map models.
 
         Raises:
             ValueError: If no CausalLM architecture is found or cannot be resolved.
@@ -838,7 +880,7 @@ class AutoBridge(Generic[MegatronModelT]):
         causal_lm_arch = None
         for architecture_name in architectures:
             # TODO: Can we improve this?
-            if architecture_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
+            if architecture_name.endswith(SUPPORTED_HF_ARCHITECTURES):
                 causal_lm_arch = architecture_name
                 break
 
@@ -846,7 +888,7 @@ class AutoBridge(Generic[MegatronModelT]):
             raise ValueError(
                 f"\n✗ No CausalLM architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
-                f"None of the architectures end with 'ForCausalLM' or 'ForConditionalGeneration'.\n"
+                f"None of the architectures end with {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
                 f"This bridge only supports causal language models.\n"
                 f"For other model types, use a different bridge class."
             )
@@ -878,7 +920,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 f"\n✗ Model architecture not supported by AutoBridge\n\n"
                 f"Model: {path}\n"
                 f"Architectures: {architectures}\n\n"
-                f"AutoBridge only supports models with architectures ending in 'ForCausalLM' or 'ForConditionalGeneration'.\n"
+                f"AutoBridge only supports models with architectures ending in {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
                 f"Found architectures that don't match this pattern.\n\n"
                 f"If this is a different model type (e.g., Vision, Sequence-to-Sequence),\n"
                 f"you may need to use a different bridge class."
@@ -887,7 +929,7 @@ class AutoBridge(Generic[MegatronModelT]):
         # Check if we have an implementation for this specific architecture
         architecture = None
         for arch_name in config.architectures:
-            if arch_name.endswith(("ForCausalLM", "ForConditionalGeneration")):
+            if arch_name.endswith(SUPPORTED_HF_ARCHITECTURES):
                 architecture = arch_name
                 break
 

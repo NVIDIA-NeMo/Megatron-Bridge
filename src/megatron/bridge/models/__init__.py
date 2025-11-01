@@ -181,6 +181,11 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.models.nemotron_vl import (
+    NemotronVLBridge,
+    NemotronVLModel,
+    NemotronNano12Bv2Provider,
+)
 
 
 __all__ = [
@@ -323,4 +328,7 @@ __all__ = [
     "Gemma3VLBridge",
     "Gemma3VLModel",
     "Gemma3VLModelProvider",
+    "NemotronVLModel",
+    "NemotronVLBridge",
+    "NemotronNano12Bv2VLModelProvider",
 ]
