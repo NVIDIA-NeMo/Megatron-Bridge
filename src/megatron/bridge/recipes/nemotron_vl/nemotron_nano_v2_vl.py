@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import torch
 
@@ -44,15 +44,7 @@ def pretrain_config(
     hf_model_path: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
     # Dataset configuration
     dataset_type: Optional[str] = None,
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
-    use_preloaded: bool = False,
-    image_folder: Optional[str] = None,
     dataset_maker_name: str = "make_cord_v2_dataset",
     # Model configuration
     tensor_parallelism: int = 4,
@@ -61,7 +53,6 @@ def pretrain_config(
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
     sequence_parallelism: bool = False,
-    use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
     global_batch_size: int = 32,
@@ -74,10 +65,6 @@ def pretrain_config(
     # Precision and comm overlap
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
-    # Freeze options
-    freeze_language_model: bool = False,
-    freeze_vision_model: bool = False,
-    freeze_vision_projection: bool = False,
     # Checkpointing
     save_interval: Optional[int] = 200,
 ) -> ConfigContainer:

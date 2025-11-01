@@ -142,6 +142,7 @@ def main() -> None:
         cfg.print_yaml()
         logger.info("--------------------------------------------")
 
+    # Nemotron Nano V2 VL uses the LLaVaModel class for the model, so we use the llava_step.forward_step function.
     finetune(config=cfg, forward_step_func=forward_step)
 
     if torch.distributed.is_initialized():
