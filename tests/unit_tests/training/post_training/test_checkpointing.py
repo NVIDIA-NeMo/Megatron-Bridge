@@ -19,8 +19,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 
 from megatron.bridge.training.post_training.checkpointing import (
+    _has_only_kd_state,
     has_modelopt_state,
     load_modelopt_state,
 )
@@ -97,6 +99,87 @@ class TestPostTrainingCheckpointUtilities:
         """Test has_modelopt_state with empty string checkpoint path."""
         result = has_modelopt_state("")
         assert result is False
+
+    def test_has_only_kd_state_returns_true(self):
+        """Test _has_only_kd_state when modelopt_state contains only kd_loss state."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            modelopt_state_path = Path(temp_dir)
+            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
+
+            # Create modelopt_state_dict with only kd_loss
+            modelopt_state = {"modelopt_state_dict": [("kd_loss", {"some": "data"})]}
+            torch.save(modelopt_state, common_state_file)
+
+            result = _has_only_kd_state(str(modelopt_state_path))
+            assert result is True
+
+    def test_has_only_kd_state_returns_false_multiple_states(self):
+        """Test _has_only_kd_state when modelopt_state contains multiple states."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            modelopt_state_path = Path(temp_dir)
+            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
+
+            # Create modelopt_state_dict with multiple states including kd_loss
+            modelopt_state = {
+                "modelopt_state_dict": [
+                    ("kd_loss", {"some": "data"}),
+                    ("quantization", {"other": "data"}),
+                ]
+            }
+            torch.save(modelopt_state, common_state_file)
+
+            result = _has_only_kd_state(str(modelopt_state_path))
+            assert result is False
+
+    def test_has_only_kd_state_returns_false_different_state(self):
+        """Test _has_only_kd_state when modelopt_state contains a single state that is not kd_loss."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            modelopt_state_path = Path(temp_dir)
+            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
+
+            # Create modelopt_state_dict with only quantization state (not kd_loss)
+            modelopt_state = {"modelopt_state_dict": [("quantization", {"some": "data"})]}
+            torch.save(modelopt_state, common_state_file)
+
+            result = _has_only_kd_state(str(modelopt_state_path))
+            assert result is False
+
+    def test_has_modelopt_state_with_ignore_kd_state_true_only_kd(self):
+        """Test has_modelopt_state with ignore_kd_state=True when only kd_loss state exists."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_path = Path(temp_dir)
+            modelopt_state_path = checkpoint_path / "modelopt_state"
+            modelopt_state_path.mkdir()
+            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
+
+            # Create modelopt_state_dict with only kd_loss
+            modelopt_state = {"modelopt_state_dict": [("kd_loss", {"some": "data"})]}
+            torch.save(modelopt_state, common_state_file)
+
+            # When ignore_kd_state=True and only kd_loss exists, should return True
+            result = has_modelopt_state(str(checkpoint_path), ignore_kd_state=True)
+            assert result is True
+
+    def test_has_modelopt_state_with_ignore_kd_state_true_multiple_states(self):
+        """Test has_modelopt_state with ignore_kd_state=True when multiple states exist."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_path = Path(temp_dir)
+            modelopt_state_path = checkpoint_path / "modelopt_state"
+            modelopt_state_path.mkdir()
+            common_state_file = modelopt_state_path / COMMON_STATE_FNAME
+
+            # Create modelopt_state_dict with multiple states
+            modelopt_state = {
+                "modelopt_state_dict": [
+                    ("kd_loss", {"some": "data"}),
+                    ("quantization", {"other": "data"}),
+                ]
+            }
+            torch.save(modelopt_state, common_state_file)
+
+            # When ignore_kd_state=True but multiple states exist, should return False
+            result = has_modelopt_state(str(checkpoint_path), ignore_kd_state=True)
+            assert result is False
 
 
 class TestLoadModeloptState:
