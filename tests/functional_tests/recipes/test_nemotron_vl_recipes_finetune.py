@@ -18,8 +18,8 @@ import functools
 
 import pytest
 
-from megatron.bridge.recipes import nemotron_nano_v2_vl_step
 from megatron.bridge.recipes.nemotron_vl import nemotron_nano_v2_vl as nemotron_recipe
+from megatron.bridge.training import llava_step
 from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 
 
@@ -60,5 +60,5 @@ class TestNemotronVLRecipes:
             recipe_name,
             tmp_path,
             model_overrides=model_overrides,
-            forward_step_func=nemotron_nano_v2_vl_step.forward_step,
+            forward_step_func=llava_step.forward_step,
         )

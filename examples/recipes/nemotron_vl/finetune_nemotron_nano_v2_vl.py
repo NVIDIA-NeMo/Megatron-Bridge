@@ -29,9 +29,9 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
-from megatron.bridge.recipes.nemotron_nano_v2_vl_step import forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.llava_step import forward_step
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,

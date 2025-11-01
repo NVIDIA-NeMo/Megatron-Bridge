@@ -22,11 +22,9 @@ import torch
 import torch.nn.functional as F
 from PIL import Image  # noqa: F401  # may be used downstream by processors
 
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
-
-from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
@@ -101,9 +99,9 @@ def create_multiturn_loss_mask_by_search(
         search_start = try_mark(asst_text, search_start)
 
     if sum(mask) == 0:
-        warnings.warn("*"*100)
+        warnings.warn("*" * 100)
         warnings.warn(f"All tokens are masked for example:\n{example}.")
-        warnings.warn("*"*100)
+        warnings.warn("*" * 100)
 
     # Ensure pad/skipped tokens are masked
     ids_t = torch.tensor(ids)
@@ -273,15 +271,18 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
 def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_token=None) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Nano V2 VL model."""
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
+
     skipped_tokens = extract_skipped_token_ids(processor)
     # this assumes the first message in conversation is the video message
-    is_video = examples[0]["conversation"][0]["content"][0]['type']=="video"
+    is_video = examples[0]["conversation"][0]["content"][0]["type"] == "video"
     if is_video:
         from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
             maybe_path_or_url_to_data_urls,
             pil_image_from_base64,
         )
-        assert (len(examples) == 1), "Nemotron Nano V2 VL processor only supports batch size == 1"
+
+        assert len(examples) == 1, "Nemotron Nano V2 VL processor only supports batch size == 1"
         frames = []
         video_fps = -1
         video_nframe = 10
@@ -301,7 +302,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
         batch = processor(
             text=prompt,
             videos=frames,
-            videos_kwargs={'video_metadata': metadata},
+            videos_kwargs={"video_metadata": metadata},
             return_tensors="pt",
         )
     else:
@@ -333,7 +334,9 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     if is_video:
         video_token_id = processor.tokenizer.convert_tokens_to_ids("<video>")
         image_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
-        adjusted_batch["input_ids"] = torch.where(adjusted_batch["input_ids"] == video_token_id, image_token_id, adjusted_batch["input_ids"])
+        adjusted_batch["input_ids"] = torch.where(
+            adjusted_batch["input_ids"] == video_token_id, image_token_id, adjusted_batch["input_ids"]
+        )
 
     batch["input_ids"] = adjusted_batch["input_ids"]
     loss_mask = adjusted_batch["loss_mask"]

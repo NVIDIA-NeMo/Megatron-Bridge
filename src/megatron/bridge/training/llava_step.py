@@ -17,16 +17,15 @@ from functools import partial
 from typing import Iterable
 
 import torch
-from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
-from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
     get_packed_seq_params,
 )
+from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
 
 
@@ -80,13 +79,6 @@ def get_batch_from_iterator(
     return _batch_required_keys
 
 
-def get_batch_on_this_tp_rank(*args, **kwargs):
-    # Re-export the shared implementation for backward compatibility
-    from megatron.bridge.training.gpt_step import get_batch_on_this_tp_rank as _shared_get_batch_on_this_tp_rank
-
-    return _shared_get_batch_on_this_tp_rank(*args, **kwargs)
-
-
 def get_batch(
     data_iterator: Iterable, cfg: ConfigContainer
 ) -> tuple[
@@ -128,8 +120,8 @@ def get_batch(
 
     assert batch.get("tokens") is not None or batch.get("input_ids") is not None, "tokens or input_ids must be present"
     return (
-        batch['images'],
-        batch['num_patches'],
+        batch["images"],
+        batch["num_patches"],
         batch.get("tokens") or batch.get("input_ids"),
         batch["labels"],
         batch["loss_mask"],
@@ -213,7 +205,6 @@ def forward_step(
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
 
     return output_tensor, loss_function
-
 
 
 def _create_loss_function(loss_mask: torch.Tensor, check_for_nan_in_loss: bool, check_for_spiky_loss: bool) -> partial:
