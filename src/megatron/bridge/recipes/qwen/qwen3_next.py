@@ -116,7 +116,7 @@ def _qwen3_next_common(
     test_data_path: Optional[List[str]] = None,
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
-    path_to_cache: Optional[str] = None, # Path to cache the dataset
+    path_to_cache: Optional[str] = None,
     # Model configuration
     tensor_parallelism: int = 4,
     pipeline_parallelism: int = 2,

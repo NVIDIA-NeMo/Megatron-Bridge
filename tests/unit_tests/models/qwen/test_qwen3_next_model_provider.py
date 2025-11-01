@@ -46,7 +46,7 @@ class TestQwen3NextModelProvider:
         assert provider.qk_layernorm is True
         assert provider.kv_channels == 256
         assert provider.num_query_groups == 2
-        assert provider.seq_length == 262144 # 256k tokens
+        assert provider.seq_length == 262144  # 256k tokens
         assert provider.init_method_std == 0.02
         assert provider.hidden_dropout == 0.0
         assert provider.attention_dropout == 0.0
@@ -265,7 +265,7 @@ class TestQwen3NextModelProvider80B_A3B:
         assert provider.qk_layernorm is True
         assert provider.kv_channels == 256
         assert provider.vocab_size == 151936
-        assert provider.seq_length == 262144 # 256k tokens
+        assert provider.seq_length == 262144  # 256k tokens
         assert provider.rotary_base == 10000000.0
         assert provider.rotary_percent == 0.25
         assert provider.attention_output_gate is True
@@ -334,7 +334,7 @@ class TestQwen3NextProviderEdgeCases:
             num_layers=32,
             hidden_size=4096,
             linear_num_value_heads=64,
-            linear_num_key_heads=8, # 64 divisible by 8
+            linear_num_key_heads=8,  # 64 divisible by 8
         )
         assert provider.linear_num_key_heads == 8
 
@@ -343,7 +343,7 @@ class TestQwen3NextProviderEdgeCases:
         provider = Qwen3NextModelProvider(
             num_layers=32,
             hidden_size=4096,
-            linear_attention_freq=2, # 32 divisible by 2
+            linear_attention_freq=2,  # 32 divisible by 2
         )
         assert provider.linear_attention_freq == 2
 
@@ -352,9 +352,9 @@ class TestQwen3NextProviderEdgeCases:
         provider = Qwen3NextModelProvider(
             num_layers=8,
             hidden_size=4096,
-            linear_attention_freq=[1,1,1,0,1,1,1,0], # 8 layers, 6 linear attention layers
+            linear_attention_freq=[1, 1, 1, 0, 1, 1, 1, 0],  # 8 layers, 6 linear attention layers
         )
-        assert provider.linear_attention_freq == [1,1,1,0,1,1,1,0]
+        assert provider.linear_attention_freq == [1, 1, 1, 0, 1, 1, 1, 0]
 
     def test_moe_configuration_validity(self):
         """Test MoE configuration parameters."""

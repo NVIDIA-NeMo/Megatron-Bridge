@@ -15,15 +15,14 @@
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
+
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-
-from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
 try:
     import transformer_engine  # type: ignore  # noqa: F401
@@ -437,24 +436,24 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
         get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
     )
 
-    layernorm_zero_centered_gamma: bool = True # Zero-centered RMSNorm
+    layernorm_zero_centered_gamma: bool = True  # Zero-centered RMSNorm
     kv_channels: int | None = 256
     num_query_groups: int = 2
-    seq_length: int = 262144 # 256k tokens
+    seq_length: int = 262144  # 256k tokens
     rotary_base: float = 10000000.0
-    rotary_percent: float = 0.25 # 25% of the hidden size is used for RoPE
-    attention_output_gate: bool = True # Gated Attention
+    rotary_percent: float = 0.25  # 25% of the hidden size is used for RoPE
+    attention_output_gate: bool = True  # Gated Attention
 
     # MoE specific parameters
     num_moe_experts: int = 512
-    moe_router_topk: int = 10 # 10 routed experts per token
-    moe_shared_expert_gate: bool = True # Qwen3-Next uses a gate for the shared expert
+    moe_router_topk: int = 10  # 10 routed experts per token
+    moe_shared_expert_gate: bool = True  # Qwen3-Next uses a gate for the shared expert
     moe_router_dtype: str = "fp32"
-    moe_router_load_balancing_type: str = "global_aux_loss" # Qwen3-Next uses global aux loss for load balancing
+    moe_router_load_balancing_type: str = "global_aux_loss"  # Qwen3-Next uses global aux loss for load balancing
 
     # Linear Attention specific parameters
-    linear_attention_type: str = "gated_delta_net" # Gated Delta Net used in 75% of the model layers
-    linear_attention_freq: int | list[int] = 4  # 1 gated standard attention layer per 4 layers
+    linear_attention_type: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
+    linear_attention_freq: int | list[int] = 4   # 1 gated standard attention layer per 4 layers
     linear_conv_kernel_dim: int = 4
     linear_key_head_dim: int = 128
     linear_value_head_dim: int = 128
