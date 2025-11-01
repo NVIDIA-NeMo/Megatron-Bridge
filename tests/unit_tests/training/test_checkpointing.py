@@ -39,7 +39,6 @@ from megatron.bridge.training.checkpointing import (
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
     get_rng_state,
-    has_nvidia_modelopt,
     init_checkpointing_context,
     load_checkpoint,
     read_metadata,
@@ -364,13 +363,6 @@ def save_checkpoint_fixtures():
     }
 
 
-def _patch_modelopt_state_saver():
-    """Conditionally patch modelopt state saving function."""
-    if has_nvidia_modelopt:
-        return patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
-    return patch.object(_dummy_obj, "save_sharded_modelopt_state")
-
-
 class TestSaveCheckpoint:
     """Test checkpoint saving functionality."""
 
@@ -379,7 +371,7 @@ class TestSaveCheckpoint:
     @patch("builtins.open", new_callable=mock_open)
     @patch("torch.save")
     @patch("shutil.copy")
-    @_patch_modelopt_state_saver()
+    @patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing.get_rng_state")
     @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")

@@ -49,6 +49,7 @@ training/activation-recomputation.md
 training/cpu-offloading.md
 training/peft.md
 training/packed-sequences.md
+training/distillation.md
 ```
 
 ```{toctree}
