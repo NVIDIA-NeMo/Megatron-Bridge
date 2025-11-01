@@ -20,7 +20,10 @@ ConfigContainer:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
     recompute_granularity: "selective"
-    pipeline_model_parallel_layout: "Et|(tt|)*30L"
+    # pipeline_model_parallel_layout: "Et|(tt|)*30L"
+  
+  comm_overlap:
+    overlap_grad_reduce: false
 
   train:
     train_iters: 25
@@ -42,6 +45,7 @@ ConfigContainer:
   ddp:
     check_for_nan_in_grad: false
     check_for_large_grads: false
+    overlap_grad_reduce: false
 
   mixed_precision:
     grad_reduce_in_fp32: false
@@ -85,7 +89,7 @@ perf_matrix:
         tp: 1
         pp: 1
         cp: 1
-        vp: 1
+        vp: null
         ep: 8
         etp: 1
         use_megatron_fsdp: false

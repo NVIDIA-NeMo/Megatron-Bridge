@@ -119,14 +119,7 @@ def main():
         enable_deepep = bool(args.gpu.lower() in ["h100"])
         use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
 
-        if enable_deepep:
-            recipe.model.moe_token_dispatcher_type = "flex"
-            recipe.model.moe_enable_deepep = True
-            recipe.model.moe_shared_expert_overlap = False
-        if use_tokendrop:
-            enable_deepep = False
-            logger.info("Using token drop, disabling DeepEP")
-            recipe.model = apply_moe_token_drop(recipe.model)
+        
         
         pp, vp = 1, 1
         recipe = kimi_k2_llm_pretrain_config(
@@ -136,11 +129,19 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
-            layout="Et|(tt|)*30mL",
+            optimizer_type="muon",
         )
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
-        
+        if enable_deepep:
+            recipe.model.moe_token_dispatcher_type = "flex"
+            recipe.model.moe_enable_deepep = True
+            recipe.model.moe_shared_expert_overlap = False
+        if use_tokendrop:
+            enable_deepep = False
+            logger.info("Using token drop, disabling DeepEP")
+            recipe.model = apply_moe_token_drop(recipe.model)
+
         A2A_1F1B = bool(args.gpu.lower() in ["h100"])
         if A2A_1F1B:
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
@@ -152,6 +153,11 @@ def main():
             recipe.model.moe_shared_expert_overlap = True
         if args.gpu.lower() in ["h100"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
+        
+        recipe.model.num_layers=3
+        recipe.model.num_moe_experts=8
+        recipe.model.moe_layer_freq=[0] + [1] * 2
+        # recipe.model.overlap_grad_reduce=False
 
     else:
         raise ValueError(f"Model {args.model_name} {args.model_size} not supported")

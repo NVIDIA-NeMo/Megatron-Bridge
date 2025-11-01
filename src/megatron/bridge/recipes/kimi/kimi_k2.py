@@ -221,6 +221,7 @@ def pretrain_config(
             lr_warmup_iters=lr_warmup_iters,
             lr_decay_iters=train_iters,
             max_lr=lr,
+            min_lr=lr,
         )
     else:
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")
