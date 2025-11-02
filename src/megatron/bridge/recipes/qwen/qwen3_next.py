@@ -105,6 +105,7 @@ def qwen3_next_80b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3NextCommonKwar
     combined_kwargs: Qwen3NextCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_next_common(**combined_kwargs)
 
+
 def _qwen3_next_common(
     hf_path: str,
     dir: Optional[str] = None,
