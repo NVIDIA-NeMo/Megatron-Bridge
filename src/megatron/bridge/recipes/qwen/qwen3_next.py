@@ -85,6 +85,7 @@ class Qwen3NextCommonKwargs(TypedDict, total=False):
     # Performance optimization knobs
     enable_deepep: bool
 
+
 def qwen3_next_80b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3NextCommonKwargs]) -> ConfigContainer:
     """Return a pre-training config for Qwen3-Next 80B-A3B.
 

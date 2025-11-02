@@ -20,6 +20,7 @@ from megatron.bridge.models.qwen import (
     Qwen3NextModelProvider80B_A3B,
 )
 
+
 class TestQwen3NextModelProvider:
     """Test cases for base Qwen3NextModelProvider class."""
 
@@ -228,6 +229,7 @@ class TestQwen3NextModelProvider:
         assert provider.mtp_num_layers == 2
         assert provider.mtp_loss_scaling_factor == 0.2
 
+
 class TestQwen3NextModelProvider80B_A3B:
     """Test cases for Qwen3NextModelProvider80B_A3B class."""
 
@@ -296,6 +298,7 @@ class TestQwen3NextModelProvider80B_A3B:
         assert provider.moe_ffn_hidden_size == 512
         assert provider.moe_shared_expert_intermediate_size == 512
         assert provider.moe_router_pre_softmax is False
+
 
 class TestQwen3NextProviderInheritance:
     """Test inheritance relationships between Qwen3 Next providers."""
@@ -416,6 +419,7 @@ class TestQwen3NextProviderEdgeCases:
         )
 
         assert provider.layernorm_epsilon == 1e-5
+
 
 class TestQwen3NextProviderArchitecturalFeatures:
     """Test cases to verify Qwen3 MoE architectural features."""

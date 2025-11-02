@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from typing import Callable
+
 import torch
+
 
 def get_no_weight_decay_cond(
     no_weight_decay_cond_type: str, default_skip_embedding_weight_decay: bool
@@ -35,6 +37,7 @@ def get_no_weight_decay_cond(
                     or (default_skip_embedding_weight_decay and "embedding" in name)
                 )
             return no_wd
+        
         no_weight_decay_cond_fn = qwen3_next_no_weight_decay_cond
     elif no_weight_decay_cond_type is not None:
         raise ValueError(f"Invalid no_weight_decay_cond_type: {no_weight_decay_cond_type}")

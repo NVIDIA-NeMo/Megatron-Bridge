@@ -24,6 +24,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
+
 try:
     import transformer_engine  # type: ignore  # noqa: F401
 
@@ -453,7 +454,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
 
     # Linear Attention specific parameters
     linear_attention_type: str = "gated_delta_net"  # Gated Delta Net used in 75% of the model layers
-    linear_attention_freq: int | list[int] = 4   # 1 gated standard attention layer per 4 layers
+    linear_attention_freq: int | list[int] = 4  # 1 gated standard attention layer per 4 layers
     linear_conv_kernel_dim: int = 4
     linear_key_head_dim: int = 128
     linear_value_head_dim: int = 128
@@ -462,6 +463,7 @@ class Qwen3NextModelProvider(Qwen3MoEModelProvider):
 
     # Checkpointing
     hetereogenous_dist_checkpoint: bool = True
+
 
 @dataclass
 class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
