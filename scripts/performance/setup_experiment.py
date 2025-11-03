@@ -91,9 +91,9 @@ def main(
 
     parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
 
-    tp_size = tp_size if tp_size is not None else parallelism_defaults["tp_size"]
-    pp_size = pp_size if pp_size is not None else parallelism_defaults["pp_size"]
-    cp_size = cp_size if cp_size is not None else parallelism_defaults["cp_size"]
+    tp_size = tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size
+    pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
+    cp_size = cp_size if cp_size is not None else parallelism_defaults.context_parallel_size
 
     plugins = (
         [

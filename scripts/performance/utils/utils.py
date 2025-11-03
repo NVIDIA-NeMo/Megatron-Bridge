@@ -12,20 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ast
 import importlib
 import logging
-from functools import lru_cache
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 
-try:
-    from parse_default_config_ast import ParallelismExtractor
-except ImportError:
-    from .parse_default_config_ast import ParallelismExtractor
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ParallelismAndBatchConfig:
+    """Container for model parallelism and batch size overrides."""
+
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    context_parallel_size: int
+    virtual_pipeline_model_parallel_size: int | None
+    expert_model_parallel_size: int
+    expert_tensor_parallel_size: int | None
+    global_batch_size: int
+    micro_batch_size: int
+    sequence_parallel: Optional[bool] = None
+
+    def sequence_parallel_enabled(self) -> bool:
+        if self.sequence_parallel is not None:
+            return self.sequence_parallel
+        return self.tensor_model_parallel_size > 1
 
 
 def get_model_recipe(
@@ -38,7 +51,7 @@ def get_model_recipe(
 ):
     """Get the model recipe factory by its name."""
     recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
-    module_name = f"configs.{model_name}.{model_name}_{model_size}_llm_pretrain"
+    module_name = f"configs.{model_name}.{model_name}_llm_pretrain"
     try:
         module = importlib.import_module(module_name)
         logger.debug("Imported configuration module '%s' to load recipe '%s'.", module_name, recipe_name)
@@ -58,12 +71,6 @@ def get_model_recipe(
         raise ValueError(f"Invalid compute dtype: {compute_dtype} and FP8 recipe: {fp8_recipe}")
 
 
-def _config_module_path(model_name: str, model_size: str) -> Path:
-    configs_root = Path(__file__).resolve().parent.parent / "configs"
-    return configs_root / model_name / f"{model_name}_{model_size}_llm_pretrain.py"
-
-
-@lru_cache(maxsize=None)
 def get_parallelism_defaults(
     model_name: str,
     model_size: str,
@@ -73,41 +80,22 @@ def get_parallelism_defaults(
     fp8_recipe: Optional[str] = None,
 ) -> Dict[str, int]:
     """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
-    config_path = _config_module_path(model_name, model_size)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"Configuration module path not found: {config_path}")
+    parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}"
+    parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
 
-    function_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
+    module_name = f"configs.{model_name}.parallelism_configs"
+    try:
+        module = importlib.import_module(module_name)
+        logger.debug(
+            "Imported configuration module '%s' to load parallelism config '%s'.", module_name, parallelism_name
+        )
+    except ModuleNotFoundError as exc:
+        raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
 
     try:
-        tree = ast.parse(config_path.read_text())
-    except SyntaxError as exc:
-        raise RuntimeError(f"Failed to parse configuration module: {config_path}") from exc
+        parallelism_config = getattr(module, parallelism_name)
+    except AttributeError:
+        logger.error(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
+        parallelism_config = ParallelismAndBatchConfig(1, 1, 1, None, 1, None, 1, 1)
 
-    context = {
-        "fp8_recipe": fp8_recipe,
-        "compute_dtype": compute_dtype,
-        "gpu": gpu,
-        "num_gpus": num_gpus,
-        "model_name": model_name,
-        "model_size": model_size,
-    }
-
-    extractor = ParallelismExtractor(function_name, context)
-    extractor.visit(tree)
-
-    if not extractor.defaults:
-        raise ValueError(
-            f"Unable to extract parallelism defaults for '{function_name}' in '{config_path}'. "
-            "Ensure the configuration uses explicit assignments for tensor/pipeline/context parallel sizes."
-        )
-
-    tp_size = extractor.defaults.get("tensor_model_parallel_size", 1)
-    pp_size = extractor.defaults.get("pipeline_model_parallel_size", 1)
-    cp_size = extractor.defaults.get("context_parallel_size", 1)
-
-    return {
-        "tp_size": tp_size,
-        "pp_size": pp_size,
-        "cp_size": cp_size,
-    }
+    return parallelism_config

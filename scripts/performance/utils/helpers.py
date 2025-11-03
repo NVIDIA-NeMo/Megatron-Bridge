@@ -15,7 +15,7 @@
 import logging
 from typing import Any, Dict, Optional
 
-from utils.utils import get_model_recipe
+from utils.utils import ParallelismAndBatchConfig, get_model_recipe
 
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer
@@ -29,6 +29,21 @@ from megatron.bridge.training.mixed_precision import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def apply_parallelism_and_batch_config(cfg: ConfigContainer, settings: ParallelismAndBatchConfig) -> None:
+    """Apply parallelism and batch size overrides to a config container."""
+
+    cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
+    cfg.model.pipeline_model_parallel_size = settings.pipeline_model_parallel_size
+    cfg.model.context_parallel_size = settings.context_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = settings.virtual_pipeline_model_parallel_size
+    cfg.model.expert_model_parallel_size = settings.expert_model_parallel_size
+    cfg.model.expert_tensor_parallel_size = settings.expert_tensor_parallel_size
+    cfg.model.sequence_parallel = settings.sequence_parallel_enabled()
+
+    cfg.train.global_batch_size = settings.global_batch_size
+    cfg.train.micro_batch_size = settings.micro_batch_size
 
 
 def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
@@ -70,9 +85,6 @@ def set_basic_perf_overrides(recipe: ConfigContainer) -> None:
 
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
-
-    recipe.mixed_precision.grad_reduce_in_fp32 = False
-    recipe.ddp.grad_reduce_in_fp32 = False
 
 
 def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
@@ -168,6 +180,9 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if use_tokendrop:
         recipe.model = apply_moe_token_drop(recipe.model)
     if use_tokendrop is not None and not use_tokendrop:  # explicitly set to False by user
+        recipe.model = apply_moe_token_drop(
+            recipe.model, moe_expert_capacity_factor=-1.0, moe_pad_expert_input_to_capacity=False
+        )
         recipe.model.moe_router_force_load_balancing = True
 
     if kwargs.get("tensor_model_parallel_size") is not None:
