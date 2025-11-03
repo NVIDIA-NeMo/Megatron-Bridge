@@ -1865,6 +1865,29 @@ class TestParamIsNotShared:
 class TestCalcParamsL2Norm:
     """Test suite for the calc_params_l2_norm function."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_pg_collection(self, monkeypatch):
+        class _PG:
+            def __init__(self):
+                # Minimal set of groups used by calc_params_l2_norm
+                self.dp_cp = object()
+                self.mp = object()
+                self.tp_ep_pp = object()
+                self.pp = object()
+
+                # Provide dp with size() to satisfy any incidental calls
+                class _DP:
+                    def size(self_inner):
+                        return 1
+
+                self.dp = _DP()
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: _PG(),
+            raising=True,
+        )
+
     @pytest.fixture
     def simple_model(self):
         """Create a simple model for testing."""
