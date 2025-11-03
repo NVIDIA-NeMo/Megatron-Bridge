@@ -205,6 +205,17 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         return None
 
     @property
+    def auto_map_model_class(self) -> Optional[str]:
+        """Get the AutoModelForCausalLM class from the config."""
+        config = self.config
+        auto_map = getattr(config, "auto_map", None)
+        if auto_map and "AutoModelForCausalLM" in auto_map:
+            auto_map_class = auto_map["AutoModelForCausalLM"]
+            return str(auto_map_class)
+
+        return None
+
+    @property
     def generation_config(self) -> Optional[GenerationConfig]:
         """Lazy load and return the generation config."""
         if not hasattr(self, "_generation_config"):
