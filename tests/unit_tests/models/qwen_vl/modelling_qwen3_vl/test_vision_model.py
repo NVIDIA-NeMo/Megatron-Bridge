@@ -15,7 +15,7 @@
 """
 Unit tests for Qwen3VL Vision Model implementation.
 
-Run with: pytest tests/unit_tests/models/qwen_3_vl/test_vision_model.py
+Run with: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_vision_model.py
 """
 
 from unittest.mock import Mock
@@ -26,7 +26,7 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor
 
-from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 
 
 @pytest.fixture(scope="module")

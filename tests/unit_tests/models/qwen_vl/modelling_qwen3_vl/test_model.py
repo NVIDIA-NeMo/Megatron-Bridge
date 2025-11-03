@@ -15,8 +15,8 @@
 """
 Unit tests for Qwen3VL Model implementation.
 
-Run with: torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_3_vl/test_model.py
-Or for single GPU: pytest tests/unit_tests/models/qwen_3_vl/test_model.py
+Run with: torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
+Or for single GPU: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
 """
 
 import numpy as np
@@ -29,8 +29,8 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
 from transformers import AutoProcessor, Qwen3VLMoeConfig
 
-from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
 
 @pytest.fixture(scope="module")

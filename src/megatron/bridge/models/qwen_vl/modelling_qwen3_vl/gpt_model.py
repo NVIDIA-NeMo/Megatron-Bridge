@@ -28,11 +28,11 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
-from megatron.bridge.models.qwen_3_vl.rope import (
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
     Qwen3VLMoETextRotaryEmbedding,
     Qwen3VLTextRotaryEmbedding,
 )
-from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 

@@ -20,9 +20,9 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
 
-from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel
-from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_3_vl.utils import get_rope_index, split_deepstack_embs
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.gpt_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_index, split_deepstack_embs
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 

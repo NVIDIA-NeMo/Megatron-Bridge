@@ -26,8 +26,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvider
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.qwen3vl_provider import Qwen3VLMoEModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3VLMoeForConditionalGeneration, target=Qwen3VLModel)

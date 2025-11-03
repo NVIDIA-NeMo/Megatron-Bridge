@@ -16,18 +16,18 @@
 
 # Core model components
 # Bridges for HuggingFace to Megatron conversion
-from megatron.bridge.models.qwen_3_vl.bridge import Qwen3VLBridge
-from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel  # noqa: F401
-from megatron.bridge.models.qwen_3_vl.moe_bridge import Qwen3VLMoEBridge
-
-# MoE (Mixture of Experts) model providers
-from megatron.bridge.models.qwen_3_vl.moe_provider import (
-    Qwen3VLMoEModelProvider,
-)
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.bridge import Qwen3VLBridge
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel  # noqa: F401
 
 # Dense model providers
-from megatron.bridge.models.qwen_3_vl.provider import (
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.provider import (
     Qwen3VLModelProvider,
+)
+from megatron.bridge.models.qwen_vl.qwen3vl_bridge import Qwen3VLMoEBridge
+
+# MoE (Mixture of Experts) model providers
+from megatron.bridge.models.qwen_vl.qwen3vl_provider import (
+    Qwen3VLMoEModelProvider,
 )
 
 
