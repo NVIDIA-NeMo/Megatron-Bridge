@@ -148,7 +148,6 @@ class Qwen3VLModel(MegatronModule):
             freeze_vision_model (bool): Freeze the vision model module (patch_embed, blocks, pos_embed).
             freeze_vision_projection (bool): Freeze the vision projection modules (merger and deepstack_merger_list).
         """
-        print(self)
         modules = []
         
         if freeze_language_model and self.language_model is not None:
