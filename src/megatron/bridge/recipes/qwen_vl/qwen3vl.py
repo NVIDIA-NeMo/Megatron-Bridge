@@ -94,9 +94,15 @@ def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> C
         "hf_path": "Qwen/Qwen3-VL-8B-Instruct",
         "tensor_parallelism": 4,
         "pipeline_parallelism": 1,
-        "freeze_language_model": False,
-        "freeze_vision_model": False,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
         "freeze_vision_projection": False,
+        "min_lr": 1e-6,
+        "lr": 1e-5,
+        "lr_warmup_iters": 200,
+        "micro_batch_size": 1,
+        "global_batch_size": 32,
+        
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)
@@ -110,9 +116,17 @@ def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLComm
     """
     recommended_kwargs: Qwen3VLCommonKwargs = {
         "hf_path": "Qwen/Qwen3-VL-30B-A3B-Instruct",
-        "tensor_parallelism": 4,
+        "tensor_parallelism": 1,
         "pipeline_parallelism": 1,
         "expert_parallelism": 8,
+        "freeze_language_model": True,
+        "freeze_vision_model": True,
+        "freeze_vision_projection": False,
+        "min_lr": 2e-6,
+        "lr": 2e-5,
+        "lr_warmup_iters": 200,
+        "micro_batch_size": 1,
+        "global_batch_size": 32,
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)
