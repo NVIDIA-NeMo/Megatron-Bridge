@@ -32,6 +32,7 @@ from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_attn_to_len,
     pad_or_truncate_pos_to_len,
 )
+from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ def forward_step(
             cu_seqlens_argmin,
             max_seqlen,
             visual_inputs,
-        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=model.pg_collection)
+        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
     timers("batch-generator").stop()
 
     forward_args = {

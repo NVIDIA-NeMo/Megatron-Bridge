@@ -25,6 +25,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,7 @@ def forward_step(
     straggler_timer = state.straggler_timer
 
     config = get_model_config(model)
-    pg_collection = model.pg_collection
+    pg_collection = get_pg_collection(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
 
     timers("batch-generator", log_level=2).start()
