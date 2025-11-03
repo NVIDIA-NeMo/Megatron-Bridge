@@ -136,7 +136,6 @@ def llama3_8b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Conf
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -156,7 +155,6 @@ def llama3_8b_16k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> 
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -176,7 +174,6 @@ def llama3_8b_64k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> 
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -196,7 +193,6 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -222,7 +218,6 @@ def llama3_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -248,7 +243,6 @@ def llama3_70b_16k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -274,7 +268,6 @@ def llama3_70b_64k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -344,7 +337,6 @@ def llama31_405b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> C
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     cfg = _llama3_common(**combined_kwargs)
-    cfg.model.cross_entropy_fusion_impl = "te"
     return cfg
 
 
@@ -441,6 +433,7 @@ def _llama3_common(
     model_cfg.context_parallel_size = context_parallelism
     model_cfg.sequence_parallel = sequence_parallelism
     model_cfg.seq_length = seq_length
+    model_cfg.cross_entropy_fusion_impl = "te"
 
     # Large model specific pipeline split configurations
     if account_for_embedding_in_pipeline_split:
