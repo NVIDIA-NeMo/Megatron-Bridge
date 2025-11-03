@@ -225,7 +225,11 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
             transformer_layer_args["ub_atomic_gemm_rs"] = config.tp_comm_atomic_rs
         self.transformer_layer = AutocastTransformerLayer(**transformer_layer_args)
 
-        if self.config.enable_cuda_graph and self.training:
+        if (
+            self.config.cuda_graph_impl == "local"
+            and self.training
+            and self.config.cuda_graph_scope != "full_iteration"
+        ):
             assert not config.cpu_offloading and config.recompute_granularity is None, "Cudagraphs not supported"
             self.add_module("cudagraph_manager", CudaGraphManager(config))
 
@@ -256,7 +260,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
         context = None
 
         # External CUDA graph requires returned values to be Tensors
-        if hasattr(self.config, "external_cuda_graph") and self.config.external_cuda_graph and self.training:
+        if self.config.cuda_graph_impl == "transformer_engine" and self.training:
             return hidden_states
         return hidden_states, context
 

@@ -50,7 +50,7 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None) -> None:
     else:
         save_path = model_name
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id)
+    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
     megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
     console.print(weights_verification_table(bridge, megatron_model))
 

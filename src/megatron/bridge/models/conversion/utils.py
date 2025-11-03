@@ -246,42 +246,19 @@ def extract_sort_key(param_name: str):
     return numbers, param_name
 
 
-def get_causal_lm_class_via_auto_map(
-    model_name_or_path: str,
+def get_causal_lm_class_name_via_auto_map(
     config: PretrainedConfig,
-) -> type | str | None:
-    """Return CausalLM class via config.auto_map if available; otherwise None.
+) -> str | None:
+    """Return CausalLM class name via config.auto_map if available; otherwise None.
 
-    If auto_map["AutoModelForCausalLM"] is present in the config, tries to return the dynamically loaded class.
-    If dynamic loading fails (e.g., due to version incompatibilities), returns the class name as a string.
-    Returns None when auto_map is absent.
+    If auto_map["AutoModelForCausalLM"] is present in the config, returns the class
+    name string extracted from the mapping value by splitting on '.' and taking the
+    last segment. Returns None if auto_map is not set.
     """
     auto_map = getattr(config, "auto_map", None)
     if auto_map and "AutoModelForCausalLM" in auto_map:
         auto_map_class = auto_map["AutoModelForCausalLM"]
-        repo_id = model_name_or_path or getattr(config, "_name_or_path", None)
-        if not repo_id:
-            return None
-        try:
-            from transformers.dynamic_module_utils import get_class_from_dynamic_module
-
-            return get_class_from_dynamic_module(
-                class_reference=auto_map_class,
-                pretrained_model_name_or_path=repo_id,
-                cache_dir=None,
-                force_download=False,
-                resume_download=True,
-                proxies=None,
-                use_auth_token=None,
-                revision=None,
-                local_files_only=False,
-                repo_id=repo_id,
-            )
-        except Exception:
-            # If dynamic loading fails (e.g., version incompatibilities),
-            # return the class name as string for string-based bridge registration
-            class_name = auto_map_class.split(".")[-1]  # Extract class name from module.ClassName
-            return class_name
+        return str(auto_map_class).split(".")[-1]
 
     return None
 

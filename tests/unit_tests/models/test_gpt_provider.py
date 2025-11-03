@@ -14,7 +14,11 @@
 
 from unittest.mock import Mock, patch
 
-from megatron.bridge.models import GPTModelProvider
+import pytest
+import torch
+
+from megatron.bridge.models.gpt_provider import GPTDistillationProvider, GPTModelProvider
+from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
 class TestGPTModelProvider:
@@ -400,3 +404,232 @@ class TestGPTModelProvider:
         mock_te_full_spec.assert_not_called()
         mock_te_spec.assert_called_once_with(provider)
         assert result == "te_spec"
+
+
+class TestGPTDistillationProvider:
+    """Test cases for GPTDistillationProvider class."""
+
+    def test_initialization_with_teacher(self):
+        """Test GPTDistillationProvider can be initialized with a teacher."""
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        student = GPTDistillationProvider(
+            num_layers=12,
+            hidden_size=2048,
+            num_attention_heads=16,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+            teacher=teacher,
+        )
+
+        assert student.teacher is teacher
+        assert student.num_layers == 12
+        assert student.hidden_size == 2048
+        assert student.num_attention_heads == 16
+
+    def test_initialization_without_teacher_raises_error(self):
+        """Test GPTDistillationProvider raises error when teacher is None."""
+        with pytest.raises(AssertionError, match="Teacher model must be provided"):
+            GPTDistillationProvider(
+                num_layers=12,
+                hidden_size=2048,
+                num_attention_heads=16,
+                vocab_size=1000,
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=1,
+                context_parallel_size=1,
+                seq_length=1024,
+                pipeline_dtype=None,
+                teacher=None,
+            )
+
+    def test_post_init_validates_shared_attributes(self):
+        """Test __post_init__ validates that shared attributes match between student and teacher."""
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=torch.float32,
+        )
+
+        # Test mismatched tensor_model_parallel_size
+        with pytest.raises(ValueError):
+            GPTDistillationProvider(
+                num_layers=12,
+                hidden_size=2048,
+                num_attention_heads=16,
+                vocab_size=1000,
+                tensor_model_parallel_size=2,  # Different from teacher
+                pipeline_model_parallel_size=1,
+                context_parallel_size=1,
+                seq_length=1024,
+                pipeline_dtype=None,
+                teacher=teacher,
+            )
+
+    def test_post_init_validates_seq_length(self):
+        """Test __post_init__ validates seq_length."""
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=2048,
+            pipeline_dtype=torch.float32,
+        )
+
+        with pytest.raises(ValueError):
+            GPTDistillationProvider(
+                num_layers=12,
+                hidden_size=2048,
+                num_attention_heads=16,
+                vocab_size=1000,
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=1,
+                context_parallel_size=1,
+                seq_length=1024,  # Different from teacher
+                pipeline_dtype=torch.float32,
+                teacher=teacher,
+            )
+
+    @patch("modelopt.torch.distill.plugins.megatron.parallel_state")
+    @patch("megatron.bridge.models.gpt_provider.parallel_state")
+    @patch("megatron.bridge.models.gpt_provider.calculate_padded_vocab_size", return_value=1024)
+    @patch("megatron.bridge.models.gpt_provider.MCoreGPTModel")
+    def test_provide_method_creates_distillation_model(
+        self,
+        mock_mcore_gpt,
+        mock_calc_vocab,
+        mock_parallel_state,
+        mock_mtd_parallel_state,
+    ):
+        """Test provide method creates a ModelOpt DistillationModel."""
+        mock_parallel_state.is_pipeline_first_stage.return_value = True
+        mock_parallel_state.is_pipeline_last_stage.return_value = True
+        mock_mtd_parallel_state.is_pipeline_first_stage.return_value = True
+        mock_mtd_parallel_state.is_pipeline_last_stage.return_value = True
+
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        student = GPTDistillationProvider(
+            num_layers=12,
+            hidden_size=4096,
+            num_attention_heads=16,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+            teacher=teacher,
+            kd_config=ModelOptDistillConfig(),
+        )
+
+        # Mock the provide method calls and modelopt functions
+        mock_student_model = Mock()
+        mock_teacher_model = Mock()
+        mock_student_model.config = Mock()
+        mock_teacher_model.config = Mock()
+        # Avoid ProjectionLayer being created here
+        mock_student_model.config.hidden_size = mock_teacher_model.config.hidden_size = 4096
+        mock_kd_model = Mock()
+
+        # Set the side effects for the model provider - student first, then teacher
+        mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]
+
+        with patch("megatron.bridge.models.gpt_provider.mtd.convert", return_value=mock_kd_model):
+            result = student.provide()
+
+        # Verify that both student and teacher models were created
+        assert mock_mcore_gpt.call_count == 2
+        assert result is mock_kd_model
+
+    def test_setattr_mirrors_to_teacher(self):
+        """Test __setattr__ mirrors attributes to teacher when teacher has that attribute."""
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        student = GPTDistillationProvider(
+            num_layers=12,
+            hidden_size=2048,
+            num_attention_heads=16,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+            teacher=teacher,
+        )
+
+        student.num_layers = 10  # This exists on teacher, so it should be mirrored
+        assert student.num_layers == 10
+        assert teacher.num_layers == 10
+
+    def test_setattr_does_not_mirror_when_teacher_lacks_attribute(self):
+        """Test __setattr__ does not mirror attributes that teacher doesn't have."""
+        teacher = GPTModelProvider(
+            num_layers=24,
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        student = GPTDistillationProvider(
+            num_layers=12,
+            hidden_size=2048,
+            num_attention_heads=16,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+            teacher=teacher,
+        )
+
+        student.new_attribute = "test_value"  # Should not be reflected on teacher
+        assert student.new_attribute == "test_value"
+        assert not hasattr(teacher, "new_attribute")

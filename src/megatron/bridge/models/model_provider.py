@@ -677,17 +677,19 @@ def _ddp_wrap(
     else:
         DP = DistributedDataParallel
 
-    model = [
-        DP(
-            config=get_model_config(model_chunk),
-            ddp_config=ddp_config,
-            module=model_chunk,
-            # Turn off bucketing for model_chunk 2 onwards, since communication for these
-            # model chunks is overlapped with compute anyway.
-            disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
-        )
-        for (model_chunk_idx, model_chunk) in enumerate(model)
-    ]
+    # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
+    with torch.cuda.stream(torch.cuda.Stream()):
+        model = [
+            DP(
+                config=get_model_config(model_chunk),
+                ddp_config=ddp_config,
+                module=model_chunk,
+                # Turn off bucketing for model_chunk 2 onwards, since communication for these
+                # model chunks is overlapped with compute anyway.
+                disable_bucketing=(model_chunk_idx > 0) or overlap_param_gather_with_optimizer_step,
+            )
+            for (model_chunk_idx, model_chunk) in enumerate(model)
+        ]
 
     # Broadcast params from data parallel src rank to other data parallel ranks.
     if data_parallel_random_init:
