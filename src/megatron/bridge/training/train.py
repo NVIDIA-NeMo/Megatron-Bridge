@@ -17,12 +17,13 @@ import os
 import sys
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
     get_current_running_global_batch_size,
@@ -32,6 +33,7 @@ from megatron.core.num_microbatches_calculator import (
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
@@ -42,6 +44,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
+from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -230,7 +233,7 @@ def train(
         print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
 
     # Capture CUDA Graphs.
-    if model_config.external_cuda_graph:
+    if model_config.cuda_graph_impl == "transformer_engine":
         cuda_graph_helper = TECudaGraphHelper(
             model=model,
             config=model_config,
@@ -238,6 +241,7 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
+        # TODO: Fix #991
         cuda_graph_helper.create_cudagraphs()
 
     # Track train step elapsed time for throughput logging
@@ -245,6 +249,7 @@ def train(
     if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
     # Run training iterations till done.
+    start_iteration = global_state.train_state.step
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -259,6 +264,14 @@ def train(
         fault_tolerance.on_checkpointing_start(global_state)
         maybe_finalize_async_save(global_state=global_state, ckpt_cfg=config.checkpoint, blocking=False)
         fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
+
+        # Update the timeout for all process groups after initialization
+        # We update the timeout after the first successful iteration,
+        # which takes longer than others usually
+        if global_state.train_state.step == start_iteration + 1:
+            distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
+            if distributed_timeout_seconds_after_init is not None:
+                update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
 
         # Update number of microbatches first without consistency check to decide if a
         # checkpoint should be saved. If the number of microbatches is different
@@ -333,7 +346,7 @@ def train(
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
                     # Set the manual hooks when CUDA Graphs are used.
-                    if model_config.external_cuda_graph:
+                    if model_config.cuda_graph_impl == "transformer_engine":
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
@@ -556,8 +569,22 @@ def train_step(
                 seq_key="tokens",
             )
 
+        # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
+        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+            model,
+            seq_length=model_config.seq_length,
+            micro_batch_size=train_config.micro_batch_size,
+            decoder_seq_length=model_config.seq_length,
+        )
+
         # Forward pass.
-        forward_backward_func = get_forward_backward_func()
+        if cfg.model.cuda_graph_impl == "local" and cfg.model.cuda_graph_scope == "full_iteration":
+            forward_backward_func = FullCudaGraphWrapper(
+                get_forward_backward_func(), cuda_graph_warmup_steps=cfg.model.cuda_graph_warmup_steps
+            )
+        else:
+            forward_backward_func = get_forward_backward_func()
+
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -567,6 +594,7 @@ def train_step(
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,
             forward_only=False,
+            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
