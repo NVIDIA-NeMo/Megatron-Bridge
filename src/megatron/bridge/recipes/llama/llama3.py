@@ -37,7 +37,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
 
 class Llama3CommonKwargs(TypedDict, total=False):
@@ -72,6 +72,7 @@ class Llama3CommonKwargs(TypedDict, total=False):
     seq_length: int
     lr: float
     min_lr: float
+    adam_eps: float
     lr_warmup_iters: int
     lr_decay_iters: Optional[int]
     eval_interval: int
@@ -191,6 +192,26 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
 
+def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str, **user_kwargs: Unpack[Llama3CommonKwargs]) -> ConfigContainer:
+    """Return a low precision (FP8 Current Scaling/MXFP8/NVFP4) pre-training config for Llama 3 8B.
+
+    See `_llama3_common` for the full list of parameters.
+    """
+    precision_config = get_mixed_precision_config(mixed_precision_recipe)
+    recommended_kwargs: Llama3CommonKwargs = {
+        "hf_path": "meta-llama/Meta-Llama-3-8B",
+        "tensor_parallelism": 1,
+        "pipeline_parallelism": 1,
+        "context_parallelism": 2,
+        "sequence_parallelism": False,
+        "precision_config": precision_config,
+        "lr": 6e-4,
+        "min_lr": 6e-6,
+        "adam_eps": 1e-8,
+        "global_batch_size": 768,
+    }
+    combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _llama3_common(**combined_kwargs)
 
 # Llama3 70B models
 def llama3_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> ConfigContainer:
@@ -361,6 +382,7 @@ def _llama3_common(
     seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
+    adam_eps: float = 1e-5,
     lr_warmup_iters: int = 2000,
     lr_decay_iters: Optional[int] = None,
     eval_interval: int = 2000,
@@ -399,6 +421,7 @@ def _llama3_common(
         seq_length (int): Sequence length for training data.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
+        adam_eps (float): AdamW epsilon.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
@@ -437,6 +460,7 @@ def _llama3_common(
         lr_decay_iters=lr_decay_iters,
         max_lr=lr,
         min_lr=min_lr,
+        adam_eps=adam_eps,
     )
 
     # Config Container
