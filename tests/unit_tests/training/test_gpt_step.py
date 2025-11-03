@@ -13,12 +13,16 @@
 # limitations under the License.
 
 from functools import partial
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import modelopt.torch.distill as mtd
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
-from megatron.bridge.training.gpt_step import get_packed_seq_params
+from megatron.bridge.training.gpt_step import (
+    _create_loss_function_modelopt,
+    get_packed_seq_params,
+)
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
@@ -241,3 +245,76 @@ class TestCreateLossFunction:
 
         # Verify the result
         assert result == expected_result
+
+
+class TestCreateLossFunctionModelopt:
+    """Tests for the _create_loss_function_modelopt helper function."""
+
+    def test_create_loss_function_modelopt_regular_model(self):
+        """Test _create_loss_function_modelopt with a regular (non-DistillationModel) model."""
+        loss_mask = torch.tensor([[1.0, 1.0, 0.0]])
+        mock_model = Mock()
+        mock_unwrapped_model = Mock()
+
+        with patch("megatron.bridge.training.gpt_step.unwrap_model", return_value=mock_unwrapped_model):
+            loss_func = _create_loss_function_modelopt(
+                loss_mask=loss_mask,
+                model=mock_model,
+                check_for_nan_in_loss=True,
+                check_for_spiky_loss=True,
+            )
+
+            # Verify it returns a partial function for masked_next_token_loss (regular loss)
+            assert isinstance(loss_func, partial)
+            assert loss_func.func.__name__ == "masked_next_token_loss"
+
+            # Verify the partial has correct arguments
+            assert torch.equal(loss_func.args[0], loss_mask)
+            assert loss_func.keywords["check_for_nan_in_loss"] == True
+            assert loss_func.keywords["check_for_spiky_loss"] == True
+
+    def test_create_loss_function_modelopt_distillation_model(self):
+        """Test _create_loss_function_modelopt with a DistillationModel."""
+        loss_mask = torch.tensor([[1.0, 0.0, 1.0]])
+        mock_model = Mock()
+        mock_distillation_model = Mock(spec=mtd.DistillationModel)
+
+        with patch("megatron.bridge.training.gpt_step.unwrap_model", return_value=mock_distillation_model):
+            loss_func = _create_loss_function_modelopt(
+                loss_mask=loss_mask,
+                model=mock_model,
+                check_for_nan_in_loss=False,
+                check_for_spiky_loss=True,
+            )
+
+            # Verify it returns a partial function for loss_func_kd (distillation loss)
+            assert isinstance(loss_func, partial)
+            assert loss_func.func.__name__ == "loss_func_kd"
+
+            # Verify the partial has correct keyword arguments
+            assert torch.equal(loss_func.keywords["loss_mask"], loss_mask)
+            assert loss_func.keywords["model"] == mock_distillation_model
+            assert isinstance(loss_func.keywords["original_loss_fn"], partial)
+            # Verify original_loss_fn is correctly configured
+            assert loss_func.keywords["original_loss_fn"].func.__name__ == "masked_next_token_loss"
+            assert loss_func.keywords["original_loss_fn"].keywords["check_for_nan_in_loss"] == False
+            assert loss_func.keywords["original_loss_fn"].keywords["check_for_spiky_loss"] == True
+
+    def test_create_loss_function_modelopt_both_flags_false(self):
+        """Test _create_loss_function_modelopt with both flags as False."""
+        loss_mask = torch.tensor([[0.0, 1.0, 1.0]])
+        mock_model = Mock()
+        mock_unwrapped_model = Mock()
+
+        with patch("megatron.bridge.training.gpt_step.unwrap_model", return_value=mock_unwrapped_model):
+            loss_func = _create_loss_function_modelopt(
+                loss_mask=loss_mask,
+                model=mock_model,
+                check_for_nan_in_loss=False,
+                check_for_spiky_loss=False,
+            )
+
+            # Verify the partial has correct arguments
+            assert torch.equal(loss_func.args[0], loss_mask)
+            assert loss_func.keywords["check_for_nan_in_loss"] == False
+            assert loss_func.keywords["check_for_spiky_loss"] == False
