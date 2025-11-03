@@ -18,7 +18,10 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from megatron.bridge.utils.slurm_utils import (
+    _parse_slurm_nodelist,
     is_slurm_job,
     resolve_slurm_local_rank,
     resolve_slurm_master_addr,
@@ -94,6 +97,38 @@ class TestResolveSLURMLocalRank:
         assert resolve_slurm_local_rank() is None
 
 
+class TestParseSLURMNodelist:
+    """Test _parse_slurm_nodelist helper function."""
+
+    def test_simple_comma_separated_list(self):
+        """Test parsing simple comma-separated nodelist."""
+        assert _parse_slurm_nodelist("node001,node002,node003") == "node001"
+
+    def test_simple_single_node(self):
+        """Test parsing single node."""
+        assert _parse_slurm_nodelist("node042") == "node042"
+
+    def test_bracket_range_notation(self):
+        """Test parsing bracket range notation."""
+        assert _parse_slurm_nodelist("node[001-004]") == "node001"
+
+    def test_bracket_list_notation(self):
+        """Test parsing bracket list notation."""
+        assert _parse_slurm_nodelist("node[001,003,005]") == "node001"
+
+    def test_complex_prefix(self):
+        """Test parsing with complex prefix."""
+        assert _parse_slurm_nodelist("compute-gpu-[10-20]") == "compute-gpu-10"
+
+    def test_with_whitespace(self):
+        """Test parsing handles leading/trailing whitespace."""
+        assert _parse_slurm_nodelist(" node001 , node002 ") == "node001"
+
+    def test_zero_padded_numbers(self):
+        """Test parsing preserves zero-padded numbers."""
+        assert _parse_slurm_nodelist("node[001-100]") == "node001"
+
+
 class TestResolveSLURMMasterAddr:
     """Test resolve_slurm_master_addr function."""
 
@@ -124,8 +159,9 @@ class TestResolveSLURMMasterAddr:
 
     @patch.dict(os.environ, {"SLURM_NTASKS": "4"}, clear=True)
     def test_missing_nodelist(self):
-        """Test returns None when nodelist not set."""
-        assert resolve_slurm_master_addr() is None
+        """Test warns and returns localhost when nodelist not set in SLURM environment."""
+        with pytest.warns(UserWarning, match="SLURM environment detected.*but SLURM_NODELIST is missing"):
+            assert resolve_slurm_master_addr() == "localhost"
 
 
 class TestResolveSLURMMasterPort:
@@ -151,8 +187,8 @@ class TestResolveSLURMMasterPort:
 
     @patch.dict(os.environ, {"SLURM_NTASKS": "8"}, clear=True)
     def test_port_without_job_id(self):
-        """Test fallback port when SLURM_JOB_ID not set."""
-        assert resolve_slurm_master_port() == 29500
+        """Test returns None when SLURM_JOB_ID not set."""
+        assert resolve_slurm_master_port() is None
 
     @patch.dict(os.environ, {}, clear=True)
     def test_not_slurm_environment(self):
