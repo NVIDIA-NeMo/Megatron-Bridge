@@ -15,7 +15,6 @@
 
 import shutil
 from abc import ABC, abstractmethod
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import ClassVar, Dict, List, Optional, Union
 
@@ -55,8 +54,6 @@ class PreTrainedBase(ABC):
     def __init__(self, **kwargs):
         self._state_dict_accessor: Optional[StateDict] = None
         self.init_kwargs = kwargs
-        # Store the original source path for custom modeling file preservation
-        self._original_source_path: Optional[Union[str, Path]] = None
 
         # File patterns used to copy files used for custom modeling, e.g.
         # modeling_*.py, configuration_*.py, tokenization_*.py,
@@ -155,7 +152,6 @@ class PreTrainedBase(ABC):
             self._config.save_pretrained(save_path)
 
         # Iterate over required artifacts to save them in a predictable order
-
         for name in self.ARTIFACTS:
             # Access the public property to trigger lazy loading if needed
             artifact = getattr(self, name)
