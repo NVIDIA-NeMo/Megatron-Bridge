@@ -16,6 +16,7 @@ from typing import Union
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
+from megatron.core.utils import get_attr_wrapped_model
 
 
 def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> ProcessGroupCollection:
@@ -36,4 +37,4 @@ def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> Pro
         model_ref = model
 
     # Do not add any fallback; this must exist on the model
-    return getattr(model_ref, "pg_collection")
+    return get_attr_wrapped_model(model_ref, "pg_collection", allow_none=False)

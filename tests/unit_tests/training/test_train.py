@@ -821,9 +821,7 @@ class TestIterationSkipping:
 
     @patch("megatron.bridge.training.train._dummy_train_step")
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
-    def test_should_skip_iteration_when_step_in_skip_list(
-        self, mock_get_microbatches, mock_dummy_step
-    ):
+    def test_should_skip_iteration_when_step_in_skip_list(self, mock_get_microbatches, mock_dummy_step):
         """Test that iteration is skipped when step is in iterations_to_skip list."""
         # Setup
         global_state = self._create_mock_global_state(step=5, iterations_to_skip=[3, 5, 10])
@@ -880,9 +878,7 @@ class TestIterationSkipping:
 
     @patch("megatron.bridge.training.train._dummy_train_step")
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
-    def test_batch_size_calculation_with_different_parallelism(
-        self, mock_get_microbatches, mock_dummy_step
-    ):
+    def test_batch_size_calculation_with_different_parallelism(self, mock_get_microbatches, mock_dummy_step):
         """Test batch size calculation with different parallelism settings."""
         # Setup
         global_state = self._create_mock_global_state(step=10, iterations_to_skip=[10], micro_batch_size=8)
