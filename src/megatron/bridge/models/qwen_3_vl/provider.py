@@ -22,15 +22,13 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-from copy import deepcopy
-from functools import partial
-import torch.nn.functional as F
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.bridge.models import Qwen3ModelProvider
-from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig, Qwen3VLTextConfig
-from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
+
+from megatron.bridge.models import Qwen3ModelProvider
+from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 
 
 @dataclass
@@ -38,13 +36,14 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     """
     Base model provider for Qwen 3 VL Models.
     Inherits language model configuration from Qwen3ModelProvider.
-    
+
     Note: num_query_groups in parent class corresponds to num_key_value_heads in HF config.
     Default value of 8 is used for GQA (Grouped Query Attention).
     """
+
     head_dim: int = 128
     hidden_size: int = 2048
-    
+
     # Fields from Qwen3VLTransformerConfig
     language_max_sequence_length: int = 2048
     patch_size: int = 14
@@ -58,12 +57,11 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     fp16_lm_cross_entropy: bool = False
     rotary_percent: float = 1.0
     apply_rope_fusion: bool = False
-    
+
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
 
     hf_text_config: Optional[Qwen3VLTextConfig] = None
-    
-    
+
     # Vision-specific token IDs matching Qwen3VL configuration
     # Based on https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/blob/main/config.json
     # Token ID for image placeholder in text
@@ -78,21 +76,21 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     bos_token_id: int = 151643
     # EOS token ID for Qwen3-VL models
     eos_token_id: int = 151645
-    
+
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
-    
+
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
-    
+
     # RoPE theta value specific to Qwen3-VL models
     # From HuggingFace config: rope_theta: 5000000
     rotary_base: float = 5000000.0
-    
+
     # Override to disable scattering embeddings for vision insertion
     scatter_embedding_sequence_parallel: bool = False
-    
+
     # Freeze options for fine-tuning scenarios
     # Whether to freeze language model weights
     freeze_language_model: bool = False
@@ -101,10 +99,10 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
 
-    sequence_parallel: bool = False 
-    
+    sequence_parallel: bool = False
+
     qk_layernorm: bool = True
-    
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
         Provide a Qwen3VL model instance with vision and language components.
@@ -112,7 +110,7 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
         language_transformer_config = self
 
         hf_vision_config = self.vision_config
-            
+
         # Spec for the Qwen3VLTransformerLayer
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,
@@ -121,15 +119,15 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
             normalization="RMSNorm",
             fp8=False,
         )
-        
+
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_vision_config,
             pre_process=pre_process,
-            post_process=post_process
+            post_process=post_process,
         )
-        
+
         # Apply freeze options if any are enabled for fine-tuning
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(
@@ -137,18 +135,18 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
                 freeze_vision_model=self.freeze_vision_model,
                 freeze_vision_projection=self.freeze_vision_projection,
             )
-        
+
         return model
-    
+
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """
         Provide just the language model component without vision.
-        
+
         Args:
             pre_process: Whether this is the first stage in pipeline parallelism
-            post_process: Whether this is the last stage in pipeline parallelism  
+            post_process: Whether this is the last stage in pipeline parallelism
             vp_stage: Virtual pipeline stage number
-            
+
         Returns:
             MCoreGPTModel instance (language model only)
         """

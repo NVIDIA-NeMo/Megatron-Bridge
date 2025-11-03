@@ -13,19 +13,18 @@
 # limitations under the License.
 
 import torch
-from megatron.core import InferenceParams, tensor_parallel, mpu
+from megatron.core import InferenceParams, mpu, tensor_parallel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_config import TransformerConfig
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
+from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
+
+from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_3_vl.utils import get_rope_index, split_deepstack_embs
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
-from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_3_vl.utils import get_rope_index
-from megatron.bridge.models.qwen_3_vl.gpt_model import Qwen3VLGPTModel
-from megatron.bridge.models.qwen_3_vl.utils import split_deepstack_embs
-from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionModel as Qwen3VLVisionModelHF
-from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 
 # Note: This is under development and may be missing features.
 class Qwen3VLModel(MegatronModule):
@@ -81,14 +80,13 @@ class Qwen3VLModel(MegatronModule):
         self.share_embeddings_and_output_weights = False
 
         if self.pre_process:
-        
             # Initialize vision model with random weights from config
             self.vision_model = Qwen3VLVisionModelHF._from_config(vision_transformer_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
-            hook_hf_module_setattr_for_tp_grad_sync(self.vision_model) 
+            hook_hf_module_setattr_for_tp_grad_sync(self.vision_model)
             # Move to device if available
             if torch.cuda.is_available():
-                self.vision_model = self.vision_model.to('cuda')
+                self.vision_model = self.vision_model.to("cuda")
 
         self.language_model = Qwen3VLGPTModel(
             config=language_transformer_config,
@@ -108,9 +106,7 @@ class Qwen3VLModel(MegatronModule):
         # assert len(vision_transformer_config.deepstack_visual_indexes) < len(self.language_model.decoder.layers), \
         #     "the deepstack_visual_embeds should on the first pp-stage"
 
-        self.share_embeddings_and_output_weights = (
-            self.language_model.share_embeddings_and_output_weights
-        )
+        self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights
 
     def shared_embedding_or_output_weight(self):
         """This is a convenience method to surface the language model's word embeddings, which is
@@ -124,9 +120,7 @@ class Qwen3VLModel(MegatronModule):
         # gives us non-lists or None
         if not isinstance(input_tensor, list):
             input_tensor = [input_tensor]
-        assert (
-            len(input_tensor) == 1
-        ), "input_tensor should only be length 1 for Qwen3VL"
+        assert len(input_tensor) == 1, "input_tensor should only be length 1 for Qwen3VL"
 
         if self.pre_process:
             self.encoder_hidden_state = input_tensor[0]
@@ -149,10 +143,10 @@ class Qwen3VLModel(MegatronModule):
             freeze_vision_projection (bool): Freeze the vision projection modules (merger and deepstack_merger_list).
         """
         modules = []
-        
+
         if freeze_language_model and self.language_model is not None:
             modules.append(self.language_model)
-            
+
         if freeze_vision_model and self.vision_model is not None:
             # Freeze vision encoder components (patch_embed, blocks, pos_embed, rotary_pos_emb)
             if hasattr(self.vision_model, "patch_embed"):
@@ -163,7 +157,7 @@ class Qwen3VLModel(MegatronModule):
                 modules.append(self.vision_model.pos_embed)
             if hasattr(self.vision_model, "rotary_pos_emb"):
                 modules.append(self.vision_model.rotary_pos_emb)
-                
+
         if freeze_vision_projection and self.vision_model is not None:
             # Freeze vision projection components (merger and deepstack_merger_list)
             if hasattr(self.vision_model, "merger"):
@@ -178,7 +172,7 @@ class Qwen3VLModel(MegatronModule):
     def forward(
         self,
         input_ids: torch.Tensor,
-        position_ids: torch.Tensor = None, # can set at dataset
+        position_ids: torch.Tensor = None,  # can set at dataset
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
         inference_params: InferenceParams = None,
@@ -260,7 +254,6 @@ class Qwen3VLModel(MegatronModule):
                         f"{video_start_index}"
                     )
                 assert video_embeds is None, "not support video now"
-
 
                 if image_embeds is not None:
                     combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()

@@ -102,7 +102,6 @@ def qwen3_vl_8b_finetune_config(**user_kwargs: Unpack[Qwen3VLCommonKwargs]) -> C
         "lr_warmup_iters": 200,
         "micro_batch_size": 1,
         "global_batch_size": 32,
-        
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)
@@ -130,7 +129,6 @@ def qwen3_vl_3b_active_30b_moe_finetune_config(**user_kwargs: Unpack[Qwen3VLComm
     }
     combined_kwargs: Qwen3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen3_vl_common(**combined_kwargs)
-
 
 
 def _qwen3_vl_common(
@@ -198,13 +196,12 @@ def _qwen3_vl_common(
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
-    
 
     if expert_parallelism is not None:
         model_cfg.expert_model_parallel_size = expert_parallelism
     if expert_tensor_parallelism is not None:
         model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
-        
+
     # Optimizer and scheduler
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,

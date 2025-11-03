@@ -18,12 +18,14 @@ Unit tests for Qwen3VL Vision Model implementation.
 Run with: pytest tests/unit_tests/models/qwen_3_vl/test_vision_model.py
 """
 
+from unittest.mock import Mock
+
+import numpy as np
 import pytest
 import torch
-import numpy as np
 from PIL import Image
-from unittest.mock import Mock
 from transformers import AutoProcessor
+
 from megatron.bridge.models.qwen_3_vl.vision_model import Qwen3VLVisionModel
 
 
@@ -65,7 +67,7 @@ class TestVisionModel:
     def test_vision_model_forward(self, vision_model, processor, random_image):
         """Test vision model forward pass with processor-generated inputs."""
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         # Use processor with random image (no URL download needed)
         messages = [
             {
@@ -75,11 +77,8 @@ class TestVisionModel:
                         "type": "image",
                         "image": random_image,  # Pass PIL Image directly
                     },
-                    {
-                        "type": "text",
-                        "text": "Describe this image."
-                    }
-                ]
+                    {"type": "text", "text": "Describe this image."},
+                ],
             }
         ]
 
@@ -95,14 +94,11 @@ class TestVisionModel:
         image_grid_thw = inputs.get("image_grid_thw", None)
         if image_grid_thw is not None:
             image_grid_thw = image_grid_thw.to(device)
-        
+
         # Forward pass
         with torch.no_grad():
-            hidden_states, deepstack_feature_lists = vision_model(
-                hidden_states=pixel_values,
-                grid_thw=image_grid_thw
-            )
-        
+            hidden_states, deepstack_feature_lists = vision_model(hidden_states=pixel_values, grid_thw=image_grid_thw)
+
         # Verify outputs have expected properties
         assert hidden_states is not None, "hidden_states should not be None"
         assert isinstance(deepstack_feature_lists, list), "deepstack_feature_lists should be a list"

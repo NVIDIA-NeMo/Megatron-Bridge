@@ -26,8 +26,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvider
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_3_vl.moe_provider import Qwen3VLMoEModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3VLMoeForConditionalGeneration, target=Qwen3VLModel)
@@ -115,7 +115,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry containing parameter mappings for MoE models.
-        
+
         The MoE mappings include:
         1. Standard language model mappings (embeddings, layer norms, output)
         2. Vision model mappings (same as dense model)
@@ -135,68 +135,64 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.output_layer.weight": "lm_head.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-            
             # Layer normalization for attention
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
-            
             # MoE-specific: pre-MLP layernorm
             "language_model.decoder.layers.*.pre_mlp_layernorm.weight": "model.language_model.layers.*.post_attention_layernorm.weight",
-            
             # Attention output projection
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
-            
             # QK layernorm weights (Qwen3 specific)
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
-            
             # MoE router weights
             "language_model.decoder.layers.*.mlp.router.weight": "model.language_model.layers.*.mlp.gate.weight",
         }
 
         mapping_list = []
-        
+
         # Convert simple 1:1 mappings to AutoMapping objects
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # Add special mappings that require parameter transformation
-        mapping_list.extend([
-            # Vision model weights are replicated directly
-            ReplicatedMapping(
-                megatron_param="vision_model.**",
-                hf_param="model.visual.**",
-            ),
-            
-            # QKV mapping: Combine separate Q, K, V matrices
-            QKVMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.language_model.layers.*.self_attn.q_proj.weight",
-                k="model.language_model.layers.*.self_attn.k_proj.weight",
-                v="model.language_model.layers.*.self_attn.v_proj.weight",
-            ),
-            
-            # QKV bias mapping (if attention_bias is True)
-            QKVMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.bias",
-                q="model.language_model.layers.*.self_attn.q_proj.bias",
-                k="model.language_model.layers.*.self_attn.k_proj.bias",
-                v="model.language_model.layers.*.self_attn.v_proj.bias",
-            ),
-            
-            ExpertMLPGateUpProjMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
-            ),
-
-            ExpertMLPDownProjMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                hf_param="model.language_model.layers.*.mlp.experts.down_proj",
-            ), 
-        ])
+        mapping_list.extend(
+            [
+                # Vision model weights are replicated directly
+                ReplicatedMapping(
+                    megatron_param="vision_model.**",
+                    hf_param="model.visual.**",
+                ),
+                # QKV mapping: Combine separate Q, K, V matrices
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.language_model.layers.*.self_attn.q_proj.weight",
+                    k="model.language_model.layers.*.self_attn.k_proj.weight",
+                    v="model.language_model.layers.*.self_attn.v_proj.weight",
+                ),
+                # QKV bias mapping (if attention_bias is True)
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    q="model.language_model.layers.*.self_attn.q_proj.bias",
+                    k="model.language_model.layers.*.self_attn.k_proj.bias",
+                    v="model.language_model.layers.*.self_attn.v_proj.bias",
+                ),
+                ExpertMLPGateUpProjMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param="model.language_model.layers.*.mlp.experts.gate_up_proj",
+                ),
+                ExpertMLPDownProjMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.language_model.layers.*.mlp.experts.down_proj",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)
 
+
 class ExpertMLPDownProjMapping(AutoMapping):
+    """Mapping for expert MLP down projection weights between HF and Megatron formats."""
+
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         return super().hf_to_megatron(hf_weights[global_expert_number].transpose(0, 1), megatron_module)
@@ -213,6 +209,8 @@ class ExpertMLPDownProjMapping(AutoMapping):
 
 
 class ExpertMLPGateUpProjMapping(AutoMapping):
+    """Mapping for expert MLP gate and up projection weights between HF and Megatron formats."""
+
     def hf_to_megatron(self, hf_weights: Union[torch.Tensor, Dict], megatron_module: nn.Module) -> torch.Tensor:
         global_expert_number = extract_expert_number_from_param(self.megatron_param)
         return super().hf_to_megatron(hf_weights[global_expert_number].transpose(0, 1), megatron_module)

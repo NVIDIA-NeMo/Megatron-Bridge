@@ -19,19 +19,18 @@ Run with: torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_3_v
 Or for single GPU: pytest tests/unit_tests/models/qwen_3_vl/test_model.py
 """
 
+import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
-import numpy as np
+from megatron.core import parallel_state
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
+from transformers import AutoProcessor, Qwen3VLMoeConfig
 
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
-from megatron.core import parallel_state
-from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from transformers import AutoProcessor
-from transformers import Qwen3VLMoeConfig
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +60,7 @@ class TestQwen3VLModel:
         """Setup distributed process group once for all tests in this class."""
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group("nccl")
-        
+
         torch.cuda.set_device(torch.distributed.get_rank() % torch.cuda.device_count())
 
     @classmethod
@@ -72,10 +71,10 @@ class TestQwen3VLModel:
 
     def _setup_parallel_state(self, tp_size=1, ep_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state with specified parallelism configuration.
-        
+
         Args:
             tp_size: Tensor model parallel size
-            ep_size: Expert model parallel size  
+            ep_size: Expert model parallel size
             pp_size: Pipeline model parallel size
             cp_size: Context parallel size
         """
@@ -87,9 +86,9 @@ class TestQwen3VLModel:
             expert_model_parallel_size=ep_size,
             expert_tensor_parallel_size=1,
         )
-        
+
         model_parallel_cuda_manual_seed(123)
-    
+
     def teardown_method(self):
         """Teardown Megatron parallel state after each test method."""
         parallel_state.destroy_model_parallel()
@@ -97,7 +96,7 @@ class TestQwen3VLModel:
     @staticmethod
     def get_vision_transformer_config(hf_config):
         """Create a vision transformer config for testing.
-        
+
         Returns:
             TransformerConfig: Configuration for the vision model.
         """
@@ -106,13 +105,13 @@ class TestQwen3VLModel:
     @staticmethod
     def get_language_transformer_config(hf_config):
         """Create a language transformer config for testing.
-        
+
         Uses actual Qwen3-VL-30B-A3B model sizes to ensure compatibility
         with the vision model output (2048 hidden size).
-        
+
         Args:
             hf_config: HuggingFace config object.
-        
+
         Returns:
             Qwen3VLTransformerConfig: Configuration for the language model.
         """
@@ -124,25 +123,20 @@ class TestQwen3VLModel:
             num_query_groups=hf_config.text_config.num_key_value_heads,
             kv_channels=hf_config.text_config.hidden_size // hf_config.text_config.num_attention_heads,
             ffn_hidden_size=hf_config.text_config.intermediate_size,
-            
             # Qwen3-VL specific
             vocab_size=hf_config.text_config.vocab_size,
             language_max_sequence_length=hf_config.text_config.max_position_embeddings,
-            
             # Vision parameters
             patch_size=hf_config.vision_config.patch_size,
             temporal_patch_size=hf_config.vision_config.temporal_patch_size,
             in_channels=hf_config.vision_config.in_channels,
             spatial_merge_size=hf_config.vision_config.spatial_merge_size,
             out_hidden_size=hf_config.text_config.hidden_size,  # Vision output = language input
-            
             # RoPE settings
             rotary_base=hf_config.text_config.rope_theta,
             rotary_percent=1.0,
             mrope_section=hf_config.text_config.rope_scaling.get("mrope_section", [16, 24, 24]),
-
             hf_text_config=hf_config.text_config,
-        
             # Training settings
             normalization="RMSNorm",
             activation_func=F.silu,
@@ -159,7 +153,7 @@ class TestQwen3VLModel:
     @staticmethod
     def get_language_model_layer_spec():
         """Create a GPT layer spec for the language model.
-        
+
         Returns:
             ModuleSpec: Layer specification for transformer layers.
         """
@@ -174,11 +168,11 @@ class TestQwen3VLModel:
     @staticmethod
     def get_data_batch(processor, random_image):
         """Generate a batch of data for model forward pass.
-        
+
         Args:
             processor: HuggingFace processor.
             random_image: Random PIL image.
-        
+
         Returns:
             dict: A dictionary containing all inputs needed for model forward pass:
                 - input_ids: Token IDs [batch, seq_len]
@@ -197,11 +191,8 @@ class TestQwen3VLModel:
                         "type": "image",
                         "image": random_image,  # Pass PIL Image directly
                     },
-                    {
-                        "type": "text",
-                        "text": "Describe this image."
-                    }
-                ]
+                    {"type": "text", "text": "Describe this image."},
+                ],
             }
         ]
 
@@ -213,40 +204,43 @@ class TestQwen3VLModel:
             return_dict=True,
             return_tensors="pt",
         )
-        
+
         batch = {
-            'input_ids': inputs['input_ids'],
-            'attention_mask': inputs.get('attention_mask'),
-            'pixel_values': inputs.get('pixel_values'),
-            'image_grid_thw': inputs.get('image_grid_thw'),
-            'pixel_values_videos': inputs.get('pixel_values_videos'),
-            'video_grid_thw': inputs.get('video_grid_thw'),
-            'position_ids': None,
-            'labels': None,
+            "input_ids": inputs["input_ids"],
+            "attention_mask": inputs.get("attention_mask"),
+            "pixel_values": inputs.get("pixel_values"),
+            "image_grid_thw": inputs.get("image_grid_thw"),
+            "pixel_values_videos": inputs.get("pixel_values_videos"),
+            "video_grid_thw": inputs.get("video_grid_thw"),
+            "position_ids": None,
+            "labels": None,
         }
-        
+
         # Move tensors to CUDA if available
         if torch.cuda.is_available():
             for key, value in batch.items():
                 if value is not None and isinstance(value, torch.Tensor):
                     batch[key] = value.cuda()
-        
+
         return batch
 
-    @pytest.mark.parametrize("tp_size,ep_size,pp_size", [
-        (1, 1, 1),  # No parallelism
-        (2, 2, 1),  # tp=2, ep=2, pp=1
-        (2, 2, 2),  # tp=2, ep=2, pp=2
-    ])
+    @pytest.mark.parametrize(
+        "tp_size,ep_size,pp_size",
+        [
+            (1, 1, 1),  # No parallelism
+            (2, 2, 1),  # tp=2, ep=2, pp=1
+            (2, 2, 2),  # tp=2, ep=2, pp=2
+        ],
+    )
     def test_model_forward(self, tp_size, ep_size, pp_size, hf_config, processor, random_image):
         """Test Qwen3VL model initialization and forward pass with different parallelism configs."""
         self._setup_parallel_state(tp_size=tp_size, ep_size=ep_size, pp_size=pp_size)
-        
+
         # Verify parallel configuration
         assert parallel_state.get_tensor_model_parallel_world_size() == tp_size
         assert parallel_state.get_expert_model_parallel_world_size() == ep_size
         assert parallel_state.get_pipeline_model_parallel_world_size() == pp_size
-        
+
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
         language_model_layer_spec = self.get_language_model_layer_spec()
@@ -269,9 +263,9 @@ class TestQwen3VLModel:
             model.to("cuda")
 
         inputs = self.get_data_batch(processor, random_image)
-        
+
         with torch.no_grad():
             output = model(**inputs)
-        
+
         assert output is not None
-        assert output.shape[0] == inputs['input_ids'].shape[0]
+        assert output.shape[0] == inputs["input_ids"].shape[0]

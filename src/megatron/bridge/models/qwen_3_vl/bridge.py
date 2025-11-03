@@ -39,7 +39,7 @@ class Qwen3VLBridge(MegatronModelBridge):
 
     The weight mappings are based on the yan-mbridge implementation which defines:
     - Vision model direct mappings
-    - Vision attention layer mappings  
+    - Vision attention layer mappings
     - Vision MLP layer mappings
     - Language model mappings
     - Deepstack visual merger mappings
@@ -107,7 +107,7 @@ class Qwen3VLBridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format.
-        
+
         The mappings are organized into:
         1. Simple 1:1 mappings for embeddings, layer norms, and output layers
         2. Vision model mappings (replicated without modification)
@@ -120,66 +120,61 @@ class Qwen3VLBridge(MegatronModelBridge):
         """
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Based on yan-mbridge weight mappings in __init__.py
-        
+
         # Language model direct mappings
         param_mappings = {
             # Embeddings and output layers
             "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
             "language_model.output_layer.weight": "lm_head.weight",
             "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
-            
             # Layer normalization for attention and MLP
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.language_model.layers.*.input_layernorm.weight",
             "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
-            
             # Attention output projection
             "language_model.decoder.layers.*.self_attention.linear_proj.weight": "model.language_model.layers.*.self_attn.o_proj.weight",
-            
-            # MLP output projection  
+            # MLP output projection
             "language_model.decoder.layers.*.mlp.linear_fc2.weight": "model.language_model.layers.*.mlp.down_proj.weight",
-            
             # QK layernorm weights (Qwen3 specific)
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": "model.language_model.layers.*.self_attn.q_norm.weight",
             "language_model.decoder.layers.*.self_attention.k_layernorm.weight": "model.language_model.layers.*.self_attn.k_norm.weight",
         }
 
         mapping_list = []
-        
+
         # Convert simple 1:1 mappings to AutoMapping objects
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # Add special mappings that require parameter transformation
-        mapping_list.extend([
-            # Vision model weights are replicated directly
-            # This handles all vision encoder layers, patch embeddings, mergers, etc.
-            ReplicatedMapping(
-                megatron_param="vision_model.**",
-                hf_param="model.visual.**",
-            ),
-            
-            # QKV mapping: Combine separate Q, K, V matrices into single QKV matrix
-            QKVMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.language_model.layers.*.self_attn.q_proj.weight",
-                k="model.language_model.layers.*.self_attn.k_proj.weight",
-                v="model.language_model.layers.*.self_attn.v_proj.weight",
-            ),
-            
-            # QKV bias mapping (if attention_bias is True)
-            QKVMapping(
-                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.bias",
-                q="model.language_model.layers.*.self_attn.q_proj.bias",
-                k="model.language_model.layers.*.self_attn.k_proj.bias",
-                v="model.language_model.layers.*.self_attn.v_proj.bias",
-            ),
-            
-            # Gated MLP: Combine gate and up projection matrices into single FC1 matrix
-            GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
-                gate="model.language_model.layers.*.mlp.gate_proj.weight",
-                up="model.language_model.layers.*.mlp.up_proj.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                # Vision model weights are replicated directly
+                # This handles all vision encoder layers, patch embeddings, mergers, etc.
+                ReplicatedMapping(
+                    megatron_param="vision_model.**",
+                    hf_param="model.visual.**",
+                ),
+                # QKV mapping: Combine separate Q, K, V matrices into single QKV matrix
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.language_model.layers.*.self_attn.q_proj.weight",
+                    k="model.language_model.layers.*.self_attn.k_proj.weight",
+                    v="model.language_model.layers.*.self_attn.v_proj.weight",
+                ),
+                # QKV bias mapping (if attention_bias is True)
+                QKVMapping(
+                    megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.bias",
+                    q="model.language_model.layers.*.self_attn.q_proj.bias",
+                    k="model.language_model.layers.*.self_attn.k_proj.bias",
+                    v="model.language_model.layers.*.self_attn.v_proj.bias",
+                ),
+                # Gated MLP: Combine gate and up projection matrices into single FC1 matrix
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)

@@ -15,16 +15,17 @@
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
 
 
 @dataclass
 class Qwen3VLTransformerConfig(TransformerConfig):
+    """Configuration for Qwen3-VL transformer with vision and language components."""
 
     vocab_size: int = 64000
-    language_max_sequence_length: int  = 4096
-
+    language_max_sequence_length: int = 4096
 
     patch_size: int = 14
     temporal_patch_size: int = 2
@@ -39,7 +40,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 10000
-    
+
     # Multimodal rope section for [temporal, height, width] dimensions
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
     apply_rope_fusion: bool = False

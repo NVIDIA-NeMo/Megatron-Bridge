@@ -13,8 +13,9 @@
 # limitations under the License.
 
 
-import torch
 from typing import Optional
+
+import torch
 
 
 def split_deepstack_embs(
@@ -25,6 +26,19 @@ def split_deepstack_embs(
     cp_size: int = 1,
     cp_rank: int = 0,
 ):
+    """Split deepstack visual embeddings for tensor and context parallelism.
+
+    Args:
+        visual_pos_masks: Visual position masks tensor
+        deepstack_visual_embeds: List of deepstack visual embeddings
+        tp_size: Tensor parallel size (default: 1)
+        tp_rank: Tensor parallel rank (default: 0)
+        cp_size: Context parallel size (default: 1)
+        cp_rank: Context parallel rank (default: 0)
+
+    Returns:
+        Split visual embeddings based on parallelism configuration
+    """
     # first split by cp (zigzag)
     assert cp_size == 1 and cp_rank == 0, "no support cp now"
 
@@ -54,7 +68,6 @@ def split_deepstack_embs(
         deepstack_visual_embeds_ret.append(torch.cat(tmp_slice_tensor, dim=0))
 
     return visual_pos_masks_list[tp_rank], deepstack_visual_embeds_ret
-
 
 
 def get_rope_index(

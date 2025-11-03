@@ -22,42 +22,40 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-from copy import deepcopy
-from functools import partial
-import torch.nn.functional as F
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.bridge.models import Qwen3MoEModelProvider    
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
+from megatron.bridge.models import Qwen3MoEModelProvider
 from megatron.bridge.models.qwen_3_vl.model import Qwen3VLModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+
 
 @dataclass
 class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     """
     Base model provider for Qwen 3 VL MoE Models.
     Inherits language model MoE configuration from Qwen3MoEModelProvider.
-    
+
     Key MoE Parameters (inherited from Qwen3MoEModelProvider):
     - num_moe_experts: Number of total experts (default 128)
     - moe_router_topk: Number of experts selected per token (default 8)
     - moe_router_load_balancing_type: Load balancing strategy (default "aux_loss")
     - moe_aux_loss_coeff: Auxiliary loss coefficient (default 1e-3)
     - moe_grouped_gemm: Use grouped GEMM for efficiency (default True)
-    
+
     Note: num_query_groups in parent class corresponds to num_key_value_heads in HF config.
     """
 
     # Vision configuration using the transformers Qwen3VLVisionConfig
     # Default configuration matches the standard Qwen3VL vision encoder
     vision_config: Qwen3VLVisionConfig = field(default_factory=lambda: Qwen3VLVisionConfig())
-    
+
     hf_text_config: Optional[Qwen3VLMoeTextConfig] = None
-    
+
     pretrained_model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    
+
     # Vision-specific token IDs matching Qwen3VL MoE configuration
     # Based on HuggingFace Qwen3-VL-MoE configs
     # Token ID for image placeholder in text
@@ -75,41 +73,41 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
 
     head_dim: int = 128
     qk_layernorm: bool = True
-    
+
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
-    
+
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])
-    
+
     # RoPE theta value specific to Qwen3-VL models
     # From HuggingFace config: rope_theta: 5000000
     rotary_base: float = 5000000.0
     spatial_merge_size: int = 2
     temporal_patch_size: int = 2
     patch_size: int = 16
-    
+
     # Override to disable scattering embeddings for vision insertion
     scatter_embedding_sequence_parallel: bool = False
-    
+
     # Router configuration
     moe_router_pre_softmax: bool = False  # Qwen3 specific
     moe_router_dtype: str = "fp32"  # Use FP32 for router computations
     moe_router_score_function: str = "softmax"  # Softmax scoring
     moe_router_bias_update_rate: float = 0.001  # Router bias update rate
-    
+
     # MoE optimization settings
     moe_permute_fusion: bool = True  # Fuse permutation operations
     moe_token_dispatcher_type: str = "alltoall"  # All-to-all communication
-    
+
     # Dense layers configuration (some layers may not use MoE)
     # Empty list means all layers use MoE, otherwise specify layer indices
     mlp_only_layers: List[int] = field(default_factory=list)
-    
+
     # Decoder sparse step (frequency of MoE layers)
     decoder_sparse_step: int = 1  # Every layer is MoE by default
-    
+
     # Freeze options for fine-tuning scenarios
     # Whether to freeze language model weights
     freeze_language_model: bool = True
@@ -118,9 +116,9 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     # Whether to freeze vision-to-language projection weights
     freeze_vision_projection: bool = False
     language_max_sequence_length: int = 2048
-    
+
     # QK layernorm is already True in Qwen3MoEModelProvider, no need to redefine
-    
+
     # These are typically set in the base class but documented here for clarity
     persist_layer_norm: bool = True  # Persist layer norm for efficiency
     bias_activation_fusion: bool = True  # Fuse bias and activation
@@ -134,17 +132,17 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
     def finalize(self) -> None:
         if self.tensor_model_parallel_size > 1:
             self.sequence_parallel = True
-           
+
         super().finalize()
-    
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """
         Provide a Qwen3VL MoE model instance with vision and language components.
         """
         language_transformer_config = self
-        
-        # Create vision transformer config
-        vision_transformer_config = deepcopy(self)
+
+        # Create vision transformer config - placeholder for future use
+        # vision_transformer_config = deepcopy(self)
         hf_config = self.vision_config
 
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
@@ -152,18 +150,18 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
             moe_grouped_gemm=True,
             qk_layernorm=self.qk_layernorm,
             fp8=False,
-            normalization="RMSNorm",    
+            normalization="RMSNorm",
         )
-        
+
         # reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_config,
             pre_process=pre_process,
-            post_process=post_process
+            post_process=post_process,
         )
-        
+
         # Apply freeze options if any are enabled for fine-tuning
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(
@@ -171,18 +169,18 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
                 freeze_vision_model=self.freeze_vision_model,
                 freeze_vision_projection=self.freeze_vision_projection,
             )
-        
+
         return model
-    
+
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """
         Provide just the language MoE model component without vision.
-        
+
         Args:
             pre_process: Whether this is the first stage in pipeline parallelism
-            post_process: Whether this is the last stage in pipeline parallelism  
+            post_process: Whether this is the last stage in pipeline parallelism
             vp_stage: Virtual pipeline stage number
-            
+
         Returns:
             MCoreGPTModel instance (MoE language model only)
         """

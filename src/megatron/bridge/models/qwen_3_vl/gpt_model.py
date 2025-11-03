@@ -13,30 +13,31 @@
 # limitations under the License.
 
 
-'''
+"""
 Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 3e5a40f2ee42a2c74/mbridge/models/qwen3_vl/gpt_model.py
-'''
+"""
 
 from typing import Literal, Optional
 
 import torch
+from megatron.core.inference.contexts import BaseInferenceContext
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
-from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.utils import deprecate_inference_params
-
-from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.spec_utils import ModuleSpec
-
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.qwen_3_vl.rope import (
+    Qwen3VLMoETextRotaryEmbedding,
+    Qwen3VLTextRotaryEmbedding,
+)
 from megatron.bridge.models.qwen_3_vl.transformer_block import Qwen3VLTransformerBlock
-from megatron.bridge.models.qwen_3_vl.rope import Qwen3VLTextRotaryEmbedding, Qwen3VLMoETextRotaryEmbedding
+from megatron.bridge.models.transformer_config import TransformerConfig
 
-from transformers import Qwen3VLMoeTextConfig, Qwen3VLTextConfig
 
 class Qwen3VLGPTModel(GPTModel):
+    """Qwen3-VL GPT model with vision-language capabilities."""
 
     def __init__(
         self,
@@ -49,8 +50,7 @@ class Qwen3VLGPTModel(GPTModel):
         fp16_lm_cross_entropy: bool = False,
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
-        position_embedding_type: Literal['learned_absolute', 'rope', 'mrope',
-                                         'none'] = 'learned_absolute',
+        position_embedding_type: Literal["learned_absolute", "rope", "mrope", "none"] = "learned_absolute",
         rotary_percent: float = 1.0,
         rotary_base: int = 10000,
         rope_scaling: bool = False,
@@ -81,20 +81,19 @@ class Qwen3VLGPTModel(GPTModel):
             vp_stage=vp_stage,
         )
 
+        is_moe = (
+            hasattr(config, "num_moe_experts") and config.num_moe_experts is not None and config.num_moe_experts > 0
+        )
 
-        is_moe = hasattr(config, 'num_moe_experts') and config.num_moe_experts is not None and config.num_moe_experts > 0
-        
-    
-      
         if is_moe:
             self.rotary_pos_emb = Qwen3VLMoETextRotaryEmbedding(config.hf_text_config)
         else:
             self.rotary_pos_emb = Qwen3VLTextRotaryEmbedding(config.hf_text_config)
-        
+
         self.mrope_section = self.config.mrope_section
-        assert (
-            self.mrope_section is not None
-        ), "mrope require mrope_section setting, but we got None from TransformerConfig"
+        assert self.mrope_section is not None, (
+            "mrope require mrope_section setting, but we got None from TransformerConfig"
+        )
 
         # rebuild the transformer block
         self.decoder = Qwen3VLTransformerBlock(
@@ -136,14 +135,13 @@ class Qwen3VLGPTModel(GPTModel):
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
 
-        decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = (
-            self._preprocess(
-                input_ids=input_ids,
-                position_ids=position_ids,
-                decoder_input=decoder_input,
-                inference_context=inference_context,
-                packed_seq_params=packed_seq_params,
-            ))
+        decoder_input, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin, sequence_len_offset = self._preprocess(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            decoder_input=decoder_input,
+            inference_context=inference_context,
+            packed_seq_params=packed_seq_params,
+        )
 
         # Run decoder.
         hidden_states = self.decoder(

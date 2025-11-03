@@ -329,12 +329,12 @@ def load_image(image_path: str) -> Image.Image:
 
 def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
     """Pad input_ids so sequence length is divisible by tp_size.
-    
+
     Args:
         input_ids: Input token IDs tensor
         tp_size: Tensor parallel size
         pad_token_id: Token ID to use for padding
-        
+
     Returns:
         Padded input_ids tensor
     """
@@ -342,7 +342,9 @@ def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0)
     remainder = seq_len % tp_size
     if remainder != 0:
         pad_len = tp_size - remainder
-        padding = torch.full((input_ids.shape[0], pad_len), pad_token_id, dtype=input_ids.dtype, device=input_ids.device)
+        padding = torch.full(
+            (input_ids.shape[0], pad_len), pad_token_id, dtype=input_ids.dtype, device=input_ids.device
+        )
         input_ids = torch.cat([input_ids, padding], dim=1)
     return input_ids
 
@@ -390,7 +392,6 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             padding=True,
             return_tensors="pt",
         )
-        
 
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
         return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
@@ -600,8 +601,6 @@ def compare_models_one_step(args) -> None:
     # Load HF model
     hf_model = _load_hf_model(args, is_vl_model)
 
-   
-
     # Setup tokenizer and processor
     tokenizer, processor = _setup_tokenizer_and_processor(args, is_vl_model)
 
@@ -627,7 +626,7 @@ def compare_models_one_step(args) -> None:
     )
 
     del hf_model
-     # Load Megatron model
+    # Load Megatron model
     megatron_model = _load_megatron_model(args)
 
     # Broadcast HF results to all ranks after Megatron initialization

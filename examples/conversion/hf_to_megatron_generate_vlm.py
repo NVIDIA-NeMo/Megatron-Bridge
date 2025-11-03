@@ -239,10 +239,10 @@ def main(args) -> None:
     model = [m.cuda() for m in model]
     for m in model:
         m.eval()
-    
+
     # Set grad_scale_func to None on the model's config for inference
     for m in model:
-        if hasattr(m, 'config'):
+        if hasattr(m, "config"):
             m.config.grad_scale_func = None
 
     # Initialize tokenizer and processor
