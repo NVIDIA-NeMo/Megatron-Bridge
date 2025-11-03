@@ -58,6 +58,15 @@ class PreTrainedBase(ABC):
         # Store the original source path for custom modeling file preservation
         self._original_source_path: Optional[Union[str, Path]] = None
 
+        # File patterns used to copy files used for custom modeling, e.g.
+        # modeling_*.py, configuration_*.py, tokenization_*.py,
+        # processing_*.py, feature_extraction_*.py. HF repos
+        # may have additional python files that are imported in the
+        # aforementioned, so we just copy all python files
+        # instead of above specific prefixes.
+        # Currently, we can capture all json files via ARTIFACTS.
+        self.custom_file_patterns = ["*.py"]
+
     def get_artifacts(self) -> Dict[str, str]:
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
@@ -75,16 +84,11 @@ class PreTrainedBase(ABC):
         source_path = Path(source_path)
         target_path = Path(target_path)
 
-        # Common custom modeling file patterns
-        custom_file_patterns = [
-            "*.py",
-            "*.json",
-        ]
         copied_files = []
 
         # First, try to copy from local directory if it exists
         if source_path.exists() and source_path.is_dir():
-            for pattern in custom_file_patterns:
+            for pattern in self.custom_file_patterns:
                 for file_path in source_path.glob(pattern):
                     if file_path.is_file():
                         target_file = target_path / file_path.name
@@ -103,31 +107,35 @@ class PreTrainedBase(ABC):
 
                 # Get list of Python files in the repository
                 repo_files = list_repo_files(str(source_path))
-                print("repo_files: ", repo_files)
-                for file in repo_files:
+                python_files = [f for f in repo_files if f.endswith(".py")]
+
+                for py_file in python_files:
                     # Check if it matches our custom file patterns
-                    if any(fnmatch(file, pattern) for pattern in custom_file_patterns):
+                    if any(
+                        py_file.startswith(pattern.replace("*.py", "").replace("*", ""))
+                        for pattern in self.custom_file_patterns
+                    ):
                         try:
                             _ = hf_hub_download(
                                 repo_id=str(source_path),
-                                filename=file,
+                                filename=py_file,
                                 local_dir=target_path,
                                 local_dir_use_symlinks=False,
                             )
-                            copied_files.append(file)
-                        except Exception as e:
-                            print("Error downloading file: ", e, "Skipping file...")
+                            copied_files.append(py_file)
+                        except Exception:
                             # Silently skip files that can't be downloaded
                             pass
 
-            except Exception as e:
-                print("Error downloading custom modeling files: ", e, "Skipping custom modeling files...")
+            except Exception:
                 # If HuggingFace Hub operations fail, silently continue
                 pass
 
         return copied_files
 
-    def save_artifacts(self, save_directory: Union[str, Path]):
+    def save_artifacts(
+        self, save_directory: Union[str, Path], original_source_path: Optional[Union[str, Path]] = None
+    ):
         """
         Saves all loaded, generic artifacts that have a `save_pretrained` method
         to the specified directory. Note: This does not save the `model` attribute.
@@ -166,8 +174,26 @@ class PreTrainedBase(ABC):
         if hasattr(self, "trust_remote_code") and self.trust_remote_code:
             # Try original source path first, then fallback to model_name_or_path
             source_paths = []
-            if hasattr(self, "_original_source_path") and self._original_source_path:
-                source_paths.append(self._original_source_path)
+
+            if original_source_path is not None:
+                source_paths.append(original_source_path)
+            else:
+                # try to automatically determine original source path
+                if getattr(self, "auto_map_model_class", None) is not None and hasattr(self, "model_name_or_path"):
+                    import sys
+
+                    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+                    try:
+                        model_class = get_class_from_dynamic_module(
+                            self.auto_map_model_class, self.model_name_or_path, trust_remote_code=True
+                        )
+                        src_file = sys.modules[model_class.__module__].__file__
+                        src_path = Path(src_file).parent
+                        source_paths.append(src_path)
+                    except OSError:  # ignore if model_name_or_path does not contain the modeling file
+                        pass
+
             if hasattr(self, "model_name_or_path") and self.model_name_or_path:
                 source_paths.append(self.model_name_or_path)
 
