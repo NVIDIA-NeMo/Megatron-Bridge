@@ -2073,7 +2073,7 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for fsdp_dtensor format."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        ckpt_cfg = CheckpointConfig(ckpt_fully_parallel_save=False, ckpt_format="fsdp_dtensor")
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="fsdp_dtensor")
         result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "fsdp_dtensor"
