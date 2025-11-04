@@ -160,12 +160,16 @@ def apply_perf_matrix_overrides(yaml_root: Any, recipe: Any, args: Any, excluded
     perf_overrides: Dict[str, Any] = OmegaConf.to_container(merged_perf, resolve=True)  # type: ignore
 
     recipe.train.micro_batch_size = args.micro_batch_size or perf_overrides.get("mbs", recipe.train.micro_batch_size)
-    recipe.train.global_batch_size = args.global_batch_size or perf_overrides.get("gbs", recipe.train.global_batch_size)
+    recipe.train.global_batch_size = args.global_batch_size or perf_overrides.get(
+        "gbs", recipe.train.global_batch_size
+    )
     recipe.dataset.sequence_length = perf_overrides.get("seq_length", recipe.dataset.sequence_length)
 
     recipe.model.tensor_model_parallel_size = args.tensor_parallel_size or perf_overrides.get("tp", 1)
     recipe.model.pipeline_model_parallel_size = args.pipeline_parallel_size or perf_overrides.get("pp", 1)
-    recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_parallel_size or perf_overrides.get("vp", None)
+    recipe.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_parallel_size or perf_overrides.get(
+        "vp", None
+    )
     recipe.model.context_parallel_size = args.context_parallel_size or perf_overrides.get("cp", 1)
     recipe.model.expert_model_parallel_size = args.expert_parallel_size or perf_overrides.get("ep", 1)
     recipe.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size or perf_overrides.get("etp", None)

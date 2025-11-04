@@ -138,11 +138,15 @@ def main(
         start_step = profile_cfg["profile_step_start"]
         end_step = profile_cfg["profile_step_end"]
         ranks = list(range(num_gpus))
-        plugins.append(NsysPlugin(profile_step_start=start_step,
-            profile_step_end=end_step,
-            profile_ranks=ranks,
-            nsys_gpu_metrics=args.profiling_gpu_metrics,
-            nsys_trace=['cuda']))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=start_step,
+                profile_step_end=end_step,
+                profile_ranks=ranks,
+                nsys_gpu_metrics=args.profiling_gpu_metrics,
+                nsys_trace=["cuda"],
+            )
+        )
 
     custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
@@ -184,7 +188,22 @@ def main(
         str(config_filepath),
     ]
     # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop", "micro_batch_size", "global_batch_size", "tensor_parallel_size", "pipeline_parallel_size", "virtual_pipeline_parallel_size", "context_parallel_size", "expert_parallel_size", "expert_tensor_parallel_size"]
+    args_to_forward = [
+        "model_name",
+        "model_size",
+        "compute_dtype",
+        "fp8_recipe",
+        "gpu",
+        "use_tokendrop",
+        "micro_batch_size",
+        "global_batch_size",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+        "virtual_pipeline_parallel_size",
+        "context_parallel_size",
+        "expert_parallel_size",
+        "expert_tensor_parallel_size",
+    ]
     for arg_name in args_to_forward:
         if hasattr(args, arg_name):
             arg_value = getattr(args, arg_name)
@@ -197,7 +216,7 @@ def main(
         entrypoint="python",
         args=target_script_args,
     )
-    
+
     base_config = preset["common"]
     extra_config = preset[compute_dtype]
     train_config = OmegaConf.merge(base_config, extra_config) if extra_config else base_config
@@ -232,9 +251,9 @@ if __name__ == "__main__":
 
     # Parse additional SLURM parameters if provided
     additional_slurm_params = None
-    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
         additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
- 
+
     main(
         model_name=args.model_name,
         model_size=args.model_size,

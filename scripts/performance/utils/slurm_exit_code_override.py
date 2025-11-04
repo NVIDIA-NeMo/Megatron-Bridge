@@ -27,9 +27,9 @@ How it works:
 
 Usage:
     Import this module before creating any SlurmExecutor:
-    
+
     from .utils.slurm_exit_code_override import *  # Apply patch
-    
+
     executor = slurm_executor(...)  # Will use patched behavior
 
 Removal Plan:
@@ -43,6 +43,7 @@ import os
 
 import nemo_run.core.execution.slurm as slurm_module
 from nemo_run.core.execution.slurm import SlurmBatchRequest
+
 
 # Store original implementations for restoration
 _ORIGINAL_MATERIALIZE = SlurmBatchRequest.materialize
@@ -88,4 +89,3 @@ def _custom_materialize(self) -> str:
 SlurmBatchRequest.materialize = _custom_materialize
 
 print("[SLURM PATCH] Exit code override enabled - will validate logs for false-positive failures")
-

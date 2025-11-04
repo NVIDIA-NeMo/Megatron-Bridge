@@ -36,13 +36,21 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
         scaling_factor = defaults.get("gbs_scaling_factor_default")
         preset["common"]["gbs"] = int(args.num_gpus * scaling_factor)
 
-    if args.tensor_parallel_size: preset["common"]["tp"] = args.tensor_parallel_size
-    if args.pipeline_parallel_size: preset["common"]["pp"] = args.pipeline_parallel_size
-    if args.context_parallel_size: preset["common"]["cp"] = args.context_parallel_size
-    if args.virtual_pipeline_parallel_size: preset["common"]["vp"] = args.virtual_pipeline_parallel_size
-    if args.expert_parallel_size: preset["common"]["ep"] = args.expert_parallel_size
-    if args.expert_tensor_parallel_size: preset["common"]["etp"] = args.expert_tensor_parallel_size
-    if args.micro_batch_size: preset["common"]["mbs"] = args.micro_batch_size
-    if args.global_batch_size: preset["common"]["gbs"] = args.global_batch_size
+    if args.tensor_parallel_size:
+        preset["common"]["tp"] = args.tensor_parallel_size
+    if args.pipeline_parallel_size:
+        preset["common"]["pp"] = args.pipeline_parallel_size
+    if args.context_parallel_size:
+        preset["common"]["cp"] = args.context_parallel_size
+    if args.virtual_pipeline_parallel_size:
+        preset["common"]["vp"] = args.virtual_pipeline_parallel_size
+    if args.expert_parallel_size:
+        preset["common"]["ep"] = args.expert_parallel_size
+    if args.expert_tensor_parallel_size:
+        preset["common"]["etp"] = args.expert_tensor_parallel_size
+    if args.micro_batch_size:
+        preset["common"]["mbs"] = args.micro_batch_size
+    if args.global_batch_size:
+        preset["common"]["gbs"] = args.global_batch_size
 
     return preset
