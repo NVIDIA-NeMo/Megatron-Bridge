@@ -2088,7 +2088,7 @@ class TestFSDPDTensorFunctionality:
         result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "dp_reshardable"
-    
+
     def test_build_sharded_state_dict_metadata_torch_dist_fully_parallel_legacy(self):
         """Test _build_sharded_state_dict_metadata for torch_dist with fully parallel save."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
