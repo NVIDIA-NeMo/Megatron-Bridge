@@ -29,7 +29,7 @@ from typing import Any, Callable, Literal, Optional, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
-from megatron.core import dist_checkpointing, mpu, tensor_parallel
+from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict
 from megatron.core.dist_checkpointing.serialization import (
     StateDict,
@@ -44,6 +44,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import MegatronOptimizer
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import unwrap_model
@@ -73,6 +74,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     read_train_state,
 )
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
+from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     is_last_rank,
@@ -370,7 +372,12 @@ def is_empty_async_queue(global_state: GlobalState) -> bool:
     return async_queue.get_num_unfinalized_calls() == 0
 
 
-def get_rng_state(data_parallel_random_init: bool, ckpt_format: str = "torch_dist") -> Union[ShardedObject, dict]:
+def get_rng_state(
+    data_parallel_random_init: bool,
+    ckpt_format: str = "torch_dist",
+    *,
+    pg_collection: ProcessGroupCollection,
+) -> Union[ShardedObject, dict]:
     """Get the random number generator states for all necessary libraries.
 
     Collects states from random, numpy, torch, cuda, and the Megatron RNG tracker.
@@ -394,27 +401,27 @@ def get_rng_state(data_parallel_random_init: bool, ckpt_format: str = "torch_dis
     }
 
     rng_state_list = None
-    if torch.distributed.is_initialized() and mpu.get_data_parallel_world_size() > 1 and data_parallel_random_init:
-        rng_state_list = [None for i in range(mpu.get_data_parallel_world_size())]
-        torch.distributed.all_gather_object(rng_state_list, rng_state, group=mpu.get_data_parallel_group())
+    if torch.distributed.is_initialized() and pg_collection.dp_cp.size() > 1 and data_parallel_random_init:
+        rng_state_list = [None for i in range(pg_collection.dp_cp.size())]
+        torch.distributed.all_gather_object(rng_state_list, rng_state, group=pg_collection.dp_cp)
     else:
         rng_state_list = [rng_state]
 
     if ckpt_format == "torch_dist":
-        pp_rank = mpu.get_pipeline_model_parallel_rank()
-        pp_size = mpu.get_pipeline_model_parallel_world_size()
-        tp_rank = mpu.get_tensor_model_parallel_rank()
-        tp_size = mpu.get_tensor_model_parallel_world_size()
+        pp_rank = pg_collection.pp.rank()
+        pp_size = pg_collection.pp.size()
+        tp_rank = pg_collection.tp.rank()
+        tp_size = pg_collection.tp.size()
         rng_state_list = ShardedObject(
             "rng_state",
             rng_state_list,
             (pp_size, tp_size),
             (pp_rank, tp_rank),
-            replica_id=mpu.get_data_parallel_rank(with_context_parallel=True),
+            replica_id=pg_collection.dp_cp.rank(),
         )
     elif ckpt_format == "fsdp_dtensor":
-        pp_rank = mpu.get_pipeline_model_parallel_rank()
-        tp_rank = mpu.get_tensor_model_parallel_rank()
+        pp_rank = pg_collection.pp.rank()
+        tp_rank = pg_collection.tp.rank()
         rng_state_list = {f"({pp_rank}, {tp_rank})": rng_state_list}
 
     return rng_state_list
@@ -506,8 +513,11 @@ def save_checkpoint(
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
 
     # Collect rng state across data parallel ranks.
+    pg_collection = get_pg_collection(model)
     rng_state = get_rng_state(
-        data_parallel_random_init=cfg.rng.data_parallel_random_init, ckpt_format=ckpt_cfg.ckpt_format
+        data_parallel_random_init=cfg.rng.data_parallel_random_init,
+        ckpt_format=ckpt_cfg.ckpt_format,
+        pg_collection=pg_collection,
     )
 
     # Collect rerun state across all ranks
@@ -521,7 +531,13 @@ def save_checkpoint(
     checkpoint_name = get_checkpoint_name(save_dir, train_state.step, release=False)
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
-    maybe_save_dataloader_state(train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None))
+    maybe_save_dataloader_state(
+        model,
+        train_data_iterator,
+        train_state.step,
+        getattr(cfg.dataset, "dataloader_save", None),
+        pg_collection=pg_collection,
+    )
 
     async_save_request = None
     if ckpt_cfg.async_save:
@@ -551,6 +567,7 @@ def save_checkpoint(
         optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
         model_sd_kwargs=dict(metadata=sharded_sd_metadata),
         rerun_state=rerun_state,
+        pg_collection=pg_collection,
     )
 
     # Apply PEFT filtering to save adapter-only checkpoints
@@ -593,7 +610,7 @@ def save_checkpoint(
                 if ckpt_cfg.fully_parallel_save:
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        mpu.get_data_parallel_group(with_context_parallel=True),
+                        pg_collection.dp_cp,
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # Store save strategy for future checkpoint saves
@@ -637,7 +654,7 @@ def save_checkpoint(
                 state_dict,
                 algo=algo,
                 cached_metadata=cached_metadata,
-                parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
+                parallelization_group=pg_collection.dp_cp,
             )
             async_save_request = checkpointing_context["local_checkpoint_manager"].save(
                 state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
@@ -696,10 +713,10 @@ def save_checkpoint(
                     if tokenizer_instance is not None:
                         save_tokenizer_assets(tokenizer_instance, cfg.tokenizer, checkpoint_name)
 
-                tp_rank = (tensor_rank if tensor_rank is not None else mpu.get_tensor_model_parallel_rank()) + 1
-                tp_world_size = mpu.get_tensor_model_parallel_world_size()
-                pp_rank = (pipeline_rank if pipeline_rank is not None else mpu.get_pipeline_model_parallel_rank()) + 1
-                pp_world_size = mpu.get_pipeline_model_parallel_world_size()
+                tp_rank = (tensor_rank if tensor_rank is not None else pg_collection.tp.rank()) + 1
+                tp_world_size = pg_collection.tp.size()
+                pp_rank = (pipeline_rank if pipeline_rank is not None else pg_collection.pp.rank()) + 1
+                pp_world_size = pg_collection.pp.size()
                 print_rank_0(
                     f"  successfully saved checkpoint from iteration {train_state_dict['step'].item():7d} "
                     f"to {ckpt_cfg.save} [ t {tp_rank}/{tp_world_size}, p {pp_rank}/{pp_world_size} ]"
@@ -804,7 +821,14 @@ def cleanup_old_non_persistent_checkpoint(
         remove_iter_ckpts(rm_iter_ckpts)
 
 
-def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_save_path: Optional[str]) -> None:
+def maybe_save_dataloader_state(
+    model: list[MegatronModule] | MegatronModule,
+    train_iterator: Any,
+    iteration: int,
+    dataloader_save_path: Optional[str],
+    *,
+    pg_collection: ProcessGroupCollection | None = None,
+) -> None:
     """Save the dataloader state if the iterator supports it.
 
     Checks if the train_iterator has a `save_state` method and calls it.
@@ -822,12 +846,13 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     if not hasattr(train_iterator.iterable, "save_state"):
         raise RuntimeError(f"Could not find a save_state for the train_iterator of type {type(train_iterator)}")
 
-    # Save dataloader state for each data parallel rank only once.
-    first_rank = mpu.is_pipeline_first_stage() and mpu.get_tensor_model_parallel_rank() == 0
+    # Resolve process groups and save dataloader state for each DP rank only once.
+    pg_collection = pg_collection or get_pg_collection(model)
+    first_rank = (pg_collection.pp.rank() == 0) and (pg_collection.tp.rank() == 0)
     if not first_rank:
         return
 
-    dp_rank = mpu.get_data_parallel_rank()
+    dp_rank = pg_collection.dp.rank()
     print_rank_0(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
     train_dataloader_state_dict = train_iterator.iterable.save_state()
     # Get the base directory for the current iteration
@@ -835,12 +860,12 @@ def maybe_save_dataloader_state(train_iterator: Any, iteration: int, dataloader_
     # Construct the specific filename within that iteration directory
     data_state_save_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
 
-    torch.distributed.barrier(group=mpu.get_data_parallel_group())
+    torch.distributed.barrier(group=pg_collection.dp)
 
-    if mpu.get_data_parallel_rank() == 0:
+    if pg_collection.dp.rank() == 0:
         ensure_directory_exists(data_state_save_path)
 
-    torch.distributed.barrier(group=mpu.get_data_parallel_group())
+    torch.distributed.barrier(group=pg_collection.dp)
 
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
@@ -986,6 +1011,8 @@ def _generate_model_state_dict(
     model: list[MegatronModule],
     model_sd_kwargs: Optional[dict[str, Any]] = None,
     ckpt_format: str = "torch_dist",
+    *,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> dict[str, ShardedStateDict]:
     """Generate the model subset of the state dictionary to be saved in a checkpoint.
 
@@ -1026,6 +1053,8 @@ def generate_state_dict(
     optim_sd_kwargs: Optional[dict[str, Any]] = None,
     model_sd_kwargs: Optional[dict[str, Any]] = None,
     rerun_state: Optional[dict[str, Any]] = None,
+    *,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> dict[str, Any]:
     """Generate the state dictionary to be saved in a checkpoint.
 
@@ -1049,7 +1078,9 @@ def generate_state_dict(
     if iteration is not None:
         state_dict["iteration"] = iteration
 
-    state_dict.update(_generate_model_state_dict(model, model_sd_kwargs, ckpt_cfg.ckpt_format))
+    state_dict.update(
+        _generate_model_state_dict(model, model_sd_kwargs, ckpt_cfg.ckpt_format, pg_collection=pg_collection)
+    )
 
     # Optimizer stuff.
     if ckpt_cfg.save_optim:
@@ -1145,13 +1176,13 @@ def _load_model_weights_from_checkpoint(
     restore_modelopt_state(model, state_dict)
 
     model = unwrap_model(model)
-    sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs)
+    pg_collection = get_pg_collection(model)
+    sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
 
     load_strategy = get_default_load_sharded_strategy(checkpoint_path)
     if fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(
-            load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
-        )
+        pg_collection = get_pg_collection(model)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
@@ -1274,6 +1305,7 @@ def _load_checkpoint_from_path(
     """
     cfg = state.cfg
     model = unwrap_model(model)
+    pg_collection = get_pg_collection(model)
     ckpt_format = cfg.checkpoint.ckpt_format
 
     # Step 1: Load base checkpoint with rank0=True (torch_dist only)
@@ -1284,6 +1316,7 @@ def _load_checkpoint_from_path(
             rank0=True,
             checkpointing_context=checkpointing_context,
             ignore_ckpt_step=ignore_ckpt_step,
+            pg_collection=pg_collection,
         )
 
     # Step 2: Initialize scaffolding
@@ -1322,7 +1355,9 @@ def _load_checkpoint_from_path(
             and cfg.checkpoint.load_rng
             and run_config["checkpoint"]["save_rng"]
         ):
-            gen_sd_rng_state = get_rng_state(cfg.rng.data_parallel_random_init, ckpt_format)
+            gen_sd_rng_state = get_rng_state(
+                cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+            )
         else:
             ignore_rng_state = True
             gen_sd_rng_state = None
@@ -1406,6 +1441,7 @@ def _load_checkpoint_from_path(
                 optim_sd_kwargs=optim_sd_kwargs,
                 model_sd_kwargs=model_sd_kwargs,
                 rerun_state=gen_sd_rerun_state,
+                pg_collection=pg_collection,
             )
 
     elif ckpt_format == "fsdp_dtensor":
@@ -1445,7 +1481,9 @@ def _load_checkpoint_from_path(
                     data_iterator=None, ckpt_format=ckpt_format, force=True
                 )
             if cfg.checkpoint.load_rng:
-                gen_sd_rng_state = get_rng_state(cfg.rng.data_parallel_random_init, ckpt_format)
+                gen_sd_rng_state = get_rng_state(
+                    cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+                )
             if cfg.checkpoint.load_optim:
                 gen_sd_optim = optimizer
                 gen_sd_opt_param_scheduler = opt_param_scheduler
@@ -1466,6 +1504,7 @@ def _load_checkpoint_from_path(
             optim_sd_kwargs=optim_sd_kwargs,
             rerun_state=gen_sd_rerun_state,
             iteration=1,
+            pg_collection=pg_collection,
         )
 
     # Apply PEFT resume filtering (common across all checkpoint formats)
@@ -1488,6 +1527,7 @@ def _load_checkpoint_from_path(
         rank0=False,
         checkpointing_context=checkpointing_context,
         ignore_ckpt_step=ignore_ckpt_step,
+        pg_collection=pg_collection,
         **load_kwargs,
     )
 
@@ -1582,8 +1622,8 @@ def _load_checkpoint_from_path(
             if "rng_state" in state_dict:
                 if ckpt_format == "fsdp_dtensor":
                     # FSDP DTensor format: {(pp_rank, tp_rank): rng_state_list}
-                    tp_rank = mpu.get_tensor_model_parallel_rank()
-                    pp_rank = mpu.get_pipeline_model_parallel_rank()
+                    tp_rank = pg_collection.tp.rank()
+                    pp_rank = pg_collection.pp.rank()
                     key = f"({pp_rank}, {tp_rank})"
                     if key in state_dict["rng_state"]:
                         rng_state_list = state_dict["rng_state"][key]
@@ -1591,14 +1631,14 @@ def _load_checkpoint_from_path(
                         print_rank_0("WARNING: RNG state not found for current TP/PP rank")
                         rng_state_list = next(iter(state_dict["rng_state"].values()))
                     rng_state = (
-                        rng_state_list[mpu.get_data_parallel_rank()]
+                        rng_state_list[pg_collection.dp.rank()]
                         if cfg.rng.data_parallel_random_init
                         else rng_state_list[0]
                     )
                 else:
                     # torch_dist format: ShardedObject
                     rng_state = (
-                        state_dict["rng_state"][mpu.get_data_parallel_rank()]
+                        state_dict["rng_state"][pg_collection.dp.rank()]
                         if cfg.rng.data_parallel_random_init
                         else state_dict["rng_state"][0]
                     )
@@ -1632,8 +1672,8 @@ def _load_checkpoint_from_path(
 
     print_rank_0(
         f"  successfully loaded checkpoint from {load_dir} "
-        f"[ t {mpu.get_tensor_model_parallel_rank() + 1}/{mpu.get_tensor_model_parallel_world_size()}, "
-        f"p {mpu.get_pipeline_model_parallel_rank() + 1}/{mpu.get_pipeline_model_parallel_world_size()} ] "
+        f"[ t {pg_collection.tp.rank()}/{pg_collection.tp.size()}, "
+        f"p {pg_collection.pp.rank()}/{pg_collection.pp.size()} ] "
         f"at iteration {state.train_state.step}"
     )
 
@@ -1871,6 +1911,8 @@ def _load_non_persistent_base_checkpoint(
     sharded_state_dict: Optional[dict[str, Any]],
     non_persistent_iteration: int,
     checkpointing_context: Optional[dict[str, Any]] = None,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
     """Load the base state_dict from a non-persistent distributed checkpoint."""
     assert ckpt_cfg.non_persistent_ckpt_type is not None
@@ -1891,7 +1933,7 @@ def _load_non_persistent_base_checkpoint(
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
             algo=ckpt_cfg.non_persistent_local_ckpt_algo,
-            parallelization_group=mpu.get_data_parallel_group(with_context_parallel=True),
+            parallelization_group=pg_collection.dp_cp,
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
@@ -1908,6 +1950,8 @@ def _load_global_dist_base_checkpoint(
     iteration: int,
     release: bool,
     checkpointing_context: Optional[dict[str, Any]] = None,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
     """Load the base state_dict from the given directory containing the global distributed checkpoint."""
     if rank0:
@@ -1921,9 +1965,7 @@ def _load_global_dist_base_checkpoint(
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
     load_strategy = get_default_load_sharded_strategy(checkpoint_name)
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(
-            load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
-        )
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     state_dict = dist_checkpointing.load(
@@ -1939,6 +1981,8 @@ def _load_base_checkpoint(
     sharded_state_dict: Optional[dict[str, Any]] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
     ignore_ckpt_step: bool = False,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[Optional[dict[str, Any]], str, bool, Optional[CheckpointType]]:
     """Load the base state_dict from the given directory.
 
@@ -1983,6 +2027,7 @@ def _load_base_checkpoint(
                 sharded_state_dict,
                 non_persistent_iteration,
                 checkpointing_context,
+                pg_collection=pg_collection,
             )
         else:
             print_rank_0("WARNING: non-persistent checkpoints are older than persistent checkpoint")
@@ -2023,6 +2068,7 @@ def _load_base_checkpoint(
             iteration,
             release,
             checkpointing_context=checkpointing_context,
+            pg_collection=pg_collection,
         )
     elif ckpt_format == "fsdp_dtensor":
         return _load_fsdp_dtensor_base_checkpoint(

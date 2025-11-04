@@ -16,6 +16,7 @@
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -249,14 +250,13 @@ class TestCheckpointTypes:
 class TestRNGState:
     """Test RNG state collection."""
 
-    @patch("megatron.bridge.training.checkpointing.mpu")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
     @patch("torch.distributed.is_initialized")
     @patch("torch.cuda.get_rng_state")
     @patch("torch.get_rng_state")
     @patch("numpy.random.get_state")
     @patch("random.getstate")
-    def test_get_rng_state(self, mock_random, mock_np, mock_torch, mock_cuda, mock_dist_init, mock_tp, mock_mpu):
+    def test_get_rng_state(self, mock_random, mock_np, mock_torch, mock_cuda, mock_dist_init, mock_tp):
         """Test RNG state collection."""
         # Setup mocks
         mock_dist_init.return_value = False
@@ -268,13 +268,19 @@ class TestRNGState:
         mock_tracker.get_states.return_value = "tracker_states"
         mock_tp.get_cuda_rng_tracker.return_value = mock_tracker
 
-        mock_mpu.get_pipeline_model_parallel_rank.return_value = 0
-        mock_mpu.get_pipeline_model_parallel_world_size.return_value = 1
-        mock_mpu.get_tensor_model_parallel_rank.return_value = 0
-        mock_mpu.get_tensor_model_parallel_world_size.return_value = 1
-        mock_mpu.get_data_parallel_rank.return_value = 0
+        # Minimal pg_collection with rank/size methods
+        dp_cp = Mock()
+        dp_cp.rank.return_value = 0
+        dp_cp.size.return_value = 1
+        tp = Mock()
+        tp.rank.return_value = 0
+        tp.size.return_value = 1
+        pp = Mock()
+        pp.rank.return_value = 0
+        pp.size.return_value = 1
+        pg = SimpleNamespace(dp_cp=dp_cp, tp=tp, pp=pp)
 
-        result = get_rng_state(data_parallel_random_init=False)
+        result = get_rng_state(data_parallel_random_init=False, pg_collection=pg)
 
         # Verify the result is a ShardedObject
         assert result.key == "rng_state"
@@ -351,6 +357,20 @@ def save_checkpoint_fixtures():
     mock_state.cfg = mock_cfg
 
     mock_model = [Mock()]
+    # Attach a minimal pg_collection required by checkpointing
+    dp = Mock()
+    dp.rank.return_value = 0
+    dp.size.return_value = 1
+    dp_cp = Mock()
+    dp_cp.rank.return_value = 0
+    dp_cp.size.return_value = 1
+    tp = Mock()
+    tp.rank.return_value = 0
+    tp.size.return_value = 1
+    pp = Mock()
+    pp.rank.return_value = 0
+    pp.size.return_value = 1
+    mock_model[0].pg_collection = SimpleNamespace(dp=dp, dp_cp=dp_cp, tp=tp, pp=pp)
     mock_optimizer = Mock()
     mock_scheduler = Mock()
 
@@ -377,7 +397,6 @@ class TestSaveCheckpoint:
     @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
     @patch("megatron.bridge.training.checkpointing.generate_state_dict")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     @patch("megatron.bridge.training.checkpointing.fault_tolerance")
     @patch("megatron.bridge.training.checkpointing.is_empty_async_queue")
     @patch("megatron.bridge.training.checkpointing.get_rank_safe")
@@ -400,7 +419,6 @@ class TestSaveCheckpoint:
         mock_get_rank_safe,
         mock_empty_queue,
         mock_ft,
-        mock_mpu,
         mock_dist_ckpt,
         mock_gen_state,
         mock_rerun,
@@ -424,12 +442,6 @@ class TestSaveCheckpoint:
         mock_get_rng.return_value = Mock()
         mock_rerun.return_value.state_dict.return_value = {}
         mock_gen_state.return_value = {"model": {"param1": "value1", "param2": "value2"}}
-        mock_mpu.get_expert_data_parallel_rank.return_value = 0
-        mock_mpu.get_tensor_model_parallel_rank.return_value = 0
-        mock_mpu.get_tensor_model_parallel_world_size.return_value = 1
-        mock_mpu.get_pipeline_model_parallel_rank.return_value = 0
-        mock_mpu.get_pipeline_model_parallel_world_size.return_value = 1
-        mock_get_strategy.return_value = Mock()
         mock_dist_ckpt.save.return_value = None  # Synchronous save
         mock_save_modelopt.return_value = None  # Mock ModelOpt save
         mock_is_last_rank.return_value = False  # Disable wandb logging for simplicity
@@ -588,7 +600,6 @@ class TestLoadCheckpoint:
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
     @patch("megatron.bridge.training.checkpointing.generate_state_dict")
@@ -615,7 +626,6 @@ class TestLoadCheckpoint:
         mock_generate_state_dict,
         mock_tensor_parallel,
         mock_rerun_machine,
-        mock_mpu,
         mock_print_rank_0,
         mock_is_last_rank,
         mock_wandb,
@@ -634,6 +644,18 @@ class TestLoadCheckpoint:
         mock_is_last_rank.return_value = False
         mock_exists.return_value = True
         mock_unwrap.return_value = load_checkpoint_fixtures["mock_model"]
+
+        # Attach minimal pg_collection for rank/size logging during load
+        dp = Mock()
+        dp.rank.return_value = 0
+        dp.size.return_value = 1
+        tp = Mock()
+        tp.rank.return_value = 0
+        tp.size.return_value = 1
+        pp = Mock()
+        pp.rank.return_value = 0
+        pp.size.return_value = 1
+        load_checkpoint_fixtures["mock_model"][0].pg_collection = SimpleNamespace(dp=dp, tp=tp, pp=pp, dp_cp=dp)
 
         # Mock train state file existence (for train_state.pt check)
         mock_exists_os.return_value = True  # train_state.pt exists (normal case)
@@ -658,15 +680,8 @@ class TestLoadCheckpoint:
         mock_rng_tracker.set_states = Mock()
         mock_tensor_parallel.get_cuda_rng_tracker.return_value = mock_rng_tracker
 
-        # Mock MPU functions
-        mock_mpu.get_tensor_model_parallel_rank.return_value = 0
-        mock_mpu.get_tensor_model_parallel_world_size.return_value = 1
-        mock_mpu.get_pipeline_model_parallel_rank.return_value = 0
-        mock_mpu.get_pipeline_model_parallel_world_size.return_value = 1
-        mock_mpu.get_data_parallel_rank.return_value = 0
-
-        # Mock rerun state machine
-        mock_rerun_machine.return_value.load_state_dict = Mock()
+        # No mpu; ranks are derived from pg_collection when present
+        mock_get_rng_state.return_value = Mock()
 
         # Mock run config to avoid file I/O
         mock_run_config = {
@@ -907,7 +922,8 @@ class TestLoadBaseCheckpoint:
         mock_get_np_iter.return_value = -1
         mock_isfile.return_value = False
 
-        result = _load_base_checkpoint("/fake/dir", base_config)
+        pg = SimpleNamespace(dp_cp=Mock())
+        result = _load_base_checkpoint("/fake/dir", base_config, pg_collection=pg)
 
         assert result == (None, "", False, None)
 
@@ -932,7 +948,8 @@ class TestLoadBaseCheckpoint:
         mock_os_exists.return_value = False
 
         with pytest.raises(RuntimeError) as exc_info:
-            _load_base_checkpoint("/fake/dir", base_config)
+            pg = SimpleNamespace(dp_cp=Mock())
+            _load_base_checkpoint("/fake/dir", base_config, pg_collection=pg)
 
         assert "Unknown checkpoint format" in str(exc_info.value)
 
@@ -945,6 +962,11 @@ class TestLoadModelWeightsFromCheckpoint:
         """Create a mock model for testing."""
         model = Mock()
         model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
+        # Attach minimal pg_collection
+        dp_cp = Mock()
+        tp = Mock()
+        pp = Mock()
+        model.pg_collection = SimpleNamespace(dp_cp=dp_cp, tp=tp, pp=pp)
         return [model]
 
     @pytest.fixture
@@ -954,6 +976,11 @@ class TestLoadModelWeightsFromCheckpoint:
         model1.sharded_state_dict.return_value = {"weight1": torch.randn(10, 10)}
         model2 = Mock()
         model2.sharded_state_dict.return_value = {"weight2": torch.randn(5, 5)}
+        dp_cp = Mock()
+        tp = Mock()
+        pp = Mock()
+        model1.pg_collection = SimpleNamespace(dp_cp=dp_cp, tp=tp, pp=pp)
+        model2.pg_collection = SimpleNamespace(dp_cp=dp_cp, tp=tp, pp=pp)
         return [model1, model2]
 
     @pytest.fixture
@@ -990,10 +1017,8 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
     @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     def test_load_model_weights_single_model_success(
         self,
-        mock_mpu,
         mock_fully_parallel_wrapper,
         mock_get_strategy,
         mock_load_state_dict,
@@ -1078,10 +1103,8 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
     @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     def test_load_model_weights_multiple_models_success(
         self,
-        mock_mpu,
         mock_fully_parallel_wrapper,
         mock_get_strategy,
         mock_load_state_dict,
@@ -1134,10 +1157,8 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
     @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     def test_load_model_weights_fully_parallel_load(
         self,
-        mock_mpu,
         mock_fully_parallel_wrapper,
         mock_get_strategy,
         mock_load_state_dict,
@@ -1157,7 +1178,9 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_fully_parallel_wrapper.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
-        mock_mpu.get_data_parallel_group.return_value = Mock()
+        dp_cp_group = Mock()
+        # attach pg_collection to model for dp_cp
+        mock_model[0].pg_collection = SimpleNamespace(dp_cp=dp_cp_group, tp=Mock(), pp=Mock())
 
         # Call the function
         from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
@@ -1171,10 +1194,7 @@ class TestLoadModelWeightsFromCheckpoint:
         )
 
         # Verify fully parallel wrapper was used
-        mock_fully_parallel_wrapper.assert_called_once_with(
-            mock_strategy, mock_mpu.get_data_parallel_group.return_value
-        )
-        mock_mpu.get_data_parallel_group.assert_called_once_with(with_context_parallel=True)
+        mock_fully_parallel_wrapper.assert_called_once_with(mock_strategy, dp_cp_group)
 
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
@@ -1182,10 +1202,8 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
     @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     def test_load_model_weights_none_state_dict(
         self,
-        mock_mpu,
         mock_fully_parallel_wrapper,
         mock_get_strategy,
         mock_load_state_dict,
@@ -1221,10 +1239,8 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
     @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     def test_return_state_dict(
         self,
-        mock_mpu,
         mock_fully_parallel_wrapper,
         mock_get_strategy,
         mock_load_state_dict,
@@ -1392,7 +1408,9 @@ class TestMegatronLMCompatibility:
                 with patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint") as mock_load:
                     mock_load.return_value = ({"test": "data"}, "/ckpt/path", False, CheckpointType.GLOBAL)
 
-                    result = _load_base_checkpoint("/test/dir", mock_cfg, rank0=True)
+                    result = _load_base_checkpoint(
+                        "/test/dir", mock_cfg, rank0=True, pg_collection=SimpleNamespace(dp_cp=Mock())
+                    )
 
                     state_dict, checkpoint_name, release, ckpt_type = result
                     assert state_dict == {"test": "data"}
@@ -1440,7 +1458,6 @@ class TestMegatronLMCompatibility:
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
-    @patch("megatron.bridge.training.checkpointing.mpu")
     @patch("megatron.bridge.training.checkpointing.get_rerun_state_machine")
     @patch("megatron.bridge.training.checkpointing.generate_state_dict")
     @patch("megatron.bridge.training.checkpointing.get_rng_state")
@@ -1457,7 +1474,6 @@ class TestMegatronLMCompatibility:
         mock_get_rng_state,
         mock_generate_state_dict,
         mock_rerun_machine,
-        mock_mpu,
         mock_print_rank_0,
         mock_is_last_rank,
         mock_wandb,
@@ -1472,7 +1488,19 @@ class TestMegatronLMCompatibility:
         mock_dist_init.return_value = False
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
-        mock_unwrap.return_value = [Mock()]
+        model_mock = Mock()
+        # attach minimal pg_collection needed by logging
+        dp = Mock()
+        dp.rank.return_value = 0
+        dp.size.return_value = 1
+        tp = Mock()
+        tp.rank.return_value = 0
+        tp.size.return_value = 2
+        pp = Mock()
+        pp.rank.return_value = 0
+        pp.size.return_value = 1
+        model_mock.pg_collection = SimpleNamespace(dp=dp, tp=tp, pp=pp, dp_cp=dp)
+        mock_unwrap.return_value = [model_mock]
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
@@ -1512,10 +1540,6 @@ class TestMegatronLMCompatibility:
         # Mock other required functions
         mock_generate_state_dict.return_value = {"test": "state"}
         mock_get_rng_state.return_value = Mock()
-        mock_mpu.get_tensor_model_parallel_rank.return_value = 0
-        mock_mpu.get_tensor_model_parallel_world_size.return_value = 2
-        mock_mpu.get_pipeline_model_parallel_rank.return_value = 0
-        mock_mpu.get_pipeline_model_parallel_world_size.return_value = 1
         mock_rerun_machine.return_value.load_state_dict = Mock()
 
         # Create test fixtures
@@ -2004,16 +2028,10 @@ class TestFSDPDTensorFunctionality:
         with pytest.raises(NotImplementedError, match="Unknown checkpoint format"):
             _get_checkpoint_format("/path/to/checkpoint")
 
-    @patch("megatron.core.mpu.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.mpu.get_tensor_model_parallel_rank")
-    @patch("megatron.core.mpu.get_data_parallel_world_size")
     @patch("torch.distributed.is_initialized")
-    def test_get_rng_state_fsdp_dtensor_format(self, mock_dist_init, mock_dp_world_size, mock_tp_rank, mock_pp_rank):
+    def test_get_rng_state_fsdp_dtensor_format(self, mock_dist_init):
         """Test get_rng_state returns correct format for fsdp_dtensor."""
         mock_dist_init.return_value = False  # Simplify
-        mock_dp_world_size.return_value = 1
-        mock_tp_rank.return_value = 0
-        mock_pp_rank.return_value = 0
 
         with (
             patch("random.getstate"),
@@ -2022,37 +2040,26 @@ class TestFSDPDTensorFunctionality:
             patch("torch.cuda.get_rng_state"),
             patch("megatron.core.tensor_parallel.get_cuda_rng_tracker"),
         ):
-            result = get_rng_state(data_parallel_random_init=False, ckpt_format="fsdp_dtensor")
+            dp_cp = Mock()
+            dp_cp.rank.return_value = 0
+            dp_cp.size.return_value = 1
+            tp = Mock()
+            tp.rank.return_value = 0
+            tp.size.return_value = 1
+            pp = Mock()
+            pp.rank.return_value = 0
+            pp.size.return_value = 1
+            pg = SimpleNamespace(dp_cp=dp_cp, tp=tp, pp=pp)
+            result = get_rng_state(data_parallel_random_init=False, ckpt_format="fsdp_dtensor", pg_collection=pg)
 
         # Should return dict format for fsdp_dtensor
         assert isinstance(result, dict)
         assert "(0, 0)" in result
 
-    @patch("megatron.core.mpu.get_pipeline_model_parallel_rank")
-    @patch("megatron.core.mpu.get_pipeline_model_parallel_world_size")
-    @patch("megatron.core.mpu.get_tensor_model_parallel_rank")
-    @patch("megatron.core.mpu.get_tensor_model_parallel_world_size")
-    @patch("megatron.core.mpu.get_data_parallel_rank")
-    @patch("megatron.core.mpu.get_data_parallel_world_size")
     @patch("torch.distributed.is_initialized")
-    def test_get_rng_state_torch_dist_format(
-        self,
-        mock_dist_init,
-        mock_dp_world_size,
-        mock_dp_rank,
-        mock_tp_world_size,
-        mock_tp_rank,
-        mock_pp_world_size,
-        mock_pp_rank,
-    ):
+    def test_get_rng_state_torch_dist_format(self, mock_dist_init):
         """Test get_rng_state returns ShardedObject for torch_dist."""
         # The ShardedObject is only created for torch_dist format regardless of distributed state
-        mock_dp_world_size.return_value = 1
-        mock_dp_rank.return_value = 0
-        mock_tp_rank.return_value = 0
-        mock_tp_world_size.return_value = 1
-        mock_pp_rank.return_value = 0
-        mock_pp_world_size.return_value = 1
         mock_dist_init.return_value = False
 
         with (
@@ -2063,7 +2070,17 @@ class TestFSDPDTensorFunctionality:
             patch("megatron.core.tensor_parallel.get_cuda_rng_tracker"),
             patch("megatron.bridge.training.checkpointing.ShardedObject") as mock_sharded_obj,
         ):
-            _ = get_rng_state(data_parallel_random_init=False, ckpt_format="torch_dist")
+            dp_cp = Mock()
+            dp_cp.rank.return_value = 0
+            dp_cp.size.return_value = 1
+            tp = Mock()
+            tp.rank.return_value = 0
+            tp.size.return_value = 1
+            pp = Mock()
+            pp.rank.return_value = 0
+            pp.size.return_value = 1
+            pg = SimpleNamespace(dp_cp=dp_cp, tp=tp, pp=pp)
+            _ = get_rng_state(data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=pg)
 
         # Should create ShardedObject for torch_dist format
         # The exact arguments depend on the RNG state, but we just verify it was called
