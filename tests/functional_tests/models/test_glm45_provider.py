@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 import pytest
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -29,18 +27,11 @@ HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER = {
     "zai-org/GLM-4.5-Air": GLM45AirModelProvider106B,
 }
 
-ROOT_PATH: str = "/home/TestData/megatron_bridge/hf_home"
-
-HF_MODEL_ID_PATH_TO_MODEL_PROVIDER = {
-    os.path.join(ROOT_PATH, hf_model_id): provider_class
-    for hf_model_id, provider_class in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()
-}
-
 
 class TestGLM45ModelProviderMapping:
     """Test that bridge provider configs are equivalent to predefined provider configs."""
 
-    @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_PATH_TO_MODEL_PROVIDER.items()))
+    @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.items()))
     def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
         """Test that bridge converted provider config matches predefined provider config."""
         # Create bridge from HF model

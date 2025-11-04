@@ -207,7 +207,6 @@ def main(args) -> None:
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
-
         # Load the Megatron model directly
         model = bridge.load_megatron_model(
             args.megatron_model_path,

@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
@@ -82,15 +83,22 @@ def evaluate(
     eval_num_microbatches = eval_batch_size // (state.cfg.train.micro_batch_size * state.cfg.data_parallel_size)
 
     with torch.no_grad():
-        iteration = 0
         if verbose:
             print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
+
+        if state.cfg.model.cuda_graph_impl == "local" and state.cfg.model.cuda_graph_scope == "full_iteration":
+            forward_backward_func = FullCudaGraphWrapper(
+                get_forward_backward_func(), cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps
+            )
+        else:
+            forward_backward_func = get_forward_backward_func()
+
+        iteration = 0
         while iteration < state.cfg.train.eval_iters:
             iteration += 1
             if verbose:
                 print_rank_0(f"Evaluating iter {iteration}/{state.cfg.train.eval_iters}")
 
-            forward_backward_func = get_forward_backward_func()
             # Don't care about timing during evaluation
             config.timers = None
             fault_tolerance.on_eval_step_start(state)
