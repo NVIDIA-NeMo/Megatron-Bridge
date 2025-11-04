@@ -15,9 +15,9 @@
 import logging
 
 from utils.helpers import (
-    apply_parallelism_and_batch_config,
     get_precision_config,
     set_cuda_graph_overrides,
+    set_parallelism_and_batch_configs,
 )
 
 from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config, qwen3_235b_a22b_pretrain_config
@@ -57,7 +57,7 @@ def qwen3_235b_a22b_gb300_64gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="none", cuda_graph_scope="full_iteration")
 
@@ -74,9 +74,9 @@ def qwen3_235b_a22b_gb300_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigCon
     set_qwen3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -92,7 +92,7 @@ def qwen3_235b_a22b_gb200_64gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB200_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_GB200_64GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -109,9 +109,9 @@ def qwen3_235b_a22b_gb200_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigCon
     set_qwen3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -127,7 +127,7 @@ def qwen3_235b_a22b_b200_64gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_B200_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_B200_64GPUS_BF16_PARALLEL_CONFIG)
 
     return cfg
 
@@ -142,9 +142,9 @@ def qwen3_235b_a22b_b200_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigCont
     set_qwen3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     return cfg
 
@@ -158,7 +158,7 @@ def qwen3_235b_a22b_h100_256gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_H100_256GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_H100_256GPUS_BF16_PARALLEL_CONFIG)
 
     return cfg
 
@@ -172,7 +172,7 @@ def qwen3_235b_a22b_h100_256gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigCon
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG)
 
     return cfg
 
@@ -186,7 +186,7 @@ def qwen3_30b_a3b_gb300_8gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -203,9 +203,9 @@ def qwen3_30b_a3b_gb300_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
     set_qwen3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -221,7 +221,7 @@ def qwen3_30b_a3b_gb200_8gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB200_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_GB200_8GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -238,9 +238,9 @@ def qwen3_30b_a3b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
     set_qwen3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -256,7 +256,7 @@ def qwen3_30b_a3b_b200_8gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_B200_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_B200_8GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -273,9 +273,9 @@ def qwen3_30b_a3b_b200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContain
     set_qwen3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -291,7 +291,7 @@ def qwen3_30b_a3b_h100_16gpus_bf16_config() -> ConfigContainer:
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_H100_16GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_H100_16GPUS_BF16_PARALLEL_CONFIG)
 
     return cfg
 
@@ -305,6 +305,6 @@ def qwen3_30b_a3b_h100_16gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
     )
     set_qwen3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_H100_16GPUS_FP8_CS_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.QWEN3_30B_A3B_H100_16GPUS_FP8_CS_PARALLEL_CONFIG)
 
     return cfg

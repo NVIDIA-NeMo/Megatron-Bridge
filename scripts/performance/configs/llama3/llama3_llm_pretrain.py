@@ -15,10 +15,10 @@
 import logging
 
 from utils.helpers import (
-    apply_parallelism_and_batch_config,
     get_precision_config,
     set_cuda_graph_overrides,
     set_megatron_fsdp_overrides,
+    set_parallelism_and_batch_configs,
     set_recompute_overrides,
 )
 
@@ -55,7 +55,7 @@ def llama3_70b_gb300_64gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG)
 
     set_megatron_fsdp_overrides(cfg)
     cfg.ddp.fsdp_double_buffer = True
@@ -74,17 +74,17 @@ def llama3_70b_gb300_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContaine
     set_llama3_common_configs(cfg)
 
     # use mx parallelism config by default
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG)
         set_megatron_fsdp_overrides(cfg)
         cfg.ddp.fsdp_double_buffer = True
         cfg.model.gradient_accumulation_fusion = False
         cfg.ddp.suggested_communication_unit_size = 800000000
         set_recompute_overrides(cfg, cpu_offloading_num_layers=20)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -96,7 +96,7 @@ def llama3_70b_gb200_64gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG)
 
     set_megatron_fsdp_overrides(cfg)
     cfg.ddp.fsdp_double_buffer = True
@@ -115,17 +115,17 @@ def llama3_70b_gb200_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContaine
     set_llama3_common_configs(cfg)
 
     # use mx parallelism config by default
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG)
         set_megatron_fsdp_overrides(cfg)
         cfg.ddp.fsdp_double_buffer = True
         cfg.model.gradient_accumulation_fusion = False
         cfg.ddp.suggested_communication_unit_size = 800000000
         set_recompute_overrides(cfg, cpu_offloading_num_layers=40)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -139,7 +139,7 @@ def llama3_70b_b200_64gpus_bf16_config() -> ConfigContainer:
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_BF16_PARALLEL_CONFIG)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -152,17 +152,17 @@ def llama3_70b_b200_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer
     set_llama3_common_configs(cfg)
 
     # use mx parallelism config by default
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG)
         set_megatron_fsdp_overrides(cfg)
         cfg.ddp.fsdp_double_buffer = True
         cfg.model.gradient_accumulation_fusion = False
         cfg.ddp.suggested_communication_unit_size = 800000000
         set_recompute_overrides(cfg, recompute_num_layers=5)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -174,7 +174,7 @@ def llama3_70b_h100_64gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
 
@@ -186,7 +186,7 @@ def llama3_70b_h100_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192
 
@@ -198,7 +198,7 @@ def llama3_8b_gb300_8gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -213,9 +213,9 @@ def llama3_8b_gb300_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     set_llama3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -229,7 +229,7 @@ def llama3_8b_gb200_8gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -244,9 +244,9 @@ def llama3_8b_gb200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     set_llama3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG)
 
     cg_impl_map = {"cs": "none", "mx": "local"}
     cuda_graph_impl = cg_impl_map.get(fp8_recipe, "none")
@@ -262,7 +262,7 @@ def llama3_8b_b200_8gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_B200_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_B200_8GPUS_BF16_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -277,9 +277,9 @@ def llama3_8b_b200_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     set_llama3_common_configs(cfg)
 
     if fp8_recipe == "cs":
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG)
     else:
-        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG)
+        set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG)
 
     set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
@@ -293,7 +293,7 @@ def llama3_8b_h100_8gpus_bf16_config() -> ConfigContainer:
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_H100_8GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_H100_8GPUS_BF16_PARALLEL_CONFIG)
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
 
@@ -305,7 +305,7 @@ def llama3_8b_h100_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
     set_llama3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG)
 
     if fp8_recipe == "cs":
         set_megatron_fsdp_overrides(cfg)

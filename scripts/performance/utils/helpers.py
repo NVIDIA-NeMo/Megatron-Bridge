@@ -31,21 +31,6 @@ from megatron.bridge.training.mixed_precision import (
 logger = logging.getLogger(__name__)
 
 
-def apply_parallelism_and_batch_config(cfg: ConfigContainer, settings: ParallelismAndBatchConfig) -> None:
-    """Apply parallelism and batch size overrides to a config container."""
-
-    cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
-    cfg.model.pipeline_model_parallel_size = settings.pipeline_model_parallel_size
-    cfg.model.context_parallel_size = settings.context_parallel_size
-    cfg.model.virtual_pipeline_model_parallel_size = settings.virtual_pipeline_model_parallel_size
-    cfg.model.expert_model_parallel_size = settings.expert_model_parallel_size
-    cfg.model.expert_tensor_parallel_size = settings.expert_tensor_parallel_size
-    cfg.model.sequence_parallel = settings.sequence_parallel_enabled()
-
-    cfg.train.global_batch_size = settings.global_batch_size
-    cfg.train.micro_batch_size = settings.micro_batch_size
-
-
 def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
@@ -68,8 +53,23 @@ def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
 
-def set_basic_perf_overrides(recipe: ConfigContainer) -> None:
-    """Apply common performance overrides shared across recipes."""
+def set_parallelism_and_batch_configs(cfg: ConfigContainer, settings: ParallelismAndBatchConfig) -> None:
+    """Set parallelism and batch size configs."""
+
+    cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
+    cfg.model.pipeline_model_parallel_size = settings.pipeline_model_parallel_size
+    cfg.model.context_parallel_size = settings.context_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = settings.virtual_pipeline_model_parallel_size
+    cfg.model.expert_model_parallel_size = settings.expert_model_parallel_size
+    cfg.model.expert_tensor_parallel_size = settings.expert_tensor_parallel_size
+    cfg.model.sequence_parallel = settings.sequence_parallel_enabled()
+
+    cfg.train.global_batch_size = settings.global_batch_size
+    cfg.train.micro_batch_size = settings.micro_batch_size
+
+
+def set_common_perf_overrides(recipe: ConfigContainer) -> None:
+    """Set common performance overrides shared across recipes."""
     recipe.train.train_iters = 50
     recipe.train.eval_iters = 0
 
@@ -85,6 +85,22 @@ def set_basic_perf_overrides(recipe: ConfigContainer) -> None:
 
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
+
+    if recipe.model.use_transformer_engine_op_fuser:
+        recipe.model.use_transformer_engine_op_fuser = False
+    recipe.model.apply_rope_fusion = True
+    recipe.model.cross_entropy_fusion_impl = "te"
+
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
@@ -154,7 +170,6 @@ def set_moe_a2a_overlap_overrides(recipe: ConfigContainer) -> None:
 
 def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     """Set the user overrides."""
-    set_basic_perf_overrides(recipe)
     if kwargs.get("max_steps") is not None:
         recipe.train.train_iters = kwargs.get("max_steps")
 
@@ -204,21 +219,6 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
-    if recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.apply_rope_fusion = True
-    recipe.model.cross_entropy_fusion_impl = "te"
-
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-
-    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     return recipe
 
@@ -235,5 +235,7 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     recipe = get_model_recipe(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
 
     recipe = set_user_overrides(recipe, kwargs)
+
+    set_common_perf_overrides(recipe)
 
     return recipe

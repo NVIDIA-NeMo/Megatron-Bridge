@@ -15,9 +15,9 @@
 import logging
 
 from utils.helpers import (
-    apply_parallelism_and_batch_config,
     get_precision_config,
     set_moe_a2a_overlap_overrides,
+    set_parallelism_and_batch_configs,
 )
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
@@ -57,7 +57,7 @@ def deepseek_v3_gb200_256gpus_bf16_config() -> ConfigContainer:
     )
     set_deepseek_v3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG)
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -88,7 +88,7 @@ def deepseek_v3_gb200_256gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
     )
     set_deepseek_v3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_and_batch_cfg)
+    set_parallelism_and_batch_configs(cfg, parallelism_and_batch_cfg)
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -115,7 +115,7 @@ def deepseek_v3_b200_256gpus_bf16_config() -> ConfigContainer:
     )
     set_deepseek_v3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG)
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -141,7 +141,7 @@ def deepseek_v3_b200_256gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContain
     )
     set_deepseek_v3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_and_batch_cfg)
+    set_parallelism_and_batch_configs(cfg, parallelism_and_batch_cfg)
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -165,7 +165,7 @@ def deepseek_v3_h100_1024gpus_bf16_config() -> ConfigContainer:
     )
     set_deepseek_v3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_cfg.DEEPSEEK_V3_H100_1024GPUS_BF16_PARALLEL_CONFIG)
+    set_parallelism_and_batch_configs(cfg, parallelism_cfg.DEEPSEEK_V3_H100_1024GPUS_BF16_PARALLEL_CONFIG)
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
@@ -194,7 +194,7 @@ def deepseek_v3_h100_1024gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
     )
     set_deepseek_v3_common_configs(cfg)
 
-    apply_parallelism_and_batch_config(cfg, parallelism_and_batch_cfg)
+    set_parallelism_and_batch_configs(cfg, parallelism_and_batch_cfg)
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
