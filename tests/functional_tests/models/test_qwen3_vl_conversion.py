@@ -194,7 +194,7 @@ class TestQwen3VLConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            # (1, 2, "PP"),
+            (1, 2, "PP"),
         ],
     )
     def test_qwen3_vl_conversion_parallelism(self, qwen3_vl_toy_model_path, tmp_path, tp, pp, test_name):
