@@ -91,17 +91,6 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
     recipe.model.apply_rope_fusion = True
     recipe.model.cross_entropy_fusion_impl = "te"
 
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-
-    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
-
 
 def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
     """Set the Megatron FSDP overrides."""
@@ -237,5 +226,16 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     recipe = set_user_overrides(recipe, kwargs)
 
     set_common_perf_overrides(recipe)
+
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     return recipe
