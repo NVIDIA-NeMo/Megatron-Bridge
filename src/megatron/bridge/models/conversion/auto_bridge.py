@@ -624,7 +624,7 @@ class AutoBridge(Generic[MegatronModelT]):
         megatron_path: str | Path,
         hf_path: str | Path,
         show_progress: bool = True,
-        strict: bool = False
+        strict: bool = False,
         source_path: Optional[Union[str, Path]] = None,
     ) -> None:
         """
