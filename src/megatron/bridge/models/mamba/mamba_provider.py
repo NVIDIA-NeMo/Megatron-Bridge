@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.mamba import MambaModel as MCoreMambaModel
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec as default_mamba_stack_spec
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
@@ -132,8 +132,9 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             rotary_percent=self.rotary_percent,
             rotary_base=self.rotary_base,
             seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process or parallel_state.is_pipeline_first_stage(),
-            post_process=post_process or parallel_state.is_pipeline_last_stage(),
+            pre_process=pre_process or is_pp_first_stage(self.pg_collection.pp),
+            post_process=post_process or is_pp_last_stage(self.pg_collection.pp),
+            pg_collection=self.pg_collection,
         )
 
 
