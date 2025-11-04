@@ -17,7 +17,7 @@ import logging
 from utils.helpers import (
     apply_parallelism_and_batch_config,
     get_precision_config,
-    set_moe_a2a_1f1b_overrides,
+    set_moe_a2a_overlap_overrides,
 )
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
@@ -64,6 +64,8 @@ def deepseek_v3_gb200_256gpus_bf16_config() -> ConfigContainer:
 
     cfg.model = apply_moe_token_drop(cfg.model)
 
+    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
+    # we are debugging this and might change this in the future.
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
@@ -169,7 +171,7 @@ def deepseek_v3_h100_1024gpus_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_router_force_load_balancing = True
 
-    set_moe_a2a_1f1b_overrides(cfg)
+    set_moe_a2a_overlap_overrides(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = False
 
@@ -198,7 +200,7 @@ def deepseek_v3_h100_1024gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
 
     cfg.model.moe_router_force_load_balancing = True
 
-    set_moe_a2a_1f1b_overrides(cfg)
+    set_moe_a2a_overlap_overrides(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = False
 

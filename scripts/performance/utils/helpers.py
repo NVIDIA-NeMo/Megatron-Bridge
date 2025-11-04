@@ -145,8 +145,8 @@ def set_recompute_overrides(
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
 
 
-def set_moe_a2a_1f1b_overrides(recipe: ConfigContainer) -> None:
-    """Tune configuration for MoE A2A 1F1B communication overlap."""
+def set_moe_a2a_overlap_overrides(recipe: ConfigContainer) -> None:
+    """Tune configuration for MoE A2A communication overlap."""
     recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
     recipe.comm_overlap.delay_wgrad_compute = True
     recipe.model.moe_shared_expert_overlap = False
@@ -172,9 +172,9 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
         recipe, recompute_num_layers=recompute_num_layers, cpu_offloading_num_layers=cpu_offloading_num_layers
     )
 
-    moe_a2a = kwargs.get("moe_a2a")
-    if moe_a2a:
-        set_moe_a2a_1f1b_overrides(recipe)
+    moe_a2a_overlap = kwargs.get("moe_a2a_overlap")
+    if moe_a2a_overlap:
+        set_moe_a2a_overlap_overrides(recipe)
 
     use_tokendrop = kwargs.get("use_tokendrop")
     if use_tokendrop:

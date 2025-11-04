@@ -35,9 +35,9 @@ except ImportError:
 
 if HAS_NEMO_RUN:
     try:
-        from perf_plugins import NsysPlugin, PerfEnvPlugin
+        from perf_plugins import NsysPlugin, PerfEnvPlugin, WandbPlugin
     except (ImportError, ModuleNotFoundError):
-        from .perf_plugins import NsysPlugin, PerfEnvPlugin
+        from .perf_plugins import NsysPlugin, PerfEnvPlugin, WandbPlugin
 
 import logging
 
@@ -62,10 +62,12 @@ def main(
     enable_vboost: bool,
     enable_nsys: bool,
     use_tokendrop: bool,
-    moe_a2a: bool,
+    moe_a2a_overlap: bool,
     tp_size: int,
     pp_size: int,
     cp_size: int,
+    wandb_prj_name: str,
+    wandb_exp_name: str,
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
@@ -85,9 +87,9 @@ def main(
         sys.exit(1)
 
     enable_deepep = False
-    moe_a2a = False if moe_a2a is None else moe_a2a
+    moe_a2a_overlap = False if moe_a2a_overlap is None else moe_a2a_overlap
     if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
-        enable_deepep, moe_a2a = True, True
+        enable_deepep, moe_a2a_overlap = True, True
 
     parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
 
@@ -104,7 +106,7 @@ def main(
                 layernorm_sm_margin=20 if enable_deepep else 16,
                 num_gpus=num_gpus,
                 deepep_enabled=enable_deepep,
-                a2a_overlap=moe_a2a,
+                a2a_overlap=moe_a2a_overlap,
                 tp_size=tp_size,
                 pp_size=pp_size,
                 cp_size=cp_size,
@@ -115,6 +117,11 @@ def main(
     )
     if HAS_NEMO_RUN and enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+    if HAS_NEMO_RUN and (wandb_prj_name is not None or wandb_exp_name is not None):
+        assert wandb_prj_name is not None and wandb_exp_name is not None, (
+            "wandb_prj_name and wandb_exp_name must be set together if one is set"
+        )
+        plugins.append(WandbPlugin(project=wandb_prj_name, name=wandb_exp_name))
 
     custom_mounts = custom_mounts + [
         f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
@@ -190,10 +197,12 @@ if __name__ == "__main__":
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
         use_tokendrop=args.use_tokendrop,
-        moe_a2a=args.moe_a2a,
+        moe_a2a_overlap=args.moe_a2a_overlap,
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        wandb_prj_name=args.wandb_prj_name,
+        wandb_exp_name=args.wandb_exp_name,
         executor=slurm_executor(
             args.gpu,
             args.account,

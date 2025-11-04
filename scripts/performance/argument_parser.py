@@ -186,6 +186,22 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "-wdp",
+        "--wandb_prj_name",
+        type=str,
+        help="wandb project name",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
+        "-wdj",
+        "--wandb_exp_name",
+        type=str,
+        help="wandb job name",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "-d",
         "--dryrun",
         help="If true, prints sbatch script to terminal without launching experiment.",
@@ -347,7 +363,7 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
-        "--moe_a2a",
+        "--moe_a2a_overlap",
         type=bool_arg,
         required=False,
         default=None,
