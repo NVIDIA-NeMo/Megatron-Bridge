@@ -119,7 +119,8 @@ def main():
         enable_deepep = bool(args.gpu.lower() in ["h100"])
         use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
 
-        
+        optimizer_type = "muon" 
+        # optimizer_type = "adam"
         
         pp, vp = 1, 1
         recipe = kimi_k2_llm_pretrain_config(
@@ -129,8 +130,10 @@ def main():
             pipeline_parallelism=pp,
             virtual_pipeline_parallelism=vp,
             enable_deepep=enable_deepep,
-            optimizer_type="muon",
+            optimizer_type=optimizer_type,
         )
+        if optimizer_type == "muon":
+            recipe.model.qk_clip = True
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
         if enable_deepep:
