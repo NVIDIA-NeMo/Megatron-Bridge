@@ -118,7 +118,7 @@ def set_cuda_graph_overrides(
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
-        else:
+        else:  # this condition ensures we unset in case of user override to "none" from default
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if cuda_graph_impl == "transformer_engine":
@@ -207,6 +207,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
     recipe.model.apply_rope_fusion = True
+    recipe.model.cross_entropy_fusion_impl = "te"
 
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size

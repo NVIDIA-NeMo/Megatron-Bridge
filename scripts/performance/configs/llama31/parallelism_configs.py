@@ -19,6 +19,42 @@ from utils.utils import ParallelismAndBatchConfig
 
 # Llama3.1 405B presets ---------------------------------------------------------
 
+LLAMA31_405B_GB300_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=64,
+    micro_batch_size=1,
+)
+
+
+LLAMA31_405B_GB300_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=64,
+    micro_batch_size=1,
+)
+
+
+LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=4,
+    pipeline_model_parallel_size=8,
+    context_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=64,
+    micro_batch_size=1,
+)
+
+
 LLAMA31_405B_GB200_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
@@ -106,6 +142,9 @@ LLAMA31_405B_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 
 
 __all__ = [
+    "LLAMA31_405B_GB300_128GPUS_BF16_PARALLEL_CONFIG",
+    "LLAMA31_405B_GB300_128GPUS_FP8_CS_PARALLEL_CONFIG",
+    "LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG",
     "LLAMA31_405B_GB200_128GPUS_BF16_PARALLEL_CONFIG",
     "LLAMA31_405B_GB200_128GPUS_FP8_CS_PARALLEL_CONFIG",
     "LLAMA31_405B_GB200_128GPUS_FP8_MX_PARALLEL_CONFIG",

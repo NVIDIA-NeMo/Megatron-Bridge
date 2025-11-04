@@ -48,6 +48,42 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
+def llama31_405b_gb300_128gpus_bf16_config() -> ConfigContainer:
+    """GB300, 128xGPU, BF16 baseline config."""
+    cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))
+    set_llama31_common_configs(cfg)
+
+    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA31_405B_GB300_128GPUS_BF16_PARALLEL_CONFIG)
+    set_megatron_fsdp_overrides(cfg)
+    cfg.ddp.fsdp_double_buffer = True
+    set_recompute_overrides(cfg, cpu_offloading_num_layers=40)
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
+
+    return cfg
+
+
+def llama31_405b_gb300_128gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB300, 128xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("fp8", fp8_recipe))
+    set_llama31_common_configs(cfg)
+
+    # use mx parallelism config by default
+    apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG)
+
+    if fp8_recipe == "cs":
+        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA31_405B_GB300_128GPUS_FP8_CS_PARALLEL_CONFIG)
+        set_megatron_fsdp_overrides(cfg)
+        cfg.ddp.fsdp_double_buffer = True
+        set_recompute_overrides(cfg, cpu_offloading_num_layers=10)
+    else:
+        apply_parallelism_and_batch_config(cfg, parallelism_cfg.LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG)
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
+
+    return cfg
+
+
 def llama31_405b_gb200_128gpus_bf16_config() -> ConfigContainer:
     """GB200, 128xGPU, BF16 baseline config."""
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=get_precision_config("bf16"))

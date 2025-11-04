@@ -81,12 +81,15 @@ def get_parallelism_defaults(
 ) -> Dict[str, int]:
     """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
     parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}"
+    if compute_dtype == "fp8":
+        fp8_recipe = "cs" if fp8_recipe == "ds" else fp8_recipe  # we don't maintain FP8-DS parallelism configs
+        parallelism_name += f"_{fp8_recipe}"
     parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
 
     module_name = f"configs.{model_name}.parallelism_configs"
     try:
         module = importlib.import_module(module_name)
-        logger.debug(
+        logger.info(
             "Imported configuration module '%s' to load parallelism config '%s'.", module_name, parallelism_name
         )
     except ModuleNotFoundError as exc:
@@ -94,6 +97,7 @@ def get_parallelism_defaults(
 
     try:
         parallelism_config = getattr(module, parallelism_name)
+        logger.info(f"Loaded parallelism config: {parallelism_config}")
     except AttributeError:
         logger.error(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
         parallelism_config = ParallelismAndBatchConfig(1, 1, 1, None, 1, None, 1, 1)

@@ -19,6 +19,42 @@ from utils.utils import ParallelismAndBatchConfig
 
 # Llama3 70B presets ---------------------------------------------------------
 
+LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=2,
+)
+
+
+LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=2,
+)
+
+
+LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=4,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=5,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=1,
+)
+
+
 LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
@@ -116,6 +152,33 @@ LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 
 # Llama3 8B presets ---------------------------------------------------------
 
+
+LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=4,
+)
+
+
+LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=4,
+)
+
+LLAMA3_8B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG = LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG
+
+
 LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
@@ -193,6 +256,9 @@ LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 
 
 __all__ = [
+    "LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG",
+    "LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG",
+    "LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG",
     "LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG",
     "LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG",
     "LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG",
@@ -201,6 +267,9 @@ __all__ = [
     "LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG",
     "LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG",
     "LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG",
+    "LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG",
+    "LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG",
+    "LLAMA3_8B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG",
     "LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG",
     "LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG",
     "LLAMA3_8B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG",

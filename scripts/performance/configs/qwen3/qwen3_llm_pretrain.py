@@ -48,6 +48,41 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
+def qwen3_235b_a22b_gb300_64gpus_bf16_config() -> ConfigContainer:
+    """GB300, 64xGPU, BF16 baseline config."""
+    cfg = qwen3_235b_a22b_pretrain_config(
+        mock=True,
+        precision_config=get_precision_config("bf16"),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_common_configs(cfg)
+
+    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG)
+
+    set_cuda_graph_overrides(cfg, cuda_graph_impl="none", cuda_graph_scope="full_iteration")
+
+    return cfg
+
+
+def qwen3_235b_a22b_gb300_64gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB300, 64xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    cfg = qwen3_235b_a22b_pretrain_config(
+        mock=True,
+        precision_config=get_precision_config("fp8", fp8_recipe),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_common_configs(cfg)
+
+    if fp8_recipe == "cs":
+        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG)
+    else:
+        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG)
+
+    set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
+
+    return cfg
+
+
 def qwen3_235b_a22b_gb200_64gpus_bf16_config() -> ConfigContainer:
     """GB200, 64xGPU, BF16 baseline config."""
     cfg = qwen3_235b_a22b_pretrain_config(
@@ -138,6 +173,41 @@ def qwen3_235b_a22b_h100_256gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigCon
     set_qwen3_common_configs(cfg)
 
     apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG)
+
+    return cfg
+
+
+def qwen3_30b_a3b_gb300_8gpus_bf16_config() -> ConfigContainer:
+    """GB300, 8xGPU, BF16 baseline config."""
+    cfg = qwen3_30b_a3b_pretrain_config(
+        mock=True,
+        precision_config=get_precision_config("bf16"),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_common_configs(cfg)
+
+    apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG)
+
+    set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
+
+    return cfg
+
+
+def qwen3_30b_a3b_gb300_8gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB300, 8xGPU, FP8 preset with selectable recipe (ds/cs/mx/ss)."""
+    cfg = qwen3_30b_a3b_pretrain_config(
+        mock=True,
+        precision_config=get_precision_config("fp8", fp8_recipe),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_common_configs(cfg)
+
+    if fp8_recipe == "cs":
+        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG)
+    else:
+        apply_parallelism_and_batch_config(cfg, parallelism_cfg.QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG)
+
+    set_cuda_graph_overrides(cfg, cuda_graph_impl="local", cuda_graph_scope="full_iteration")
 
     return cfg
 
