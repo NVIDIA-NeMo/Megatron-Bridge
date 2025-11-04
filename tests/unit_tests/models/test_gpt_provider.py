@@ -285,10 +285,14 @@ class TestGPTModelProvider:
 
         assert provider.generation_config == generation_config
 
+    @patch("megatron.bridge.models.gpt_provider.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
-    def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec):
+    def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
         """Test quantization_layer_spec function."""
         from megatron.bridge.models.gpt_provider import quantization_layer_spec
+
+        # Mock context parallel world size to return 1 (use_arbitrary_attention_mask will be True)
+        mock_parallel_state.get_context_parallel_world_size.return_value = 1
 
         # Create a mock provider
         provider = GPTModelProvider(

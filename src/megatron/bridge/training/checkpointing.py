@@ -49,7 +49,6 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.utils import unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
-    restore_sharded_modelopt_state,
     save_modelopt_state,
     save_sharded_modelopt_state,
 )
@@ -1383,14 +1382,6 @@ def _load_checkpoint_from_path(
 
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
-
-        # ModelOpt restoration
-        if ckpt_type == CheckpointType.LOCAL:
-            print_rank_0("WARNING: Local checkpointing does not support nvidia_modelopt.")
-        elif ckpt_type == CheckpointType.GLOBAL:
-            restore_modelopt_state(model, state_dict)
-        else:
-            restore_sharded_modelopt_state(model, checkpoint_name)
 
         # Build sharded state dict for loading
         with contextlib.ExitStack() as stack:

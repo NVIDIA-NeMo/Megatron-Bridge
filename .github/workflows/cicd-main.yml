@@ -115,6 +115,7 @@ jobs:
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
+          - script: L2_Launch_quantization
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
