@@ -2107,7 +2107,7 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     if cfg.dist_ckpt_save_pre_mcore_014 or force_pre_mcore_014:
         metadata["singleton_local_shards"] = False
         if use_distributed_optimizer and cfg.ckpt_format != "fsdp_dtensor":
-            if cfg.ckpt_fully_parallel_save:
+            if cfg.fully_parallel_save:
                 metadata["distrib_optim_sharding_type"] = "fully_sharded_model_space"
             else:
                 metadata["distrib_optim_sharding_type"] = "dp_zero_gather_scatter"
