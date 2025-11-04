@@ -2093,7 +2093,7 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for torch_dist with dp_zero_gather_scatter."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        ckpt_cfg = CheckpointConfig(ckpt_fully_parallel_save=False, ckpt_format="torch_dist")
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="torch_dist")
         result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "dp_zero_gather_scatter"
