@@ -138,6 +138,8 @@ def make_raven_dataset(
 
     Examples missing either images or the required fields are filtered out.
     """
+    if split != "train":
+        raise ValueError("Raven dataset only supports train split. Please set `train.eval_iters=0`.")
     dataset = load_dataset(path_or_dataset, subset, split=split)
 
     def format(example):
@@ -210,6 +212,8 @@ def make_llava_video_178k_dataset(
 
     if split == "train":
         split = "open_ended"
+    elif split in ("validation", "test"):
+        raise ValueError("LLaVA-Video-178K dataset only supports train split. Please set `train.eval_iters=0`.")
     individual_datasets = [load_dataset(path_or_dataset, subset, split=split) for subset in subsets]
     dataset = concatenate_datasets(individual_datasets)
 
