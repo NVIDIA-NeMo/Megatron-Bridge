@@ -69,7 +69,7 @@ def llama3_70b_gb300_64gpus_config(precision: str = "bf16", fp8_recipe: str = "c
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.fsdp_double_buffer = True
-        cfg.model.gradient_accumulation_fusion = False
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
         cfg.ddp.suggested_communication_unit_size = 800000000
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
@@ -96,7 +96,7 @@ def llama3_70b_gb200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "c
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.fsdp_double_buffer = True
-        cfg.model.gradient_accumulation_fusion = False
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
         cfg.ddp.suggested_communication_unit_size = 800000000
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
@@ -123,7 +123,7 @@ def llama3_70b_b200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.fsdp_double_buffer = True
-        cfg.model.gradient_accumulation_fusion = False
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
         cfg.ddp.suggested_communication_unit_size = 800000000
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
@@ -231,6 +231,6 @@ def llama3_8b_h100_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs")
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.nccl_ub = True
-        cfg.model.gradient_accumulation_fusion = False
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
 
     return cfg
