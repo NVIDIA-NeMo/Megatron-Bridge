@@ -42,7 +42,12 @@ from megatron.bridge.training.optim import setup_optimizer
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
+from megatron.bridge.training.utils.weight_decay_utils import get_no_weight_decay_cond
 from megatron.bridge.utils.common_utils import print_rank_0, get_rank_safe
+from megatron.bridge.training.tensor_inspect import (
+    finalize_tensor_inspect_post_model_initialization,
+    initialize_tensor_inspect_pre_model_initialization,
+)
 
 
 
@@ -161,6 +166,9 @@ def setup(
     timers("tokenizer-setup").stop()
     barrier_and_log("after tokenizer is built")
 
+    # Initialize NVIDIA DLFw Inspect early (this must happen before TE modules are constructed)
+    initialize_tensor_inspect_pre_model_initialization(cfg.tensor_inspect)
+
     # Model, optimizer, and learning rate.
     timers("model-and-optimizer-setup", log_level=0).start(barrier=True)
 
@@ -170,6 +178,28 @@ def setup(
         cfg.model.register_pre_wrap_hook(peft_hook)
         print_rank_0("Registered PEFT pre-wrap hook")
 
+    if getattr(cfg.model, "restore_modelopt_state", False):
+        from megatron.bridge.training.post_training.checkpointing import load_modelopt_state
+
+        def modelopt_pre_wrap_hook(model):
+            from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
+
+            # Check which checkpoint path has modelopt state
+            if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
+                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
+            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load):
+                checkpoint_path = cfg.checkpoint.load
+            else:
+                raise RuntimeError(
+                    f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
+                    f"or load={cfg.checkpoint.load}"
+                )
+
+            load_modelopt_state(model, checkpoint_path)
+            return model
+
+        cfg.model.register_pre_wrap_hook(modelopt_pre_wrap_hook)
+
     model = cfg.model.provide_distributed_model(
         ddp_config=cfg.ddp,
         use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
@@ -177,13 +207,19 @@ def setup(
         overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,
     )
+
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
+    no_weight_decay_cond = get_no_weight_decay_cond(
+        cfg.scheduler.no_weight_decay_cond_type,
+        default_skip_embedding_weight_decay=cfg.model.embedding_init_method_std is not None,
+    )
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
+        no_weight_decay_cond=no_weight_decay_cond,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -210,6 +246,15 @@ def setup(
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
+
+    # Finalize NVIDIA DLFw Inspect after model is built (attach loggers, module names, parallelism groups)
+    finalize_tensor_inspect_post_model_initialization(
+        cfg.tensor_inspect,
+        model,
+        state.tensorboard_logger,
+        state.wandb_logger,
+        current_training_step=state.train_state.step,
+    )
 
     _update_model_config_funcs(
         model,
