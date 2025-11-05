@@ -90,6 +90,18 @@ def parse_cli_args():
         action="store_true",
     )
     parser.add_argument(
+        "--qkclip",
+        help="If true, enable qk_clip for the model.",
+        required=False,
+        action="store_true",
+    )
+    parser.add_argument(
+        "--adam",
+        help="If true, use adam optimizer for the model.",
+        required=False,
+        action="store_true",
+    )
+    parser.add_argument(
         "-c",
         "--compute_dtype",
         type=str,

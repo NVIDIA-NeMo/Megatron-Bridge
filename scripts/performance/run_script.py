@@ -52,6 +52,7 @@ def main():
     args, cli_overrides = parse_cli_args()
 
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
+    optimizer_type = "muon" if not args.adam else "adam"
 
     if args.model_name == "llama3" and args.model_size == "8b":
         recipe = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
@@ -118,9 +119,6 @@ def main():
 
         enable_deepep = bool(args.gpu.lower() in ["h100"])
         use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
-
-        optimizer_type = "muon" 
-        # optimizer_type = "adam"
         
         pp, vp = 1, 1
         recipe = kimi_k2_llm_pretrain_config(
@@ -132,7 +130,8 @@ def main():
             enable_deepep=enable_deepep,
             optimizer_type=optimizer_type,
         )
-        if optimizer_type == "muon":
+        # Disable qk_clip for muon optimizer for now to avoid the memory leaking issue
+        if optimizer_type == "muon" and args.qkclip:
             recipe.model.qk_clip = True
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
@@ -172,7 +171,7 @@ def main():
         ub_cfg = COMM_OVERLAP_CONFIG_MAP[f"{args.model_name}_{args.model_size}"][args.gpu][args.compute_dtype]
         recipe.comm_overlap.tp_comm_overlap_cfg = ub_cfg
 
-    if args.compute_dtype == "bf16":
+    if args.compute_dtype == "bf16" and optimizer_type == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
 
     merged_omega_conf, excluded_fields = create_omegaconf_dict_config(recipe)
