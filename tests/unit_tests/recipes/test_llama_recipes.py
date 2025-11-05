@@ -66,6 +66,9 @@ def _safe_overrides_for(name: str) -> dict:
 
 
 class _FakeModelCfg:
+    def __init__(self):
+        self.cross_entropy_fusion_impl = "native"
+
     def finalize(self):
         return None
 
@@ -118,3 +121,6 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+    if "llama3" in recipe_func.__name__.lower():
+        assert cfg.model.cross_entropy_fusion_impl == "te"

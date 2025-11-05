@@ -238,6 +238,7 @@ def _qwen3_moe_common(
         model_cfg.recompute_method = "uniform"
         model_cfg.recompute_num_layers = 1
     model_cfg.seq_length = seq_length
+    model_cfg.cross_entropy_fusion_impl = "te"
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
