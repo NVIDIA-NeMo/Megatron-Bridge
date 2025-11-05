@@ -55,7 +55,7 @@ Examples:
         Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_3b_active_30b_moe_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe --ep 8
+                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe
 
     Using a custom YAML config file:
         $  uv run python -m torch.distributed.run --nproc_per_node=8 finetune_qwen_vl.py \\
