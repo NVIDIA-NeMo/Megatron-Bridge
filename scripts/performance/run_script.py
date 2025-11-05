@@ -156,10 +156,10 @@ def main():
         if args.gpu.lower() in ["h100", "b200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         
-        if args.localrun:
-            recipe.model.num_layers=3
-            recipe.model.num_moe_experts=8
-            recipe.model.moe_layer_freq=[0] + [1] * 2
+        
+        recipe.model.num_layers=3
+        recipe.model.num_moe_experts=8
+        recipe.model.moe_layer_freq=[0] + [1] * 2
         # recipe.model.overlap_grad_reduce=False
 
     else:
