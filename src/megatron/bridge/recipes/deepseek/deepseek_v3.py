@@ -52,13 +52,13 @@ class DeepSeekV3CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    expert_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    expert_model_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
     # Recompute configuration
@@ -96,10 +96,10 @@ def deepseek_v3_pretrain_config(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V3",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 16,
-        "expert_parallelism": 64,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 16,
+        "expert_model_parallel_size": 64,
+        "pipeline_dtype": torch.bfloat16,
         # Old recipe-compatible defaults passed via wrapper
         "recompute_granularity": "selective",
         "precision_config": MixedPrecisionConfig(
@@ -123,9 +123,9 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V3",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 8,
-        "expert_parallelism": 32,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 8,
+        "expert_model_parallel_size": 32,
         # Maintain old recipe defaults via wrapper overrides
         "precision_config": MixedPrecisionConfig(
             bf16=True,
@@ -155,13 +155,13 @@ def _deepseek_v3_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 16,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 64,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 16,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 64,
+    sequence_parallel: bool = True,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
@@ -205,13 +205,13 @@ def _deepseek_v3_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.expert_model_parallel_size = expert_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.expert_model_parallel_size = expert_model_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     model_cfg.expert_tensor_parallel_size = 1
@@ -240,8 +240,8 @@ def _deepseek_v3_common(
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
     }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
+    pp_size = pipeline_model_parallel_size or 1
+    vp_size = virtual_pipeline_model_parallel_size or 1
     if layout is not None:
         # Allow overriding the automatically selected layout
         model_cfg.pipeline_model_parallel_layout = layout

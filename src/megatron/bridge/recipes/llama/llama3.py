@@ -56,12 +56,12 @@ class Llama3CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     account_for_embedding_in_pipeline_split: bool
     account_for_loss_in_pipeline_split: bool
@@ -96,10 +96,10 @@ def llama32_1b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Llama-3.2-1B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -112,10 +112,10 @@ def llama32_3b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Llama-3.2-3B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -129,10 +129,10 @@ def llama3_8b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Conf
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 2,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -145,11 +145,11 @@ def llama3_8b_16k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> 
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_16K,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -163,11 +163,11 @@ def llama3_8b_64k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> 
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 4,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 4,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_64K,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -181,11 +181,11 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 8,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 8,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_128K,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -200,12 +200,12 @@ def llama3_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-70B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": 5,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": 5,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
             tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
@@ -223,12 +223,12 @@ def llama3_70b_16k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-70B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": None,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": None,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_16K,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
@@ -247,12 +247,12 @@ def llama3_70b_64k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-70B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": None,
-        "context_parallelism": 8,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": None,
+        "context_parallel_size": 8,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_64K,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
@@ -272,10 +272,10 @@ def llama31_8b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3.1-8B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 2,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -288,12 +288,12 @@ def llama31_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Co
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3.1-70B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": 5,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": 5,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
             tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
@@ -312,12 +312,12 @@ def llama31_405b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> C
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3.1-405B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 8,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": 2,
-        "context_parallelism": 4,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 8,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": 2,
+        "context_parallel_size": 4,
+        "sequence_parallel": True,
         "account_for_embedding_in_pipeline_split": True,
         "account_for_loss_in_pipeline_split": True,
         "comm_overlap_config": CommOverlapConfig(
@@ -345,12 +345,12 @@ def _llama3_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
     account_for_loss_in_pipeline_split: bool = False,
@@ -384,12 +384,12 @@ def _llama3_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         account_for_embedding_in_pipeline_split (bool): Whether to account for embedding in pipeline split.
         account_for_loss_in_pipeline_split (bool): Whether to account for loss in pipeline split.
@@ -418,12 +418,12 @@ def _llama3_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     # Large model specific pipeline split configurations
