@@ -56,8 +56,8 @@ class TestGemmaModelProvider:
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_backend == AttnBackend.flash
 
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_vp_first_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.modules.extend_instance")
     def test_gemma_model_provider_provide_with_embedding_scaling(self, mock_extend_instance, *_):
         """Test that provide method applies embedding scaling when appropriate."""
@@ -71,6 +71,9 @@ class TestGemmaModelProvider:
             num_attention_heads=8,
         )
 
+        # Attach minimal pg_collection required by provider
+        provider.pg_collection = type("PG", (), {"pp": object()})()
+
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
 
@@ -83,8 +86,8 @@ class TestGemmaModelProvider:
             assert args[0] == mock_model.embedding  # First arg should be the embedding
             # Second arg should be the EmbeddingScalingMixin class
 
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage", return_value=False)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_vp_first_stage", return_value=False)
     @patch("megatron.bridge.models.gemma.modules.extend_instance")
     def test_gemma_model_provider_provide_no_embedding_scaling(self, mock_extend_instance, *_):
         """Test that provide method doesn't apply embedding scaling when not first stage."""
@@ -97,6 +100,8 @@ class TestGemmaModelProvider:
             num_attention_heads=8,
         )
 
+        provider.pg_collection = type("PG", (), {"pp": object()})()
+
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=1)
 
@@ -106,8 +111,8 @@ class TestGemmaModelProvider:
             # Verify that extend_instance was NOT called
             mock_extend_instance.assert_not_called()
 
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma_provider.is_vp_first_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.modules.extend_instance")
     def test_gemma_model_provider_provide_virtual_pipeline_none(self, mock_extend_instance, *_):
         """Test provide method when vp_stage is None (no virtual pipeline)."""
@@ -119,6 +124,8 @@ class TestGemmaModelProvider:
             hidden_size=2048,
             num_attention_heads=8,
         )
+
+        provider.pg_collection = type("PG", (), {"pp": object()})()
 
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             _ = provider.provide(vp_stage=None)

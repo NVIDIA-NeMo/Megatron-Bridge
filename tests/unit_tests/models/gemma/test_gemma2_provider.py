@@ -63,10 +63,10 @@ class TestGemma2ModelProvider:
         assert provider.attn_logit_softcapping == 50.0
         assert provider.final_logit_softcapping == 30.0
 
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage", return_value=False)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_first_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_last_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_last_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_last_stage", return_value=False)
     @patch("megatron.bridge.models.gemma.gemma2_provider.extend_instance")
     def test_gemma2_provider_provide_with_embedding_scaling(self, mock_extend_instance, *_):
         """Test that provide method applies embedding scaling when appropriate."""
@@ -80,6 +80,8 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
+        provider.pg_collection = type("PG", (), {"pp": object()})()
+
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
 
@@ -91,10 +93,10 @@ class TestGemma2ModelProvider:
             args = mock_extend_instance.call_args_list[0][0]
             assert args[0] == mock_model.embedding
 
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage", return_value=False)
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_first_stage", return_value=False)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_first_stage", return_value=False)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_last_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.gemma2_provider.extend_instance")
     def test_gemma2_provider_provide_with_output_layer_scaling(self, mock_extend_instance, *_):
         """Test that provide method applies output layer modifications when appropriate."""
@@ -109,8 +111,11 @@ class TestGemma2ModelProvider:
             num_attention_heads=8,
         )
 
+        provider.pg_collection = type("PG", (), {"pp": object()})()
+
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
-            result = provider.provide(vp_stage=1)
+            # Use vp_stage=0 to satisfy vp_size None assertion in helpers
+            result = provider.provide(vp_stage=0)
 
             # Verify that parent provide was called
             assert result == mock_model
@@ -120,10 +125,10 @@ class TestGemma2ModelProvider:
             args = mock_extend_instance.call_args_list[0][0]
             assert args[0] == mock_model.output_layer
 
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_first_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_pp_last_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_first_stage", return_value=True)
-    @patch("megatron.core.pipeline_parallel.utils.is_vp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_pp_last_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_first_stage", return_value=True)
+    @patch("megatron.bridge.models.gemma.gemma2_provider.is_vp_last_stage", return_value=True)
     @patch("megatron.bridge.models.gemma.gemma2_provider.extend_instance")
     def test_gemma2_provider_provide_both_stages(self, mock_extend_instance, *_):
         """Test provide method when model is both first and last stage."""
@@ -136,6 +141,8 @@ class TestGemma2ModelProvider:
             hidden_size=2304,
             num_attention_heads=8,
         )
+
+        provider.pg_collection = type("PG", (), {"pp": object()})()
 
         with patch.object(provider.__class__.__bases__[0], "provide", return_value=mock_model):
             result = provider.provide(vp_stage=0)
