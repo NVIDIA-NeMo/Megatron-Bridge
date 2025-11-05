@@ -116,6 +116,23 @@ perf_matrix:
         cuda_graphs: true
       fp8_mx:
         cuda_graphs: true
+    num_gpus_8:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 4096
+        mbs: 1
+        gbs: 32
+        cuda_graphs: false
+        tp: 1
+        pp: 1
+        cp: 1
+        vp: null
+        ep: 8
+        etp: 1
+        use_megatron_fsdp: false
+      bf16:
+      fp8_cs:
+      fp8_ss:
   gb200:
     num_gpus_256:
       common:
