@@ -287,6 +287,10 @@ def setup(
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
     if get_rank_safe() == 0:
+        try: # save the config to a file
+            cfg.to_yaml("/nemo_run/configs/task_config.yaml")
+        except Exception as e:
+            print_rank_0(f"Error saving config to file: {e}")
         # Print final resolved/updated/overridden configs
         print("------- Task Configuration -------")
         cfg.print_yaml()
