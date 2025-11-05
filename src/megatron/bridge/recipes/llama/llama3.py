@@ -192,6 +192,7 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
 
+
 def llama3_8b_low_precision_pretrain_config(
     mixed_precision_recipe: str, **user_kwargs: Unpack[Llama3CommonKwargs]
 ) -> ConfigContainer:
