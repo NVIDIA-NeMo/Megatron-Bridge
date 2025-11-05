@@ -6,4 +6,5 @@ This section documents Vision Language Models supported by Megatron Bridge.
 :hidden:
 
 nemotron-nano-v2-vl.md
+qwen3-vl.md
 ```
