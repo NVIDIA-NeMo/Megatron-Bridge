@@ -22,7 +22,6 @@ from utils.helpers import (
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import deepseek_v3_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 from . import parallelism_configs as parallelism_cfg
 
@@ -41,6 +40,8 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.moe_router_force_load_balancing = True
 
 
 def deepseek_v3_gb200_256gpus_bf16_config() -> ConfigContainer:
@@ -61,8 +62,6 @@ def deepseek_v3_gb200_256gpus_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
-
-    cfg.model = apply_moe_token_drop(cfg.model)
 
     # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
     # we are debugging this and might change this in the future.
@@ -93,8 +92,8 @@ def deepseek_v3_gb200_256gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    cfg.model = apply_moe_token_drop(cfg.model)
-
+    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
+    # we are debugging this and might change this in the future.
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
@@ -120,8 +119,6 @@ def deepseek_v3_b200_256gpus_bf16_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    cfg.model = apply_moe_token_drop(cfg.model)
-
     return cfg
 
 
@@ -146,8 +143,6 @@ def deepseek_v3_b200_256gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContain
     cfg.model.recompute_modules = ["mla_up_proj"]
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    cfg.model = apply_moe_token_drop(cfg.model)
-
     return cfg
 
 
@@ -169,10 +164,9 @@ def deepseek_v3_h100_1024gpus_bf16_config() -> ConfigContainer:
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
-    cfg.model.moe_router_force_load_balancing = True
-
     set_moe_a2a_overlap_overrides(cfg)
 
+    # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
 
     return cfg
@@ -181,8 +175,8 @@ def deepseek_v3_h100_1024gpus_bf16_config() -> ConfigContainer:
 def deepseek_v3_h100_1024gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContainer:
     """H100, 1024xGPU, FP8 baseline config."""
     parallelism_and_batch_cfg = parallelism_cfg.DEEPSEEK_V3_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG
-    if fp8_recipe == "ss":
-        parallelism_and_batch_cfg = parallelism_cfg.DEEPSEEK_V3_H100_1024GPUS_FP8_SS_PARALLEL_CONFIG
+    if fp8_recipe == "sc":
+        parallelism_and_batch_cfg = parallelism_cfg.DEEPSEEK_V3_H100_1024GPUS_FP8_SC_PARALLEL_CONFIG
 
     cfg = pretrain_config(
         mock=True,
@@ -198,10 +192,9 @@ def deepseek_v3_h100_1024gpus_fp8_config(fp8_recipe: str = "cs") -> ConfigContai
 
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
-    cfg.model.moe_router_force_load_balancing = True
-
     set_moe_a2a_overlap_overrides(cfg)
 
+    # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
 
     return cfg

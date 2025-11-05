@@ -43,7 +43,7 @@ def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
             return current_scaling_cfg
         elif fp8_recipe == "mx":
             return bf16_with_mxfp8_mixed()
-        elif fp8_recipe == "ss":
+        elif fp8_recipe == "sc":
             return bf16_with_fp8_subchannel_scaling_mixed()
         else:
             raise ValueError(f"Invalid FP8 recipe: {fp8_recipe}")
@@ -159,6 +159,11 @@ def set_moe_a2a_overlap_overrides(recipe: ConfigContainer) -> None:
 
 def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     """Set the user overrides."""
+    if kwargs.get("wandb_key") is not None:
+        recipe.logger.wandb_project = kwargs.get("wandb_prj_name")
+        recipe.logger.wandb_exp_name = kwargs.get("wandb_exp_name")
+        recipe.logger.wandb_save_dir = "/nemo_run/wandb"
+
     if kwargs.get("max_steps") is not None:
         recipe.train.train_iters = kwargs.get("max_steps")
 

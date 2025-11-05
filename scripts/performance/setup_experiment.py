@@ -35,9 +35,9 @@ except ImportError:
 
 if HAS_NEMO_RUN:
     try:
-        from perf_plugins import NsysPlugin, PerfEnvPlugin, WandbPlugin
+        from perf_plugins import NsysPlugin, PerfEnvPlugin
     except (ImportError, ModuleNotFoundError):
-        from .perf_plugins import NsysPlugin, PerfEnvPlugin, WandbPlugin
+        from .perf_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
@@ -66,6 +66,7 @@ def main(
     tp_size: int,
     pp_size: int,
     cp_size: int,
+    wandb_key: str,
     wandb_prj_name: str,
     wandb_exp_name: str,
     executor: run.Executor,
@@ -117,11 +118,10 @@ def main(
     )
     if HAS_NEMO_RUN and enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
-    if HAS_NEMO_RUN and (wandb_prj_name is not None or wandb_exp_name is not None):
+    if HAS_NEMO_RUN and wandb_key is not None:
         assert wandb_prj_name is not None and wandb_exp_name is not None, (
             "wandb_prj_name and wandb_exp_name must be set together if one is set"
         )
-        plugins.append(WandbPlugin(project=wandb_prj_name, name=wandb_exp_name))
 
     custom_mounts = custom_mounts + [
         f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
@@ -201,6 +201,7 @@ if __name__ == "__main__":
         tp_size=args.tensor_model_parallel_size,
         pp_size=args.pipeline_model_parallel_size,
         cp_size=args.context_parallel_size,
+        wandb_key=args.wandb_key,
         wandb_prj_name=args.wandb_prj_name,
         wandb_exp_name=args.wandb_exp_name,
         executor=slurm_executor(
