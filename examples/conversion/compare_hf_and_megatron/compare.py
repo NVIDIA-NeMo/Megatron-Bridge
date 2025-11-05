@@ -330,6 +330,9 @@ def load_image(image_path: str) -> Image.Image:
 def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
     """Pad input_ids so sequence length is divisible by tp_size.
 
+    this is needed for sequence parallel, which is required for moe models
+    when using tensor parallel and expert parallel together.
+
     Args:
         input_ids: Input token IDs tensor
         tp_size: Tensor parallel size

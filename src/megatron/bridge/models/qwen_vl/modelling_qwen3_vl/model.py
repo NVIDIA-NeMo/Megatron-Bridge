@@ -26,7 +26,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import get_rope_ind
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
-# Note: This is under development and may be missing features.
 class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
 

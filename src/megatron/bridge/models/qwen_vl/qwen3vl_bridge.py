@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
 from typing import Dict, Union
 
 import torch
@@ -30,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3VLForConditionalGeneration, target=Qwen3VLModel)
@@ -380,22 +380,3 @@ class ExpertMLPGateUpProjMapping(AutoMapping):
     def _validate_patterns(self, *args, **kwargs):
         # allow number of wildcards to mismatch in this mapping
         pass
-
-
-def extract_expert_number_from_param(param_name: str) -> int:
-    """Extract the expert number from a parameter name.
-
-    Args:
-        param_name: The parameter name to extract the expert number from.
-
-    Returns:
-        The expert number.
-
-    """
-    pattern = r"(?:experts\.|weight|bias)(\d+)"
-    match = re.search(pattern, param_name)
-    if not match:
-        raise ValueError(
-            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
-        )
-    return int(match.group(1))

@@ -126,6 +126,8 @@ class Qwen3VLGPTModel(GPTModel):
         through the embedding layer, and then the decoeder and finally into the post
         processing layer (optional).
 
+         forward pass is overridden to add support for deepstack visual embeddings.
+
         It either returns the Loss values if labels are given  or the final hidden units
 
         Args:
