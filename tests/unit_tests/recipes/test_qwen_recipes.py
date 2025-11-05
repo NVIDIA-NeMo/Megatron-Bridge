@@ -45,9 +45,9 @@ def _safe_overrides_for(name: str) -> dict:
         "micro_batch_size": 1,
         "seq_length": 64,
         # Keep parallelism tiny so provider shaping is trivial
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
     }
 
     # Detect if this is a finetune recipe
@@ -83,9 +83,9 @@ def _safe_overrides_for(name: str) -> dict:
     if "a3b" in lname or "a22b" in lname or "moe" in lname:
         overrides.update(
             {
-                "expert_parallelism": 2,
-                "expert_tensor_parallelism": 1,
-                "sequence_parallelism": True,
+                "expert_model_parallel_size": 2,
+                "expert_tensor_parallel_size": 1,
+                "sequence_parallel": True,
             }
         )
 
