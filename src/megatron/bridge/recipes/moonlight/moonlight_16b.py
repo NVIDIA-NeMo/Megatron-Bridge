@@ -91,11 +91,11 @@ def moonlight_16b_pretrain_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) 
     """
     recommended_kwargs: MoonlightCommonKwargs = {
         "tensor_parallelism": 2,
-        "pipeline_parallelism": 2,
+        "pipeline_parallelism": 1,
         "pipeline_parallelism_dtype": torch.bfloat16,
         "virtual_pipeline_parallelism": None,
         "context_parallelism": 1,
-        "expert_parallelism": 4,
+        "expert_parallelism": 8,
         "sequence_parallelism": True,
         "recompute_granularity": "selective",
         "enable_deepep": False,
@@ -322,11 +322,11 @@ def _moonlight_common(
 
 def _model_config(
     tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 2,
+    pipeline_parallelism: int = 1,
     pipeline_parallelism_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
-    expert_parallelism: int = 4,
+    expert_parallelism: int = 8,
     sequence_parallelism: bool = True,
     # Recomputation
     recompute_granularity: str = "selective",
