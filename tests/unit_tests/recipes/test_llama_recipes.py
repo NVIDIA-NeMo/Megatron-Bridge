@@ -61,6 +61,12 @@ def _safe_overrides_for(name: str) -> dict:
                 "sequence_parallelism": True,
             }
         )
+    elif "low_precision" in lname:  # low precision recipes need an additional precision argument
+        overrides.update(
+            {
+                "mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed",
+            }
+        )
 
     return overrides
 
