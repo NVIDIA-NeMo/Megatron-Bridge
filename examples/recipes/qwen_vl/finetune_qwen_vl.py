@@ -22,47 +22,47 @@ You can pick a specific recipe via `--recipe`.
 Examples:
     Convert HF checkpoint to Megatron format:
         For Qwen2.5-VL:
-            $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
                 --hf-model Qwen/Qwen2.5-VL-3B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen25vl3b
 
         For Qwen3-VL (dense):
-            $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
                 --hf-model Qwen/Qwen3-VL-8B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen3vl8b
 
         For Qwen3-VL (MoE):
-            $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
                 --hf-model Qwen/Qwen3-VL-30B-A3B-Instruct \\
                 --megatron-path ./logs/checkpoints/qwen3vl30b_moe
 
     Finetune using the imported checkpoint:
         Qwen2.5-VL 3B:
-            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen25_vl_3b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25vl3b
 
         Qwen2.5-VL 7B:
-            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen25_vl_7b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25vl7b
 
         Qwen3-VL 8B (dense):
-            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_8b_finetune_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3vl8b
 
         Qwen3-VL 30B (MoE):
-            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+            $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
                 --recipe qwen3_vl_3b_active_30b_moe_finetune_config \\
-                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe
+                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe --ep 8
 
     Using a custom YAML config file:
-        $ torchrun --nproc_per_node=8 finetune_qwen_vl.py \\
+        $  uv run python -m torch.distributed.run --nproc_per_node=8 finetune_qwen_vl.py \\
             --config-file conf/qwen25_vl_pretrain_override_example.yaml
 
     CLI overrides:
-        $ torchrun --nproc_per_node=8 finetune_qwen_vl.py \\
+        $  uv run python -m torch.distributed.run --nproc_per_node=8 finetune_qwen_vl.py \\
             model.tensor_model_parallel_size=4 train.train_iters=100000
 
 Available Recipes:
