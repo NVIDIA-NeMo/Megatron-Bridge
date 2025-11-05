@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass
 class WorkloadBaseConfig:
     """Container for workload base configs."""
 
