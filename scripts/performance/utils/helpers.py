@@ -15,7 +15,7 @@
 import logging
 from typing import Any, Dict, Optional
 
-from utils.utils import ParallelismAndBatchConfig, get_model_recipe
+from utils.utils import WorkloadBaseConfig, get_model_recipe
 
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer
@@ -53,19 +53,31 @@ def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
 
-def set_parallelism_and_batch_configs(cfg: ConfigContainer, settings: ParallelismAndBatchConfig) -> None:
-    """Set parallelism and batch size configs."""
-
+def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig) -> None:
+    """Set workload base configs."""
     cfg.model.tensor_model_parallel_size = settings.tensor_model_parallel_size
     cfg.model.pipeline_model_parallel_size = settings.pipeline_model_parallel_size
     cfg.model.context_parallel_size = settings.context_parallel_size
     cfg.model.virtual_pipeline_model_parallel_size = settings.virtual_pipeline_model_parallel_size
     cfg.model.expert_model_parallel_size = settings.expert_model_parallel_size
     cfg.model.expert_tensor_parallel_size = settings.expert_tensor_parallel_size
-    cfg.model.sequence_parallel = settings.sequence_parallel_enabled()
+    cfg.model.sequence_parallel = settings.sequence_parallel
 
     cfg.train.global_batch_size = settings.global_batch_size
     cfg.train.micro_batch_size = settings.micro_batch_size
+
+    if settings.use_megatron_fsdp:
+        set_megatron_fsdp_overrides(cfg)
+    if settings.cuda_graph_impl is not None:
+        set_cuda_graph_overrides(
+            cfg, cuda_graph_impl=settings.cuda_graph_impl, cuda_graph_scope=settings.cuda_graph_scope
+        )
+    set_recompute_overrides(
+        cfg,
+        recompute_modules=settings.recompute_modules,
+        cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
+        recompute_num_layers=settings.recompute_num_layers,
+    )
 
 
 def set_common_perf_overrides(recipe: ConfigContainer) -> None:
@@ -136,18 +148,21 @@ def set_cuda_graph_overrides(
 
 def set_recompute_overrides(
     recipe: Any,
-    recompute_num_layers: Optional[int] = None,
     cpu_offloading_num_layers: Optional[int] = None,
+    recompute_num_layers: Optional[int] = None,
+    recompute_modules: Optional[List[str]] = None,
 ) -> None:
-    """Set the recompute num layers overrides."""
-    if recompute_num_layers is not None:
-        recipe.model.recompute_granularity = "full"
-        recipe.model.recompute_method = "block"
-        recipe.model.recompute_num_layers = recompute_num_layers
+    """Set the recompute and CPU offloading overrides."""
     if cpu_offloading_num_layers is not None:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
+    if recompute_num_layers is not None:
+        recipe.model.recompute_granularity = "full"
+        recipe.model.recompute_method = "block"
+        recipe.model.recompute_num_layers = recompute_num_layers
+    if recompute_modules is not None:
+        recipe.model.recompute_modules = recompute_modules
 
 
 def set_moe_a2a_overlap_overrides(recipe: ConfigContainer) -> None:
@@ -237,7 +252,7 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     cp = recipe.model.context_parallel_size
     vp = recipe.model.virtual_pipeline_model_parallel_size or 1
 
-    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
+    dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     if dp > 1 and pp > 1 and vp > 1:
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True

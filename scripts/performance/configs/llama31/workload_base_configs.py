@@ -14,12 +14,12 @@
 
 """Parallelism presets for Llama3.1 performance configs."""
 
-from utils.utils import ParallelismAndBatchConfig
+from utils.utils import WorkloadBaseConfig
 
 
 # Llama3.1 405B presets ---------------------------------------------------------
 
-LLAMA31_405B_GB300_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_GB300_128GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -28,10 +28,12 @@ LLAMA31_405B_GB300_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=64,
     micro_batch_size=1,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=40,
 )
 
 
-LLAMA31_405B_GB300_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_GB300_128GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -40,10 +42,12 @@ LLAMA31_405B_GB300_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=64,
     micro_batch_size=1,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=10,
 )
 
 
-LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,
@@ -55,7 +59,7 @@ LLAMA31_405B_GB300_128GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA31_405B_GB200_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_GB200_128GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,
@@ -67,7 +71,7 @@ LLAMA31_405B_GB200_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA31_405B_GB200_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_GB200_128GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -76,10 +80,12 @@ LLAMA31_405B_GB200_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=64,
     micro_batch_size=1,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=95,
 )
 
 
-LLAMA31_405B_GB200_128GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_GB200_128GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,
@@ -91,7 +97,7 @@ LLAMA31_405B_GB200_128GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA31_405B_B200_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_B200_128GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,
@@ -103,7 +109,7 @@ LLAMA31_405B_B200_128GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA31_405B_B200_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_B200_128GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,
@@ -117,7 +123,7 @@ LLAMA31_405B_B200_128GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 
 LLAMA31_405B_B200_128GPUS_FP8_MX_PARALLEL_CONFIG = LLAMA31_405B_B200_128GPUS_FP8_CS_PARALLEL_CONFIG
 
-LLAMA31_405B_H100_1024GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_H100_1024GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=8,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,
@@ -129,7 +135,7 @@ LLAMA31_405B_H100_1024GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA31_405B_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA31_405B_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=8,
     pipeline_model_parallel_size=8,
     context_parallel_size=2,

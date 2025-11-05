@@ -14,13 +14,13 @@
 
 """Parallelism presets for Qwen3 performance configs."""
 
-from utils.utils import ParallelismAndBatchConfig
+from utils.utils import WorkloadBaseConfig
 
 
 # Qwen3 235B A22B presets ----------------------------------------------------
 
 
-QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -29,10 +29,12 @@ QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=1024,
     micro_batch_size=4,
+    cuda_graph_impl="none",
+    cuda_graph_scope="full_iteration",
 )
 
 
-QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -41,11 +43,13 @@ QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=1024,
     micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG = QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG
 
-QWEN3_235B_A22B_GB200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_GB200_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -54,10 +58,12 @@ QWEN3_235B_A22B_GB200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=1024,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -66,12 +72,14 @@ QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=1024,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 QWEN3_235B_A22B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG = QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG
 
 
-QWEN3_235B_A22B_B200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_B200_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -83,7 +91,7 @@ QWEN3_235B_A22B_B200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -97,7 +105,7 @@ QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 QWEN3_235B_A22B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG = QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG
 
 
-QWEN3_235B_A22B_H100_256GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_H100_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -109,7 +117,7 @@ QWEN3_235B_A22B_H100_256GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -124,7 +132,7 @@ QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 # Qwen3 30B A3B presets ------------------------------------------------------
 
 
-QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -133,10 +141,12 @@ QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=8,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -145,12 +155,14 @@ QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=8,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
 QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG = QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG
 
-QWEN3_30B_A3B_GB200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_GB200_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -159,10 +171,12 @@ QWEN3_30B_A3B_GB200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -171,12 +185,14 @@ QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
 QWEN3_30B_A3B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG = QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG
 
-QWEN3_30B_A3B_B200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_B200_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -185,10 +201,12 @@ QWEN3_30B_A3B_B200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -197,11 +215,13 @@ QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=512,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 QWEN3_30B_A3B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG = QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG
 
-QWEN3_30B_A3B_H100_16GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_H100_16GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=2,
     context_parallel_size=1,
@@ -213,7 +233,7 @@ QWEN3_30B_A3B_H100_16GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-QWEN3_30B_A3B_H100_16GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+QWEN3_30B_A3B_H100_16GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=2,
     context_parallel_size=1,

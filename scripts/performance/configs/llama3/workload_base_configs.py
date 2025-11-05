@@ -14,12 +14,12 @@
 
 """Parallelism presets for Llama3 performance configs."""
 
-from utils.utils import ParallelismAndBatchConfig
+from utils.utils import WorkloadBaseConfig
 
 
 # Llama3 70B presets ---------------------------------------------------------
 
-LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -28,10 +28,12 @@ LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=2,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=30,
 )
 
 
-LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -40,10 +42,12 @@ LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=2,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=20,
 )
 
 
-LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=4,
     context_parallel_size=1,
@@ -55,7 +59,7 @@ LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -64,10 +68,12 @@ LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=1,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=20,
 )
 
 
-LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -76,10 +82,12 @@ LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=2,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=40,
 )
 
 
-LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=4,
     context_parallel_size=1,
@@ -91,7 +99,7 @@ LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA3_70B_B200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_B200_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=4,
     context_parallel_size=2,
@@ -100,10 +108,12 @@ LLAMA3_70B_B200_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-LLAMA3_70B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -112,10 +122,12 @@ LLAMA3_70B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=1,
+    use_megatron_fsdp=True,
+    cpu_offloading_num_layers=5,
 )
 
 
-LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=4,
     context_parallel_size=1,
@@ -127,7 +139,7 @@ LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=4,
     context_parallel_size=2,
@@ -139,7 +151,7 @@ LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=4,
     pipeline_model_parallel_size=8,
     context_parallel_size=1,
@@ -153,7 +165,7 @@ LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 # Llama3 8B presets ---------------------------------------------------------
 
 
-LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -162,10 +174,12 @@ LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -174,12 +188,28 @@ LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=4,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 LLAMA3_8B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG = LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG
 
 
-LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=2,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+
+LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -190,8 +220,7 @@ LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     micro_batch_size=2,
 )
 
-
-LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -200,24 +229,12 @@ LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=2,
-)
-
-LLAMA3_8B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG = LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG
-
-
-LLAMA3_8B_B200_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
-    tensor_model_parallel_size=1,
-    pipeline_model_parallel_size=1,
-    context_parallel_size=1,
-    virtual_pipeline_model_parallel_size=None,
-    expert_model_parallel_size=1,
-    expert_tensor_parallel_size=None,
-    global_batch_size=128,
-    micro_batch_size=2,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
-LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_B200_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -226,12 +243,28 @@ LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=2,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+
+LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=1,
+    expert_tensor_parallel_size=None,
+    global_batch_size=128,
+    micro_batch_size=2,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 
 LLAMA3_8B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG = LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG
 
-LLAMA3_8B_H100_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_H100_8GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=2,
@@ -243,7 +276,7 @@ LLAMA3_8B_H100_8GPUS_BF16_PARALLEL_CONFIG = ParallelismAndBatchConfig(
 )
 
 
-LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
+LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
     context_parallel_size=1,
@@ -252,6 +285,7 @@ LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG = ParallelismAndBatchConfig(
     expert_tensor_parallel_size=None,
     global_batch_size=128,
     micro_batch_size=1,
+    use_megatron_fsdp=True,
 )
 
 

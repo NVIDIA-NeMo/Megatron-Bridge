@@ -15,15 +15,15 @@
 import importlib
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ParallelismAndBatchConfig:
-    """Container for model parallelism and batch size overrides."""
+class WorkloadBaseConfig:
+    """Container for workload base configs."""
 
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
@@ -31,14 +31,19 @@ class ParallelismAndBatchConfig:
     virtual_pipeline_model_parallel_size: int | None
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int | None
+
     global_batch_size: int
     micro_batch_size: int
-    sequence_parallel: Optional[bool] = None
 
-    def sequence_parallel_enabled(self) -> bool:
-        if self.sequence_parallel is not None:
-            return self.sequence_parallel
-        return self.tensor_model_parallel_size > 1
+    use_megatron_fsdp: Optional[bool] = None
+    cuda_graph_impl: Optional[str] = None
+    cuda_graph_scope: str = "full"
+    cpu_offloading_num_layers: Optional[int] = None
+    recompute_num_layers: Optional[int] = None
+    recompute_modules: Optional[List[str]] = None
+
+    def __post_init__(self):
+        self.sequence_parallel = bool(self.tensor_model_parallel_size > 1)
 
 
 def get_model_recipe(
@@ -50,7 +55,7 @@ def get_model_recipe(
     fp8_recipe: Optional[str] = None,
 ):
     """Get the model recipe factory by its name."""
-    recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}_config"
+    recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_config"
     module_name = f"configs.{model_name}.{model_name}_llm_pretrain"
     try:
         module = importlib.import_module(module_name)
@@ -63,12 +68,7 @@ def get_model_recipe(
     except AttributeError as err:
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
-    if compute_dtype == "fp8" and fp8_recipe is not None:
-        return recipe_builder(fp8_recipe=fp8_recipe)
-    elif compute_dtype == "bf16":
-        return recipe_builder()
-    else:
-        raise ValueError(f"Invalid compute dtype: {compute_dtype} and FP8 recipe: {fp8_recipe}")
+    return recipe_builder(precision=compute_dtype, fp8_recipe=fp8_recipe)
 
 
 def get_parallelism_defaults(
@@ -86,7 +86,7 @@ def get_parallelism_defaults(
         parallelism_name += f"_{fp8_recipe}"
     parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
 
-    module_name = f"configs.{model_name}.parallelism_configs"
+    module_name = f"configs.{model_name}.workload_base_configs"
     try:
         module = importlib.import_module(module_name)
         logger.info(
@@ -100,6 +100,6 @@ def get_parallelism_defaults(
         logger.info(f"Loaded parallelism config: {parallelism_config}")
     except AttributeError:
         logger.error(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
-        parallelism_config = ParallelismAndBatchConfig(1, 1, 1, None, 1, None, 1, 1)
+        parallelism_config = WorkloadBaseConfig(1, 1, 1, None, 1, None, 1)
 
     return parallelism_config
