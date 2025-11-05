@@ -147,7 +147,7 @@ def parse_cli_args():
         "-fr",
         "--fp8_recipe",
         type=str,
-        choices=["ds", "cs", "mx", "sc"],
+        choices=["cs", "mx", "sc"],
         help=fp8_recipe_msg,
         required=False,
         default="cs",

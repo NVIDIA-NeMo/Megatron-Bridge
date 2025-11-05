@@ -82,7 +82,6 @@ def get_parallelism_defaults(
     """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
     parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}"
     if compute_dtype == "fp8":
-        fp8_recipe = "cs" if fp8_recipe == "ds" else fp8_recipe  # we don't maintain FP8-DS parallelism configs
         parallelism_name += f"_{fp8_recipe}"
     parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
 

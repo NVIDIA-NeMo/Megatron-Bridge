@@ -22,7 +22,6 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
-    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
@@ -34,9 +33,7 @@ logger = logging.getLogger(__name__)
 def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     if compute_dtype == "fp8":
-        if fp8_recipe == "ds":
-            return bf16_with_fp8_delayed_scaling_mixed()
-        elif fp8_recipe == "cs":
+        if fp8_recipe == "cs":
             current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
             # Disable BF16 Transformer layers in the performance config
             current_scaling_cfg.first_last_layers_bf16 = False
