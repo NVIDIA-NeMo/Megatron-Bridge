@@ -192,7 +192,9 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
 
-def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str, **user_kwargs: Unpack[Llama3CommonKwargs]) -> ConfigContainer:
+def llama3_8b_low_precision_pretrain_config(
+    mixed_precision_recipe: str, **user_kwargs: Unpack[Llama3CommonKwargs]
+) -> ConfigContainer:
     """Return a low precision (FP8 Current Scaling/MXFP8/NVFP4) pre-training config for Llama 3 8B.
 
     Args:
@@ -207,7 +209,11 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str, **user_
 
     See `_llama3_common` for the full list of parameters.
     """
-    assert mixed_precision_recipe in ["bf16_with_mxfp8_mixed", "bf16_with_fp8_current_scaling_mixed", "bf16_with_nvfp4_mixed"], f"Invalid low precision recipe: {mixed_precision_recipe}"
+    assert mixed_precision_recipe in [
+        "bf16_with_mxfp8_mixed",
+        "bf16_with_fp8_current_scaling_mixed",
+        "bf16_with_nvfp4_mixed",
+    ], f"Invalid low precision recipe: {mixed_precision_recipe}"
     precision_config = get_mixed_precision_config(mixed_precision_recipe)
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
@@ -224,6 +230,7 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str, **user_
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
+
 
 # Llama3 70B models
 def llama3_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> ConfigContainer:
