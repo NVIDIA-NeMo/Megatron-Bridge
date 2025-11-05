@@ -117,8 +117,8 @@ def main():
         recipe.model = apply_moe_token_drop(recipe.model)
     elif args.model_name == "kimi" and args.model_size == "k2":
 
-        enable_deepep = bool(args.gpu.lower() in ["h100"])
-        use_tokendrop = bool(args.gpu.lower() in ["b200", "gb200"])
+        enable_deepep = bool(args.gpu.lower() in ["h100", "b200"])
+        use_tokendrop = bool(args.gpu.lower() in [ "gb200"])
         
         pp, vp = 1, 1
         recipe = kimi_k2_llm_pretrain_config(
@@ -144,7 +144,7 @@ def main():
             logger.info("Using token drop, disabling DeepEP")
             recipe.model = apply_moe_token_drop(recipe.model)
 
-        A2A_1F1B = bool(args.gpu.lower() in ["h100"])
+        A2A_1F1B = bool(args.gpu.lower() in ["h100", "b200"])
         if A2A_1F1B:
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
             recipe.comm_overlap.delay_wgrad_compute = True
@@ -153,12 +153,13 @@ def main():
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
             recipe.comm_overlap.delay_wgrad_compute = False
             recipe.model.moe_shared_expert_overlap = True
-        if args.gpu.lower() in ["h100"]:
+        if args.gpu.lower() in ["h100", "b200"]:
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         
-        recipe.model.num_layers=3
-        recipe.model.num_moe_experts=8
-        recipe.model.moe_layer_freq=[0] + [1] * 2
+        if args.localrun:
+            recipe.model.num_layers=3
+            recipe.model.num_moe_experts=8
+            recipe.model.moe_layer_freq=[0] + [1] * 2
         # recipe.model.overlap_grad_reduce=False
 
     else:

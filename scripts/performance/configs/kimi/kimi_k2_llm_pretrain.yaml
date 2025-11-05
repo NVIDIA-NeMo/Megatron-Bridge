@@ -103,11 +103,11 @@ perf_matrix:
         seq_length: 4096
         mbs: 1
         gbs: 2048
-        tp: 2
-        pp: 16
+        tp: 1
+        pp: 8
         cp: 1
         vp: null
-        ep: 8
+        ep: 32
         etp: 1
         use_megatron_fsdp: false
       bf16:
