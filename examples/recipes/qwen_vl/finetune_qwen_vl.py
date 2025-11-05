@@ -14,36 +14,77 @@
 # limitations under the License.
 
 """
-convert the hf checkpoint to megatron checkpoint
-uv run  python -m torch.distributed.run --nproc_per_node=1 examples/conversion/convert_checkpoints.py import --hf-model Qwen/Qwen3-VL-8B-Instruct --megatron-path ./logs/checkpoints/qwen3vl8b
+Unified Qwen-VL Finetuning Script with YAML and CLI Configuration Overrides.
 
-finetune the megatron checkpoint
-uv run  python -m torch.distributed.run --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen3_vl.py  --recipe qwen3_vl_8b_finetune_config
-# for moe model
-uv run  python -m torch.distributed.run --nproc_per_node=8 --log-dir logs/   --redirects 3     --tee "0:3" examples/recipes/qwen_vl/finetune_qwen3_vl.py --recipe qwen3_vl_3b_active_30b_moe_finetune_config
-
-
-
-Qwen3-VL Finetuning Script with YAML and CLI Configuration Overrides.
-
-This script supports both dense and MoE Qwen3-VL models.
+Supports both Qwen2.5-VL and Qwen3-VL models (dense and MoE variants).
 You can pick a specific recipe via `--recipe`.
 
-Available recipes:
-    - qwen3_vl_8b_finetune_config: Dense 8B model (Qwen/Qwen3-VL-8B-Instruct)
-    - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model (Qwen/Qwen3-VL-30B-A3B-Instruct)
+Examples:
+    Convert HF checkpoint to Megatron format:
+        For Qwen2.5-VL:
+            $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+                --hf-model Qwen/Qwen2.5-VL-3B-Instruct \\
+                --megatron-path ./logs/checkpoints/qwen25vl3b
+
+        For Qwen3-VL (dense):
+            $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+                --hf-model Qwen/Qwen3-VL-8B-Instruct \\
+                --megatron-path ./logs/checkpoints/qwen3vl8b
+
+        For Qwen3-VL (MoE):
+            $ torchrun --nproc_per_node=1 examples/conversion/convert_checkpoints.py import \\
+                --hf-model Qwen/Qwen3-VL-30B-A3B-Instruct \\
+                --megatron-path ./logs/checkpoints/qwen3vl30b_moe
+
+    Finetune using the imported checkpoint:
+        Qwen2.5-VL 3B:
+            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen25_vl_3b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen25vl3b
+
+        Qwen2.5-VL 7B:
+            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen25_vl_7b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen25vl7b
+
+        Qwen3-VL 8B (dense):
+            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen3_vl_8b_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3vl8b
+
+        Qwen3-VL 30B (MoE):
+            $ torchrun --nproc_per_node=8 examples/recipes/qwen_vl/finetune_qwen_vl.py \\
+                --recipe qwen3_vl_3b_active_30b_moe_finetune_config \\
+                --pretrained-checkpoint ./logs/checkpoints/qwen3vl30b_moe
+
+    Using a custom YAML config file:
+        $ torchrun --nproc_per_node=8 finetune_qwen_vl.py \\
+            --config-file conf/qwen25_vl_pretrain_override_example.yaml
+
+    CLI overrides:
+        $ torchrun --nproc_per_node=8 finetune_qwen_vl.py \\
+            model.tensor_model_parallel_size=4 train.train_iters=100000
+
+Available Recipes:
+    Qwen2.5-VL:
+        - qwen25_vl_3b_finetune_config: 3B model
+        - qwen25_vl_7b_finetune_config: 7B model
+
+    Qwen3-VL:
+        - qwen3_vl_8b_finetune_config: Dense 8B model
+        - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model with expert parallelism
 """
 
 import argparse
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Tuple
 
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.qwen_vl import qwen3vl as qwen3_vl_recipes
+from megatron.bridge.recipes.qwen_vl import qwen25_vl as qwen25_vl_recipes
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -61,19 +102,10 @@ logger: logging.Logger = logging.getLogger(__name__)
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 
 
-def get_default_config_file(recipe_name: str) -> Path:
-    """Get the default config file path based on recipe name."""
-    if "moe" in recipe_name.lower():
-        config_filename = "qwen3_moe_vl_pretrain_override_example.yaml"
-    else:
-        config_filename = "qwen3_vl_pretrain_override_example.yaml"
-    return SCRIPT_DIR / "conf" / config_filename
-
-
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse known script args and return remaining as Hydra-style overrides."""
     parser = argparse.ArgumentParser(
-        description="Finetune Qwen3-VL with YAML and CLI overrides",
+        description="Finetune Qwen-VL models (Qwen2.5-VL and Qwen3-VL) with YAML and CLI overrides",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -82,9 +114,10 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         default=None,
         help=(
             "Path to the YAML OmegaConf override file. "
-            "If not specified, automatically selects based on recipe: "
-            "qwen3_vl_pretrain_override_example.yaml for dense models, "
-            "qwen3_moe_vl_pretrain_override_example.yaml for MoE models."
+            "If not specified, automatically selects based on recipe:\n"
+            "  - qwen25_vl_pretrain_override_example.yaml for Qwen2.5-VL models\n"
+            "  - qwen3_vl_pretrain_override_example.yaml for Qwen3-VL dense models\n"
+            "  - qwen3_moe_vl_pretrain_override_example.yaml for Qwen3-VL MoE models"
         ),
     )
     parser.add_argument(
@@ -112,11 +145,15 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--recipe",
         type=str,
-        default="qwen3_vl_8b_finetune_config",
+        default="qwen25_vl_3b_finetune_config",
         help=(
-            "Name of the recipe function in megatron.bridge.recipes.qwen_vl.qwen3vl to use:\n"
-            "  - qwen3_vl_8b_finetune_config: Dense 8B model (default)\n"
-            "  - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model with expert parallelism"
+            "Name of the recipe function to use:\n"
+            "Qwen2.5-VL recipes:\n"
+            "  - qwen25_vl_3b_finetune_config: 3B model (default)\n"
+            "  - qwen25_vl_7b_finetune_config: 7B model\n"
+            "Qwen3-VL recipes:\n"
+            "  - qwen3_vl_8b_finetune_config: Dense 8B model\n"
+            "  - qwen3_vl_3b_active_30b_moe_finetune_config: MoE 30B model"
         ),
     )
     parser.add_argument(
@@ -125,7 +162,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         default=None,
         help=(
             "Path to imported Megatron checkpoint directory to load before finetuning. "
-            "Generate it with scripts/import_hf_ckpt.py."
+            "Generate it with examples/conversion/convert_checkpoints.py."
         ),
     )
     parser.add_argument(
@@ -144,20 +181,22 @@ def main() -> None:
     """
     args, cli_overrides = parse_cli_args()
 
-    logger.info("Megatron-Bridge Qwen3-VL Finetuning Script with YAML & CLI Overrides")
-    logger.info("--------------------------------------------------------------------")
+    logger.info("Megatron-Bridge Qwen-VL Finetuning Script with YAML & CLI Overrides")
+    logger.info("---------------------------------------------------------------------")
 
-    # Resolve the recipe function from the provided name
-    recipe_name = getattr(args, "recipe", "qwen3_vl_8b_finetune_config")
-    available_recipes = [name for name in dir(qwen3_vl_recipes) if name.endswith("_finetune_config")]
-    if not hasattr(qwen3_vl_recipes, recipe_name):
-        logger.error(
-            "Unknown recipe '%s'. Available recipes: %s",
-            recipe_name,
-            ", ".join(sorted(available_recipes)),
-        )
-        sys.exit(2)
-    pretrain_config = getattr(qwen3_vl_recipes, recipe_name)
+    recipe_name = getattr(args, "recipe", "qwen25_vl_3b_finetune_config")
+
+    if recipe_name.startswith("qwen3"):
+        recipe_module = qwen3_vl_recipes
+        model_family = "Qwen3-VL"
+    elif recipe_name.startswith("qwen25"):  # qwen25
+        recipe_module = qwen25_vl_recipes
+        model_family = "Qwen2.5-VL"
+    else:
+        raise ValueError(f"Unknown recipe name: {recipe_name}")
+
+    pretrain_config = getattr(recipe_module, recipe_name)
+    logger.info(f"Using {model_family} recipe: {recipe_name}")
 
     # Determine dataset type based on CLI flag (overrides) or fall back to auto-detect
     use_preloaded_flag = bool(args.data_path) or bool(getattr(args, "use_preloaded", False))
@@ -180,12 +219,6 @@ def main() -> None:
 
     # Determine which config file to use
     config_file = args.config_file
-    if config_file is None:
-        # Auto-select config file based on recipe
-        default_config_path = get_default_config_file(recipe_name)
-        if default_config_path.exists():
-            config_file = str(default_config_path)
-            logger.debug(f"Auto-selected config file: {config_file}")
 
     if config_file and os.path.exists(config_file):
         logger.debug(f"Loading YAML overrides from: {config_file}")
