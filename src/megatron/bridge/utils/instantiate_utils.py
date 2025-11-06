@@ -253,8 +253,8 @@ def instantiate_node(
                     kwargs[key] = _convert_node(value)
 
             assert callable(_target_)
-            # Drop unexpected kwargs for forward-compatibility with older checkpoints/configs
-            kwargs = _filter_kwargs_for_target(_target_, kwargs, full_key)
+            # Drop unexpected kwargs in lenient mode or raise in strict mode
+            kwargs = _filter_kwargs_for_target(_target_, kwargs, full_key, mode)
             return _call_target(_target_, partial, args, kwargs, full_key)
         else:
             dict_items = {}
@@ -363,6 +363,7 @@ def _filter_kwargs_for_target(
     target: Callable[..., Any] | type,
     kwargs: dict[str, Any],
     full_key: str,
+    mode: InstantiationMode,
 ) -> dict[str, Any]:
     """Drop unexpected keyword arguments for a target and warn.
 
@@ -390,14 +391,19 @@ def _filter_kwargs_for_target(
     if not unexpected:
         return kwargs
 
-    # Warn and drop the unexpected keys
     target_str = _convert_target_to_string(target)
-    warning_msg = f"Dropping unexpected config keys for target '{target_str}': {sorted(unexpected)}"
-    if full_key:
-        warning_msg += f"\nfull_key: {full_key}"
-    logging.warning(warning_msg)
-
-    return {k: v for k, v in kwargs.items() if k in allowed_keys}
+    if mode == InstantiationMode.LENIENT:
+        # Warn and drop the unexpected keys
+        warning_msg = f"Dropping unexpected config keys for target '{target_str}': {sorted(unexpected)}"
+        if full_key:
+            warning_msg += f"\nfull_key: {full_key}"
+        logging.warning(warning_msg)
+        return {k: v for k, v in kwargs.items() if k in allowed_keys}
+    else:
+        msg = f"Unexpected config keys for target '{target_str}': {sorted(unexpected)}"
+        if full_key:
+            msg += f"\nfull_key: {full_key}"
+        raise InstantiationException(msg)
 
 
 def _prepare_input_dict_or_list(d: Union[dict[Any, Any], list[Any]]) -> Any:
