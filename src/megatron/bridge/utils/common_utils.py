@@ -22,6 +22,14 @@ import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
 
+from megatron.bridge.utils.slurm_utils import (
+    resolve_slurm_local_rank,
+    resolve_slurm_master_addr,
+    resolve_slurm_master_port,
+    resolve_slurm_rank,
+    resolve_slurm_world_size,
+)
+
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
@@ -34,29 +42,56 @@ except ImportError:
 def get_rank_safe() -> int:
     """Get the distributed rank safely, even if torch.distributed is not initialized.
 
+    Fallback order:
+    1. torch.distributed.get_rank() (if initialized)
+    2. RANK environment variable (torchrun/torchelastic)
+    3. SLURM_PROCID environment variable (SLURM)
+    4. Default: 0 (with warning)
+
     Returns:
         The current process rank.
     """
-    # In megatron init, args.rank comes from the torchrun env var.
-    # Once init has been done, args.rank is updated to value of torch get_rank()
     if torch.distributed.is_initialized():
         return torch.distributed.get_rank()
-    else:
-        return int(os.getenv("RANK", "0"))
+
+    if "RANK" in os.environ:
+        return int(os.environ["RANK"])
+
+    slurm_rank = resolve_slurm_rank()
+    if slurm_rank is not None:
+        return slurm_rank
+
+    warnings.warn("Could not determine rank from torch.distributed, RANK, or SLURM_PROCID. Defaulting to rank 0.")
+    return 0
 
 
 def get_world_size_safe() -> int:
     """Get the distributed world size safely, even if torch.distributed is not initialized.
 
+    Fallback order:
+    1. torch.distributed.get_world_size() (if initialized)
+    2. WORLD_SIZE environment variable (torchrun/torchelastic)
+    3. SLURM_NTASKS environment variable (SLURM)
+    4. Default: 1 (with warning)
+
     Returns:
         The total number of processes in the distributed job.
     """
-    # In megatron init, args.world_size comes from the torchrun env var.
-    # Once init has been done, args.world_size is updated to value of torch get_world_size()
     if torch.distributed.is_initialized():
         return torch.distributed.get_world_size()
-    else:
-        return int(os.getenv("WORLD_SIZE", "1"))
+
+    if "WORLD_SIZE" in os.environ:
+        return int(os.environ["WORLD_SIZE"])
+
+    slurm_world_size = resolve_slurm_world_size()
+    if slurm_world_size is not None:
+        return slurm_world_size
+
+    warnings.warn(
+        "Could not determine world size from torch.distributed, WORLD_SIZE, or SLURM_NTASKS. "
+        "Defaulting to world size 1."
+    )
+    return 1
 
 
 def get_last_rank() -> int:
@@ -69,10 +104,67 @@ def get_last_rank() -> int:
 def get_local_rank_preinit() -> int:
     """Get the local rank from the environment variable, intended for use before full init.
 
+    Fallback order:
+    1. LOCAL_RANK environment variable (torchrun/torchelastic)
+    2. SLURM_LOCALID environment variable (SLURM)
+    3. Default: 0 (with warning)
+
     Returns:
         The local rank of the current process.
     """
-    return int(os.getenv("LOCAL_RANK", "0"))
+    if "LOCAL_RANK" in os.environ:
+        return int(os.environ["LOCAL_RANK"])
+
+    slurm_local_rank = resolve_slurm_local_rank()
+    if slurm_local_rank is not None:
+        return slurm_local_rank
+
+    warnings.warn("Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0.")
+    return 0
+
+
+def get_master_addr_safe() -> str:
+    """Get the master address for distributed initialization.
+
+    Fallback order:
+    1. MASTER_ADDR environment variable (torchrun/torchelastic)
+    2. SLURM_NODELIST parsed (SLURM)
+    3. Default: localhost (with warning)
+
+    Returns:
+        The master node address.
+    """
+    if "MASTER_ADDR" in os.environ:
+        return os.environ["MASTER_ADDR"]
+
+    slurm_addr = resolve_slurm_master_addr()
+    if slurm_addr is not None:
+        return slurm_addr
+
+    warnings.warn("Could not determine master address from MASTER_ADDR or SLURM_NODELIST. Defaulting to 'localhost'.")
+    return "localhost"
+
+
+def get_master_port_safe() -> int:
+    """Get the master port for distributed initialization.
+
+    Fallback order:
+    1. MASTER_PORT environment variable (torchrun/torchelastic)
+    2. SLURM job-based port (SLURM_JOB_ID derived)
+    3. Default: 29500 (with warning)
+
+    Returns:
+        The master port.
+    """
+    if "MASTER_PORT" in os.environ:
+        return int(os.environ["MASTER_PORT"])
+
+    slurm_port = resolve_slurm_master_port()
+    if slurm_port is not None:
+        return slurm_port
+
+    warnings.warn("Could not determine master port from MASTER_PORT or SLURM environment. Defaulting to 29500.")
+    return 29500
 
 
 def print_rank_0(message: str) -> None:
