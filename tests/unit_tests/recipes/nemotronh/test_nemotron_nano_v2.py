@@ -69,10 +69,10 @@ class TestNemotronNano9Bv2:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotron_nano_9b_v2_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            context_parallelism=8,
-            sequence_parallelism=False,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=8,
+            sequence_parallel=False,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -134,8 +134,8 @@ class TestNemotronNano12Bv2:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotron_nano_12b_v2_pretrain_config(
-            tensor_parallelism=2,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 2

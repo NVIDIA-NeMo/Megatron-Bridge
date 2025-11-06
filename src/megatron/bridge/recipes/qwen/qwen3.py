@@ -53,12 +53,12 @@ class Qwen3CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: str | None
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: torch.dtype | None
-    virtual_pipeline_parallelism: int | None
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     use_null_tokenizer: bool
     # Training hyperparameters
@@ -101,8 +101,8 @@ def qwen3_600m_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-0.6B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -116,8 +116,8 @@ def qwen3_1p7b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-1.7B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -131,8 +131,8 @@ def qwen3_4b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Config
     """
     recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-4B",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -146,8 +146,8 @@ def qwen3_8b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Config
     """
     recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -161,8 +161,8 @@ def qwen3_14b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Confi
     """
     recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-14B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -176,9 +176,9 @@ def qwen3_32b_pretrain_config(**user_kwargs: Unpack[Qwen3CommonKwargs]) -> Confi
     """
     recommended_kwargs: Qwen3CommonKwargs = {
         "hf_path": "Qwen/Qwen3-32B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
         "enable_recompute": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -199,12 +199,12 @@ def _qwen3_common(
     per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: torch.dtype | None = None,
-    virtual_pipeline_parallelism: int | None = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     use_null_tokenizer: bool = False,
     enable_recompute: bool = False,
@@ -237,12 +237,12 @@ def _qwen3_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         use_null_tokenizer (bool): Whether to use NullTokenizer instead of HuggingFaceTokenizer.
         enable_recompute (bool): Whether to enable recompute for memory optimization.
@@ -271,12 +271,12 @@ def _qwen3_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     # Add recompute settings for memory optimization (used by larger models like 32B)
@@ -284,6 +284,8 @@ def _qwen3_common(
         model_cfg.recompute_granularity = "full"
         model_cfg.recompute_method = "uniform"
         model_cfg.recompute_num_layers = 1
+
+    model_cfg.cross_entropy_fusion_impl = "te"
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
@@ -369,8 +371,8 @@ def qwen3_600m_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> Co
 
     recommended_kwargs: Qwen3FinetuneKwargs = {
         "hf_path": "Qwen/Qwen3-0.6B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
@@ -390,8 +392,8 @@ def qwen3_1p7b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> Co
 
     recommended_kwargs: Qwen3FinetuneKwargs = {
         "hf_path": "Qwen/Qwen3-1.7B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
@@ -412,8 +414,8 @@ def qwen3_4b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> Conf
 
     recommended_kwargs: Qwen3FinetuneKwargs = {
         "hf_path": "Qwen/Qwen3-4B",
-        "tensor_parallelism": 2 if is_full_sft else 1,  # Match NeMo2: higher TP for SFT, TP=1 for LoRA
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 2 if is_full_sft else 1,  # Match NeMo2: higher TP for SFT, TP=1 for LoRA
+        "pipeline_model_parallel_size": 1,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
     }
@@ -434,8 +436,8 @@ def qwen3_8b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> Conf
 
     recommended_kwargs: Qwen3FinetuneKwargs = {
         "hf_path": "Qwen/Qwen3-8B",
-        "tensor_parallelism": 4 if is_full_sft else 1,  # Match NeMo2: TP=4 for SFT, TP=1 for LoRA
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 4 if is_full_sft else 1,  # Match NeMo2: TP=4 for SFT, TP=1 for LoRA
+        "pipeline_model_parallel_size": 1,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
     }
@@ -456,8 +458,8 @@ def qwen3_14b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> Con
 
     recommended_kwargs: Qwen3FinetuneKwargs = {
         "hf_path": "Qwen/Qwen3-14B",
-        "tensor_parallelism": 8 if is_full_sft else 1,  # Match NeMo2: TP=8 for SFT, TP=1 for LoRA
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 8 if is_full_sft else 1,  # Match NeMo2: TP=8 for SFT, TP=1 for LoRA
+        "pipeline_model_parallel_size": 1,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
     }
@@ -478,8 +480,8 @@ def qwen3_32b_finetune_config(**user_kwargs: Unpack[Qwen3FinetuneKwargs]) -> Con
 
     recommended_kwargs: Qwen3FinetuneKwargs = {
         "hf_path": "Qwen/Qwen3-32B",
-        "tensor_parallelism": 8 if is_full_sft else 1,  # Match NeMo2: TP=8 for SFT, TP=1 for LoRA
-        "pipeline_parallelism": 2 if is_full_sft else 1,  # PP=2 for SFT, PP=1 for LoRA
+        "tensor_model_parallel_size": 8 if is_full_sft else 1,  # Match NeMo2: TP=8 for SFT, TP=1 for LoRA
+        "pipeline_model_parallel_size": 2 if is_full_sft else 1,  # PP=2 for SFT, PP=1 for LoRA
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,  # Match NeMo2: lower LR for SFT
     }
@@ -499,12 +501,12 @@ def _qwen3_finetune_common(
     dir: str | None = None,
     name: str = "default",
     # Core model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: torch.dtype | None = None,
-    virtual_pipeline_parallelism: int | None = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     # Finetuning-specific params
     pretrained_checkpoint: str | None = None,
@@ -545,12 +547,12 @@ def _qwen3_finetune_common(
     # Create model config
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

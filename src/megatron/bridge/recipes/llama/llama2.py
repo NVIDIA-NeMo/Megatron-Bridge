@@ -52,12 +52,12 @@ class Llama2CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     # Training hyperparameters
     train_iters: int
@@ -83,8 +83,8 @@ def llama2_7b_pretrain_config(**user_kwargs: Unpack[Llama2CommonKwargs]) -> Conf
     """
     recommended_kwargs: Llama2CommonKwargs = {
         "hf_path": "meta-llama/Llama-2-7b-hf",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
         "train_iters": 1_168_251,
         "global_batch_size": 512,
         "micro_batch_size": 1,
@@ -110,12 +110,12 @@ def _llama2_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 1_168_251,
@@ -147,12 +147,12 @@ def _llama2_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
@@ -181,12 +181,12 @@ def _llama2_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(

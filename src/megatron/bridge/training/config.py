@@ -185,6 +185,9 @@ class DistributedInitConfig:
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
+    distributed_timeout_seconds_after_init: int | None = None
+    """Timeout in seconds for process groups after initialization. This timeout is applied to all process groups after initialization and the first iteration completes."""
+
 
 @dataclass
 class RerunStateMachineConfig:
@@ -437,6 +440,12 @@ class SchedulerConfig:
 
     weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
     """Weight decay increment function."""
+
+    no_weight_decay_cond_type: Optional[Literal["qwen3_next"]] = None
+    """Type of no weight decay condition. Choices:
+    None (default): param no weight decay if and only if it is 1D; or it is bias;
+    or it is embedding and embedding_init_method_std is not None.
+    "qwen3_next": In addition to the default rules, apply weight decay to qk layernorm as a special case."""
 
     lr_warmup_steps: Optional[int] = field(init=False, default=None)
     lr_decay_steps: Optional[int] = field(init=False, default=None)
@@ -1247,6 +1256,13 @@ class ConfigContainer(Container):
 
             if self.optimizer.use_precision_aware_optimizer:
                 self.ddp.preserve_fp32_weights = False
+
+        # ModelOpt/Quantization checks
+        if getattr(self.model, "restore_modelopt_state", False):
+            assert not self.model.gradient_accumulation_fusion, (
+                "Gradient accumulation fusion is not supported with ModelOpt/Quantized models. "
+                "Please set model.gradient_accumulation_fusion=False"
+            )
 
         # Checkpoint
         if self.checkpoint.save is not None or self.checkpoint.load is not None:

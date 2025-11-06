@@ -55,12 +55,12 @@ class Qwen25VLCommonKwargs(TypedDict, total=False):
     image_folder: Optional[str]
     tokenizer_model: Optional[str]
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     # Training hyperparameters
     train_iters: int
@@ -91,8 +91,8 @@ def qwen25_vl_3b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) ->
     """
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-3B-Instruct",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -105,8 +105,8 @@ def qwen25_vl_7b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) ->
     """
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-7B-Instruct",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -119,9 +119,9 @@ def qwen25_vl_32b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
     """
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-32B-Instruct",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -134,9 +134,9 @@ def qwen25_vl_72b_finetune_config(**user_kwargs: Unpack[Qwen25VLCommonKwargs]) -
     """
     recommended_kwargs: Qwen25VLCommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-VL-72B-Instruct",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
     }
     combined_kwargs: Qwen25VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _qwen25_vl_common(**combined_kwargs)
@@ -155,12 +155,12 @@ def _qwen25_vl_common(
     image_folder: Optional[str] = None,
     tokenizer_model: Optional[str] = None,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 300000,
@@ -195,12 +195,12 @@ def _qwen25_vl_common(
     # Build provider via AutoBridge and set parallel/seq params here
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.freeze_language_model = freeze_language_model
     model_cfg.freeze_vision_model = freeze_vision_model
     model_cfg.freeze_vision_projection = freeze_vision_projection

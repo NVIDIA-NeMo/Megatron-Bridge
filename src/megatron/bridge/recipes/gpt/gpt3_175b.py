@@ -36,34 +36,34 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_m
 
 
 def model_config(
-    tensor_parallelism: int = 4,
-    pipeline_parallelism: int = 8,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = 6,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 4,
+    pipeline_model_parallel_size: int = 8,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = 6,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = True,
 ) -> GPTProvider175B:
     """
     Configure the GPT3 175B model.
 
     Args:
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism.
+        sequence_parallel (bool): Whether to use sequence parallelism.
 
     Returns:
         GPTProvider175B: Configuration for the GPT3 175B model.
     """
     return GPTProvider175B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        sequence_parallel=sequence_parallel,
     )
 
 
@@ -79,12 +79,12 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 4,
-    pipeline_parallelism: int = 8,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = 6,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 4,
+    pipeline_model_parallel_size: int = 8,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = 6,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = True,
     use_megatron_fsdp: bool = False,
     # Training hyperparameters
     train_iters: int = 1_168_251,
@@ -113,12 +113,12 @@ def pretrain_config(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
         micro_batch_size (int): Micro batch size for training.
@@ -143,12 +143,12 @@ def pretrain_config(
     )
 
     model_cfg = model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        sequence_parallelism=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        sequence_parallel=sequence_parallel,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(

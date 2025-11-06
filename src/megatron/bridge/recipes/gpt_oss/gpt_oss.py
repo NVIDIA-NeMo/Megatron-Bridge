@@ -59,11 +59,11 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
     num_layers: int  # for ci testing
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
+    pipeline_dtype: Optional[torch.dtype]
     virtual_pipeline_model_parallel_size: Optional[int]
     context_parallel_size: int
     expert_model_parallel_size: Optional[int]
-    sequence_parallelism: bool
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     account_for_embedding_in_pipeline_split: bool
     account_for_loss_in_pipeline_split: bool
@@ -105,11 +105,11 @@ def _gpt_oss_common(
     num_layers: int = None,  # for ci testing
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
+    pipeline_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
     account_for_loss_in_pipeline_split: bool = False,
@@ -148,12 +148,12 @@ def _gpt_oss_common(
         model_cfg.num_layers = num_layers
     model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
     model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
+    model_cfg.pipeline_dtype = pipeline_dtype
     model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
     model_cfg.context_parallel_size = context_parallel_size
     model_cfg.expert_model_parallel_size = expert_model_parallel_size
     model_cfg.expert_tensor_parallel_size = 1
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     if account_for_embedding_in_pipeline_split:
@@ -254,7 +254,7 @@ def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> Co
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 4,
         "expert_model_parallel_size": 2,
-        "sequence_parallelism": False,
+        "sequence_parallel": False,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
@@ -268,7 +268,7 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 4,
         "expert_model_parallel_size": 8,
-        "sequence_parallelism": True,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}

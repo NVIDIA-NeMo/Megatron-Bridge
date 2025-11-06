@@ -46,9 +46,9 @@ def _safe_overrides_for(name: str) -> dict:
         "lr": 1e-4,
         "min_lr": 1e-5,
         "lr_warmup_iters": 2,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
         "use_null_tokenizer": True,
     }
 
@@ -57,8 +57,8 @@ def _safe_overrides_for(name: str) -> dict:
     if "12b" in lname or "27b" in lname:
         overrides.update(
             {
-                "virtual_pipeline_parallelism": None,
-                "sequence_parallelism": True,
+                "virtual_pipeline_model_parallel_size": None,
+                "sequence_parallel": True,
             }
         )
 

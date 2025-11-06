@@ -258,11 +258,11 @@ class TestMamba2Recipes:
         combos = LARGE_PAR_COMBOS if is_large else SMALL_PAR_COMBOS
         for tp, pp, cp in combos:
             cfg = config_func(
-                tensor_parallelism=tp,
-                pipeline_parallelism=pp,
-                context_parallelism=cp,
-                pipeline_parallelism_dtype=torch.bfloat16,
-                sequence_parallelism=(is_large and tp > 1),
+                tensor_model_parallel_size=tp,
+                pipeline_model_parallel_size=pp,
+                context_parallel_size=cp,
+                pipeline_dtype=torch.bfloat16,
+                sequence_parallel=(is_large and tp > 1),
             )
             assert cfg.model.tensor_model_parallel_size == tp
             assert cfg.model.pipeline_model_parallel_size == pp

@@ -52,12 +52,12 @@ class Gemma3CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: str | None
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: torch.dtype | None
-    virtual_pipeline_parallelism: int | None
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     account_for_embedding_in_pipeline_split: bool
     account_for_loss_in_pipeline_split: bool
@@ -92,10 +92,10 @@ def gemma3_1b_pretrain_config(**user_kwargs: Unpack[Gemma3CommonKwargs]) -> Conf
     recommended_kwargs: Gemma3CommonKwargs = {
         "provider_class": Gemma3ModelProvider1B,
         "hf_path": "google/gemma-3-1b",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
         "seq_length": SEQUENCE_LENGTH_32K,
     }
     combined_kwargs: Gemma3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -116,12 +116,12 @@ def _gemma3_common(
     per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: torch.dtype | None = None,
-    virtual_pipeline_parallelism: int | None = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
     account_for_loss_in_pipeline_split: bool = False,
@@ -156,12 +156,12 @@ def _gemma3_common(
         test_data_path (list[str] | None): List of test data paths.
         per_split_data_args_path (str | None): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (torch.dtype | None): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (int | None): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (torch.dtype | None): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (int | None): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         account_for_embedding_in_pipeline_split (bool): Whether to account for embedding in pipeline split.
         account_for_loss_in_pipeline_split (bool): Whether to account for loss in pipeline split.
@@ -193,12 +193,12 @@ def _gemma3_common(
 
     # Instantiate the model provider
     model_cfg = provider_class()
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     # Large model specific pipeline split configurations

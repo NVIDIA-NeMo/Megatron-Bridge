@@ -71,10 +71,10 @@ class TestNemotronH4B:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_4b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            context_parallelism=8,
-            sequence_parallelism=True,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=8,
+            sequence_parallel=True,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -132,9 +132,9 @@ class TestNemotronH8B:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_8b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
-            sequence_parallelism=False,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
+            sequence_parallel=False,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -176,8 +176,8 @@ class TestNemotronH47B:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_47b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 4
@@ -218,8 +218,8 @@ class TestNemotronH56B:
     def test_pretrain_config_custom_parallelism(self):
         """Test pretrain_config with custom parallelism."""
         config = nemotronh_56b_pretrain_config(
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
+            tensor_model_parallel_size=4,
+            pipeline_model_parallel_size=2,
         )
 
         assert config.model.tensor_model_parallel_size == 4
