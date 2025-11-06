@@ -17,6 +17,45 @@
 from utils.utils import WorkloadBaseConfig
 
 
+DEEPSEEK_V3_GB300_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=4,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=64,
+    expert_tensor_parallel_size=1,
+    global_batch_size=2048,
+    micro_batch_size=1,
+    recompute_modules=["mla_up_proj"],
+)
+
+
+DEEPSEEK_V3_GB300_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=4,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=64,
+    expert_tensor_parallel_size=1,
+    global_batch_size=2048,
+    micro_batch_size=1,
+    recompute_modules=["mla_up_proj"],
+)
+
+
+DEEPSEEK_V3_GB300_256GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=4,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=64,
+    expert_tensor_parallel_size=1,
+    global_batch_size=2048,
+    micro_batch_size=1,
+    recompute_modules=["mla_up_proj"],
+)
+
+
 DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=4,
@@ -43,8 +82,17 @@ DEEPSEEK_V3_GB200_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_FP8_MX_PARALLEL_CONFIG = DEEPSEEK_V3_GB200_256GPUS_FP8_CS_PARALLEL_CONFIG
-
+DEEPSEEK_V3_GB200_256GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=4,
+    context_parallel_size=1,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=64,
+    expert_tensor_parallel_size=1,
+    global_batch_size=2048,
+    micro_batch_size=1,
+    recompute_modules=["mla_up_proj", "mlp"],
+)
 
 DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     tensor_model_parallel_size=1,

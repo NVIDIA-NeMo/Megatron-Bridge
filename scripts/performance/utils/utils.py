@@ -99,6 +99,6 @@ def get_parallelism_defaults(
         logger.info(f"Loaded parallelism config: {parallelism_config}")
     except AttributeError:
         logger.error(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
-        parallelism_config = WorkloadBaseConfig(1, 1, 1, None, 1, None, 1)
+        parallelism_config = WorkloadBaseConfig(1, 1, 1, None, 1, None, 1, 1)
 
     return parallelism_config

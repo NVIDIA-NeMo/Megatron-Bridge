@@ -44,6 +44,38 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
+def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB300, 256xGPU, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_BF16_PARALLEL_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_CS_PARALLEL_CONFIG
+        if fp8_recipe == "mx":
+            base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_MX_PARALLEL_CONFIG
+        precision_config = get_precision_config(precision, fp8_recipe)
+
+    cfg = pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        enable_deepep=False,
+        layout=None,
+    )
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    # Setting num_workers and pin_memory to 0 and False respectively gives better performance.
+    # we are debugging this and might change this in the future.
+    cfg.dataset.num_workers = 0
+    cfg.dataset.pin_memory = False
+
+    return cfg
+
+
 def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB200, 256xGPU, baseline config."""
     if precision == "bf16":

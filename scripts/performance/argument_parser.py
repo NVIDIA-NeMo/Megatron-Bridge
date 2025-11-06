@@ -394,6 +394,13 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--recompute_modules",
+        type=list_of_strings,
+        help="Comma separated list of modules to recompute. Defaults to None",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--detach",
         help="Detach the experiment from the terminal. Disabled by default",
         action="store_true",

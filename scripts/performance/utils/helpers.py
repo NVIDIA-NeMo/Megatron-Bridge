@@ -189,8 +189,12 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     recompute_num_layers = kwargs.get("recompute_num_layers")
     cpu_offloading_num_layers = kwargs.get("activation_offload_layers")
+    recompute_modules = kwargs.get("recompute_modules")
     set_recompute_overrides(
-        recipe, recompute_num_layers=recompute_num_layers, cpu_offloading_num_layers=cpu_offloading_num_layers
+        recipe,
+        recompute_num_layers=recompute_num_layers,
+        cpu_offloading_num_layers=cpu_offloading_num_layers,
+        recompute_modules=recompute_modules,
     )
 
     moe_a2a_overlap = kwargs.get("moe_a2a_overlap")
