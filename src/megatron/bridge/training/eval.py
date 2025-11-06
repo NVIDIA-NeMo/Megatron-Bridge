@@ -86,7 +86,7 @@ def evaluate(
         if verbose:
             print_rank_0(f"Evaluating on {state.cfg.train.eval_iters * eval_batch_size} samples")
 
-        if state.cfg.model.cuda_graph_impl == "local" and state.cfg.model.cuda_graph_scope == "full_iteration":
+        if state.cfg.model.cuda_graph_impl == "local" and "full_iteration" in state.cfg.model.cuda_graph_scope:
             forward_backward_func = FullCudaGraphWrapper(
                 get_forward_backward_func(), cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps
             )
