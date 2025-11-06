@@ -1235,6 +1235,13 @@ class ConfigContainer(Container):
             if self.optimizer.use_precision_aware_optimizer:
                 self.ddp.preserve_fp32_weights = False
 
+        # ModelOpt/Quantization checks
+        if getattr(self.model, "restore_modelopt_state", False):
+            assert not self.model.gradient_accumulation_fusion, (
+                "Gradient accumulation fusion is not supported with ModelOpt/Quantized models. "
+                "Please set model.gradient_accumulation_fusion=False"
+            )
+
         # Checkpoint
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             # only check if saving or loading
