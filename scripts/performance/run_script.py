@@ -131,7 +131,7 @@ def main():
             optimizer_type=optimizer_type,
         )
         # Disable qk_clip for muon optimizer for now to avoid the memory leaking issue
-        if optimizer_type == "muon" and args.qkclip:
+        if optimizer_type == "muon":
             recipe.model.qk_clip = True
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
