@@ -26,7 +26,9 @@ DEEPSEEK_V3_GB300_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=2048,
     micro_batch_size=1,
-    recompute_modules=["mla_up_proj"],
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="attn",
+    recompute_modules=["mlp", "moe_act"],
 )
 
 
@@ -39,7 +41,9 @@ DEEPSEEK_V3_GB300_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=2048,
     micro_batch_size=1,
-    recompute_modules=["mla_up_proj"],
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="attn",
+    recompute_modules=["mlp", "moe_act"],
 )
 
 
