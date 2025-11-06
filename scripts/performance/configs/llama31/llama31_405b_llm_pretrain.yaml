@@ -23,7 +23,7 @@ ConfigContainer:
     seq_length: 8192
 
   train:
-    train_iters: 100
+    train_iters: 50
     eval_iters: 0
   
   scheduler:
@@ -50,11 +50,21 @@ ConfigContainer:
     # For optional fields in the config, specify the target to instantiate the object.
     _target_: megatron.bridge.training.config.ProfilingConfig
     use_nsys_profiler: true
-    profile_step_start: 10
-    profile_step_end: 11
+    profile_step_start: 45
+    profile_step_end: 50
     profile_ranks: [0]
     record_shapes: false
     use_pytorch_profiler: false
+
+# Default GPU counts when selecting entries from the perf_matrix.
+# Values inferred from the available perf_matrix keys (e.g., num_gpus_1024).
+defaults:
+  gpu_defaults:
+    h100: 1024
+    b200: 128
+    gb200: 128
+    gb300: 128
+  gbs_scaling_factor_default: 0.5
 
 perf_matrix:
   h100:
@@ -123,7 +133,43 @@ perf_matrix:
         cp: 1
         vp: null
         use_megatron_fsdp: true
+        cpu_offloading_num_layers: 80
+      fp8_mx:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        use_megatron_fsdp: false
+  gb300:
+    num_gpus_128:
+      common:
+        num_gpus_per_node: 4
+        seq_length: 8192
+        mbs: 1
+        gbs: 64
+        cuda_graphs: false
+        ep: 1
+        etp: null
+      bf16:
+        tp: 4
+        pp: 8
+        cp: 2
+        vp: 8
+        use_megatron_fsdp: false
+      fp8_ds:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: null
+        use_megatron_fsdp: true
         cpu_offloading_num_layers: 95
+      fp8_cs:
+        tp: 2
+        pp: 1
+        cp: 1
+        vp: null
+        use_megatron_fsdp: true
+        cpu_offloading_num_layers: 80
       fp8_mx:
         tp: 4
         pp: 8

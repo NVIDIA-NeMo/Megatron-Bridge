@@ -27,4 +27,30 @@ def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
     gpu_block = perf.get(args.gpu) or {}
     preset = gpu_block.get(num_gpus_yaml_key) or {}
 
+    if preset == {} and args.model_name in ["deepseek", "llama3", "llama31"]:
+        defaults = yaml_root.get("defaults")
+        yaml_gpu_defaults = defaults.get("gpu_defaults")
+        default_num_gpus = yaml_gpu_defaults.get(args.gpu) or yaml_gpu_defaults.get(args.gpu.lower())
+        num_gpus_yaml_key = f"num_gpus_{default_num_gpus}"
+        preset = gpu_block.get(num_gpus_yaml_key)
+        scaling_factor = defaults.get("gbs_scaling_factor_default")
+        preset["common"]["gbs"] = int(args.num_gpus * scaling_factor)
+
+    if args.tensor_parallel_size:
+        preset["common"]["tp"] = args.tensor_parallel_size
+    if args.pipeline_parallel_size:
+        preset["common"]["pp"] = args.pipeline_parallel_size
+    if args.context_parallel_size:
+        preset["common"]["cp"] = args.context_parallel_size
+    if args.virtual_pipeline_parallel_size:
+        preset["common"]["vp"] = args.virtual_pipeline_parallel_size
+    if args.expert_parallel_size:
+        preset["common"]["ep"] = args.expert_parallel_size
+    if args.expert_tensor_parallel_size:
+        preset["common"]["etp"] = args.expert_tensor_parallel_size
+    if args.micro_batch_size:
+        preset["common"]["mbs"] = args.micro_batch_size
+    if args.global_batch_size:
+        preset["common"]["gbs"] = args.global_batch_size
+
     return preset

@@ -20,11 +20,11 @@ from omegaconf import OmegaConf
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.common import get_perf_matrix_overrides
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.common import get_perf_matrix_overrides
     from .utils.executors import slurm_executor
 
@@ -41,6 +41,12 @@ if HAS_NEMO_RUN:
         from perf_plugins import NsysPlugin, PerfEnvPlugin
     except (ImportError, ModuleNotFoundError):
         from .perf_plugins import NsysPlugin, PerfEnvPlugin
+
+    # TEMPORARY WORKAROUND - Remove in next release when upstream srun issue is fixed
+    try:
+        from utils.slurm_exit_code_override import *  # Monkey-patch for false-positive job failures
+    except (ImportError, ModuleNotFoundError):
+        from .utils.slurm_exit_code_override import *  # Monkey-patch for false-positive job failures
 
 import logging
 
@@ -65,8 +71,6 @@ def main(
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
-    exp_name = f"{model_name}_{model_size}_{domain}_{task}"
-    exp_name += "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
 
     if model_name in ["qwen3"] and model_size in ["30b_a3b", "235b_a22b"]:
         assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
@@ -114,9 +118,9 @@ def main(
     plugins = (
         [
             PerfEnvPlugin(
-                enable_vboost=enable_vboost,
-                nccl_pp_comm_chunksize=2097152 if model_size in ["70b", "405b"] else None,
-                gpu_sm100_or_newer=gpu.lower() in ["b200", "gb200"],
+                enable_vboost=args.enable_vboost,
+                nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
+                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200", "gb300"],
                 layernorm_sm_margin=20 if enable_deepep else 16,
                 tp_size=tp,
                 cp_size=cp,
@@ -129,10 +133,22 @@ def main(
         if HAS_NEMO_RUN
         else []
     )
-    if HAS_NEMO_RUN and enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+    if HAS_NEMO_RUN and args.enable_nsys:
+        profile_cfg = yaml_overrides_omega["ConfigContainer"]["profiling"]
+        start_step = profile_cfg["profile_step_start"]
+        end_step = profile_cfg["profile_step_end"]
+        ranks = list(range(num_gpus))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=start_step,
+                profile_step_end=end_step,
+                profile_ranks=ranks,
+                nsys_gpu_metrics=args.profiling_gpu_metrics,
+                nsys_trace=["cuda"],
+            )
+        )
 
-    custom_mounts = custom_mounts + [
+    custom_mounts = args.custom_mounts + [
         f"{config_filepath}:{config_filepath}",
         f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
         f"{SCRIPT_DIR}:{SCRIPT_DIR}",
@@ -140,10 +156,11 @@ def main(
     executor.container_mounts.extend(custom_mounts)
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    if model_name in ["llama31"] and model_size in ["405b"] and gpu.lower() in ["gb200"]:
+    if model_name in ["llama31"] and model_size in ["405b"] and gpu.lower() in ["gb200", "gb300"]:
         if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if model_name in ["deepseek"] and model_size in ["v3"] and gpu.lower() in ["gb200"]:
+            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
+    if model_name in ["deepseek"] and model_size in ["v3"] and gpu.lower() in ["gb200"] and args.num_gpus == 128:
         if compute_dtype == "bf16" and (not use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
@@ -171,7 +188,22 @@ def main(
         str(config_filepath),
     ]
     # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
+    args_to_forward = [
+        "model_name",
+        "model_size",
+        "compute_dtype",
+        "fp8_recipe",
+        "gpu",
+        "use_tokendrop",
+        "micro_batch_size",
+        "global_batch_size",
+        "tensor_parallel_size",
+        "pipeline_parallel_size",
+        "virtual_pipeline_parallel_size",
+        "context_parallel_size",
+        "expert_parallel_size",
+        "expert_tensor_parallel_size",
+    ]
     for arg_name in args_to_forward:
         if hasattr(args, arg_name):
             arg_value = getattr(args, arg_name)
@@ -184,6 +216,22 @@ def main(
         entrypoint="python",
         args=target_script_args,
     )
+
+    base_config = preset["common"]
+    extra_config = preset[compute_dtype]
+    train_config = OmegaConf.merge(base_config, extra_config) if extra_config else base_config
+
+    exp_config = (
+        f"gpus{args.num_gpus}_"
+        f"tp{train_config['tp']}_"
+        f"pp{train_config['pp']}_"
+        f"cp{train_config['cp']}_"
+        f"vp{train_config['vp']}_"
+        f"ep{train_config['ep']}_"
+        f"mbs{train_config['mbs']}_"
+        f"gbs{train_config['gbs']}"
+    )
+    exp_name = f"pretrain_{args.model_name}_{args.model_size}_{compute_dtype}_{exp_config}"
 
     run.run(train_script, executor=executor, plugins=plugins, dryrun=dryrun, detach=detach, name=exp_name)
 
@@ -200,6 +248,12 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     args, _ = parse_cli_args()
+
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     main(
         model_name=args.model_name,
         model_size=args.model_size,
@@ -230,5 +284,6 @@ if __name__ == "__main__":
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
+            additional_slurm_params=additional_slurm_params,
         ),
     )
