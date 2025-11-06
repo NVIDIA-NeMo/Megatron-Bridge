@@ -769,7 +769,7 @@ class TestConfigContainerValidation:
 
         # Create packed sequence specs with packed_sequence_size > 0
         packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
-        dataset_cfg = create_test_finetuning_dataset_config(seq_length=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
         dataset_cfg.packed_sequence_specs = packed_specs
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -795,7 +795,7 @@ class TestConfigContainerValidation:
 
         # Create packed sequence specs with packed_sequence_size > 0
         packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
-        dataset_cfg = create_test_finetuning_dataset_config(seq_length=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
         dataset_cfg.packed_sequence_specs = packed_specs
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -815,7 +815,7 @@ class TestConfigContainerValidation:
         # Create config with micro_batch_size > 1 but no packed sequences
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(seq_length=512)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
         # packed_sequence_specs defaults to None
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -835,7 +835,7 @@ class TestConfigContainerValidation:
         # Create config with micro_batch_size > 1 and GPTDatasetConfig
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = create_test_gpt_dataset_config(seq_length=512)
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)
         # GPTDatasetConfig doesn't have packed_sequence_specs
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -2159,7 +2159,7 @@ class TestDatasetSequenceLengthValidation:
     def test_gpt_dataset_sequence_length_mismatch_fails(self, monkeypatch):
         """Test that GPTDatasetConfig with mismatched sequence length fails validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_gpt_dataset_config(seq_length=1024)  # Mismatch!
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=1024)  # Mismatch!
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2178,7 +2178,7 @@ class TestDatasetSequenceLengthValidation:
     def test_gpt_dataset_sequence_length_match_passes(self, monkeypatch):
         """Test that GPTDatasetConfig with matching sequence length passes validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_gpt_dataset_config(seq_length=512)  # Match!
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)  # Match!
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2194,7 +2194,7 @@ class TestDatasetSequenceLengthValidation:
     def test_finetuning_dataset_sequence_length_mismatch_fails(self, monkeypatch):
         """Test that FinetuningDatasetConfig with mismatched sequence length fails validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_finetuning_dataset_config(seq_length=1024)  # Mismatch!
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=1024)  # Mismatch!
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -2213,7 +2213,7 @@ class TestDatasetSequenceLengthValidation:
     def test_finetuning_dataset_sequence_length_match_passes(self, monkeypatch):
         """Test that FinetuningDatasetConfig with matching sequence length passes validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_finetuning_dataset_config(seq_length=512)  # Match!
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)  # Match!
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
