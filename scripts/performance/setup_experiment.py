@@ -130,10 +130,10 @@ def main(
     executor.container_mounts.extend(custom_mounts)
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200", "gb300"]:
+    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
         if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200", "gb300"]:
+    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
         if compute_dtype == "bf16" and (not use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
