@@ -191,18 +191,14 @@ class TestInstantiate:
         with pytest.raises(InstantiationException):
             instantiate(config, mode=InstantiationMode.STRICT)
 
-    def test_instantiate_lenient_mode_error(self, caplog):
-        """Test instantiate in lenient mode with error."""
+    def test_instantiate_lenient_mode_error(self):
+        """In lenient mode, nested resolution errors now propagate (no auto-None)."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
             "nested": {"_target_": "non.existent.module.Class"},
         }
-        with caplog.at_level(logging.WARNING):
-            result = instantiate(config, mode=InstantiationMode.LENIENT)
-
-        assert isinstance(result, TestClass)
-        assert result.kwargs["nested"] is None
-        assert "Error instantiating" in caplog.text
+        with pytest.raises(InstantiationException, match="Error locating target"):
+            instantiate(config, mode=InstantiationMode.LENIENT)
 
     def test_instantiate_with_omegaconf_dict(self):
         """Test instantiate with OmegaConf DictConfig."""
