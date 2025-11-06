@@ -237,19 +237,7 @@ def instantiate_node(
                     if OmegaConf.is_missing(node, key) and is_partial:
                         continue
                     value = node[key]
-                    try:
-                        value = instantiate_node(value, mode=mode)
-                    except (ImportError, InstantiationException) as e:
-                        if mode == InstantiationMode.STRICT:
-                            raise InstantiationException(
-                                f"Error instantiating {value} for key {full_key}.{key}: {e}"
-                            ) from e
-                        else:
-                            value = None
-                            logging.warning(
-                                f"Error instantiating {value} for key {full_key}.{key}. "
-                                f"Using None instead in lenient mode."
-                            )
+                    value = instantiate_node(value, mode=mode)
                     kwargs[key] = _convert_node(value)
 
             assert callable(_target_)
