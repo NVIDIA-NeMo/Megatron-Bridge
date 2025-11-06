@@ -565,6 +565,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get the model with DoRA applied via hook
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         # Verify we got a list of Megatron modules
@@ -600,6 +603,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get base model first to count original parameters
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         base_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         base_model = [chunk.cuda() for chunk in base_model]
 
@@ -622,6 +628,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get DoRA-adapted model using hook
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
@@ -649,6 +658,9 @@ class TestDoRAMegatronIntegration:
         dora_hook = self._create_dora_pre_wrap_hook(dora)
         model_provider.register_pre_wrap_hook(dora_hook)
         model_provider.finalize()
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         first_transform = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
 
         first_transform = [chunk.cuda() for chunk in first_transform]
@@ -711,6 +723,9 @@ class TestDoRAMegatronIntegration:
         model_provider.finalize()
 
         # Get DoRA-adapted model using hook
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
         adapted_model = [chunk.cuda() for chunk in adapted_model]
 
@@ -781,6 +796,9 @@ class TestDoRAMegatronIntegration:
             model_provider.finalize()
 
             # Get adapted model using hook
+            from megatron.core.process_groups_config import ProcessGroupCollection
+
+            model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
             adapted_model = model_provider.provide_distributed_model(ddp_config=None, wrap_with_ddp=False)
             adapted_model = [chunk.cuda() for chunk in adapted_model]
 

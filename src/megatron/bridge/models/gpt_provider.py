@@ -22,11 +22,16 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 import modelopt.torch.distill as mtd
 import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
+)
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
 )
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
 from megatron.core.transformer import ModuleSpec
@@ -247,6 +252,18 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.attention_backend == AttnBackend.local:
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
+        # Determine pre/post flags if not provided using vp + pp stage
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self.pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self.pg_collection.pp
+            )
+        # Expose vp stage on config for downstream modules (e.g., TE layers)
+        # so they can compute correct offsets without legacy globals.
+        self._vp_stage = vp_stage
         with model_init_device_context():
             model = MCoreGPTModel(
                 self,
@@ -260,11 +277,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 rotary_percent=self.rotary_percent,
                 rotary_base=self.rotary_base,
                 seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-                pre_process=pre_process
-                or parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage),
-                post_process=post_process
-                or parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage),
+                pre_process=pre_process,
+                post_process=post_process,
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
+                pg_collection=self.pg_collection,
                 vp_stage=vp_stage,
                 **kwargs,
             )
@@ -276,25 +292,23 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.use_transformer_engine_full_layer_spec:
             # Copied from:
             # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
-            if parallel_state.get_tensor_model_parallel_world_size() > 1:
+            if self.pg_collection.tp.size() > 1:
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_tensor_parallel_group"):
-                        tp_group = parallel_state.get_tensor_model_parallel_group()
+                        tp_group = self.pg_collection.tp
                         child.set_tensor_parallel_group(tp_group)
 
-            if parallel_state.get_context_parallel_world_size() > 1:
+            if self.pg_collection.cp.size() > 1:
                 cp_stream = torch.cuda.Stream()
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_context_parallel_group"):
-                        child.set_context_parallel_group(
-                            parallel_state.get_context_parallel_group(),
-                            parallel_state.get_context_parallel_global_ranks(),
-                            cp_stream,
-                        )
+                        cp_group = self.pg_collection.cp
+                        cp_global_ranks = torch.distributed.get_process_group_ranks(cp_group)
+                        child.set_context_parallel_group(cp_group, cp_global_ranks, cp_stream)
 
         return model
 
