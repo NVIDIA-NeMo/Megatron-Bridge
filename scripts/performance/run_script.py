@@ -79,10 +79,10 @@ def main():
             layout=layout,
         )
 
-        if enable_deepep:
-            recipe.model.moe_router_force_load_balancing = True
         if use_tokendrop:
             recipe.model = apply_moe_token_drop(recipe.model)
+        else:
+            recipe.model.moe_router_force_load_balancing = True
 
         if A2A_1F1B:
             recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
