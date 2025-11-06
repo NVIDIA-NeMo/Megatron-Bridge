@@ -162,6 +162,8 @@ Megatron Bridge supports various vision-language dataset examples which can be u
 | [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 | [LLaVA-Video-178K (0_30_s_nextqa subset)](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K) | `make_llava_video_178k_dataset` | Video understanding: video question-answer dataset covering every-day scenarios. |
 
+`cord-v2` is a tiny dataset and is included for demonstration only. This dataset is not recommended for PEFT tuning for this model since the XML output format interacts with the special tokens, leading to unexpected results. 
+
 Note on video training example:
 - We provide a video config yaml file instead of the default config yaml file that overwrites a few commands. Please
   pass in `--config-file "examples/recipes/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml"`.
