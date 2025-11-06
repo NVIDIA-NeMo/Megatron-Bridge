@@ -20,7 +20,7 @@ ConfigContainer:
     cross_entropy_fusion_impl: "te"
     moe_router_fusion: true
     recompute_granularity: "selective"
-    # pipeline_model_parallel_layout: "Et|(tt|)*30L"
+    pipeline_model_parallel_layout: "Et|(tt|)*30L"
   
   comm_overlap:
     overlap_grad_reduce: false
@@ -97,7 +97,7 @@ perf_matrix:
       fp8_cs:
       fp8_ss:
   b200:
-    num_gpus_256:
+    num_gpus_512:
       common:
         num_gpus_per_node: 8
         seq_length: 4096
@@ -106,6 +106,25 @@ perf_matrix:
         tp: 1
         pp: 8
         cp: 1
+        vp: 4
+        ep: 64
+        etp: 1
+        use_megatron_fsdp: false
+      bf16:
+        cuda_graphs: false
+      fp8_cs:
+        cuda_graphs: false
+      fp8_mx:
+        cuda_graphs: false
+    num_gpus_32:
+      common:
+        num_gpus_per_node: 8
+        seq_length: 4096
+        mbs: 1
+        gbs: 32
+        tp: 1
+        pp: 1
+        cp: 1
         vp: null
         ep: 32
         etp: 1
@@ -113,9 +132,9 @@ perf_matrix:
       bf16:
         cuda_graphs: false
       fp8_cs:
-        cuda_graphs: true
+        cuda_graphs: false
       fp8_mx:
-        cuda_graphs: true
+        cuda_graphs: false
     num_gpus_8:
       common:
         num_gpus_per_node: 8

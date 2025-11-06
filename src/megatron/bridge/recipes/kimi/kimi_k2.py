@@ -97,29 +97,29 @@ def model_config(
     if apply_rope_fusion:
         cfg.apply_rope_fusion = True
 
-    # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
-    map_pp_vp_to_layout = {
-        (1, 1): None,
-        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + ["loss"]],
-        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
-        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
-        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
-        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
-        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
-    }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
-    if (pp_size, vp_size) not in map_pp_vp_to_layout:
-        raise ValueError(
-            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
-            f"for Kimi-K2. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
-        )
+    ## Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
+    #map_pp_vp_to_layout = {
+    #    (1, 1): None,
+    #    (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + ["loss"]],
+    #    (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
+    #    (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
+    #    (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+    #    (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+    #    (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+    #}
+    #pp_size = pipeline_parallelism or 1
+    #vp_size = virtual_pipeline_parallelism or 1
+    #if (pp_size, vp_size) not in map_pp_vp_to_layout:
+    #    raise ValueError(
+    #        f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
+    #        f"for Kimi-K2. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
+    #    )
 
-    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+    #layout = map_pp_vp_to_layout[(pp_size, vp_size)]
 
-    if layout is not None:
-        layout = list([list(x) for x in layout])  # yield all the elements
-    cfg.pipeline_model_parallel_layout = layout
+    #$if layout is not None:
+    #$    layout = list([list(x) for x in layout])  # yield all the elements
+    #$cfg.pipeline_model_parallel_layout = layout
 
     if enable_deepep:
         cfg.moe_token_dispatcher_type = "flex"
@@ -141,8 +141,8 @@ def pretrain_config(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 16,
+    tensor_parallelism: int = 1,
+    pipeline_parallelism: int = 8,
     pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_parallelism: Optional[int] = None,
     context_parallelism: int = 1,
@@ -156,7 +156,7 @@ def pretrain_config(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
-    optimizer_type: str = "adam",
+    optimizer_type: str = "muon",
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
