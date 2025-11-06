@@ -286,9 +286,12 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    if cfg.logger.save_config_filepath is not None and get_rank_safe() == 0:
-        try:
-            cfg.to_yaml(cfg.logger.save_config_filepath)
+    if get_rank_safe() == 0:
+        if cfg.logger.save_config_filepath is not None:
+            try:
+                cfg.to_yaml(cfg.logger.save_config_filepath)
+            except Exception as e:
+                print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
         except Exception as e:
             print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
         # Print final resolved/updated/overridden configs
