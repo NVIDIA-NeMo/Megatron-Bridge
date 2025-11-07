@@ -265,7 +265,11 @@ def import_hf_to_megatron(
 
         print(f"✅ Successfully imported model to: {megatron_path}")
 
-    torch.distributed.barrier()
+    if torch.distributed.is_initialized():
+        # Destroy process groups created by import ckpt
+        torch.distributed.barrier()
+        parallel_state.destroy_model_parallel()
+        torch.distributed.destroy_process_group()
 
 
 def megatron_generate_from_checkpoint(
