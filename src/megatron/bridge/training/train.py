@@ -542,7 +542,7 @@ def train_step(
     scheduler: OptimizerParamScheduler,
     global_state: GlobalState,
     pg_collection: ProcessGroupCollection,
-    forward_backward_func: Optional[Callable] = None,
+    forward_backward_func: Callable,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -554,8 +554,7 @@ def train_step(
         scheduler: Learning rate scheduler
         global_state: Global training state
         pg_collection: Process group collection
-        forward_backward_func: Optional forward-backward function.
-            If None, will be created using get_forward_backward_func() and wrapped with FullCudaGraphWrapper if needed.
+        forward_backward_func: forward-backward function
 
     Returns:
         tuple containing:
@@ -572,10 +571,6 @@ def train_step(
     model_config = get_model_config(model[0])
     train_config = cfg.train
     optim_config = cfg.optimizer
-
-    # Backwards compatibility: create forward_backward_func if not provided
-    if forward_backward_func is None:
-        forward_backward_func = get_forward_backward_func()
 
     rerun_state_machine = get_rerun_state_machine()
     while rerun_state_machine.should_run_forward_backward(data_iterator):
