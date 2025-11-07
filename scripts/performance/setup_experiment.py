@@ -43,14 +43,6 @@ SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 SCRIPT_NAME: str = "run_script.py"
 
 
-def enable_deepep(gpu: str, model_name: str, model_size: str):
-    return gpu in ["h100"] and model_name == "deepseek" and model_size == "v3"
-
-
-def enable_moe_a2a_overlap(gpu: str, model_name: str, model_size: str):
-    return gpu in ["h100"] and model_name == "deepseek" and model_size == "v3"
-
-
 def main(
     script_name: str,
     model_name: str,
