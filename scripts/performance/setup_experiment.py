@@ -149,8 +149,8 @@ def main(
         if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
             executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
-    exp_name = f"{model_name}_{model_size}_{domain}_{task}"(
-        f"_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
+    exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
+        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
     )
     run.run(
         run.Script(
