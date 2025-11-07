@@ -37,7 +37,8 @@ from megatron.core.transformer import MegatronModule
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.utils.common_utils import get_last_rank, get_rank_safe, print_rank_0
 
 
@@ -387,6 +388,55 @@ def megatron_generate_from_checkpoint(
     return generated_text
 
 
+def megatron_generate_from_hf(
+    hf_model: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
+) -> list[str]:
+    """
+    Generate text from a Megatron model with weights loaded from HuggingFace using AutoBridge.
+
+    This function is just a wrapper around megatron_generate(), with some setup.
+
+    Args:
+        hf_model: HuggingFace model ID or path to model directory
+        prompt: Input prompt for the model
+        max_new_tokens: Upper bound on how many tokens to generate.
+           May generate fewer tokens than this limit. (default: 20)
+        tp: Tensor parallelism size override. (default: 1)
+        pp: Pipeline parallelism size override. (default: 1)
+        ep: Expert parallelism size override. (default: 1)
+        etp: Expert tensor parallelism size override. (default: 1)
+    """
+
+    print_rank_0(f"Loading HuggingFace model from: {hf_model}")
+
+    # Get model config from HF
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    model_provider = bridge.to_megatron_provider(load_weights=True)
+
+    # Override parallelisms
+    model_provider.tensor_model_parallel_size = tp
+    model_provider.pipeline_model_parallel_size = pp
+    model_provider.expert_model_parallel_size = ep
+    model_provider.expert_tensor_parallel_size = etp
+
+    # Initialize parallel state
+    model_provider.finalize()
+    model_provider.initialize_model_parallel(seed=0)
+
+    # Initialize and load the model and tokenizer
+    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    tokenizer_cfg = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_model)
+    tokenizer = build_tokenizer(tokenizer_cfg, trust_remote_code=True)
+
+    generated_text = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
+
+    # each tested generation method should recreate this, since
+    # user will likely use these methods in isolation
+    _safe_destroy_distributed()
+
+    return generated_text
+
+
 def parse_cli_args():
     parser = argparse.ArgumentParser(
         description="Compare text generated through various Megatron-Bridge conversion methods against HuggingFace direct"
@@ -422,7 +472,9 @@ def main():
 
     _ = transformers_generate(args.hf_model_id, args.prompt, args.max_new_tokens)
 
-    # TODO: Generate from on-the-fly HF weight loading
+    _ = megatron_generate_from_hf(
+        args.hf_model_id, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp
+    )
 
     # Generate from imported checkpoint
     import_hf_to_megatron(args.hf_model_id, args.megatron_path, args.torch_dtype, args.device_map)
