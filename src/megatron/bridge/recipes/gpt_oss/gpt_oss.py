@@ -89,6 +89,74 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
     pretrained_checkpoint: Optional[str]
 
 
+class GPTOSSFinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by GPT-OSS finetune recipe helpers."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+    # Model parallelism
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    expert_model_parallel_size: Optional[int]
+    sequence_parallelism: bool
+    use_megatron_fsdp: bool
+    # Finetuning specifics
+    pretrained_checkpoint: Optional[str]
+    peft: Optional[Union[str, PEFT]]
+    packed_sequence: bool
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: Optional[int]
+    micro_batch_size: int
+    seq_length: int
+    finetune_lr: float
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+    eval_interval: int
+    save_interval: int
+    # Precision / overlap configs
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
+
+
+def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 20B variant."""
+    recommended: GPTOSSCommonKwargs = {
+        "hf_path": "openai/gpt-oss-20b",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 4,
+        "expert_model_parallel_size": 2,
+        "sequence_parallelism": False,
+        "use_null_tokenizer": True,
+    }
+    kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
+    return _gpt_oss_common(**kwargs)
+
+
+def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for GPT-OSS 120B variant."""
+    recommended: GPTOSSCommonKwargs = {
+        "hf_path": "openai/gpt-oss-120b",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 4,
+        "expert_model_parallel_size": 8,
+        "sequence_parallelism": False,
+        "use_null_tokenizer": True,
+    }
+    kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
+    return _gpt_oss_common(**kwargs)
+
+
 def _gpt_oss_common(
     hf_path: str,
     dir: Optional[str] = None,
@@ -249,34 +317,6 @@ def _gpt_oss_common(
     return cfg
 
 
-def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for GPT-OSS 20B variant."""
-    recommended: GPTOSSCommonKwargs = {
-        "hf_path": "openai/gpt-oss-20b",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 2,
-        "sequence_parallelism": False,
-        "use_null_tokenizer": True,
-    }
-    kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
-    return _gpt_oss_common(**kwargs)
-
-
-def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for GPT-OSS 120B variant."""
-    recommended: GPTOSSCommonKwargs = {
-        "hf_path": "openai/gpt-oss-120b",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 4,
-        "expert_model_parallel_size": 8,
-        "sequence_parallelism": False,
-        "use_null_tokenizer": True,
-    }
-    kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
-    return _gpt_oss_common(**kwargs)
-
-
 def gpt_oss_20b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) -> ConfigContainer:
     """Return a finetuning config for GPT-OSS 20B variant.
 
@@ -319,46 +359,6 @@ def gpt_oss_120b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) ->
     }
     kwargs: GPTOSSFinetuneKwargs = {**recommended, **user_kwargs}
     return _gpt_oss_finetune_common(**kwargs)
-
-
-class GPTOSSFinetuneKwargs(TypedDict, total=False):
-    """Typed options accepted by GPT-OSS finetune recipe helpers."""
-
-    # Core identifiers
-    hf_path: str
-    dir: Optional[str]
-    name: str
-    # Model parallelism
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    pipeline_dtype: Optional[torch.dtype]
-    virtual_pipeline_model_parallel_size: Optional[int]
-    context_parallel_size: int
-    expert_model_parallel_size: Optional[int]
-    sequence_parallelism: bool
-    use_megatron_fsdp: bool
-    # Finetuning specifics
-    pretrained_checkpoint: Optional[str]
-    peft: Optional[Union[str, PEFT]]
-    packed_sequence: bool
-    # Training hyperparameters
-    train_iters: int
-    global_batch_size: Optional[int]
-    micro_batch_size: int
-    seq_length: int
-    finetune_lr: float
-    min_lr: float
-    lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
-    eval_interval: int
-    save_interval: int
-    # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
-    # W&B logging
-    wandb_project: Optional[str]
-    wandb_entity: Optional[str]
-    wandb_exp_name: Optional[str]
 
 
 def _gpt_oss_finetune_common(
