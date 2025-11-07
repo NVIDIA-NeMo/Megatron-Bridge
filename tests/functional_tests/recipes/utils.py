@@ -164,7 +164,7 @@ def run_pretrain_vl_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     if forward_step_func is None:
-    # Import locally to avoid loading VLM stack for non-VL tests
+        # Import locally to avoid loading VLM stack for non-VL tests
         from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
     else:
         vlm_forward_step = forward_step_func
