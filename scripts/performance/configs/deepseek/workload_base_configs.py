@@ -14,156 +14,133 @@
 
 """Workload base presets for DeepSeek-V3 performance configs."""
 
+from dataclasses import replace
+
 from utils.utils import WorkloadBaseConfig
 
 
-DEEPSEEK_V3_GB300_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+BASE_DEEPSEEK_V3_CONFIG = WorkloadBaseConfig(
+    expert_tensor_parallel_size=1,
+)
+
+
+DEEPSEEK_V3_GB300_256GPUS_BF16_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=4,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="attn",
     recompute_modules=["mlp", "moe_act"],
 )
 
 
-DEEPSEEK_V3_GB300_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_GB300_256GPUS_FP8_CS_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=4,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope="attn",
     recompute_modules=["mlp", "moe_act"],
 )
 
 
-DEEPSEEK_V3_GB300_256GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_GB300_256GPUS_FP8_MX_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=4,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj"],
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_GB200_256GPUS_BF16_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=4,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj"],
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=4,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj"],
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_FP8_MX_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=4,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj", "mlp"],
 )
 
-DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_B200_256GPUS_BF16_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=16,
-    context_parallel_size=1,
-    virtual_pipeline_model_parallel_size=None,
     expert_model_parallel_size=8,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj"],
 )
 
 
-DEEPSEEK_V3_B200_256GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
-    tensor_model_parallel_size=1,
+DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     pipeline_model_parallel_size=16,
-    context_parallel_size=1,
-    virtual_pipeline_model_parallel_size=None,
     expert_model_parallel_size=8,
-    expert_tensor_parallel_size=1,
     global_batch_size=2048,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj"],
 )
 
 
-DEEPSEEK_V3_B200_256GPUS_FP8_MX_PARALLEL_CONFIG = DEEPSEEK_V3_B200_256GPUS_FP8_CS_PARALLEL_CONFIG
+DEEPSEEK_V3_B200_256GPUS_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG
 
 
-DEEPSEEK_V3_H100_1024GPUS_BF16_PARALLEL_CONFIG = WorkloadBaseConfig(
+DEEPSEEK_V3_H100_1024GPUS_BF16_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=8192,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj", "mlp"],
 )
 
 
-DEEPSEEK_V3_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG = WorkloadBaseConfig(
+DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
-    context_parallel_size=1,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    expert_tensor_parallel_size=1,
     global_batch_size=8192,
-    micro_batch_size=1,
     recompute_modules=["mla_up_proj", "mlp"],
 )
 
 
-DEEPSEEK_V3_H100_1024GPUS_FP8_SC_PARALLEL_CONFIG = DEEPSEEK_V3_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG
+DEEPSEEK_V3_H100_1024GPUS_FP8_SC_BASE_CONFIG = DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG
 
 
 __all__ = [
-    "DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_GB200_256GPUS_FP8_CS_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_GB200_256GPUS_FP8_MX_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_B200_256GPUS_FP8_CS_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_B200_256GPUS_FP8_MX_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_H100_1024GPUS_BF16_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG",
-    "DEEPSEEK_V3_H100_1024GPUS_FP8_SC_PARALLEL_CONFIG",
+    "DEEPSEEK_V3_GB200_256GPUS_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG",
+    "DEEPSEEK_V3_B200_256GPUS_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_B200_256GPUS_FP8_MX_BASE_CONFIG",
+    "DEEPSEEK_V3_H100_1024GPUS_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_H100_1024GPUS_FP8_SC_BASE_CONFIG",
 ]
