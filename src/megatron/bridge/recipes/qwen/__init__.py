@@ -51,8 +51,8 @@ from .qwen3_moe import (
 
 # Qwen3-Next models
 from .qwen3_next import (
-    qwen3_next_80b_a3b_pretrain_config,
     qwen3_next_80b_a3b_finetune_config,
+    qwen3_next_80b_a3b_pretrain_config,
 )
 
 

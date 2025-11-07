@@ -21,19 +21,19 @@ from typing_extensions import TypedDict, Unpack
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
+from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    FinetuningDatasetConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
     TrainingConfig,
-    FinetuningDatasetConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
 
@@ -439,7 +439,7 @@ def _qwen3_next_finetune_common(
             seed=5678,
             memmap_workers=1,
             max_train_samples=None,
-            packed_sequence_specs=None, # TODO: add packed_sequence_specs if packed_sequence is True, currently not supported for Qwen3-Next
+            packed_sequence_specs=None,  # TODO: add packed_sequence_specs if packed_sequence is True, currently not supported for Qwen3-Next
             dataset_kwargs=None,
             do_validation=True,
             do_test=True,
