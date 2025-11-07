@@ -12,8 +12,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+End to end test that compares text generated from a HuggingFace model
+using the following methods:
+    - Generate with Transformers
+    - Load a Megatron model directly from the HuggingFace weights and
+        generate text from it (AutoBridge.from_hf_pretrained method)
+    - Convert the HuggingFace weights to a Megatron checkpoint,
+        load that checkpoint, and generate text from it (AutoBridge.import_ckpt method)
+    - Export the Megatron checkpoint (that was previously imported from HF) back
+        to HuggingFace format and generate using Transformers again, as a sanity test.
 
-# TODO: add file docstring
+Supports loading the Megatron model with different parallelisms.
+"""
 
 import argparse
 
