@@ -25,15 +25,15 @@ logger = logging.getLogger(__name__)
 class WorkloadBaseConfig:
     """Container for workload base configs."""
 
-    tensor_model_parallel_size: int
-    pipeline_model_parallel_size: int
-    context_parallel_size: int
-    virtual_pipeline_model_parallel_size: int | None
-    expert_model_parallel_size: int
-    expert_tensor_parallel_size: int | None
+    tensor_model_parallel_size: int = 1
+    pipeline_model_parallel_size: int = 1
+    context_parallel_size: int = 1
+    virtual_pipeline_model_parallel_size: int | None = None
+    expert_model_parallel_size: int = 1
+    expert_tensor_parallel_size: int | None = None
 
-    global_batch_size: int
-    micro_batch_size: int
+    global_batch_size: int = 1
+    micro_batch_size: int = 1
 
     use_megatron_fsdp: Optional[bool] = None
     cuda_graph_impl: Optional[str] = None
