@@ -48,7 +48,6 @@ def main(
     domain: str,
     task: str,
     compute_dtype: str,
-    fp8_recipe: str,
     gpu: str,
     num_gpus: int,
     hf_token: str,
@@ -56,6 +55,7 @@ def main(
     detach: bool,
     dryrun: bool,
     enable_vboost: bool,
+    enable_perf_plugin: bool,
     enable_nsys: bool,
     use_tokendrop: bool,
     moe_a2a_overlap: bool,
@@ -85,22 +85,22 @@ def main(
 
     plugins = []
 
-    plugins.append(
-        PerfEnvPlugin(
-            enable_vboost=enable_vboost,
-            num_gpus=num_gpus,
-            moe_a2a_overlap=moe_a2a_overlap,
-            tp_size=tp_size,
-            pp_size=pp_size,
-            cp_size=cp_size,
-            model_name=model_name,
-            model_size=model_size,
-            gpu=gpu,
-            compute_dtype=compute_dtype,
-            fp8_recipe=fp8_recipe,
-            use_tokendrop=use_tokendrop,
+    if enable_perf_plugin:
+        plugins.append(
+            PerfEnvPlugin(
+                enable_vboost=enable_vboost,
+                num_gpus=num_gpus,
+                moe_a2a_overlap=moe_a2a_overlap,
+                tp_size=tp_size,
+                pp_size=pp_size,
+                cp_size=cp_size,
+                model_name=model_name,
+                model_size=model_size,
+                gpu=gpu,
+                compute_dtype=compute_dtype,
+                use_tokendrop=use_tokendrop,
+            )
         )
-    )
     if enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
@@ -114,7 +114,7 @@ def main(
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
-        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
+        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
     )
     run.run(
         run.Script(
@@ -149,7 +149,6 @@ if __name__ == "__main__":
         domain=args.domain,
         task=args.task,
         compute_dtype=args.compute_dtype,
-        fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
         num_gpus=args.num_gpus,
         hf_token=args.hf_token,
@@ -157,6 +156,7 @@ if __name__ == "__main__":
         detach=args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
+        enable_perf_plugin=True,
         enable_nsys=args.enable_nsys,
         use_tokendrop=args.use_tokendrop,
         moe_a2a_overlap=args.moe_a2a_overlap,

@@ -52,7 +52,6 @@ def get_model_recipe(
     gpu: str,
     num_gpus: int,
     compute_dtype: str,
-    fp8_recipe: Optional[str] = None,
 ):
     """Get the model recipe factory by its name."""
     recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_config"
@@ -68,7 +67,7 @@ def get_model_recipe(
     except AttributeError as err:
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
-    return recipe_builder(precision=compute_dtype, fp8_recipe=fp8_recipe)
+    return recipe_builder(precision=compute_dtype)
 
 
 def get_parallelism_defaults(
@@ -77,12 +76,9 @@ def get_parallelism_defaults(
     gpu: str,
     num_gpus: int,
     compute_dtype: str,
-    fp8_recipe: Optional[str] = None,
 ) -> Dict[str, int]:
     """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
     parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}"
-    if compute_dtype == "fp8":
-        parallelism_name += f"_{fp8_recipe}"
     parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
 
     module_name = f"configs.{model_name}.workload_base_configs"

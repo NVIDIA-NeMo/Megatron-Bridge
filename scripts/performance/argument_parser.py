@@ -118,15 +118,14 @@ def parse_cli_args():
         required=False,
         default="00:30:00",
     )
-    container_img_msg = [
-        "NeMo container to use for experiment. Defaults to latest dev container- 'nvcr.io/nvidia/nemo:dev'",
-        "Make sure your NGC credentials are accessible in your environment.",
-    ]
     parser.add_argument(
         "-i",
         "--container_image",
         type=str,
-        help=" ".join(container_img_msg),
+        help=(
+            "NeMo container to use for experiment. Defaults to latest dev container- 'nvcr.io/nvidia/nemo:dev' "
+            "Make sure your NGC credentials are accessible in your environment."
+        ),
         required=False,
         default="nvcr.io/nvidia/nemo:dev",
     )
@@ -134,23 +133,10 @@ def parse_cli_args():
         "-c",
         "--compute_dtype",
         type=str,
-        choices=["bf16", "fp8"],
+        choices=["bf16", "fp8-cs", "fp8-mx", "fp8-sc"],
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
-    )
-    fp8_recipe_msg = (
-        "FP8 recipe. Options- ds (per-tensor delayed scaling), cs (per-tensor current scaling), "
-        "mxfp8, ss (subchannel scaling). Defaults to ds"
-    )
-    parser.add_argument(
-        "-fr",
-        "--fp8_recipe",
-        type=str,
-        choices=["cs", "mx", "sc"],
-        help=fp8_recipe_msg,
-        required=False,
-        default="cs",
     )
     parser.add_argument(
         "--task",
@@ -165,16 +151,15 @@ def parse_cli_args():
         help="HuggingFace token. Defaults to None. Required for accessing tokenizers and checkpoints.",
         default=None,
     )
-    nemo_home_msg = [
-        "Sets env var `NEMO_HOME` (on compute node using sbatch script)- directory where NeMo searches",
-        "for models and checkpoints. This saves a lot of time (especially for bigger models) if checkpoints already",
-        f"exist here. Missing files will be downloaded here from HuggingFace. Defaults to {DEFAULT_NEMO_HOME}",
-    ]
     parser.add_argument(
         "-nh",
         "--nemo_home",
         type=str,
-        help=" ".join(nemo_home_msg),
+        help=(
+            "Sets env var `NEMO_HOME` (on compute node using sbatch script)- directory where NeMo searches "
+            "for models and checkpoints. This saves a lot of time (especially for bigger models) if checkpoints already "
+            f"exist here. Missing files will be downloaded here from HuggingFace. Defaults to {DEFAULT_NEMO_HOME}"
+        ),
         default=DEFAULT_NEMO_HOME,
     )
     parser.add_argument(

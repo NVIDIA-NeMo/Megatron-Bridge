@@ -200,7 +200,6 @@ class PerfEnvPlugin(Plugin):
     model_size: str
     gpu: str
     compute_dtype: str
-    fp8_recipe: str
     use_tokendrop: str
 
     def _set_num_cuda_device_max_connections(
@@ -249,12 +248,11 @@ class PerfEnvPlugin(Plugin):
         model_size: str,
         gpu: str,
         compute_dtype: str,
-        fp8_recipe: str,
         use_tokendrop: bool,
     ):
         """Set model-specific environment variables"""
         if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
-            if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
+            if compute_dtype in ["fp8-cs", "fp8-mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
             if compute_dtype == "bf16" and (not use_tokendrop):
@@ -262,16 +260,16 @@ class PerfEnvPlugin(Plugin):
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_name == "llama3" and model_size == "8b":
-                if compute_dtype == "fp8" and fp8_recipe == "cs":
+                if compute_dtype == "fp8-cs":
                     executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
             if model_name == "llama3" and model_size == "70b":
-                if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
+                if compute_dtype == "bf16" or compute_dtype == "fp8-cs":
                     del_cudnn_ln = False
             if model_name == ["llama31"] and model_size == "405b":
-                if compute_dtype == "fp8" and fp8_recipe == "cs":
+                if compute_dtype == "fp8-cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
@@ -358,7 +356,7 @@ class PerfEnvPlugin(Plugin):
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         parallelism_defaults = get_parallelism_defaults(
-            self.model_name, self.model_size, self.gpu, self.num_gpus, self.compute_dtype, self.fp8_recipe
+            self.model_name, self.model_size, self.gpu, self.num_gpus, self.compute_dtype
         )
         tp_size = (self.tp_size if self.tp_size is not None else parallelism_defaults.tensor_model_parallel_size,)
         pp_size = (self.pp_size if self.pp_size is not None else parallelism_defaults.pipeline_model_parallel_size,)
@@ -403,6 +401,5 @@ class PerfEnvPlugin(Plugin):
             self.model_size,
             self.gpu,
             self.compute_dtype,
-            self.fp8_recipe,
             self.use_tokendrop,
         )

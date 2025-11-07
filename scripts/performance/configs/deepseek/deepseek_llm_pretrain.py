@@ -44,14 +44,14 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def deepseek_v3_gb300_256gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, 256xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8-mx":
             base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
@@ -76,14 +76,14 @@ def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     return cfg
 
 
-def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def deepseek_v3_gb200_256gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, 256xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8-mx":
             base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
@@ -108,14 +108,14 @@ def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     return cfg
 
 
-def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def deepseek_v3_b200_256gpus_config(precision: str = "bf16") -> ConfigContainer:
     """B200, 256xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8-mx":
             base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
@@ -135,14 +135,14 @@ def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "
     return cfg
 
 
-def deepseek_v3_h100_1024gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def deepseek_v3_h100_1024gpus_config(precision: str = "bf16") -> ConfigContainer:
     """H100, 1024xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "sc":
+        if precision == "fp8-sc":
             base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_SC_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
