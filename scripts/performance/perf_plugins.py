@@ -36,6 +36,11 @@ import nemo_run as run
 from nemo_run import Plugin, Script, SlurmExecutor
 
 
+try:
+    from utils.utils import get_parallelism_defaults
+except (ImportError, ModuleNotFoundError):
+    from .utils.utils import get_parallelism_defaults
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -352,6 +357,12 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
+        parallelism_defaults = get_parallelism_defaults(
+            self.model_name, self.model_size, self.gpu, self.num_gpus, self.compute_dtype, self.fp8_recipe
+        )
+        tp_size = (self.tp_size if self.tp_size is not None else parallelism_defaults.tensor_model_parallel_size,)
+        pp_size = (self.pp_size if self.pp_size is not None else parallelism_defaults.pipeline_model_parallel_size,)
+        cp_size = (self.cp_size if self.cp_size is not None else parallelism_defaults.context_parallel_size,)
 
         # Force program order kernel launch for TP, CP overlap
         enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
@@ -360,9 +371,9 @@ class PerfEnvPlugin(Plugin):
             task,
             executor,
             self.num_gpus,
-            self.tp_size,
-            self.cp_size,
-            self.pp_size,
+            tp_size,
+            cp_size,
+            pp_size,
             moe_a2a_overlap=moe_a2a_overlap,
             enable_deepep=enable_deepep,
             gpu_sm100_or_newer=self.gpu_sm100_or_newer,
@@ -377,7 +388,7 @@ class PerfEnvPlugin(Plugin):
 
         # Set the chunk size of P2P communications
         nccl_pp_comm_chunksize = 2097152 if self.model_size in ["70b", "405b"] else None
-        self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, self.pp_size)
+        self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
         # Configure manual garbage collection
         self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)

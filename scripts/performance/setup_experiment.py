@@ -20,11 +20,9 @@ from typing import List, Optional
 try:
     from argument_parser import parse_cli_args
     from utils.executors import slurm_executor
-    from utils.utils import get_parallelism_defaults
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.executors import slurm_executor
-    from .utils.utils import get_parallelism_defaults
 
 import nemo_run as run
 
@@ -85,16 +83,16 @@ def main(
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
-    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
+    plugins = []
 
-    plugins = [
+    plugins.append(
         PerfEnvPlugin(
             enable_vboost=enable_vboost,
             num_gpus=num_gpus,
             moe_a2a_overlap=moe_a2a_overlap,
-            tp_size=tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size,
-            pp_size=pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size,
-            cp_size=cp_size if cp_size is not None else parallelism_defaults.context_parallel_size,
+            tp_size=tp_size,
+            pp_size=pp_size,
+            cp_size=cp_size,
             model_name=model_name,
             model_size=model_size,
             gpu=gpu,
@@ -102,8 +100,7 @@ def main(
             fp8_recipe=fp8_recipe,
             use_tokendrop=use_tokendrop,
         )
-    ]
-
+    )
     if enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
