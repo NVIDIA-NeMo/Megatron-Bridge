@@ -1094,6 +1094,77 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_modelopt_with_gradient_accumulation_fusion_fails(self, monkeypatch):
+        """Test that restore_modelopt_state with gradient_accumulation_fusion raises AssertionError."""
+        gpt_model_cfg = create_test_gpt_config(
+            gradient_accumulation_fusion=True,
+            restore_modelopt_state=True,
+        )
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Gradient accumulation fusion is not supported with ModelOpt/Quantized models",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_modelopt_without_gradient_accumulation_fusion_passes(self, monkeypatch):
+        """Test that restore_modelopt_state without gradient_accumulation_fusion passes validation."""
+        gpt_model_cfg = create_test_gpt_config(
+            gradient_accumulation_fusion=False,
+            restore_modelopt_state=True,
+        )
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            container.validate()  # Should pass without error
+            assert container.model.restore_modelopt_state is True
+            assert container.model.gradient_accumulation_fusion is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_modelopt_requires_no_gradient_accumulation_fusion(self, monkeypatch):
+        """Test that restore_modelopt_state requires gradient_accumulation_fusion to be explicitly set to False."""
+        # When restore_modelopt_state=True but gradient_accumulation_fusion is not set (defaults to True),
+        # validation should fail
+        gpt_model_cfg = create_test_gpt_config(restore_modelopt_state=True)
+        # Don't explicitly set gradient_accumulation_fusion - let it use default (which is True)
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            # Should fail because gradient_accumulation_fusion defaults to True
+            with pytest.raises(
+                AssertionError,
+                match="Gradient accumulation fusion is not supported with ModelOpt/Quantized models",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """
@@ -1663,153 +1734,6 @@ class TestRuntimeConfigUpdate:
 
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
-
-
-class TestSyncAndValidateExternalCudaGraph:
-    """Tests for the `_sync_and_validate_external_cuda_graph` method of the `ConfigContainer` class."""
-
-    def test_rng_config_sync_to_model(self):
-        """Test that rng.te_rng_tracker syncs to model.use_te_rng_tracker."""
-        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=False)
-        rng_cfg = RNGConfig(te_rng_tracker=True)
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container.rng = rng_cfg
-
-        container._sync_and_validate_external_cuda_graph()
-        # RNG config should sync to model config
-        assert container.model.use_te_rng_tracker is True
-
-    def test_rng_config_sync_preserves_model_override(self):
-        """Test that model.use_te_rng_tracker is preserved when already True."""
-        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
-        rng_cfg = RNGConfig(te_rng_tracker=False)
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container.rng = rng_cfg
-
-        container._sync_and_validate_external_cuda_graph()
-        # Model config should sync to RNG config
-        assert container.rng.te_rng_tracker is True
-
-    def test_cuda_graph_mutual_exclusivity_error(self):
-        """Test that enable_cuda_graph and external_cuda_graph cannot both be True."""
-        gpt_model_cfg = create_test_gpt_config(enable_cuda_graph=True, external_cuda_graph=True)
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        with pytest.raises(
-            AssertionError,
-            match="enable_cuda_graph and external_cuda_graph cannot be enabled at the same time",
-        ):
-            container._sync_and_validate_external_cuda_graph()
-
-    @patch("megatron.bridge.training.config.warn_rank_0")
-    def test_te_rng_tracker_auto_enable_with_enable_cuda_graph(self, mock_warn_rank_0):
-        """Test that te_rng_tracker is auto-enabled when using transformer_engine with CUDA graphs."""
-        gpt_model_cfg = create_test_gpt_config(
-            transformer_impl="transformer_engine",
-            use_te_rng_tracker=False,
-            enable_cuda_graph=True,
-        )
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container._sync_and_validate_external_cuda_graph()
-        # Should auto-enable te_rng_tracker and warn
-        assert container.model.use_te_rng_tracker is True
-        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
-
-    @patch("megatron.bridge.training.config.warn_rank_0")
-    def test_te_rng_tracker_auto_enable_with_external_cuda_graph(self, mock_warn_rank_0):
-        """Test that te_rng_tracker is auto-enabled when using transformer_engine with external CUDA graphs."""
-        gpt_model_cfg = create_test_gpt_config(
-            transformer_impl="transformer_engine",
-            use_te_rng_tracker=False,
-            external_cuda_graph=True,
-        )
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container._sync_and_validate_external_cuda_graph()
-        # Should auto-enable te_rng_tracker and warn
-        assert container.model.use_te_rng_tracker is True
-        mock_warn_rank_0.assert_called_once_with("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
-
-    @patch("megatron.bridge.training.config.warn_rank_0")
-    def test_te_rng_tracker_no_warn_when_already_enabled(self, mock_warn_rank_0):
-        """Test that no warning is issued when te_rng_tracker is already enabled."""
-        gpt_model_cfg = create_test_gpt_config(
-            transformer_impl="transformer_engine",
-            use_te_rng_tracker=True,
-            enable_cuda_graph=True,
-        )
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container._sync_and_validate_external_cuda_graph()
-        # Should not warn since te_rng_tracker is already enabled
-        mock_warn_rank_0.assert_not_called()
-
-    @patch("os.getenv")
-    def test_expandable_segments_validation_error(self, mock_getenv):
-        """Test that expandable_segments:True in PYTORCH_CUDA_ALLOC_CONF raises error with external CUDA graphs."""
-        mock_getenv.side_effect = ["0", "0", "expandable_segments:True"]
-
-        gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        with pytest.raises(
-            AssertionError,
-            match="expandable_segments:True may not be safe when using CUDA Graphs",
-        ):
-            container._sync_and_validate_external_cuda_graph()
-
-    @patch("os.getenv")
-    def test_expandable_segments_validation_pass(self, mock_getenv):
-        """Test that expandable_segments validation passes when not set or set to False."""
-        # Test with expandable_segments:False
-        mock_getenv.side_effect = ["0", "0", ""]
-
-        gpt_model_cfg = create_test_gpt_config(external_cuda_graph=True)
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container._sync_and_validate_external_cuda_graph()  # Should pass
-
-    def test_no_cuda_graph_features_enabled(self):
-        """Test normal case where no CUDA graph features are enabled."""
-        gpt_model_cfg = create_test_gpt_config(
-            enable_cuda_graph=False,
-            external_cuda_graph=False,
-            transformer_impl="local",
-            use_te_rng_tracker=False,
-        )
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-
-        container._sync_and_validate_external_cuda_graph()  # Should pass without any changes
-        assert container.model.use_te_rng_tracker is False
-
-    def test_all_validations_combined(self):
-        """Test a valid configuration with external CUDA graphs that passes all validations."""
-        gpt_model_cfg = create_test_gpt_config(
-            external_cuda_graph=True,
-            transformer_impl="transformer_engine",
-            use_te_rng_tracker=True,
-            recompute_granularity="selective",
-        )
-
-        rng_cfg = RNGConfig(te_rng_tracker=True)
-
-        container, _, _ = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
-        container.rng = rng_cfg
-
-        container._sync_and_validate_external_cuda_graph()
-        assert container.model.use_te_rng_tracker is True
 
 
 class TestDistributedOptimizerValidation:

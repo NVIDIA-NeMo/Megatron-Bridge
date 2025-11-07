@@ -26,7 +26,7 @@ QWEN_VL_PRETRAIN_RECIPES = [
     (
         qwen25_vl_3b_finetune_config,
         "qwen25_vl_3b",
-        {"tensor_parallelism": 2, "pipeline_parallelism": 1},
+        {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 2},
     ),
 ]

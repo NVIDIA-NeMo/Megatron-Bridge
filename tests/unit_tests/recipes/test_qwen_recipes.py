@@ -45,9 +45,9 @@ def _safe_overrides_for(name: str) -> dict:
         "micro_batch_size": 1,
         "seq_length": 64,
         # Keep parallelism tiny so provider shaping is trivial
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
     }
 
     # Detect if this is a finetune recipe
@@ -83,9 +83,9 @@ def _safe_overrides_for(name: str) -> dict:
     if "a3b" in lname or "a22b" in lname or "moe" in lname:
         overrides.update(
             {
-                "expert_parallelism": 2,
-                "expert_tensor_parallelism": 1,
-                "sequence_parallelism": True,
+                "expert_model_parallel_size": 2,
+                "expert_tensor_parallel_size": 1,
+                "sequence_parallel": True,
             }
         )
 
@@ -94,6 +94,10 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     # Minimal provider to accept attribute assignments used in recipes
+
+    def __init__(self):
+        self.cross_entropy_fusion_impl = "native"
+
     def finalize(self):
         # qwen3 recipe may call finalize(); make it a no-op
         return None
@@ -172,6 +176,10 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     # Parallelism and shaping
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+    recipe_name = recipe_func.__name__.lower()
+    if "qwen3" in recipe_name and "pretrain" in recipe_name and "next" not in recipe_name:
+        assert cfg.model.cross_entropy_fusion_impl == "te"
 
     # Finetuning-specific assertions
     if is_finetune:

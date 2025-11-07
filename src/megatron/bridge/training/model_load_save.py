@@ -253,7 +253,7 @@ def build_and_load_model(
     from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _mamba_provider
     from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
-    if has_modelopt_state(checkpoint_path):
+    if has_modelopt_state(checkpoint_path, ignore_kd_state=True):
         if hasattr(model_cfg, "restore_modelopt_state"):
             model_cfg.restore_modelopt_state = True
 

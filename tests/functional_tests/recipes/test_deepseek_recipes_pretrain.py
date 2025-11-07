@@ -27,13 +27,13 @@ DEEPSEEK_PRETRAIN_RECIPES = [
     (
         deepseek_v2_lite_config,
         "deepseek_v2_lite",
-        {"tensor_parallelism": 1, "pipeline_parallelism": 1, "expert_parallelism": 1},
+        {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1, "expert_model_parallel_size": 1},
         {"num_layers": 2, "num_moe_experts": 8, "moe_router_topk": 1, "moe_layer_freq": [0, 1]},
     ),
     # (
     #     deepseek_v3_config,
     #     "deepseek_v3",
-    #     {"tensor_parallelism": 2, "pipeline_parallelism": 1, "expert_parallelism": 1},
+    #     {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1, "expert_model_parallel_size": 1},
     #     {
     #         "num_layers": 2,
     #         "num_moe_experts": 8,

@@ -46,9 +46,9 @@ def _safe_overrides_for(name: str) -> dict:
         "lr": 1e-4,
         "min_lr": 1e-5,
         "lr_warmup_iters": 2,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
         "use_null_tokenizer": True,
     }
 
@@ -57,8 +57,8 @@ def _safe_overrides_for(name: str) -> dict:
     if "70b" in lname or "405b" in lname:
         overrides.update(
             {
-                "virtual_pipeline_parallelism": None,
-                "sequence_parallelism": True,
+                "virtual_pipeline_model_parallel_size": None,
+                "sequence_parallel": True,
             }
         )
     elif "low_precision" in lname:  # low precision recipes need an additional precision argument
@@ -72,6 +72,9 @@ def _safe_overrides_for(name: str) -> dict:
 
 
 class _FakeModelCfg:
+    def __init__(self):
+        self.cross_entropy_fusion_impl = "native"
+
     def finalize(self):
         return None
 
@@ -124,3 +127,6 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+    if "llama3" in recipe_func.__name__.lower():
+        assert cfg.model.cross_entropy_fusion_impl == "te"
