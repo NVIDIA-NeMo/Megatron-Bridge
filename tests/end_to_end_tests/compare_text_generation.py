@@ -41,6 +41,18 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_last_rank, get_rank_safe, print_rank_0
 
 
+def _safe_destroy_distributed():
+    """
+    Destroy model parallel and global process groups if initialized.
+
+    Must be called by all ranks.
+    """
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+        parallel_state.destroy_model_parallel()
+        torch.distributed.destroy_process_group()
+
+
 def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) -> list[str]:
     """
     Generate text from a HuggingFace model using transformers.
@@ -266,11 +278,8 @@ def import_hf_to_megatron(
 
         print(f"✅ Successfully imported model to: {megatron_path}")
 
-    if torch.distributed.is_initialized():
-        # Destroy process groups created by import ckpt
-        torch.distributed.barrier()
-        parallel_state.destroy_model_parallel()
-        torch.distributed.destroy_process_group()
+    # Destroy process groups created by import ckpt
+    _safe_destroy_distributed()
 
 
 def megatron_generate_from_checkpoint(
@@ -328,7 +337,13 @@ def megatron_generate_from_checkpoint(
     megatron_model = build_and_load_model(str(checkpoint_path), model_provider)
     tokenizer = load_tokenizer(str(checkpoint_path))
 
-    return megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
+    generated_text = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
+
+    # each tested generation method should recreate this, since
+    # user will likely use these methods in isolation
+    _safe_destroy_distributed()
+
+    return generated_text
 
 
 def parse_cli_args():
