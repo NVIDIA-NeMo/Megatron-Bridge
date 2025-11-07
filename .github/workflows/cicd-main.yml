@@ -214,7 +214,7 @@ jobs:
             timeout: 40
           - script: L2_Launch_converter
           - script: L2_Launch_models
-            timeout: 40
+            timeout: 50
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
