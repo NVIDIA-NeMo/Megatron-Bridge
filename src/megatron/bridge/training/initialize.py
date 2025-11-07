@@ -21,6 +21,8 @@ import torch
 import torch.distributed
 import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.hyper_comm_grid import HyperCommGrid
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
 from megatron.core.fusions.fused_bias_swiglu import bias_swiglu
@@ -29,7 +31,14 @@ from megatron.core.num_microbatches_calculator import (
     init_num_microbatches_calculator,
 )
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
-from megatron.core.utils import configure_nvtx_profiling, get_te_version, is_te_min_version, is_torch_min_version
+from megatron.core.utils import (
+    configure_nvtx_profiling,
+    get_pg_rank,
+    get_pg_size,
+    get_te_version,
+    is_te_min_version,
+    is_torch_min_version,
+)
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
@@ -49,7 +58,7 @@ def initialize_megatron(
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]] = None,
     restart_store: Optional[torch.distributed.Store] = None,
-) -> Optional[Callable[[], None]]:
+) -> ProcessGroupCollection:
     """Initialize Megatron core components and distributed setup.
 
     Sets up logging, initializes distributed environment (torch.distributed),
@@ -132,7 +141,7 @@ def torch_dist_init(
     skip_mpu_initialization: bool,
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
-) -> Optional[Callable[[], None]]:
+) -> ProcessGroupCollection:
     """Initialize torch.distributed and dependent components.
 
     Handles the core distributed setup, including process group initialization,
@@ -154,9 +163,9 @@ def torch_dist_init(
         or lazy_mpu_init is True, otherwise None.
     """
 
-    def finish_mpu_init():
+    def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
-        _initialize_distributed(
+        pg_collection = _initialize_distributed(
             model_config=model_config,
             dist_config=dist_config,
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
@@ -175,31 +184,26 @@ def torch_dist_init(
             rng_config.te_rng_tracker,
             rng_config.inference_rng_tracker,
             use_cudagraphable_rng=(model_config.cuda_graph_impl != "none"),
+            pg_collection=pg_collection,
         )
 
         if model_config.num_moe_experts is not None:
             MoEAuxLossAutoScaler.set_loss_scale(torch.ones(1, device=torch.cuda.current_device()))
+        return pg_collection
 
     if skip_mpu_initialization:
-        return None
+        raise RuntimeError("skip_mpu_initialization is not supported in this flow.")
 
     if dist_config.lazy_init:
-        # delayed initialization of DDP-related stuff
-        # We only set basic DDP globals
-        parallel_state.set_tensor_model_parallel_world_size(model_config.tensor_model_parallel_size)
-        # and return function for external DDP manager
-        # to call when it has DDP initialized
-        parallel_state.set_tensor_model_parallel_rank(get_rank_safe())
-        return finish_mpu_init
-    else:
-        # Megatron's MPU is the master. Complete initialization right away.
-        finish_mpu_init()
+        raise RuntimeError("lazy_init is not supported; initialize process groups immediately.")
 
-        if model_config.tp_comm_overlap:
-            _initialize_tp_communicators(model_config, micro_batch_size)
+    # Megatron's MPU is the master. Complete initialization right away.
+    pg_collection = finish_mpu_init()
 
-        # No continuation function
-        return None
+    if model_config.tp_comm_overlap:
+        _initialize_tp_communicators(model_config, micro_batch_size)
+
+    return pg_collection
 
 
 def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> None:
@@ -349,6 +353,135 @@ def _initialize_tp_communicators(model_config: GPTModelProvider | T5ModelProvide
         )
 
 
+def _create_pg_collection(
+    model_config: GPTModelProvider | T5ModelProvider, num_distributed_optimizer_instances: int
+) -> ProcessGroupCollection:
+    """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
+    world_size = torch.distributed.get_world_size()
+    tp_size = int(model_config.tensor_model_parallel_size)
+    pp_size = int(model_config.pipeline_model_parallel_size)
+    cp_size = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
+    model_size = tp_size * pp_size * cp_size
+    if world_size % model_size != 0:
+        raise RuntimeError(f"world_size ({world_size}) is not divisible by {model_size}")
+    dp_size = world_size // model_size
+
+    grid = HyperCommGrid(
+        shape=[tp_size, cp_size, pp_size, dp_size],
+        dim_names=["tp", "cp", "pp", "dp"],
+        rank_offset=0,
+        backend="nccl",
+    )
+    # Core groups
+    tp_pg = grid.create_pg(["tp"])
+    cp_pg = grid.create_pg(["cp"])
+    pp_pg = grid.create_pg(["pp"])
+    dp_pg = grid.create_pg(["dp"])
+    mp_pg = grid.create_pg(["tp", "pp"])
+    tp_cp_pg = grid.create_pg(["tp", "cp"])
+    tp_dp_pg = grid.create_pg(["tp", "dp"])
+    tp_dp_cp_pg = grid.create_pg(["tp", "dp", "cp"])
+    dp_cp_pg = grid.create_pg(["dp", "cp"])
+
+    # Embedding and position-embedding groups: pick the group this rank belongs to.
+    current_rank = torch.distributed.get_rank()
+    embd_pg = None
+    pos_embd_pg = None
+    # Enumerate ranks per PP group
+    pp_rank_lists = grid._gen_rank_enum(['pp'])
+    # Determine embedding ranks for each pp group
+    for ranks in pp_rank_lists:
+        if not ranks:
+            continue
+        # embedding_ranks: first and last pp stage (or only one if pp_size==1)
+        embedding_ranks = [ranks[0]] if len(ranks) == 1 else [ranks[0], ranks[-1]]
+        position_embedding_ranks = [ranks[0]]
+        if current_rank in embedding_ranks and embd_pg is None:
+            embd_pg, _ = torch.distributed.new_subgroups_by_enumeration([embedding_ranks], backend="nccl")
+        if current_rank in position_embedding_ranks and pos_embd_pg is None:
+            pos_embd_pg, _ = torch.distributed.new_subgroups_by_enumeration(
+                [position_embedding_ranks], backend="nccl"
+            )
+
+    # Expert/MoE related groups (refer to original parallel_state.initialize_model_parallel)
+    expert_tp_size = int(model_config.expert_tensor_parallel_size) if getattr(model_config, "expert_tensor_parallel_size", None) else tp_size
+    ep_size = int(model_config.expert_model_parallel_size) if getattr(model_config, "expert_model_parallel_size", 1) else 1
+    # Expert data-parallel size folds CP into DP (as in original expert rank generator)
+    expt_model_block = expert_tp_size * ep_size * pp_size
+    if world_size % expt_model_block != 0:
+        raise RuntimeError(
+            f"world_size ({world_size}) is not divisible by expert_tensor_model_pipeline size ({expt_model_block})"
+        )
+    expt_dp_size = world_size // expt_model_block
+    expert_grid = HyperCommGrid(
+        shape=[expert_tp_size, ep_size, pp_size, expt_dp_size],
+        dim_names=["tp", "ep", "pp", "dp"],
+        rank_offset=0,
+        backend="nccl",
+    )
+    ep_pg = expert_grid.create_pg(["ep"])
+    expt_tp_pg = expert_grid.create_pg(["tp"])
+    tp_ep_pg = expert_grid.create_pg(["tp", "ep"])
+    tp_ep_pp_pg = expert_grid.create_pg(["tp", "ep", "pp"])
+    expt_dp_pg = expert_grid.create_pg(["dp"])
+
+    # Build Partial-Distributed-Optimizer groups for Expert DP when multiple instances are used.
+    intra_expt_dp_pg = None
+    inter_dist_opt_pg = None
+    intra_dist_opt_pg = None
+    if num_distributed_optimizer_instances > 1:
+        assert (
+            expt_dp_size % num_distributed_optimizer_instances == 0
+        ), "Expert DP size must be divisible by the number of optimizer instances."
+        intra_size = expt_dp_size // num_distributed_optimizer_instances
+        # Enumerate expert DP ranks per (tp, ep, pp) block
+        expt_dp_rank_lists = expert_grid._gen_rank_enum(['dp'])
+        # Build intra (rows) and inter (columns) groups
+        intra_groups = []
+        inter_groups = []
+        for dp_list in expt_dp_rank_lists:
+            if not dp_list:
+                continue
+            # rows: contiguous chunks within dp_list
+            rows = [dp_list[i * intra_size : (i + 1) * intra_size] for i in range(num_distributed_optimizer_instances)]
+            intra_groups.extend(rows)
+            # columns: same position across instances
+            for col in range(intra_size):
+                inter_groups.append([rows[i][col] for i in range(num_distributed_optimizer_instances)])
+        # Create groups and pick the one containing current rank
+        if intra_groups:
+            intra_expt_dp_pg, _ = torch.distributed.new_subgroups_by_enumeration(intra_groups, backend="nccl")
+            # Use intra_expt_dp as the per-instance grad-stats group
+            intra_dist_opt_pg = intra_expt_dp_pg
+        if inter_groups:
+            inter_dist_opt_pg, _ = torch.distributed.new_subgroups_by_enumeration(inter_groups, backend="nccl")
+
+    # Build ProcessGroupCollection with available groups.
+    pg_collection = ProcessGroupCollection(
+        tp=tp_pg,
+        pp=pp_pg,
+        mp=mp_pg,
+        embd=embd_pg,
+        pos_embd=pos_embd_pg,
+        cp=cp_pg,
+        tp_cp=tp_cp_pg,
+        hcp=None,
+        ep=ep_pg,
+        expt_tp=expt_tp_pg,
+        tp_ep=tp_ep_pg,
+        tp_ep_pp=tp_ep_pp_pg,
+        tp_dp_cp=tp_dp_cp_pg,
+        dp=dp_pg,
+        dp_cp=dp_cp_pg,
+        expt_dp=expt_dp_pg,
+        intra_dp_cp=dp_cp_pg,
+        intra_expt_dp=intra_expt_dp_pg if intra_expt_dp_pg is not None else expt_dp_pg,
+        inter_dist_opt=inter_dist_opt_pg,
+        intra_dist_opt=intra_dist_opt_pg,
+    )
+    return pg_collection
+
+
 def _initialize_distributed(
     model_config: GPTModelProvider | T5ModelProvider,
     dist_config: DistributedInitConfig,
@@ -357,7 +490,7 @@ def _initialize_distributed(
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     restart_store: Optional[torch.distributed.Store] = None,
     use_inprocess_restart: bool = False,
-) -> None:
+) -> ProcessGroupCollection:
     """Initialize torch.distributed and core model parallel."""
 
     device_count = torch.cuda.device_count()
@@ -411,40 +544,16 @@ def _initialize_distributed(
             torch.distributed.barrier(device_ids=[get_local_rank_preinit()])
 
     # Set the tensor model-parallel, pipeline model-parallel, and
-    # data-parallel communicators.
+    # data-parallel communicators using HyperCommGrid and populate a ProcessGroupCollection.
     if device_count > 0:
-        if parallel_state.model_parallel_is_initialized():
-            print("model parallel is already initialized")
-        else:
-            parallel_state.initialize_model_parallel(
-                tensor_model_parallel_size=model_config.tensor_model_parallel_size,
-                pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
-                virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
-                pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
-                context_parallel_size=model_config.context_parallel_size,
-                hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
-                expert_model_parallel_size=model_config.expert_model_parallel_size,
-                num_distributed_optimizer_instances=num_distributed_optimizer_instances,
-                expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
-                distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
-                nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
-                order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-pp-dp",
-                get_embedding_ranks=get_embedding_ranks,
-                get_position_embedding_ranks=get_position_embedding_ranks,
-                create_gloo_process_groups=dist_config.use_gloo_process_groups,
-                use_sharp=dist_config.use_sharp,
-                high_priority_stream_groups=dist_config.high_priority_stream_groups,
-                sharp_enabled_group=dist_config.sharp_enabled_group,
-            )
-            if get_rank_safe() == 0:
-                print(
-                    f"> initialized tensor model parallel with size "
-                    f"{parallel_state.get_tensor_model_parallel_world_size()}"
-                )
-                print(
-                    f"> initialized pipeline model parallel with size "
-                    f"{parallel_state.get_pipeline_model_parallel_world_size()}"
-                )
+        pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
+        if get_rank_safe() == 0:
+            tp = int(model_config.tensor_model_parallel_size)
+            pp = int(model_config.pipeline_model_parallel_size)
+            cp = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
+            dp = torch.distributed.get_world_size() // (tp * pp * cp)
+            print(f"> initialized HyperCommGrid with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+        return pg_collection
 
 
 def _set_random_seed(
@@ -453,6 +562,8 @@ def _set_random_seed(
     te_rng_tracker: bool = False,
     inference_rng_tracker: bool = False,
     use_cudagraphable_rng: bool = False,
+    *,
+    pg_collection: ProcessGroupCollection,
 ) -> None:
     """Set random seed for reproducability."""
     assert seed_ is not None and seed_ > 0, f"Seed ({seed_}) should be a positive integer."
@@ -462,16 +573,30 @@ def _set_random_seed(
     import numpy as np
 
     # Ensure that different pipeline MP stages get different seeds.
-    seed = seed_ + (100 * parallel_state.get_pipeline_model_parallel_rank())
+    current_rank = torch.distributed.get_rank()
+    pp_rank = torch.distributed.get_group_rank(pg_collection.pp, current_rank)
+    seed = seed_ + (100 * pp_rank)
     # Ensure different data parallel ranks get different seeds
     if data_parallel_random_init:
-        seed = seed + (10 * parallel_state.get_data_parallel_rank())
+        dp_rank = torch.distributed.get_group_rank(pg_collection.dp, current_rank)
+        seed = seed + (10 * dp_rank)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.device_count() > 0:
+        # Derive TP/EP/ETP ranks from provided process groups using helper utils
+        tp_rank = get_pg_rank(pg_collection.tp)
+        ep_rank = get_pg_rank(pg_collection.ep)
+        etp_rank = get_pg_rank(pg_collection.expt_tp)
+
         tensor_parallel.model_parallel_cuda_manual_seed(
-            seed, te_rng_tracker, inference_rng_tracker, use_cudagraphable_rng
+            seed,
+            te_rng_tracker,
+            inference_rng_tracker,
+            use_cudagraphable_rng,
+            tp_rank=tp_rank,
+            ep_rank=ep_rank,
+            etp_rank=etp_rank,
         )
 
 

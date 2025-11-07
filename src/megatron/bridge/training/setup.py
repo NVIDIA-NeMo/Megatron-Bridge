@@ -124,12 +124,13 @@ def setup(
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
-    initialize_megatron(
+    pg_collection = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         restart_store=restart_store,
     )
+    cfg.model.pg_collection = pg_collection
 
     timers = state.timers
 
@@ -152,9 +153,6 @@ def setup(
 
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
-
-    # Initialize process group collection once and pass through
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -226,6 +224,7 @@ def setup(
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
         no_weight_decay_cond=no_weight_decay_cond,
+        pg_collection=pg_collection,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")

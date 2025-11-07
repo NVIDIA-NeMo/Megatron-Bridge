@@ -119,7 +119,8 @@ def get_batch(
     )
 
     # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank(batch)
+    # need to fix for m4
+    # batch = get_batch_on_this_cp_rank(batch)
 
     return (
         batch["tokens"],

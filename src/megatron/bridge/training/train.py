@@ -34,7 +34,7 @@ from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
-from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func, forward_backward_no_pipelining
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -570,12 +570,13 @@ def train_step(
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-            model,
-            seq_length=model_config.seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
-        )
+        # adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+        #     model,
+        #     seq_length=model_config.seq_length,
+        #     micro_batch_size=train_config.micro_batch_size,
+        #     decoder_seq_length=model_config.seq_length,
+        # )
+        adjust_tensor_shapes_fn = None
 
         # Forward pass.
         if cfg.model.cuda_graph_impl == "local" and cfg.model.cuda_graph_scope == "full_iteration":
@@ -583,7 +584,8 @@ def train_step(
                 get_forward_backward_func(), cuda_graph_warmup_steps=cfg.model.cuda_graph_warmup_steps
             )
         else:
-            forward_backward_func = get_forward_backward_func()
+            # need to fix for m4
+            forward_backward_func = forward_backward_no_pipelining
 
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
@@ -595,6 +597,7 @@ def train_step(
             decoder_seq_length=seq_length,
             forward_only=False,
             adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            pg_collection=pg_collection,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:

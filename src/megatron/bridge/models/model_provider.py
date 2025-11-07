@@ -166,10 +166,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
-        if not parallel_state.is_initialized():
-            print("Model parallel not initialized, initializing...")
-            self.initialize_model_parallel(seed=0)
-        pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        pg_collection = getattr(self, "pg_collection", None)
+        if pg_collection is None:
+            raise RuntimeError("ProcessGroupCollection missing; ensure setup attached it to the model provider.")
 
         # Convert list of hooks to a single composed callable
         if isinstance(pre_wrap_hook, list):

@@ -30,6 +30,7 @@ def setup_optimizer(
     no_weight_decay_cond: Optional[Callable[[str, nn.Parameter], bool]] = None,
     scale_lr_cond: Optional[Callable[[str, nn.Parameter], bool]] = None,
     lr_mult: float = 1.0,
+    pg_collection=None,
 ) -> tuple[MegatronOptimizer, OptimizerParamScheduler]:
     """Set up the optimizer and scheduler.
 
@@ -45,6 +46,7 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
+    use_gloo_process_groups = False
     optimizer = get_megatron_optimizer(
         optimizer_config,
         model,
@@ -52,6 +54,7 @@ def setup_optimizer(
         scale_lr_cond,
         lr_mult,
         use_gloo_process_groups=use_gloo_process_groups,
+        pg_collection=pg_collection,
     )
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
