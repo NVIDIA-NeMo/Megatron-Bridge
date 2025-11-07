@@ -80,7 +80,7 @@ jobs:
     environment: nemo-ci
     if: |
       (
-        success() 
+        success()
         || needs.pre-flight.outputs.is_ci_workload == 'true'
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
@@ -88,6 +88,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup python
         uses: actions/setup-python@v5
@@ -212,13 +214,14 @@ jobs:
             timeout: 40
           - script: L2_Launch_converter
           - script: L2_Launch_models
-            timeout: 40
+            timeout: 50
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
+          - script: L2_Launch_quantization
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |

@@ -1094,6 +1094,77 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_modelopt_with_gradient_accumulation_fusion_fails(self, monkeypatch):
+        """Test that restore_modelopt_state with gradient_accumulation_fusion raises AssertionError."""
+        gpt_model_cfg = create_test_gpt_config(
+            gradient_accumulation_fusion=True,
+            restore_modelopt_state=True,
+        )
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="Gradient accumulation fusion is not supported with ModelOpt/Quantized models",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_modelopt_without_gradient_accumulation_fusion_passes(self, monkeypatch):
+        """Test that restore_modelopt_state without gradient_accumulation_fusion passes validation."""
+        gpt_model_cfg = create_test_gpt_config(
+            gradient_accumulation_fusion=False,
+            restore_modelopt_state=True,
+        )
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            container.validate()  # Should pass without error
+            assert container.model.restore_modelopt_state is True
+            assert container.model.gradient_accumulation_fusion is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_modelopt_requires_no_gradient_accumulation_fusion(self, monkeypatch):
+        """Test that restore_modelopt_state requires gradient_accumulation_fusion to be explicitly set to False."""
+        # When restore_modelopt_state=True but gradient_accumulation_fusion is not set (defaults to True),
+        # validation should fail
+        gpt_model_cfg = create_test_gpt_config(restore_modelopt_state=True)
+        # Don't explicitly set gradient_accumulation_fusion - let it use default (which is True)
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+        try:
+            # Should fail because gradient_accumulation_fusion defaults to True
+            with pytest.raises(
+                AssertionError,
+                match="Gradient accumulation fusion is not supported with ModelOpt/Quantized models",
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestRerunConfigValidation:
     """

@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
+# Ensure required packages are installed
+pip install -q datasets
 
-def get_perf_matrix_overrides(yaml_root: Any, args: Any) -> Any:
-    """Get the performance matrix overrides from the YAML file."""
-    perf = yaml_root.get("perf_matrix") if hasattr(yaml_root, "get") else None
-    if not perf:
-        return
-    if args.gpu not in perf:
-        return
-    num_gpus_value = args.num_gpus or args.gpus_per_node
-    num_gpus_yaml_key = f"num_gpus_{num_gpus_value}"
-    gpu_block = perf.get(args.gpu) or {}
-    preset = gpu_block.get(num_gpus_yaml_key) or {}
+export CUDA_VISIBLE_DEVICES="0,1"
 
-    return preset
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/quantization/test_qat_workflow.py
+coverage combine -q
+
