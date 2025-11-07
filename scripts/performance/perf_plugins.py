@@ -376,14 +376,13 @@ class PerfEnvPlugin(Plugin):
             pp_size,
             moe_a2a_overlap=moe_a2a_overlap,
             enable_deepep=enable_deepep,
-            gpu_sm100_or_newer=self.gpu_sm100_or_newer,
+            gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
         layernorm_sm_margin = 20 if enable_deepep else 16
-        enable_layernorm_sm_margin = self.gpu in ["b200", "gb200", "gb300"]
         self._set_layernorm_sm_margin(
-            task, executor, enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
+            task, executor, self.enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
         )
 
         # Set the chunk size of P2P communications
