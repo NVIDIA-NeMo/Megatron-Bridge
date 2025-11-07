@@ -53,6 +53,14 @@ def _safe_destroy_distributed():
         torch.distributed.destroy_process_group()
 
 
+def validate_path(path: str, must_exist: bool = False) -> Path:
+    """Validate and convert string path to Path object."""
+    path_obj = Path(path)
+    if must_exist and not path_obj.exists():
+        raise ValueError(f"Path does not exist: {path}")
+    return path_obj
+
+
 def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) -> list[str]:
     """
     Generate text from a HuggingFace model using transformers.
@@ -282,6 +290,39 @@ def import_hf_to_megatron(
     _safe_destroy_distributed()
 
 
+def export_megatron_to_hf(
+    hf_model: str,
+    megatron_path: str,
+    hf_path: str,
+) -> None:
+    """
+    Export a Megatron checkpoint to HuggingFace format.
+
+    Args:
+        hf_model: HuggingFace model ID or path to model directory
+        megatron_path: Directory path where the Megatron checkpoint is stored
+        hf_path: Directory path where the HuggingFace model will be saved
+    """
+    if get_rank_safe() == 0:
+        print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
+
+        # Validate megatron checkpoint exists
+        checkpoint_path = validate_path(megatron_path, must_exist=True)
+        print(f"📂 Found Megatron checkpoint: {checkpoint_path}")
+
+        bridge = AutoBridge.from_hf_pretrained(hf_model)
+        print("📤 Exporting to HuggingFace format...")
+        bridge.export_ckpt(
+            megatron_path=megatron_path,
+            hf_path=hf_path,
+        )
+
+        print(f"✅ Successfully exported model to: {hf_path}")
+
+    # Destroy process groups created by export ckpt
+    _safe_destroy_distributed()
+
+
 def megatron_generate_from_checkpoint(
     megatron_path: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
 ) -> list[str]:
@@ -363,6 +404,10 @@ def parse_cli_args():
     parser.add_argument("--torch-dtype", choices=["float32", "float16", "bfloat16"], help="Model precision")
     parser.add_argument("--device-map", help='Device placement strategy (e.g., "auto", "cuda:0")')
 
+    # Export arguments
+    parser.add_argument(
+        "--hf-save-path", required=True, help="Directory path where the export HuggingFace checkpoint will be saved."
+    )
     # Parallelism settings
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
@@ -385,7 +430,9 @@ def main():
         args.megatron_path, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp
     )
 
-    # TODO: Generate from exported checkpoint
+    # Generate from exported checkpoint
+    export_megatron_to_hf(args.hf_model_id, args.megatron_path, args.hf_save_path)
+    _ = transformers_generate(args.hf_save_path, args.prompt, args.max_new_tokens)
 
     # TODO: Compare
 
