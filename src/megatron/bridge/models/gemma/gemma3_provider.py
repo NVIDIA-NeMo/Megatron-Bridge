@@ -252,6 +252,7 @@ class Gemma3SelfAttention(SelfAttention):
         rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
+        rotary_pos_cos_sin: Optional[Tensor] = None,
         attention_bias: Optional[Tensor] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
@@ -260,7 +261,7 @@ class Gemma3SelfAttention(SelfAttention):
     ) -> Tuple[Tensor, Tensor]:
         """Switch to either local or global rope embedding before forward"""
         assert isinstance(rotary_pos_emb, tuple)
-        assert rotary_pos_cos is None and rotary_pos_sin is None
+        assert rotary_pos_cos is None and rotary_pos_sin is None and rotary_pos_cos_sin is None
 
         if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
             final_rotary_pos_emb = rotary_pos_emb[0]
