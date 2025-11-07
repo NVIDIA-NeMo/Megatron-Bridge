@@ -43,49 +43,6 @@ SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 SCRIPT_NAME: str = "run_script.py"
 
 
-def set_perf_environment_variables(
-    executor_env_vars: dict,
-    model_name: str,
-    model_size: str,
-    gpu: str,
-    compute_dtype: str,
-    fp8_recipe: str,
-    use_tokendrop: bool,
-):
-    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
-        if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
-            executor_env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
-        if compute_dtype == "bf16" and (not use_tokendrop):
-            executor_env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
-
-    del_cudnn_ln = True
-
-    if gpu in ["h100"]:
-        if model_name == "llama3" and model_size == "8b":
-            if compute_dtype == "fp8" and fp8_recipe == "cs":
-                executor_env_vars["NCCL_NVLS_ENABLE"] = "1"
-                executor_env_vars["NCCL_CTA_POLICY"] = "1"
-                del_cudnn_ln = False
-
-    if gpu in ["gb200", "gb300"]:
-        if model_name == "llama3" and model_size == "70b":
-            if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
-                del_cudnn_ln = False
-        if model_name == ["llama31"] and model_size == "405b":
-            if compute_dtype == "fp8" and fp8_recipe == "cs":
-                del_cudnn_ln = False
-
-    if del_cudnn_ln:
-        if "NVTE_NORM_FWD_USE_CUDNN" in executor_env_vars:
-            executor_env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
-        if "NVTE_NORM_BWD_USE_CUDNN" in executor_env_vars:
-            executor_env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
-
-    return executor_env_vars
-
-
 def enable_deepep(gpu: str, model_name: str, model_size: str):
     return gpu in ["h100"] and model_name == "deepseek" and model_size == "v3"
 
@@ -167,9 +124,36 @@ def main(
     )
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    executor.env_vars = set_perf_environment_variables(
-        executor.env_vars, model_name, model_size, gpu, compute_dtype, fp8_recipe, use_tokendrop
-    )
+    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
+        if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
+        if compute_dtype == "bf16" and (not use_tokendrop):
+            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
+
+    del_cudnn_ln = True
+
+    if gpu in ["h100"]:
+        if model_name == "llama3" and model_size == "8b":
+            if compute_dtype == "fp8" and fp8_recipe == "cs":
+                executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                executor.env_vars["NCCL_CTA_POLICY"] = "1"
+                del_cudnn_ln = False
+
+    if gpu in ["gb200", "gb300"]:
+        if model_name == "llama3" and model_size == "70b":
+            if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
+                del_cudnn_ln = False
+        if model_name == ["llama31"] and model_size == "405b":
+            if compute_dtype == "fp8" and fp8_recipe == "cs":
+                del_cudnn_ln = False
+
+    if del_cudnn_ln:
+        if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
+        if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
+            executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
     exp_name = f"{model_name}_{model_size}_{domain}_{task}"(
         f"_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
