@@ -58,8 +58,8 @@ def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=False,
         layout=None,
     )
@@ -90,8 +90,8 @@ def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=False,
         layout=None,
     )
@@ -122,8 +122,8 @@ def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=False,
         layout=None,
     )
@@ -149,8 +149,8 @@ def deepseek_v3_h100_1024gpus_config(precision: str = "bf16", fp8_recipe: str = 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=True,
         layout="Et|(tt|)*30mL",
     )
