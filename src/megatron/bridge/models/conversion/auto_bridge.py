@@ -365,6 +365,7 @@ class AutoBridge(Generic[MegatronModelT]):
         path: str | Path,
         show_progress: bool = True,
         source_path: Optional[Union[str, Path]] = None,
+        strict: bool = True,
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -408,7 +409,7 @@ class AutoBridge(Generic[MegatronModelT]):
             # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
 
-        self.save_hf_weights(model, path, show_progress)
+        self.save_hf_weights(model, path, show_progress, strict)
 
     def save_hf_weights(
         self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
