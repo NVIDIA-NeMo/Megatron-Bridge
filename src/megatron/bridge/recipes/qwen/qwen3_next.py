@@ -99,6 +99,9 @@ class Qwen3NextFinetuneKwargs(Qwen3NextCommonKwargs, total=False):
     # Dataset configuration
     dataset_path: str | None
 
+    # Training params
+    finetune_lr: float
+
     # W&B logging
     wandb_project: str | None
     wandb_entity: str | None
@@ -406,7 +409,7 @@ def _qwen3_next_finetune_common(
     eval_interval: int = 30,
     save_interval: int = 50,
     # Optimizer
-    lr: float = 5e-6,
+    finetune_lr: float = 5e-6,
     min_lr: float = 0.0,
     lr_warmup_iters: int = 50,
     lr_decay_iters: int | None = None,  # Let config handle this
@@ -480,7 +483,7 @@ def _qwen3_next_finetune_common(
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters,
-        max_lr=lr,
+        max_lr=finetune_lr,
         min_lr=min_lr,
         adam_beta2=0.98,
     )
