@@ -93,22 +93,29 @@ def main(
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
+    enable_deepep = False
+    moe_a2a_overlap = False if moe_a2a_overlap is None else moe_a2a_overlap
+    if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
+        enable_deepep, moe_a2a_overlap = True, True
+
     parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
+
+    tp_size = tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size
+    pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
+    cp_size = cp_size if cp_size is not None else parallelism_defaults.context_parallel_size
 
     plugins = [
         PerfEnvPlugin(
             enable_vboost=enable_vboost,
             nccl_pp_comm_chunksize=2097152 if model_size in ["70b", "405b"] else None,
             gpu_sm100_or_newer=gpu in ["b200", "gb200", "gb300"],
-            layernorm_sm_margin=20 if enable_deepep(gpu, model_name, model_size) else 16,
+            layernorm_sm_margin=20 if enable_deepep else 16,
             num_gpus=num_gpus,
-            deepep_enabled=enable_deepep(gpu, model_name, model_size),
-            a2a_overlap=(
-                enable_moe_a2a_overlap(gpu, model_name, model_size) if moe_a2a_overlap is None else moe_a2a_overlap
-            ),
-            tp_size=tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size,
-            pp_size=pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size,
-            cp_size=cp_size if cp_size is not None else parallelism_defaults.context_parallel_size,
+            deepep_enabled=enable_deepep,
+            a2a_overlap=moe_a2a_overlap,
+            tp_size=tp_size,
+            pp_size=pp_size,
+            cp_size=cp_size,
         )
     ]
 
