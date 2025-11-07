@@ -781,14 +781,13 @@ class SafeTensorsStateSource(StateSource):
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
                     output_file_path = output_path / filename
                     save_file(tensors_to_save, output_file_path)
-                    
+
                     # Free memory by removing saved tensors from the buffer.
                     for key in tensors_to_save.keys():
                         del buffered_tensors[key]
 
                     all_saved_keys.update(keys_for_file)
                     del files_to_save[filename]
-
 
         if buffered_tensors:
             print(

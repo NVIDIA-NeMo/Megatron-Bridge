@@ -234,7 +234,9 @@ def main():
         "--hf-path", required=True, help="Directory path where the HuggingFace model will be saved"
     )
     export_parser.add_argument("--no-progress", action="store_true", help="Disable progress bar during export")
-    export_parser.add_argument("--not-strict", action="store_true", help="Allow source and target checkpoint to have different keys")
+    export_parser.add_argument(
+        "--not-strict", action="store_true", help="Allow source and target checkpoint to have different keys"
+    )
 
     args = parser.parse_args()
 

@@ -132,6 +132,11 @@ from megatron.bridge.models.nemotron import (
     NemotronBridge,
     NemotronModelProvider,
 )
+from megatron.bridge.models.nemotron_vl import (
+    NemotronNano12Bv2Provider,
+    NemotronVLBridge,
+    NemotronVLModel,
+)
 from megatron.bridge.models.nemotronh.nemotron_h_provider import (
     NemotronHModel4BProvider,
     NemotronHModel8BProvider,
@@ -181,11 +186,6 @@ from megatron.bridge.models.qwen_vl import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.nemotron_vl import (
-    NemotronVLBridge,
-    NemotronVLModel,
-    NemotronNano12Bv2Provider,
-)
 
 
 __all__ = [

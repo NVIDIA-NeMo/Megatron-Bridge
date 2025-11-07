@@ -1760,8 +1760,7 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             head_size = config.kv_channels
             num_query_groups = config.num_query_groups
             q, k, v = hf_weights.split(
-                [head_num * head_size, num_query_groups * head_size, num_query_groups * head_size],
-                dim=0
+                [head_num * head_size, num_query_groups * head_size, num_query_groups * head_size], dim=0
             )
             # Check if we're dealing with biases (1D tensors) or hf_weights (2D tensors)
             if q.ndim == 1:
@@ -1822,7 +1821,6 @@ class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
 
         return type(self)(resolved_megatron_param, resolved_hf_param)
-
 
 
 class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):

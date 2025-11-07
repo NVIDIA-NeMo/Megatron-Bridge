@@ -16,11 +16,10 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, ConcatenatedQKVMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
-from megatron.bridge.models.conversion.param_mapping import ConcatenatedQKVMapping
 
 
 @MegatronModelBridge.register_bridge(source="NemotronH_Nano_VL_V2", target=NemotronVLModel)
@@ -39,7 +38,9 @@ class NemotronVLBridge(MegatronModelBridge):
             hidden_size=hf_config.llm_config.hidden_size,
             ffn_hidden_size=hf_config.llm_config.intermediate_size,
             num_attention_heads=hf_config.llm_config.num_attention_heads,
-            num_query_groups=getattr(hf_config.llm_config, "num_key_value_heads", hf_config.llm_config.num_attention_heads // 2),
+            num_query_groups=getattr(
+                hf_config.llm_config, "num_key_value_heads", hf_config.llm_config.num_attention_heads // 2
+            ),
             init_method_std=hf_config.llm_config.initializer_range,
             layernorm_epsilon=getattr(hf_config.llm_config, "layer_norm_epsilon", 1e-5),
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.llm_config.vocab_size),
@@ -130,4 +131,3 @@ class NemotronVLBridge(MegatronModelBridge):
         AutoMapping.register_module_type("Conv1d", "column")
         AutoMapping.register_module_type("ExtendedRMSNorm", "column")
         return MegatronMappingRegistry(*mapping_list)
-

@@ -19,12 +19,13 @@ from typing import List, Literal, Optional
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import ParallelLinearAdapter, get_adapter_attributes_from_linear, is_expert_linear
-from megatron.core.utils import unwrap_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ class LoRA(PEFT, ModuleMatcher):
             return LoRALinear(module, adapter)
         return module
 
+
 @dataclass
 class VLMLoRA(LoRA):
     """
@@ -181,7 +183,6 @@ class VLMLoRA(LoRA):
             modules_to_freeze.append(model.vision_projection)
         if self.freeze_language_model and model.language_model is not None:
             modules_to_freeze.append(model.language_model)
-
 
         for module in modules_to_freeze:
             for param in module.parameters():

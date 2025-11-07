@@ -38,7 +38,7 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-def pretrain_config(
+def nemotron_nano_v2_vl_12b_pretrain_config(
     dir: Optional[str] = None,
     name: str = "nemotron_nano_v2_vl_pretrain",
     hf_model_path: str = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
@@ -168,9 +168,9 @@ def pretrain_config(
     return cfg
 
 
-def finetune_config(
+def nemotron_nano_v2_vl_12b_finetune_config(
     *,
-    pretrained_checkpoint: str,
+    pretrained_checkpoint: str = "",
     lora_on_language_model: bool = False,
     lora_on_vision_model: bool = False,
     save_checkpoint_dir: Optional[str] = None,
@@ -178,7 +178,7 @@ def finetune_config(
 ) -> ConfigContainer:
     """Create a finetuning configuration for Nemotron Nano V2 VL.
 
-    This helper wraps :func:`pretrain_config`, forwarding all keyword arguments to it
+    This helper wraps :func:`nemotron_nano_v2_vl_12b_pretrain_config`, forwarding all keyword arguments to it
     while additionally wiring up the :class:`CheckpointConfig` for finetuning from a
     given *``pretrained_checkpoint``*.
 
@@ -189,18 +189,18 @@ def finetune_config(
         ``convert_ckpt_hf_to_megatron``) that will be loaded before training.
     save_checkpoint_dir: str | None, default ``run_output_dir / "checkpoints"``
         Directory where new checkpoints will be saved / resumed from.  If not
-        provided, we reuse the default path chosen by *pretrain_config*.
+        provided, we reuse the default path chosen by *nemotron_nano_v2_vl_12b_pretrain_config*.
     lora_on_language_model: bool = True
         Whether to apply PEFT to the language model.
     lora_on_vision_model: bool = True
         Whether to apply PEFT to the vision model.
     **pretrain_kwargs: Any
         Additional keyword arguments are forwarded verbatim to
-        :func:`pretrain_config` to customise the base recipe (e.g. batch size,
+        :func:`nemotron_nano_v2_vl_12b_pretrain_config` to customise the base recipe (e.g. batch size,
         learning rate, parallelism).
     """
 
-    cfg = pretrain_config(**pretrain_kwargs)
+    cfg = nemotron_nano_v2_vl_12b_pretrain_config(**pretrain_kwargs)
 
     # Override Train hyper-parameters suitable for finetuning if the caller did
     # not explicitly pass them via **pretrain_kwargs.

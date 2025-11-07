@@ -60,5 +60,3 @@ class TestNemotronNano12Bv2VLModelProvider:
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True
         assert provider.freeze_vision_projection is True
-
-

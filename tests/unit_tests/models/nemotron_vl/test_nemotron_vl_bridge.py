@@ -135,5 +135,3 @@ class TestNemotronVLBridgeMappingRegistry:
         assert any("language_model" in n for n in names)
         # QKV mappings should be present for both language and vision
         assert any("linear_qkv" in n for n in names)
-
-

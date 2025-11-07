@@ -105,9 +105,9 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import finetune_config
+    from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import nemotron_nano_v2_vl_12b_finetune_config
 
-    cfg: ConfigContainer = finetune_config(
+    cfg: ConfigContainer = nemotron_nano_v2_vl_12b_finetune_config(
         hf_model_path=args.hf_model_path,
         pretrained_checkpoint=args.pretrained_checkpoint,
         lora_on_language_model=args.lora_on_language_model,

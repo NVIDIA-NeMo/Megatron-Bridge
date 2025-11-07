@@ -15,10 +15,9 @@
 from typing import Optional
 
 import torch
-from torch import Tensor
-
-from megatron.core.transformer.module import MegatronModule
 from megatron.core.models.multimodal.llava_model import LLaVAModel
+from megatron.core.transformer.module import MegatronModule
+
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
 
 

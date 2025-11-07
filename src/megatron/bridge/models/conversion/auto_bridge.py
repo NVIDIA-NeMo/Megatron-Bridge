@@ -408,9 +408,11 @@ class AutoBridge(Generic[MegatronModelT]):
             # No distributed training, save artifacts
             self.hf_pretrained.save_artifacts(path, original_source_path=source_path)
 
-        self.save_hf_weights(model, path, show_progress, strict)
+        self.save_hf_weights(model, path, show_progress)
 
-    def save_hf_weights(self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True) -> None:
+    def save_hf_weights(
+        self, model: list[MegatronModelT], path: str | Path, show_progress: bool = True, strict: bool = True
+    ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
 
@@ -673,7 +675,9 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = self.load_megatron_model(megatron_path, wrap_with_ddp=False)
 
             # Save in HuggingFace format
-            self.save_hf_pretrained(megatron_model, hf_path, show_progress=show_progress, source_path=source_path, strict=strict)
+            self.save_hf_pretrained(
+                megatron_model, hf_path, show_progress=show_progress, source_path=source_path, strict=strict
+            )
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
