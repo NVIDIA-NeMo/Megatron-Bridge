@@ -370,7 +370,7 @@ def qwen3_next_80b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3NextFinetuneKw
         "context_parallel_size": 1,
         "expert_model_parallel_size": 8,
         "peft": peft_value,
-        "lr": 5e-6,
+        "finetune_lr": 5e-6,
         "min_lr": 5e-6,
         "enable_recompute": True,
     }
