@@ -63,6 +63,7 @@ def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) 
     out_tokens = model.generate(
         **in_tokens,
         max_new_tokens=max_new_tokens,
+        do_sample=False,
         return_dict_in_generate=True,
         output_scores=True,  # TODO: not using yet, but should compare this after script is proven for text
     )
