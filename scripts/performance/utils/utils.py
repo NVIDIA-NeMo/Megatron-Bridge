@@ -78,7 +78,7 @@ def get_parallelism_defaults(
     compute_dtype: str,
 ) -> Dict[str, int]:
     """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
-    parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}"
+    parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype.replace('-', '_')}"
     parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
 
     module_name = f"configs.{model_name}.workload_base_configs"
