@@ -65,7 +65,7 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
     virtual_pipeline_model_parallel_size: Optional[int]
     context_parallel_size: int
     expert_model_parallel_size: Optional[int]
-    sequence_parallelism: bool
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     account_for_embedding_in_pipeline_split: bool
     account_for_loss_in_pipeline_split: bool
@@ -179,7 +179,7 @@ def _gpt_oss_common(
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
-    sequence_parallelism: bool = False,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
     account_for_loss_in_pipeline_split: bool = False,
@@ -223,7 +223,7 @@ def _gpt_oss_common(
     model_cfg.context_parallel_size = context_parallel_size
     model_cfg.expert_model_parallel_size = expert_model_parallel_size
     model_cfg.expert_tensor_parallel_size = 1
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     if account_for_embedding_in_pipeline_split:

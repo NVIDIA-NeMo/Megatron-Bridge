@@ -32,9 +32,9 @@ def run_pretrain_recipe_test(
     config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_parallelism: Optional[int] = None,
-    pipeline_parallelism: Optional[int] = None,
-    expert_parallelism: Optional[int] = None,
+    tensor_model_parallel_size: Optional[int] = None,
+    pipeline_model_parallel_size: Optional[int] = None,
+    expert_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
 ):
     """
@@ -50,9 +50,9 @@ def run_pretrain_recipe_test(
         config_func: The recipe's pretrain_config function
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
-        tensor_parallelism: Override tensor parallelism (None = use recipe default)
-        pipeline_parallelism: Override pipeline parallelism (None = use recipe default)
-        expert_parallelism: Override expert parallelism (None = use recipe default)
+        tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
+        pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
+        expert_model_parallel_size: Override expert parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
@@ -95,15 +95,15 @@ def run_pretrain_recipe_test(
 
         config.dataset.split = [train_split, valid_split, test_split]
 
-        if tensor_parallelism is not None:
+        if tensor_model_parallel_size is not None:
             if hasattr(config.model, "tensor_model_parallel_size"):
-                config.model.tensor_model_parallel_size = tensor_parallelism
-        if pipeline_parallelism is not None:
+                config.model.tensor_model_parallel_size = tensor_model_parallel_size
+        if pipeline_model_parallel_size is not None:
             if hasattr(config.model, "pipeline_model_parallel_size"):
-                config.model.pipeline_model_parallel_size = pipeline_parallelism
-        if expert_parallelism is not None:
+                config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+        if expert_model_parallel_size is not None:
             if hasattr(config.model, "expert_model_parallel_size"):
-                config.model.expert_model_parallel_size = expert_parallelism
+                config.model.expert_model_parallel_size = expert_model_parallel_size
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
@@ -144,8 +144,8 @@ def run_pretrain_vl_recipe_test(
     config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_parallelism: Optional[int] = None,
-    pipeline_parallelism: Optional[int] = None,
+    tensor_model_parallel_size: Optional[int] = None,
+    pipeline_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
 ):
     """
@@ -153,6 +153,14 @@ def run_pretrain_vl_recipe_test(
 
     Mirrors the llama/qwen functional test utility but routes through
     megatron.bridge.training.vlm_step.forward_step.
+
+    Args:
+        config_func: The recipe's pretrain_config function
+        recipe_name: Name of the recipe for logging/debugging
+        tmp_path: Temporary directory for test outputs
+        tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
+        pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
+        model_overrides: Optional mapping of model attribute overrides to apply
     """
     # Import locally to avoid loading VLM stack for non-VL tests
     from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -196,10 +204,10 @@ def run_pretrain_vl_recipe_test(
 
         config.dataset.split = [train_split, valid_split, test_split]
 
-        if tensor_parallelism is not None:
-            config.model.tensor_parallelism = tensor_parallelism
-        if pipeline_parallelism is not None:
-            config.model.pipeline_parallelism = pipeline_parallelism
+        if tensor_model_parallel_size is not None:
+            config.model.tensor_model_parallel_size = tensor_model_parallel_size
+        if pipeline_model_parallel_size is not None:
+            config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:

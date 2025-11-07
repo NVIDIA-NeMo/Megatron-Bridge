@@ -14,151 +14,134 @@
 
 import sys
 from pathlib import Path
-
-from omegaconf import OmegaConf
+from typing import List, Optional
 
 
 try:
     from argument_parser import parse_cli_args
-    from utils.common import get_perf_matrix_overrides
     from utils.executors import slurm_executor
+    from utils.utils import get_parallelism_defaults
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
-    from .utils.common import get_perf_matrix_overrides
     from .utils.executors import slurm_executor
+    from .utils.utils import get_parallelism_defaults
+
+import nemo_run as run
 
 
 try:
-    import nemo_run as run
-
-    HAS_NEMO_RUN = True
-except ImportError:
-    HAS_NEMO_RUN = False
-
-if HAS_NEMO_RUN:
-    try:
-        from perf_plugins import NsysPlugin, PerfEnvPlugin
-    except (ImportError, ModuleNotFoundError):
-        from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin
+except (ImportError, ModuleNotFoundError):
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-if __name__ == "__main__":
-    args, _ = parse_cli_args()
-    exp_name = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}"
-    exp_name += "_bf16" if args.compute_dtype == "bf16" else f"_{args.compute_dtype}_{args.fp8_recipe}"
+SCRIPT_DIR: Path = Path(__file__).parent.resolve()
+SCRIPT_NAME: str = "run_script.py"
 
-    if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b", "235b_a22b"]:
-        assert args.hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
 
-    SCRIPT_DIR: Path = Path(__file__).parent.resolve()
-    RUN_SCRIPT_FILENAME: str = "run_script.py"
-    RUN_SCRIPT_PATH: Path = SCRIPT_DIR / RUN_SCRIPT_FILENAME
+def main(
+    script_name: str,
+    model_name: str,
+    model_size: str,
+    domain: str,
+    task: str,
+    compute_dtype: str,
+    fp8_recipe: str,
+    gpu: str,
+    num_gpus: int,
+    hf_token: str,
+    custom_mounts: List[str],
+    detach: bool,
+    dryrun: bool,
+    enable_vboost: bool,
+    enable_nsys: bool,
+    use_tokendrop: bool,
+    moe_a2a_overlap: bool,
+    tp_size: Optional[int],
+    pp_size: Optional[int],
+    cp_size: Optional[int],
+    wandb_key: str,
+    wandb_prj_name: str,
+    wandb_exp_name: str,
+    executor: run.Executor,
+):
+    """Sets up the experiment and runs it."""
+    if model_name in ["qwen3"] and model_size in ["30b_a3b", "235b_a22b"]:
+        assert hf_token is not None, "HF token is required for Qwen3 tokenizer. NullTokenizer to be used soon."
+
+    if wandb_key is not None:
+        assert wandb_prj_name is not None and wandb_exp_name is not None, (
+            "both wandb_prj_name and wandb_exp_name are required for logging with WandB"
+        )
+
+    RUN_SCRIPT_PATH: Path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {RUN_SCRIPT_PATH}")
     if not RUN_SCRIPT_PATH.is_file():
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
         logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
-    config_filename = f"{args.model_name}_{args.model_size}_{args.domain}_{args.task}.yaml"
-    config_filepath = SCRIPT_DIR / "configs" / f"{args.model_name}" / config_filename
-    logger.info(f"Config file path: {config_filepath}")
-    if not config_filepath.is_file():
-        logger.error(f"Specified YAML config file not found: {config_filepath}")
-        logger.error("Ensure the path passed to --config_file is correct.")
-        sys.exit(1)
 
-    num_gpus_per_node = args.gpus_per_node
-    yaml_overrides_omega = OmegaConf.load(config_filepath)
-    preset = get_perf_matrix_overrides(yaml_overrides_omega, args)
-    if not preset:
-        num_gpus_yaml_key = f"num_gpus_{args.num_gpus or args.gpus_per_node}"
-        logger.debug(f"No preset found for {args.gpu}.{num_gpus_yaml_key} in perf_matrix")
+    enable_deepep = False
+    moe_a2a_overlap = False if moe_a2a_overlap is None else moe_a2a_overlap
+    if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
+        enable_deepep, moe_a2a_overlap = True, True
 
-    common = preset.get("common") or {}
-    compute_dtype, fp8_recipe = args.compute_dtype.lower(), args.fp8_recipe.lower()
-    compute_dtype = compute_dtype if compute_dtype == "bf16" else f"{compute_dtype}_{fp8_recipe}"
-    dtype_cfg = preset.get(compute_dtype) if compute_dtype in preset else None
-    # Deep-merge so dtype-specific values override common
-    merged_perf = OmegaConf.merge(OmegaConf.create(common), OmegaConf.create(dtype_cfg or {}))
-    perf_overrides = OmegaConf.to_container(merged_perf, resolve=True)  #
+    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
 
-    tp = perf_overrides.get("tp", 1)
-    cp = perf_overrides.get("cp", 1)
-    pp = perf_overrides.get("pp", 1)
+    tp_size = tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size
+    pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
+    cp_size = cp_size if cp_size is not None else parallelism_defaults.context_parallel_size
 
-    enable_deepep, a2a_overlap = False, False
-    if args.gpu.lower() in ["h100"]:
-        if args.model_name == "deepseek" and args.model_size == "v3":
-            enable_deepep = True
-            a2a_overlap = True
+    plugins = [
+        PerfEnvPlugin(
+            enable_vboost=enable_vboost,
+            nccl_pp_comm_chunksize=2097152 if model_size in ["70b", "405b"] else None,
+            gpu_sm100_or_newer=gpu in ["b200", "gb200", "gb300"],
+            layernorm_sm_margin=20 if enable_deepep else 16,
+            num_gpus=num_gpus,
+            deepep_enabled=enable_deepep,
+            a2a_overlap=moe_a2a_overlap,
+            tp_size=tp_size,
+            pp_size=pp_size,
+            cp_size=cp_size,
+        )
+    ]
 
-    plugins = (
-        [
-            PerfEnvPlugin(
-                enable_vboost=args.enable_vboost,
-                nccl_pp_comm_chunksize=2097152 if args.model_size in ["70b", "405b"] else None,
-                gpu_sm100_or_newer=args.gpu.lower() in ["b200", "gb200"],
-                layernorm_sm_margin=20 if enable_deepep else 16,
-                tp_size=tp,
-                cp_size=cp,
-                pp_size=pp,
-                num_gpus=args.num_gpus,
-                deepep_enabled=enable_deepep,
-                a2a_overlap=a2a_overlap,
-            )
-        ]
-        if HAS_NEMO_RUN
-        else []
-    )
-    if HAS_NEMO_RUN and args.enable_nsys:
+    if enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
-    custom_mounts = args.custom_mounts + [
-        f"{config_filepath}:{config_filepath}",
-        f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
-        f"{SCRIPT_DIR}:{SCRIPT_DIR}",
-    ]
-    logger.info(f"Custom mounts: {custom_mounts}")
-
-    num_nodes = -(args.num_gpus // -num_gpus_per_node)
-    executor = slurm_executor(
-        args.gpu.lower(),
-        args.account,
-        args.partition,
-        args.log_dir,
-        num_nodes,
-        num_gpus_per_node,
-        args.time_limit,
-        args.container_image,
-        custom_mounts=custom_mounts,
-        custom_env_vars={},
-        hf_token=args.hf_token,
-        nemo_home=args.nemo_home,
-        wandb_key=args.wandb_key,
+    executor.container_mounts.extend(
+        custom_mounts
+        + [
+            f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
+            f"{SCRIPT_DIR}:{SCRIPT_DIR}",
+        ]
     )
+    logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    if args.model_name in ["llama31"] and args.model_size in ["405b"] and args.gpu.lower() in ["gb200"]:
-        if args.compute_dtype == "fp8" and args.fp8_recipe in ["cs", "mx"]:
+    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
+        if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if args.model_name in ["deepseek"] and args.model_size in ["v3"] and args.gpu.lower() in ["gb200"]:
-        if args.compute_dtype == "bf16" and (not args.use_tokendrop):
+    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
+        if compute_dtype == "bf16" and (not use_tokendrop):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
     del_cudnn_ln = True
-    if args.gpu.lower() in ["h100"]:
-        if args.model_name == "llama3" and args.model_size == "8b":
-            if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+    if gpu in ["h100"]:
+        if model_name == "llama3" and model_size == "8b":
+            if compute_dtype == "fp8" and fp8_recipe == "cs":
                 executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
                 executor.env_vars["NCCL_CTA_POLICY"] = "1"
                 del_cudnn_ln = False
-    if args.gpu.lower() in ["gb200"]:
-        if args.model_name == "llama3" and args.model_size == "70b":
-            if args.compute_dtype == "bf16" or (args.compute_dtype == "fp8" and args.fp8_recipe == "cs"):
+    if gpu in ["gb200", "gb300"]:
+        if model_name == "llama3" and model_size == "70b":
+            if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
                 del_cudnn_ln = False
-        if args.model_name == ["llama31"] and args.model_size == "405b":
-            if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+        if model_name == ["llama31"] and model_size == "405b":
+            if compute_dtype == "fp8" and fp8_recipe == "cs":
                 del_cudnn_ln = False
     if del_cudnn_ln:
         if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
@@ -166,23 +149,71 @@ if __name__ == "__main__":
         if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
             executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
-    target_script_args = [
-        "--config_file",
-        str(config_filepath),
-    ]
-    # Forward relevant args that run_script.py needs
-    args_to_forward = ["model_name", "model_size", "compute_dtype", "fp8_recipe", "gpu", "use_tokendrop"]
-    for arg_name in args_to_forward:
-        if hasattr(args, arg_name):
-            arg_value = getattr(args, arg_name)
-            if arg_value is not None:
-                target_script_args.extend([f"--{arg_name}", str(arg_value)])
-    target_script_args.extend(["-a", "dummy", "-p", "dummy", "-ng", str(args.num_gpus)])
-
-    train_script = run.Script(
-        path=str(RUN_SCRIPT_PATH),
-        entrypoint="python",
-        args=target_script_args,
+    exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
+        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
+    )
+    run.run(
+        run.Script(
+            path=str(RUN_SCRIPT_PATH),
+            entrypoint="python",
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
+            args=list(sys.argv[1:]),
+        ),
+        executor=executor,
+        plugins=plugins,
+        dryrun=dryrun,
+        detach=detach,
+        name=exp_name,
     )
 
-    run.run(train_script, executor=executor, plugins=plugins, dryrun=args.dryrun, detach=True, name=exp_name)
+    exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).items()).pop()
+    job_status = str(job_dict["status"])
+
+    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING"]:
+        raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
+
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+if __name__ == "__main__":
+    args, _ = parse_cli_args()
+
+    main(
+        script_name=SCRIPT_NAME,
+        model_name=args.model_name,
+        model_size=args.model_size,
+        domain=args.domain,
+        task=args.task,
+        compute_dtype=args.compute_dtype,
+        fp8_recipe=args.fp8_recipe,
+        gpu=args.gpu,
+        num_gpus=args.num_gpus,
+        hf_token=args.hf_token,
+        custom_mounts=args.custom_mounts,
+        detach=args.detach,
+        dryrun=args.dryrun,
+        enable_vboost=args.enable_vboost,
+        enable_nsys=args.enable_nsys,
+        use_tokendrop=args.use_tokendrop,
+        moe_a2a_overlap=args.moe_a2a_overlap,
+        tp_size=args.tensor_model_parallel_size,
+        pp_size=args.pipeline_model_parallel_size,
+        cp_size=args.context_parallel_size,
+        wandb_key=args.wandb_key,
+        wandb_prj_name=args.wandb_prj_name,
+        wandb_exp_name=args.wandb_exp_name,
+        executor=slurm_executor(
+            args.gpu,
+            args.account,
+            args.partition,
+            args.log_dir,
+            -(args.num_gpus // -args.gpus_per_node),
+            args.gpus_per_node,
+            args.time_limit,
+            args.container_image,
+            custom_env_vars={},
+            hf_token=args.hf_token,
+            nemo_home=args.nemo_home,
+            wandb_key=args.wandb_key,
+        ),
+    )
