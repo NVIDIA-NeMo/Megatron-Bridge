@@ -27,6 +27,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedInitConfig,
     GPTDatasetConfig,
     LoggerConfig,
     RNGConfig,
@@ -84,6 +85,7 @@ class Qwen3NextCommonKwargs(TypedDict, total=False):
     comm_overlap_config: Optional[CommOverlapConfig]
     # Performance optimization knobs
     enable_deepep: bool
+    disable_jit_fuser: bool
 
 
 def qwen3_next_80b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3NextCommonKwargs]) -> ConfigContainer:
@@ -151,6 +153,7 @@ def _qwen3_next_common(
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     enable_deepep: bool = False,
+    disable_jit_fuser: bool = False,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3 MoE models using a given HuggingFace path.
@@ -270,6 +273,7 @@ def _qwen3_next_common(
         ),
         optimizer=opt_config,
         scheduler=scheduler,
+        dist=DistributedInitConfig(disable_jit_fuser=disable_jit_fuser),
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,

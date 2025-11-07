@@ -188,6 +188,9 @@ class DistributedInitConfig:
     distributed_timeout_seconds_after_init: int | None = None
     """Timeout in seconds for process groups after initialization. This timeout is applied to all process groups after initialization and the first iteration completes."""
 
+    disable_jit_fuser: bool = False
+    """Disable the JIT fuser. Necessary for Qwen3-Next to work on Blackwell."""
+
 
 @dataclass
 class RerunStateMachineConfig:
