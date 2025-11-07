@@ -356,13 +356,14 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
 
 class MockGPTDatasetConfig(GPTDatasetConfig):
     """Modifies GPTDatasetConfig to enforce necessary options for creating a mock dataset."""
+
     def __init__(
         self,
         seq_length: int,
         **kwargs,
     ):
         super().__init__(seq_length=seq_length, **kwargs)
-    
+
     def finalize(self):
         """ """
         # Raise TypeError if `blend` or `blend_per_split` is not None
@@ -376,7 +377,7 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
         # Drop `blend` and `blend_per_split` from __dict__
         self.__dict__.pop("blend", None)
         self.__dict__.pop("blend_per_split", None)
-        
+
         return super().finalize()
 
 
