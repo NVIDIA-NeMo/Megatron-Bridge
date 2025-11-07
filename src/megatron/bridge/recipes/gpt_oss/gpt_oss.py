@@ -270,11 +270,55 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 4,
         "expert_model_parallel_size": 8,
-        "sequence_parallelism": True,
+        "sequence_parallelism": False,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
     return _gpt_oss_common(**kwargs)
+
+
+def gpt_oss_20b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for GPT-OSS 20B variant.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, EP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended: GPTOSSFinetuneKwargs = {
+        "hf_path": "openai/gpt-oss-20b",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "expert_model_parallel_size": 8 if is_full_sft else 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    kwargs: GPTOSSFinetuneKwargs = {**recommended, **user_kwargs}
+    return _gpt_oss_finetune_common(**kwargs)
+
+
+def gpt_oss_120b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for GPT-OSS 120B variant.
+
+    Default configuration: 2 nodes, 16 GPUs total
+    - LoRA/DoRA: TP=1, PP=4, EP=8, LR=1e-4
+    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    recommended: GPTOSSFinetuneKwargs = {
+        "hf_path": "openai/gpt-oss-120b",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 4 if is_full_sft else 1,
+        "expert_model_parallel_size": 8,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
+    }
+    kwargs: GPTOSSFinetuneKwargs = {**recommended, **user_kwargs}
+    return _gpt_oss_finetune_common(**kwargs)
 
 
 class GPTOSSFinetuneKwargs(TypedDict, total=False):
@@ -432,47 +476,3 @@ def _gpt_oss_finetune_common(
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
-
-
-def gpt_oss_20b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for GPT-OSS 20B variant.
-
-    Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, EP=1, LR=1e-4
-    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
-    """
-    peft_value = user_kwargs.get("peft", "lora")
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
-
-    recommended: GPTOSSFinetuneKwargs = {
-        "hf_path": "openai/gpt-oss-20b",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "expert_model_parallel_size": 8 if is_full_sft else 1,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    kwargs: GPTOSSFinetuneKwargs = {**recommended, **user_kwargs}
-    return _gpt_oss_finetune_common(**kwargs)
-
-
-def gpt_oss_120b_finetune_config(**user_kwargs: Unpack[GPTOSSFinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for GPT-OSS 120B variant.
-
-    Default configuration: 2 nodes, 16 GPUs total
-    - LoRA/DoRA: TP=1, PP=4, EP=8, LR=1e-4
-    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
-    """
-    peft_value = user_kwargs.get("peft", "lora")
-    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
-
-    recommended: GPTOSSFinetuneKwargs = {
-        "hf_path": "openai/gpt-oss-120b",
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 4 if is_full_sft else 1,
-        "expert_model_parallel_size": 8,
-        "peft": peft_value,
-        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-    }
-    kwargs: GPTOSSFinetuneKwargs = {**recommended, **user_kwargs}
-    return _gpt_oss_finetune_common(**kwargs)
