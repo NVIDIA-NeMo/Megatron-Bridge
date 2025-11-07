@@ -222,7 +222,9 @@ class TestGemma3VLConversion:
             str(pp),
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
         print(cmd)
 
         # Check that the conversion completed successfully
