@@ -169,10 +169,8 @@ class PerfEnvPlugin(Plugin):
     Attributes:
         enable_layernorm_sm_margin (bool): Set SM margin for TransformerEngine's Layernorm, so
             in order to not block DP level communication overlap.
-        layernorm_sm_margin (int): The SM margin for TransformerEngine Layernorm.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
-        gpu_sm100_or_newer (bool): Whether GPU is SM100 or newer architecture.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
