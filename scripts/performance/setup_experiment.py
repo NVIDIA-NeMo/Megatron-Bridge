@@ -112,7 +112,7 @@ def main(
 
     if wandb_key is not None:
         assert wandb_prj_name is not None and wandb_exp_name is not None, (
-            "wandb_prj_name and wandb_exp_name must be set together if one is set"
+            "both wandb_prj_name and wandb_exp_name are required for logging with WandB"
         )
 
     custom_mounts = custom_mounts + [
