@@ -146,7 +146,9 @@ def main(
             layernorm_sm_margin=20 if enable_deepep(gpu, model_name, model_size) else 16,
             num_gpus=num_gpus,
             deepep_enabled=enable_deepep(gpu, model_name, model_size),
-            a2a_overlap=enable_moe_a2a_overlap(gpu, model_name, model_size),
+            a2a_overlap=(
+                enable_moe_a2a_overlap(gpu, model_name, model_size) if moe_a2a_overlap is None else moe_a2a_overlap
+            ),
             tp_size=tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size,
             pp_size=pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size,
             cp_size=cp_size if cp_size is not None else parallelism_defaults.context_parallel_size,
