@@ -170,9 +170,9 @@ class TestQATWorkflow:
             tmp_path: Pytest temporary path fixture
         """
         # Extract parallelism settings (None = use defaults)
-        tensor_parallelism = parallelism_overrides.get("tensor_parallelism")
-        pipeline_parallelism = parallelism_overrides.get("pipeline_parallelism")
-        context_parallelism = parallelism_overrides.get("context_parallelism")
+        tensor_model_parallel_size = parallelism_overrides.get("tensor_model_parallel_size")
+        pipeline_model_parallel_size = parallelism_overrides.get("pipeline_model_parallel_size")
+        context_parallel_size = parallelism_overrides.get("context_parallel_size")
 
         quant_base_dir = tmp_path / "quantization"
         quant_base_dir.mkdir(exist_ok=True)
@@ -184,7 +184,10 @@ class TestQATWorkflow:
             print(f"=== STEP 1: Running PTQ quantization for {recipe_name} ===")
             # Step 1: Run PTQ quantization (use defaults if None)
             quantize_result, quantized_checkpoint_dir = self._run_quantization(
-                quant_base_dir, quant_cfg="fp8", tp=tensor_parallelism or 1, pp=pipeline_parallelism or 1
+                quant_base_dir,
+                quant_cfg="fp8",
+                tp=tensor_model_parallel_size or 1,
+                pp=pipeline_model_parallel_size or 1,
             )
 
             if quantize_result.returncode != 0:
@@ -213,9 +216,9 @@ class TestQATWorkflow:
                 quantized_checkpoint_path=str(quantized_checkpoint_dir),
                 checkpoint_save_dir=str(checkpoint_save_dir),
                 hf_model_id="meta-llama/Llama-3.2-1B",
-                tp=tensor_parallelism or 1,
-                pp=pipeline_parallelism or 1,
-                cp=context_parallelism or 2,  # Default context parallelism is 2
+                tp=tensor_model_parallel_size or 1,
+                pp=pipeline_model_parallel_size or 1,
+                cp=context_parallel_size or 2,  # Default context parallelism is 2
             )
 
             if pretrain_result.returncode != 0:

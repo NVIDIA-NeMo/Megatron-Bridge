@@ -35,7 +35,7 @@ from tests.functional_tests.utils import (
 
 LLAMA_DISTILL_RECIPES = [
     # (student_config_func, teacher_config_func, name, parallelism_overrides)
-    (llama32_1b_pretrain_config, llama32_3b_pretrain_config, "llama32_3b-1b", {"tensor_parallelism": 2}),
+    (llama32_1b_pretrain_config, llama32_3b_pretrain_config, "llama32_3b-1b", {"tensor_model_parallel_size": 2}),
 ]
 
 
@@ -60,9 +60,9 @@ def run_distill_recipe_test(
     teacher_config_func: Callable,
     recipe_name: str,
     tmp_path: Path,
-    tensor_parallelism: Optional[int] = None,
-    pipeline_parallelism: Optional[int] = None,
-    expert_parallelism: Optional[int] = None,
+    tensor_model_parallel_size: Optional[int] = None,
+    pipeline_model_parallel_size: Optional[int] = None,
+    expert_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
 ):
     """
@@ -79,9 +79,9 @@ def run_distill_recipe_test(
         teacher_config_func: The teacher model's pretrain_config function
         recipe_name: Name of the recipe for logging/debugging
         tmp_path: Temporary directory for test outputs
-        tensor_parallelism: Override tensor parallelism (None = use recipe default)
-        pipeline_parallelism: Override pipeline parallelism (None = use recipe default)
-        expert_parallelism: Override expert parallelism (None = use recipe default)
+        tensor_model_parallel_size: Override tensor parallelism (None = use recipe default)
+        pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
+        expert_model_parallel_size: Override expert parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
     """
     initialize_distributed()
@@ -134,21 +134,21 @@ def run_distill_recipe_test(
         config.dataset.split = [train_split, valid_split, test_split]
 
         # Apply parallelism overrides to both student and teacher models
-        if tensor_parallelism is not None:
+        if tensor_model_parallel_size is not None:
             if hasattr(config.model, "tensor_model_parallel_size"):
-                config.model.tensor_model_parallel_size = tensor_parallelism
+                config.model.tensor_model_parallel_size = tensor_model_parallel_size
             if hasattr(config.model.teacher, "tensor_model_parallel_size"):
-                config.model.teacher.tensor_model_parallel_size = tensor_parallelism
-        if pipeline_parallelism is not None:
+                config.model.teacher.tensor_model_parallel_size = tensor_model_parallel_size
+        if pipeline_model_parallel_size is not None:
             if hasattr(config.model, "pipeline_model_parallel_size"):
-                config.model.pipeline_model_parallel_size = pipeline_parallelism
+                config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
             if hasattr(config.model.teacher, "pipeline_model_parallel_size"):
-                config.model.teacher.pipeline_model_parallel_size = pipeline_parallelism
-        if expert_parallelism is not None:
+                config.model.teacher.pipeline_model_parallel_size = pipeline_model_parallel_size
+        if expert_model_parallel_size is not None:
             if hasattr(config.model, "expert_model_parallel_size"):
-                config.model.expert_model_parallel_size = expert_parallelism
+                config.model.expert_model_parallel_size = expert_model_parallel_size
             if hasattr(config.model.teacher, "expert_model_parallel_size"):
-                config.model.teacher.expert_model_parallel_size = expert_parallelism
+                config.model.teacher.expert_model_parallel_size = expert_model_parallel_size
 
         # Apply any model-specific overrides provided by the caller
         if model_overrides:
