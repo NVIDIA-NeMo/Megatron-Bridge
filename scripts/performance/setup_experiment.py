@@ -26,18 +26,13 @@ except (ImportError, ModuleNotFoundError):
     from .utils.executors import slurm_executor
     from .utils.utils import get_parallelism_defaults
 
+import nemo_run as run
+
+
 try:
-    import nemo_run as run
-
-    HAS_NEMO_RUN = True
-except ImportError:
-    HAS_NEMO_RUN = False
-
-if HAS_NEMO_RUN:
-    try:
-        from perf_plugins import NsysPlugin, PerfEnvPlugin
-    except (ImportError, ModuleNotFoundError):
-        from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin
+except (ImportError, ModuleNotFoundError):
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
@@ -54,7 +49,6 @@ def main(
     fp8_recipe: str,
     gpu: str,
     num_gpus: int,
-    gpus_per_node: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
@@ -98,27 +92,25 @@ def main(
     pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
     cp_size = cp_size if cp_size is not None else parallelism_defaults.context_parallel_size
 
-    plugins = (
-        [
-            PerfEnvPlugin(
-                enable_vboost=enable_vboost,
-                nccl_pp_comm_chunksize=2097152 if model_size in ["70b", "405b"] else None,
-                gpu_sm100_or_newer=gpu in ["b200", "gb200", "gb300"],
-                layernorm_sm_margin=20 if enable_deepep else 16,
-                num_gpus=num_gpus,
-                deepep_enabled=enable_deepep,
-                a2a_overlap=moe_a2a_overlap,
-                tp_size=tp_size,
-                pp_size=pp_size,
-                cp_size=cp_size,
-            )
-        ]
-        if HAS_NEMO_RUN
-        else []
-    )
-    if HAS_NEMO_RUN and enable_nsys:
+    plugins = [
+        PerfEnvPlugin(
+            enable_vboost=enable_vboost,
+            nccl_pp_comm_chunksize=2097152 if model_size in ["70b", "405b"] else None,
+            gpu_sm100_or_newer=gpu in ["b200", "gb200", "gb300"],
+            layernorm_sm_margin=20 if enable_deepep else 16,
+            num_gpus=num_gpus,
+            deepep_enabled=enable_deepep,
+            a2a_overlap=moe_a2a_overlap,
+            tp_size=tp_size,
+            pp_size=pp_size,
+            cp_size=cp_size,
+        )
+    ]
+
+    if enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
-    if HAS_NEMO_RUN and wandb_key is not None:
+
+    if wandb_key is not None:
         assert wandb_prj_name is not None and wandb_exp_name is not None, (
             "wandb_prj_name and wandb_exp_name must be set together if one is set"
         )
@@ -189,7 +181,6 @@ if __name__ == "__main__":
         fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
         num_gpus=args.num_gpus,
-        gpus_per_node=args.gpus_per_node,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,
