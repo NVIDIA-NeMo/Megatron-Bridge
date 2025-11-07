@@ -74,12 +74,12 @@ def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) 
         max_new_tokens: Upper bound on how many tokens to generate.
            May generate fewer tokens than this limit. (default: 20)
     """
-    print(f"Loading model and tokenizer: {hf_model}")
+    print_rank_0(f"Loading model and tokenizer: {hf_model}")
 
     tokenizer = AutoTokenizer.from_pretrained(hf_model)
     model = AutoModelForCausalLM.from_pretrained(hf_model, trust_remote_code=True).cuda()
 
-    print("Generating text using HF weights...")
+    print_rank_0("Generating text using HF weights...")
     in_tokens = tokenizer(prompt, return_tensors="pt").to(model.device)
     out_tokens = model.generate(
         **in_tokens,
@@ -91,10 +91,10 @@ def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) 
 
     generated_text = tokenizer.decode(out_tokens.sequences[0])
 
-    print("====== HF GENERATED TEXT OUTPUT ======")
-    print(f"Prompt: {prompt}")
-    print(f"Generated: {generated_text}")
-    print("======================================")
+    print_rank_0("====== HF GENERATED TEXT OUTPUT ======")
+    print_rank_0(f"Prompt: {prompt}")
+    print_rank_0(f"Generated: {generated_text}")
+    print_rank_0("======================================")
     return generated_text
 
 
@@ -264,20 +264,20 @@ def import_hf_to_megatron(
         trust_remote_code: Allow custom model code execution
     """
     if get_rank_safe() == 0:
-        print(f"🔄 Starting import: {hf_model} -> {megatron_path}")
+        print_rank_0(f"🔄 Starting import: {hf_model} -> {megatron_path}")
 
         # Prepare kwargs
         kwargs = {}
         if torch_dtype:
             kwargs["torch_dtype"] = get_torch_dtype(torch_dtype)
-            print(f"   Using torch_dtype: {torch_dtype}")
+            print_rank_0(f"   Using torch_dtype: {torch_dtype}")
 
         if device_map:
             kwargs["device_map"] = device_map
-            print(f"   Using device_map: {device_map}")
+            print_rank_0(f"   Using device_map: {device_map}")
 
         # Import using the convenience method
-        print(f"📥 Loading HuggingFace model: {hf_model}")
+        print_rank_0(f"📥 Loading HuggingFace model: {hf_model}")
         AutoBridge.import_ckpt(
             hf_model_id=hf_model,
             megatron_path=megatron_path,
@@ -285,7 +285,7 @@ def import_hf_to_megatron(
             **kwargs,
         )
 
-        print(f"✅ Successfully imported model to: {megatron_path}")
+        print_rank_0(f"✅ Successfully imported model to: {megatron_path}")
 
     # Destroy process groups created by import ckpt
     _safe_destroy_distributed()
@@ -305,20 +305,20 @@ def export_megatron_to_hf(
         hf_path: Directory path where the HuggingFace model will be saved
     """
     if get_rank_safe() == 0:
-        print(f"🔄 Starting export: {megatron_path} -> {hf_path}")
+        print_rank_0(f"🔄 Starting export: {megatron_path} -> {hf_path}")
 
         # Validate megatron checkpoint exists
         checkpoint_path = validate_path(megatron_path, must_exist=True)
-        print(f"📂 Found Megatron checkpoint: {checkpoint_path}")
+        print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
 
         bridge = AutoBridge.from_hf_pretrained(hf_model)
-        print("📤 Exporting to HuggingFace format...")
+        print_rank_0("📤 Exporting to HuggingFace format...")
         bridge.export_ckpt(
             megatron_path=megatron_path,
             hf_path=hf_path,
         )
 
-        print(f"✅ Successfully exported model to: {hf_path}")
+        print_rank_0(f"✅ Successfully exported model to: {hf_path}")
 
     # Destroy process groups created by export ckpt
     _safe_destroy_distributed()
