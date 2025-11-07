@@ -299,7 +299,6 @@ class DatasetProvider(DataloaderConfig, ABC):
         pass
 
 
-@dataclass
 class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     """Megatron Core GPTDatasetConfig with deferred post-init.
 
@@ -355,12 +354,30 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
 
 
-@dataclass
 class MockGPTDatasetConfig(GPTDatasetConfig):
     """Modifies GPTDatasetConfig to enforce necessary options for creating a mock dataset."""
+    def __init__(
+        self,
+        seq_length: int,
+        **kwargs,
+    ):
+        super().__init__(seq_length=seq_length, **kwargs)
+    
+    def finalize(self):
+        """ """
+        # Raise TypeError if `blend` or `blend_per_split` is not None
+        if self.__dict__.get("blend", None):
+            raise TypeError("got an unexpected keyword argument 'blend'")
+        if self.__dict__.get("blend_per_split", None):
+            raise TypeError("got an unexpected keyword argument 'blend_per_split'")
+        if self.__dict__.get("blend", None) and self.__dict__.get("blend_per_split", None):
+            raise TypeError("got an unexpected keyword argument")
 
-    blend: None = field(init=False, repr=False, default=None)
-    blend_per_split: None = field(init=False, repr=False, default=None)
+        # Drop `blend` and `blend_per_split` from __dict__
+        self.__dict__.pop("blend", None)
+        self.__dict__.pop("blend_per_split", None)
+        
+        return super().finalize()
 
 
 @dataclass(kw_only=True)

@@ -340,6 +340,7 @@ class TestMockGPTDatasetConfig:
         assert config.blend is None
         assert config.blend_per_split is None
         assert config.mock  # should be set by BlendedMegatronDatasetConfig post-init
+        print(config.__dict__)
         assert "blend" not in config.__dict__
         assert "blend_per_split" not in config.__dict__
 
