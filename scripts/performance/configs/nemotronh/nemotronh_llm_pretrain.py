@@ -36,7 +36,7 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
 
 def nemotronh_56b_gb300_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB300, 64xGPU, baseline config."""
-    base_cfg = base_cfgs.NEMOTRONH_56B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG
+    base_cfg = base_cfgs.NEMOTRONH_56B_GB300_64GPUS_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -51,7 +51,7 @@ def nemotronh_56b_gb300_64gpus_config(precision: str = "bf16", fp8_recipe: str =
 
 def nemotronh_56b_gb200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB200, 64xGPU, baseline config."""
-    base_cfg = base_cfgs.NEMOTRONH_56B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG
+    base_cfg = base_cfgs.NEMOTRONH_56B_GB200_64GPUS_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = nemotronh_56b_pretrain_config(
@@ -68,7 +68,7 @@ def nemotronh_56b_h100_64gpus_config(precision: str = "bf16", fp8_recipe: str = 
     """H100, 64xGPU, baseline config."""
     precision_config = get_precision_config(precision, fp8_recipe)
 
-    base_cfg = base_cfgs.NEMOTRONH_56B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG
+    base_cfg = base_cfgs.NEMOTRONH_56B_H100_64GPUS_FP8_CS_BASE_CONFIG
     cfg = nemotronh_56b_pretrain_config(
         mock=True,
         precision_config=precision_config,

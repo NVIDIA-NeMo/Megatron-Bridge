@@ -53,13 +53,13 @@ def set_llama3_common_configs(cfg: ConfigContainer) -> None:
 def llama3_70b_gb300_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB300, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_GB300_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_GB300_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_GB300_64GPUS_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA3_70B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_GB300_64GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -80,13 +80,13 @@ def llama3_70b_gb300_64gpus_config(precision: str = "bf16", fp8_recipe: str = "c
 def llama3_70b_gb200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB200, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_GB200_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_GB200_64GPUS_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA3_70B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_GB200_64GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -107,13 +107,13 @@ def llama3_70b_gb200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "c
 def llama3_70b_b200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """B200, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_B200_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_B200_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_B200_64GPUS_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA3_70B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.LLAMA3_70B_B200_64GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
@@ -134,11 +134,11 @@ def llama3_70b_b200_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs
 def llama3_70b_h100_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """H100, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_70B_H100_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_H100_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA3_70B_H100_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_70B_H100_64GPUS_FP8_CS_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192
 
@@ -157,12 +157,12 @@ def llama3_70b_h100_64gpus_config(precision: str = "bf16", fp8_recipe: str = "cs
 def llama3_8b_gb300_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB300, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_GB300_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_GB300_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_8B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_GB300_8GPUS_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA3_8B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.LLAMA3_8B_GB300_8GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
@@ -177,12 +177,12 @@ def llama3_8b_gb300_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs"
 def llama3_8b_gb200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """GB200, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_GB200_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_GB200_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_8B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_GB200_8GPUS_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA3_8B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.LLAMA3_8B_GB200_8GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
@@ -197,12 +197,12 @@ def llama3_8b_gb200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs"
 def llama3_8b_b200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """B200, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_B200_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_B200_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_8B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_B200_8GPUS_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA3_8B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.LLAMA3_8B_B200_8GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
@@ -217,10 +217,10 @@ def llama3_8b_b200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs")
 def llama3_8b_h100_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
     """H100, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA3_8B_H100_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_H100_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.LLAMA3_8B_H100_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.LLAMA3_8B_H100_8GPUS_FP8_CS_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
