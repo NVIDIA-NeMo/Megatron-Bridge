@@ -166,7 +166,7 @@ def main(
         name=exp_name,
     )
 
-    exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).pop().items()).pop()
+    exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).items()).pop()
     job_status = str(job_dict["status"])
 
     if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING"]:
