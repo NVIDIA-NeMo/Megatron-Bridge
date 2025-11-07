@@ -95,7 +95,7 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if recipe.model.use_transformer_engine_op_fuser:
+    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
     recipe.model.apply_rope_fusion = True
     recipe.model.cross_entropy_fusion_impl = "te"
