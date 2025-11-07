@@ -139,8 +139,34 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
         "recompute_num_layers": 1,
     }
     combined_kwargs: DeepSeekV3CommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return deepseek_v3_pretrain_config(**combined_kwargs)
+    return _deepseek_v3_common(**combined_kwargs)
 
+def deepseek_v3_pretrain_config_32nodes_fp8(**user_kwargs: Unpack[DeepSeekV3CommonKwargs]) -> ConfigContainer:
+    """
+    Create a pre-training configuration for DeepSeek-V3 (671B) model with minimal number of nodes (32) 
+    using blockwise FP8 precision with FP8 param gather.
+
+    Returns:
+        ConfigContainer: Configuration for pre-training.
+    """
+    recommended_kwargs: DeepSeekV3CommonKwargs = {
+        "hf_path": "deepseek-ai/DeepSeek-V3",
+        "tensor_parallelism": 2,
+        "pipeline_parallelism": 8,
+        "expert_parallelism": 32,
+        # Maintain old recipe defaults via wrapper overrides
+        "precision_config": MixedPrecisionConfig(
+            fp8="hybrid",
+            fp8_recipe="blockwise",
+            fp8_param_gather=True,
+        ),
+        "recompute_granularity": "full",
+        "recompute_method": "uniform",
+        "recompute_num_layers": 1,
+        "enable_deepep": True,
+    }
+    combined_kwargs: DeepSeekV3CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _deepseek_v3_common(**combined_kwargs)
 
 def _deepseek_v3_common(
     hf_path: str,
