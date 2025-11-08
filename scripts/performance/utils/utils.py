@@ -108,7 +108,7 @@ def get_workload_base_config(
 
     try:
         workload_base_config = getattr(module, workload_base_config_name)
-        logger.debug(f"Loaded {workload_base_config=}")
+        logger.info(f"Loaded {workload_base_config=}")
     except AttributeError:
         logger.error(f"Failed to get {workload_base_config_name=} from {module_name=}")
         workload_base_config = WorkloadBaseConfig()
