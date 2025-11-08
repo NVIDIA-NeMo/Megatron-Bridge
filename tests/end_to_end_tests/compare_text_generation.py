@@ -62,9 +62,9 @@ def validate_path(path: str, must_exist: bool = False) -> Path:
     return path_obj
 
 
-def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) -> tuple(
-    list[str], tuple(torch.Tensor)
-):
+def transformers_generate(
+    hf_model: str, prompt: str, max_new_tokens: int = 20
+) -> tuple[list[str], tuple[torch.Tensor]]:
     """
     Generate text from a HuggingFace model using transformers.
 
@@ -156,7 +156,7 @@ def text_forward_step(data_iterator: SingleBatchIterator, model: MegatronModule,
 
 def megatron_generate(
     megatron_model: list[MegatronModule], tokenizer: MegatronTokenizer, prompt: str, max_new_tokens: int = 20
-) -> tuple(list[str], list[torch.Tensor]):
+) -> tuple[list[str], list[torch.Tensor]]:
     """
     Generate text from a Megatron model using MCore.
 
@@ -341,7 +341,7 @@ def export_megatron_to_hf(
 
 def megatron_generate_from_checkpoint(
     megatron_path: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
-) -> tuple(list[str], list[torch.Tensor]):
+) -> tuple[list[str], list[torch.Tensor]]:
     """
     Generate text from a Megatron checkpoint.
 
@@ -405,7 +405,7 @@ def megatron_generate_from_checkpoint(
 
 def megatron_generate_from_hf(
     hf_model: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
-) -> tuple(list[str], list[torch.Tensor]):
+) -> tuple[list[str], list[torch.Tensor]]:
     """
     Generate text from a Megatron model with weights loaded from HuggingFace using AutoBridge.
 
