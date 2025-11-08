@@ -37,9 +37,9 @@ from nemo_run import Plugin, Script, SlurmExecutor
 
 
 try:
-    from utils.utils import get_parallelism_defaults
+    from utils.utils import get_workload_base_config
 except (ImportError, ModuleNotFoundError):
-    from .utils.utils import get_parallelism_defaults
+    from .utils.utils import get_workload_base_config
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -357,7 +357,7 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
-        parallelism_defaults = get_parallelism_defaults(
+        parallelism_defaults = get_workload_base_config(
             self.model_name, self.model_size, self.gpu, self.num_gpus, self.compute_dtype, self.fp8_recipe
         )
         tp_size = (self.tp_size if self.tp_size is not None else parallelism_defaults.tensor_model_parallel_size,)
