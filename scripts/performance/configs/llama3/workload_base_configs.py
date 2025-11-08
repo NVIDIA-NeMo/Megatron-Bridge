@@ -83,7 +83,7 @@ LLAMA3_70B_B200_64GPUS_BF16_BASE_CONFIG = replace(
     context_parallel_size=2,
     virtual_pipeline_model_parallel_size=5,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -125,7 +125,7 @@ LLAMA3_8B_GB300_8GPUS_BF16_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=4,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -133,7 +133,7 @@ LLAMA3_8B_GB300_8GPUS_FP8_CS_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=4,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 LLAMA3_8B_GB300_8GPUS_FP8_MX_BASE_CONFIG = LLAMA3_8B_GB300_8GPUS_FP8_CS_BASE_CONFIG
@@ -143,7 +143,7 @@ LLAMA3_8B_GB200_8GPUS_BF16_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -156,7 +156,7 @@ LLAMA3_8B_GB200_8GPUS_FP8_MX_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -164,7 +164,7 @@ LLAMA3_8B_B200_8GPUS_BF16_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -172,7 +172,7 @@ LLAMA3_8B_B200_8GPUS_FP8_CS_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
