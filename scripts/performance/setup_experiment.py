@@ -90,7 +90,7 @@ def main(
     if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
         enable_deepep, moe_a2a_overlap = True, True
 
-    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
+    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, compute_dtype, fp8_recipe)
 
     tp_size = tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size
     pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size

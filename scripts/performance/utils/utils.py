@@ -50,12 +50,11 @@ def get_model_recipe(
     model_name: str,
     model_size: str,
     gpu: str,
-    num_gpus: int,
     compute_dtype: str,
     fp8_recipe: Optional[str] = None,
 ):
     """Get the model recipe factory by its name."""
-    recipe_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_config"
+    recipe_name = f"{model_name}_{model_size}_{gpu}_config"
     module_name = f"configs.{model_name}.{model_name}_llm_pretrain"
     try:
         module = importlib.import_module(module_name)
@@ -75,12 +74,11 @@ def get_parallelism_defaults(
     model_name: str,
     model_size: str,
     gpu: str,
-    num_gpus: int,
     compute_dtype: str,
     fp8_recipe: Optional[str] = None,
 ) -> Dict[str, int]:
-    """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
-    parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype}"
+    """Get the parallelism defaults for a given model, size, GPU, compute dtype, and FP8 recipe."""
+    parallelism_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
     if compute_dtype == "fp8":
         parallelism_name += f"_{fp8_recipe}"
     parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
