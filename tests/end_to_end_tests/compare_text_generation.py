@@ -39,18 +39,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
-from megatron.bridge.utils.common_utils import get_last_rank, get_rank_safe, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, get_local_rank_preinit, get_rank_safe, print_rank_0
+
+
+def _safe_init_distributed():
+    if not torch.distributed.is_initialized():
+        torch.cuda.set_device(get_local_rank_preinit())
+        torch.distributed.init_process_group("nccl")
 
 
 def _safe_destroy_distributed():
-    """
-    Destroy model parallel and global process groups if initialized.
-
-    Must be called by all ranks.
-    """
     if torch.distributed.is_initialized():
         torch.distributed.barrier()
-        parallel_state.destroy_model_parallel()
         torch.distributed.destroy_process_group()
 
 
@@ -287,8 +287,8 @@ def import_hf_to_megatron(
 
         print_rank_0(f"✅ Successfully imported model to: {megatron_path}")
 
-    # Destroy process groups created by import ckpt
-    _safe_destroy_distributed()
+    # Destroy model parallel process groups created by import ckpt
+    parallel_state.destroy_model_parallel()
 
 
 def export_megatron_to_hf(
@@ -320,8 +320,8 @@ def export_megatron_to_hf(
 
         print_rank_0(f"✅ Successfully exported model to: {hf_path}")
 
-    # Destroy process groups created by export ckpt
-    _safe_destroy_distributed()
+    # Destroy model parallel process groups created by export ckpt
+    parallel_state.destroy_model_parallel()
 
 
 def megatron_generate_from_checkpoint(
@@ -383,7 +383,7 @@ def megatron_generate_from_checkpoint(
 
     # each tested generation method should recreate this, since
     # user will likely use these methods in isolation
-    _safe_destroy_distributed()
+    parallel_state.destroy_model_parallel()
 
     return generated_text
 
@@ -432,7 +432,7 @@ def megatron_generate_from_hf(
 
     # each tested generation method should recreate this, since
     # user will likely use these methods in isolation
-    _safe_destroy_distributed()
+    parallel_state.destroy_model_parallel()
 
     return generated_text
 
@@ -468,6 +468,8 @@ def parse_cli_args():
 
 
 def main():
+    _safe_init_distributed()
+
     args = parse_cli_args()
 
     _ = transformers_generate(args.hf_model_id, args.prompt, args.max_new_tokens)
@@ -483,6 +485,7 @@ def main():
     )
 
     # Generate from exported checkpoint
+    _safe_destroy_distributed()  # Export happens on cpu-only and creates new gloo groups
     export_megatron_to_hf(args.hf_model_id, args.megatron_path, args.hf_save_path)
     _ = transformers_generate(args.hf_save_path, args.prompt, args.max_new_tokens)
 
