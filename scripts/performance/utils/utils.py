@@ -21,31 +21,6 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class WorkloadBaseConfig:
-    """Container for workload base configs."""
-
-    tensor_model_parallel_size: int = 1
-    pipeline_model_parallel_size: int = 1
-    context_parallel_size: int = 1
-    virtual_pipeline_model_parallel_size: int | None = None
-    expert_model_parallel_size: int = 1
-    expert_tensor_parallel_size: int | None = None
-
-    global_batch_size: int = 1
-    micro_batch_size: int = 1
-
-    use_megatron_fsdp: Optional[bool] = None
-    cuda_graph_impl: Optional[str] = None
-    cuda_graph_scope: str = "full"
-    cpu_offloading_num_layers: Optional[int] = None
-    recompute_num_layers: Optional[int] = None
-    recompute_modules: Optional[List[str]] = None
-
-    def __post_init__(self):
-        self.sequence_parallel = bool(self.tensor_model_parallel_size > 1)
-
-
 def get_model_recipe(
     model_name: str,
     model_size: str,
@@ -79,7 +54,7 @@ def get_parallelism_defaults(
 ) -> Dict[str, int]:
     """Get the parallelism defaults for a given model, size, GPU, number of GPUs, compute dtype, and FP8 recipe."""
     parallelism_name = f"{model_name}_{model_size}_{gpu}_{num_gpus}gpus_{compute_dtype.replace('-', '_')}"
-    parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
+    parallelism_name = parallelism_name.upper() + "_BASE_CONFIG"
 
     module_name = f"configs.{model_name}.workload_base_configs"
     try:
@@ -94,7 +69,6 @@ def get_parallelism_defaults(
         parallelism_config = getattr(module, parallelism_name)
         logger.info(f"Loaded parallelism config: {parallelism_config}")
     except AttributeError:
-        logger.error(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
-        parallelism_config = WorkloadBaseConfig(1, 1, 1, None, 1, None, 1, 1)
+        raise ImportError(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
 
     return parallelism_config
