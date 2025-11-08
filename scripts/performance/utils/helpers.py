@@ -180,9 +180,10 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if use_megatron_fsdp:
         set_megatron_fsdp_overrides(recipe)
 
-    cuda_graph_impl = kwargs.get("cuda_graph_impl")
-    cuda_graph_scope = kwargs.get("cuda_graph_scope")
-    set_cuda_graph_overrides(recipe, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+    if kwargs.get("cuda_graph_impl") is not None:
+        cuda_graph_impl = kwargs.get("cuda_graph_impl")
+        cuda_graph_scope = kwargs.get("cuda_graph_scope")
+        set_cuda_graph_overrides(recipe, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
 
     recompute_num_layers = kwargs.get("recompute_num_layers")
     cpu_offloading_num_layers = kwargs.get("activation_offload_layers")
