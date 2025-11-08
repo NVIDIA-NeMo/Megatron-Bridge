@@ -53,7 +53,7 @@ def qwen3_235b_a22b_gb300_64gpus_config(precision: str = "bf16") -> ConfigContai
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG
         precision_config = get_precision_config(precision)
 
@@ -75,7 +75,7 @@ def qwen3_235b_a22b_gb200_64gpus_config(precision: str = "bf16") -> ConfigContai
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG
         precision_config = get_precision_config(precision)
 
@@ -97,7 +97,7 @@ def qwen3_235b_a22b_b200_64gpus_config(precision: str = "bf16") -> ConfigContain
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG
         precision_config = get_precision_config(precision)
 
@@ -139,7 +139,7 @@ def qwen3_30b_a3b_gb300_8gpus_config(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG
         precision_config = get_precision_config(precision)
 
@@ -161,7 +161,7 @@ def qwen3_30b_a3b_gb200_8gpus_config(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG
         precision_config = get_precision_config(precision)
 
@@ -183,7 +183,7 @@ def qwen3_30b_a3b_b200_8gpus_config(precision: str = "bf16") -> ConfigContainer:
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG
         precision_config = get_precision_config(precision)
 

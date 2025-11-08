@@ -51,9 +51,9 @@ def deepseek_v3_gb300_256gpus_config(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_CS_BASE_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=True,
@@ -83,9 +83,9 @@ def deepseek_v3_gb200_256gpus_config(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=True,
@@ -115,9 +115,9 @@ def deepseek_v3_b200_256gpus_config(precision: str = "bf16") -> ConfigContainer:
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG
-        if precision == "fp8-mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=True,
@@ -142,9 +142,9 @@ def deepseek_v3_h100_1024gpus_config(precision: str = "bf16") -> ConfigContainer
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG
-        if precision == "fp8-sc":
+        if precision == "fp8_sc":
             base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_SC_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = pretrain_config(
         mock=True,
