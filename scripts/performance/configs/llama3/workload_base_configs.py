@@ -20,11 +20,13 @@ from utils.utils import WorkloadBaseConfig
 
 
 BASE_LLAMA3_8B_CONFIG = WorkloadBaseConfig(
+    num_gpus=8,
     global_batch_size=128,
 )
 
 
 BASE_LLAMA3_70B_CONFIG = WorkloadBaseConfig(
+    num_gpus=64,
     global_batch_size=128,
 )
 

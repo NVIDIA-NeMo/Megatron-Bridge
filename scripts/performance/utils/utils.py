@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 class WorkloadBaseConfig:
     """Container for workload base configs."""
 
+    # NOTE: `num_gpus` is for representation purposes only. It is only meant to
+    # communicate number of GPUs to be used for a specific workload in the file-
+    # "scripts/performance/configs/<model_name>/workload_base_configs.py".
+
+    # NOTE: You can specify number of GPUs to use for a SLURM job from command
+    # line like `-ng/--num_gpus <num_gpus>` ("scripts/performance/README.md")
+    # or update your sbatch script.
+    num_gpus: int = 1
+
     tensor_model_parallel_size: int = 1
     pipeline_model_parallel_size: int = 1
     context_parallel_size: int = 1

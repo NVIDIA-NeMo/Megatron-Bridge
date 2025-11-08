@@ -20,6 +20,7 @@ from utils.utils import WorkloadBaseConfig
 
 
 BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
+    num_gpus=64,
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
     micro_batch_size=8,
