@@ -36,14 +36,14 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def gpt_oss_120b_gb300_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def gpt_oss_120b_gb300_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, 8xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_GB300_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.GPT_OSS_120B_GB300_8GPUS_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
@@ -55,14 +55,14 @@ def gpt_oss_120b_gb300_8gpus_config(precision: str = "bf16", fp8_recipe: str = "
     return cfg
 
 
-def gpt_oss_120b_gb200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def gpt_oss_120b_gb200_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, 8xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_GB200_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.GPT_OSS_120B_GB200_8GPUS_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
@@ -74,14 +74,14 @@ def gpt_oss_120b_gb200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "
     return cfg
 
 
-def gpt_oss_120b_b200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def gpt_oss_120b_b200_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """B200, 8xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_B200_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.GPT_OSS_120B_B200_8GPUS_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,
@@ -93,14 +93,14 @@ def gpt_oss_120b_b200_8gpus_config(precision: str = "bf16", fp8_recipe: str = "c
     return cfg
 
 
-def gpt_oss_120b_h100_8gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def gpt_oss_120b_h100_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """H100, 8xGPU, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_H100_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.GPT_OSS_120B_H100_8GPUS_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = gpt_oss_120b_pretrain_config(
         mock=True,

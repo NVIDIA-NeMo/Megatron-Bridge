@@ -1,13 +1,13 @@
 # Performance Recipes
 
-## NOTE: This directory will change a lot over the coming weeks.
-
+## NOTE: This directory will change a lot over the coming weeks
 
 - Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
 
 ## Configuration files
 
 There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
+
 - You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
 
 ## Example
@@ -26,7 +26,6 @@ The following line shows an example of how you can launch a pre-training experim
   - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
   - `-i/--container_image`: NeMo container image to launch. Default `nvcr.io/nvidia/nemo:dev`.
   - `-c/--compute_dtype`: Training precision, either `bf16` or `fp8`. Default `bf16`.
-  - `-fr/--fp8_recipe`: FP8 scaling recipe (`ds`, `cs`, `mx`, `sc`). Default `cs`.
   - `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
   - `-hf/--hf_token`: Hugging Face token for accessing gated tokenizers or checkpoints.
   - `-nh/--nemo_home`: Directory to expose as `NEMO_HOME` on the compute node. Defaults to `~/.cache/nemo` unless overridden.
@@ -61,6 +60,7 @@ The following line shows an example of how you can launch a pre-training experim
 ## Virtual Environment
 
 - Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
+
   ```
   pip install git+https://github.com/NVIDIA-NeMo/Run.git
   ```
