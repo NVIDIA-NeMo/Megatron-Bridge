@@ -31,7 +31,7 @@ DEEPSEEK_V3_GB300_256GPUS_BF16_BASE_CONFIG = replace(
     expert_model_parallel_size=64,
     global_batch_size=2048,
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope="attn",
+    cuda_graph_scope=["attn"],
     recompute_modules=["mlp", "moe_act"],
 )
 
@@ -43,7 +43,7 @@ DEEPSEEK_V3_GB300_256GPUS_FP8_CS_BASE_CONFIG = replace(
     expert_model_parallel_size=64,
     global_batch_size=2048,
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope="attn",
+    cuda_graph_scope=["attn"],
     recompute_modules=["mlp", "moe_act"],
 )
 
