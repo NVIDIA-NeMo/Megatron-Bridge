@@ -21,6 +21,31 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class WorkloadBaseConfig:
+    """Container for workload base configs."""
+
+    tensor_model_parallel_size: int = 1
+    pipeline_model_parallel_size: int = 1
+    context_parallel_size: int = 1
+    virtual_pipeline_model_parallel_size: int | None = None
+    expert_model_parallel_size: int = 1
+    expert_tensor_parallel_size: int | None = None
+
+    global_batch_size: int = 1
+    micro_batch_size: int = 1
+
+    use_megatron_fsdp: Optional[bool] = None
+    cuda_graph_impl: Optional[str] = None
+    cuda_graph_scope: str = "full"
+    cpu_offloading_num_layers: Optional[int] = None
+    recompute_num_layers: Optional[int] = None
+    recompute_modules: Optional[List[str]] = None
+
+    def __post_init__(self):
+        self.sequence_parallel = bool(self.tensor_model_parallel_size > 1)
+
+
 def get_model_recipe(
     model_name: str,
     model_size: str,
