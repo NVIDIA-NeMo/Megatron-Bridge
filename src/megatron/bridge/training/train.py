@@ -793,7 +793,7 @@ def compute_throughputs_and_append_to_progress_log(
 ) -> None:
     """Computes job and cumulative throughputs and appends to progress log.
 
-    Calculates TFLOP/s/GPU based on floating-point operations and elapsed time.
+    Calculates Model TFLOP/s/GPU based on floating-point operations and elapsed time.
     Appends the computed throughputs, total FLOPs, and processed tokens to the
     progress log file.
 
@@ -825,8 +825,8 @@ def compute_throughputs_and_append_to_progress_log(
     append_to_progress_log(
         state.cfg.checkpoint.save,
         f"{saved_ckpt_prefix}\tIteration: {state.train_state.step}\t"
-        f"Job throughput: {job_throughput:.1f} TFLOP/s/GPU\t"
-        f"Cumulative throughput: {cumulative_throughput:.1f} TFLOP/s/GPU\t"
+        f"Job throughput: {job_throughput:.1f} MODEL_TFLOP/s/GPU\t"
+        f"Cumulative throughput: {cumulative_throughput:.1f} MODEL_TFLOP/s/GPU\t"
         f"Floating-point operations: {num_floating_point_operations_so_far:.2e}\t"
         f"Tokens (in billions): {tokens_so_far / 10**9:.2f}",
     )
@@ -853,7 +853,7 @@ def save_checkpoint_and_time(
         model: list of model chunks (MegatronModule instances).
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
-        num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
+        num_floating_point_operations_so_far: Cumulative Model TFLOPs up to this point.
         checkpointing_context: Dictionary holding checkpointing-related state.
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
