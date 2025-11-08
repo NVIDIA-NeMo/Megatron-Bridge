@@ -358,9 +358,9 @@ class PerfEnvPlugin(Plugin):
         parallelism_defaults = get_parallelism_defaults(
             self.model_name, self.model_size, self.gpu, self.num_gpus, self.compute_dtype
         )
-        tp_size = (self.tp_size if self.tp_size is not None else parallelism_defaults.tensor_model_parallel_size,)
-        pp_size = (self.pp_size if self.pp_size is not None else parallelism_defaults.pipeline_model_parallel_size,)
-        cp_size = (self.cp_size if self.cp_size is not None else parallelism_defaults.context_parallel_size,)
+        tp_size = self.tp_size if self.tp_size is not None else parallelism_defaults.tensor_model_parallel_size
+        pp_size = self.pp_size if self.pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
+        cp_size = self.cp_size if self.cp_size is not None else parallelism_defaults.context_parallel_size
 
         # Force program order kernel launch for TP, CP overlap
         enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
