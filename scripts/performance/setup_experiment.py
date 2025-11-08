@@ -82,16 +82,15 @@ def main(
     logger.info(f"Run script path: {RUN_SCRIPT_PATH}")
     if not RUN_SCRIPT_PATH.is_file():
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
-        logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
     workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
-
     tp_size = tp_size if tp_size is not None else workload_base_config.tensor_model_parallel_size
     pp_size = pp_size if pp_size is not None else workload_base_config.pipeline_model_parallel_size
     cp_size = cp_size if cp_size is not None else workload_base_config.context_parallel_size
 
     plugins = []
+
     plugins.append(
         PerfEnvPlugin(
             enable_vboost=enable_vboost,

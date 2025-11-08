@@ -230,7 +230,16 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    return recipe
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(num_gpus / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
@@ -243,10 +252,8 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     fp8_recipe = kwargs.get("fp8_recipe")
 
     recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, fp8_recipe)
-
-    recipe = set_user_overrides(recipe, kwargs)
-
     set_common_perf_overrides(recipe)
+    set_user_overrides(recipe, kwargs)
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the user
     workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
@@ -259,16 +266,5 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
             logger.info(
                 f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
             )
-
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-
-    dp = int(num_gpus / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     return recipe
