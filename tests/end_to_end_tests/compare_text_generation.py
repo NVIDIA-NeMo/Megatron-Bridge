@@ -39,7 +39,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
-from megatron.bridge.utils.common_utils import get_last_rank, get_local_rank_preinit, get_rank_safe, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, get_local_rank_preinit, print_rank_0
 
 
 def _safe_init_distributed():
@@ -263,29 +263,28 @@ def import_hf_to_megatron(
         device_map: Device placement strategy ("auto", "cuda:0", etc.)
         trust_remote_code: Allow custom model code execution
     """
-    if get_rank_safe() == 0:
-        print_rank_0(f"🔄 Starting import: {hf_model} -> {megatron_path}")
+    print_rank_0(f"🔄 Starting import: {hf_model} -> {megatron_path}")
 
-        # Prepare kwargs
-        kwargs = {}
-        if torch_dtype:
-            kwargs["torch_dtype"] = get_torch_dtype(torch_dtype)
-            print_rank_0(f"   Using torch_dtype: {torch_dtype}")
+    # Prepare kwargs
+    kwargs = {}
+    if torch_dtype:
+        kwargs["torch_dtype"] = get_torch_dtype(torch_dtype)
+        print_rank_0(f"   Using torch_dtype: {torch_dtype}")
 
-        if device_map:
-            kwargs["device_map"] = device_map
-            print_rank_0(f"   Using device_map: {device_map}")
+    if device_map:
+        kwargs["device_map"] = device_map
+        print_rank_0(f"   Using device_map: {device_map}")
 
-        # Import using the convenience method
-        print_rank_0(f"📥 Loading HuggingFace model: {hf_model}")
-        AutoBridge.import_ckpt(
-            hf_model_id=hf_model,
-            megatron_path=megatron_path,
-            trust_remote_code=True,
-            **kwargs,
-        )
+    # Import using the convenience method
+    print_rank_0(f"📥 Loading HuggingFace model: {hf_model}")
+    AutoBridge.import_ckpt(
+        hf_model_id=hf_model,
+        megatron_path=megatron_path,
+        trust_remote_code=True,
+        **kwargs,
+    )
 
-        print_rank_0(f"✅ Successfully imported model to: {megatron_path}")
+    print_rank_0(f"✅ Successfully imported model to: {megatron_path}")
 
     # Destroy model parallel process groups created by import ckpt
     parallel_state.destroy_model_parallel()
@@ -304,21 +303,20 @@ def export_megatron_to_hf(
         megatron_path: Directory path where the Megatron checkpoint is stored
         hf_path: Directory path where the HuggingFace model will be saved
     """
-    if get_rank_safe() == 0:
-        print_rank_0(f"🔄 Starting export: {megatron_path} -> {hf_path}")
+    print_rank_0(f"🔄 Starting export: {megatron_path} -> {hf_path}")
 
-        # Validate megatron checkpoint exists
-        checkpoint_path = validate_path(megatron_path, must_exist=True)
-        print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
+    # Validate megatron checkpoint exists
+    checkpoint_path = validate_path(megatron_path, must_exist=True)
+    print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
 
-        bridge = AutoBridge.from_hf_pretrained(hf_model)
-        print_rank_0("📤 Exporting to HuggingFace format...")
-        bridge.export_ckpt(
-            megatron_path=megatron_path,
-            hf_path=hf_path,
-        )
+    bridge = AutoBridge.from_hf_pretrained(hf_model)
+    print_rank_0("📤 Exporting to HuggingFace format...")
+    bridge.export_ckpt(
+        megatron_path=megatron_path,
+        hf_path=hf_path,
+    )
 
-        print_rank_0(f"✅ Successfully exported model to: {hf_path}")
+    print_rank_0(f"✅ Successfully exported model to: {hf_path}")
 
     # Destroy model parallel process groups created by export ckpt
     parallel_state.destroy_model_parallel()
