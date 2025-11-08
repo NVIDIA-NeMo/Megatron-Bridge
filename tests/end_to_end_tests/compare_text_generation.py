@@ -92,12 +92,13 @@ def transformers_generate(
     )
 
     generated_text = tokenizer.decode(output.sequences[0])
+    generated_logits = [token_logits[0].cpu() for token_logits in output.scores]
 
     print_rank_0("====== HF GENERATED TEXT OUTPUT ======")
     print_rank_0(f"Prompt: {prompt}")
     print_rank_0(f"Generated: {generated_text}")
     print_rank_0("======================================")
-    return generated_text, output.scores
+    return generated_text, generated_logits
 
 
 class SingleBatchIterator:
