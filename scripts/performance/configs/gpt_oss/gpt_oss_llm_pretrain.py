@@ -37,7 +37,7 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
 
 
 def gpt_oss_120b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB300, 8xGPU, baseline config."""
+    """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -56,7 +56,7 @@ def gpt_oss_120b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -
 
 
 def gpt_oss_120b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 8xGPU, baseline config."""
+    """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -75,7 +75,7 @@ def gpt_oss_120b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -
 
 
 def gpt_oss_120b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """B200, 8xGPU, baseline config."""
+    """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -94,7 +94,7 @@ def gpt_oss_120b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") ->
 
 
 def gpt_oss_120b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 8xGPU, baseline config."""
+    """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.GPT_OSS_120B_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)

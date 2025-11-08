@@ -35,7 +35,7 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
 
 
 def nemotronh_56b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB300, 64xGPU, baseline config."""
+    """GB300, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision, fp8_recipe)
 
@@ -50,7 +50,7 @@ def nemotronh_56b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") 
 
 
 def nemotronh_56b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 64xGPU, baseline config."""
+    """GB200, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG
     precision_config = get_precision_config(precision, fp8_recipe)
 
@@ -65,7 +65,7 @@ def nemotronh_56b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") 
 
 
 def nemotronh_56b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 64xGPU, baseline config."""
+    """H100, baseline config."""
     precision_config = get_precision_config(precision, fp8_recipe)
 
     base_cfg = base_cfgs.NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG

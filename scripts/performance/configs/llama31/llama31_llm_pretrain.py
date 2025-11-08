@@ -47,7 +47,7 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
 
 
 def llama31_405b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB300, 128xGPU, baseline config."""
+    """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -72,7 +72,7 @@ def llama31_405b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -
 
 
 def llama31_405b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 128xGPU, baseline config."""
+    """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -97,7 +97,7 @@ def llama31_405b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -
 
 
 def llama31_405b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """B200, 128xGPU, baseline config."""
+    """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -119,7 +119,7 @@ def llama31_405b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") ->
 
 
 def llama31_405b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 1024xGPU, baseline config."""
+    """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
