@@ -20,11 +20,11 @@ from typing import List, Optional
 try:
     from argument_parser import parse_cli_args
     from utils.executors import slurm_executor
-    from utils.utils import get_parallelism_defaults
+    from utils.utils import get_workload_base_config
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.executors import slurm_executor
-    from .utils.utils import get_parallelism_defaults
+    from .utils.utils import get_workload_base_config
 
 import nemo_run as run
 
@@ -90,11 +90,11 @@ def main(
     if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
         enable_deepep, moe_a2a_overlap = True, True
 
-    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
 
-    tp_size = tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size
-    pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
-    cp_size = cp_size if cp_size is not None else parallelism_defaults.context_parallel_size
+    tp_size = tp_size if tp_size is not None else workload_base_config.tensor_model_parallel_size
+    pp_size = pp_size if pp_size is not None else workload_base_config.pipeline_model_parallel_size
+    cp_size = cp_size if cp_size is not None else workload_base_config.context_parallel_size
 
     plugins = [
         PerfEnvPlugin(

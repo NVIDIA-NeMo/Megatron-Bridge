@@ -15,7 +15,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from utils.utils import WorkloadBaseConfig, get_model_recipe
+from utils.utils import WorkloadBaseConfig, get_model_recipe, get_workload_base_config
 
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer
@@ -247,6 +247,18 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     recipe = set_user_overrides(recipe, kwargs)
 
     set_common_perf_overrides(recipe)
+
+    # Scale global batch size based on the number of GPUs IF GBS is not specified by the user
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    default_num_gpus = workload_base_config.num_gpus
+    user_gbs = kwargs.get("global_batch_size")
+    if user_gbs is None:
+        if num_gpus != default_num_gpus:
+            new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
+            recipe.train.global_batch_size = new_gbs
+            logger.info(
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
+            )
 
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size

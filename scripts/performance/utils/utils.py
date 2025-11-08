@@ -51,8 +51,15 @@ class WorkloadBaseConfig:
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
 
-    def __post_init__(self):
-        self.sequence_parallel = bool(self.tensor_model_parallel_size > 1)
+    @property
+    def sequence_parallel(self) -> bool:
+        """Get the sequence parallel flag."""
+        return bool(self.tensor_model_parallel_size > 1)
+
+    @property
+    def gbs_scaling_factor(self) -> float:
+        """Get the global batch size scaling factor."""
+        return self.global_batch_size / self.num_gpus
 
 
 def get_model_recipe(
@@ -79,33 +86,31 @@ def get_model_recipe(
     return recipe_builder(precision=compute_dtype, fp8_recipe=fp8_recipe)
 
 
-def get_parallelism_defaults(
+def get_workload_base_config(
     model_name: str,
     model_size: str,
     gpu: str,
     compute_dtype: str,
     fp8_recipe: Optional[str] = None,
 ) -> Dict[str, int]:
-    """Get the parallelism defaults for a given model, size, GPU, compute dtype, and FP8 recipe."""
-    parallelism_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
+    """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
+    workload_base_config_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
     if compute_dtype == "fp8":
-        parallelism_name += f"_{fp8_recipe}"
-    parallelism_name = parallelism_name.upper() + "_PARALLEL_CONFIG"
+        workload_base_config_name += f"_{fp8_recipe}"
+    workload_base_config_name = workload_base_config_name.upper() + "_BASE_CONFIG"
 
     module_name = f"configs.{model_name}.workload_base_configs"
     try:
         module = importlib.import_module(module_name)
-        logger.info(
-            "Imported configuration module '%s' to load parallelism config '%s'.", module_name, parallelism_name
-        )
+        logger.debug(f"Imported module '{module_name}'.")
     except ModuleNotFoundError as exc:
-        raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
+        raise ValueError(f"Failed to import module '{module_name}'") from exc
 
     try:
-        parallelism_config = getattr(module, parallelism_name)
-        logger.info(f"Loaded parallelism config: {parallelism_config}")
+        workload_base_config = getattr(module, workload_base_config_name)
+        logger.debug(f"Loaded {workload_base_config=}")
     except AttributeError:
-        logger.error(f"Failed to get parallelism config '{parallelism_name}' from module '{module_name}'")
-        parallelism_config = WorkloadBaseConfig(1, 1, 1, None, 1, None, 1, 1)
+        logger.error(f"Failed to get {workload_base_config_name=} from {module_name=}")
+        workload_base_config = WorkloadBaseConfig()
 
-    return parallelism_config
+    return workload_base_config
