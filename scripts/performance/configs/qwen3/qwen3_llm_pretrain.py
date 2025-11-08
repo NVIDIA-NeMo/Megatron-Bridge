@@ -49,12 +49,12 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 def qwen3_235b_a22b_gb300_64gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_64GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
@@ -71,12 +71,12 @@ def qwen3_235b_a22b_gb300_64gpus_config(precision: str = "bf16") -> ConfigContai
 def qwen3_235b_a22b_gb200_64gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_64GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
@@ -93,12 +93,12 @@ def qwen3_235b_a22b_gb200_64gpus_config(precision: str = "bf16") -> ConfigContai
 def qwen3_235b_a22b_b200_64gpus_config(precision: str = "bf16") -> ConfigContainer:
     """B200, 64xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.QWEN3_235B_A22B_B200_64GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
@@ -115,10 +115,10 @@ def qwen3_235b_a22b_b200_64gpus_config(precision: str = "bf16") -> ConfigContain
 def qwen3_235b_a22b_h100_256gpus_config(precision: str = "bf16") -> ConfigContainer:
     """H100, 256xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_235B_A22B_H100_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_H100_256GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_235B_A22B_H100_256GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_235B_A22B_H100_256GPUS_FP8_CS_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
@@ -135,12 +135,12 @@ def qwen3_235b_a22b_h100_256gpus_config(precision: str = "bf16") -> ConfigContai
 def qwen3_30b_a3b_gb300_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_8GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
@@ -157,12 +157,12 @@ def qwen3_30b_a3b_gb300_8gpus_config(precision: str = "bf16") -> ConfigContainer
 def qwen3_30b_a3b_gb200_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_8GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
@@ -179,12 +179,12 @@ def qwen3_30b_a3b_gb200_8gpus_config(precision: str = "bf16") -> ConfigContainer
 def qwen3_30b_a3b_b200_8gpus_config(precision: str = "bf16") -> ConfigContainer:
     """B200, 8xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
-            base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.QWEN3_30B_A3B_B200_8GPUS_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
@@ -201,10 +201,10 @@ def qwen3_30b_a3b_b200_8gpus_config(precision: str = "bf16") -> ConfigContainer:
 def qwen3_30b_a3b_h100_16gpus_config(precision: str = "bf16") -> ConfigContainer:
     """H100, 16xGPU, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.QWEN3_30B_A3B_H100_16GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_H100_16GPUS_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.QWEN3_30B_A3B_H100_16GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.QWEN3_30B_A3B_H100_16GPUS_FP8_CS_BASE_CONFIG
         precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
