@@ -324,7 +324,7 @@ class PerfEnvPlugin(Plugin):
             else:
                 raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
-    def _set_vboost(self, executor: "run.Executor", enable_vboost: bool):
+    def _set_vboost(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", enable_vboost: bool):
         def get_vboost_srun_cmd(self, nodes, job_dir):
             """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
             import shlex
