@@ -18,50 +18,45 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import Gemma2Config, Gemma2ForCausalLM, GemmaTokenizer
+from transformers import GemmaConfig, GemmaForCausalLM, GemmaTokenizer
 
 
-HF_GEMMA2_TOY_MODEL_CONFIG = {
-    "architectures": ["Gemma2ForCausalLM"],
+HF_GEMMA_TOY_MODEL_CONFIG = {
+    "architectures": ["GemmaForCausalLM"],
     "attention_bias": False,
     "attention_dropout": 0.0,
-    "attn_logit_softcapping": 50.0,
     "bos_token_id": 2,
-    "cache_implementation": "hybrid",
     "eos_token_id": 1,
-    "final_logit_softcapping": 30.0,
     "head_dim": 256,
-    "hidden_act": "gelu_pytorch_tanh",
-    "hidden_activation": "gelu_pytorch_tanh",
+    "hidden_act": "gelu",
     "hidden_size": 1024,  # Smaller than real 2B for faster testing
     "initializer_range": 0.02,
-    "intermediate_size": 2048,  # Reduced for TP compatibility testing
+    "intermediate_size": 4096,  # Smaller than real 2B for faster testing
     "max_position_embeddings": 8192,
-    "model_type": "gemma2",
+    "model_type": "gemma",
     "num_attention_heads": 8,
     "num_hidden_layers": 2,  # Much smaller for testing
-    "num_key_value_heads": 2,  # Changed from 4 to 2 to be divisible by TP=2
+    "num_key_value_heads": 2,  # Changed from 1 to 2 to be divisible by TP=2
     "pad_token_id": 0,
-    "query_pre_attn_scalar": 256,
     "rms_norm_eps": 1e-06,
+    "rope_scaling": None,
     "rope_theta": 10000.0,
-    "sliding_window": 4096,
     "torch_dtype": "bfloat16",
-    "transformers_version": "4.42.4",
+    "transformers_version": "4.38.0.dev0",
     "use_cache": True,
     "vocab_size": 256000,
 }
 
 
-class TestGemma2Conversion:
+class TestGemmaConversion:
     """
-    Test Gemma2 model conversion from local HuggingFace model with different parallelism configurations.
+    Test Gemma model conversion from local HuggingFace model with different parallelism configurations.
     """
 
     @pytest.fixture(scope="class")
-    def gemma2_toy_model_path(self, tmp_path_factory):
+    def gemma_toy_model_path(self, tmp_path_factory):
         """
-        Create and save a HuggingFace Gemma2 toy model from config to a temporary directory.
+        Create and save a HuggingFace Gemma toy model from config to a temporary directory.
 
         Args:
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
@@ -70,15 +65,15 @@ class TestGemma2Conversion:
             str: Path to the saved HuggingFace model directory
         """
         # Create a temporary directory for this test class
-        temp_dir = tmp_path_factory.mktemp("gemma2_toy_model")
-        model_dir = temp_dir / "gemma2_toy"
+        temp_dir = tmp_path_factory.mktemp("gemma_toy_model")
+        model_dir = temp_dir / "gemma_toy"
 
-        # Create Gemma2 config from the toy model config
-        config = Gemma2Config(**HF_GEMMA2_TOY_MODEL_CONFIG)
+        # Create Gemma config from the toy model config
+        config = GemmaConfig(**HF_GEMMA_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
         # Create model with random weights and convert to bfloat16
-        model = Gemma2ForCausalLM(config)
+        model = GemmaForCausalLM(config)
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
         # Debug: Check model dtype before saving
@@ -104,22 +99,22 @@ class TestGemma2Conversion:
         model.save_pretrained(model_dir, safe_serialization=True)
 
         # Also save config.json explicitly to ensure compatibility with correct torch_dtype
-        config_to_save = HF_GEMMA2_TOY_MODEL_CONFIG.copy()
+        config_to_save = HF_GEMMA_TOY_MODEL_CONFIG.copy()
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(config_to_save, f, indent=2)
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, gemma2_toy_model_path):
+    def test_toy_model_creation(self, gemma_toy_model_path):
         """
         Test that the toy model is created correctly and can be loaded.
 
         Args:
-            gemma2_toy_model_path: Path to the toy Gemma2 model (from fixture)
+            gemma_toy_model_path: Path to the toy Gemma model (from fixture)
         """
         # Verify the model directory exists
-        model_path = Path(gemma2_toy_model_path)
+        model_path = Path(gemma_toy_model_path)
         assert model_path.exists(), f"Model directory not found at {model_path}"
 
         # Check essential files exist
@@ -140,31 +135,25 @@ class TestGemma2Conversion:
         with open(config_file) as f:
             config_data = json.load(f)
 
-        assert config_data["model_type"] == "gemma2"
+        assert config_data["model_type"] == "gemma"
         assert config_data["hidden_size"] == 1024
-        assert config_data["intermediate_size"] == 2048
         assert config_data["num_hidden_layers"] == 2
         assert config_data["num_attention_heads"] == 8
         assert config_data["num_key_value_heads"] == 2
         assert config_data["vocab_size"] == 256000
         assert config_data["head_dim"] == 256
-        # Check Gemma2-specific parameters
-        assert config_data["attn_logit_softcapping"] == 50.0
-        assert config_data["final_logit_softcapping"] == 30.0
-        assert config_data["query_pre_attn_scalar"] == 256
-        assert config_data["sliding_window"] == 4096
 
         # Try loading the model to verify it's valid
         try:
-            model = Gemma2ForCausalLM.from_pretrained(
-                gemma2_toy_model_path,
+            model = GemmaForCausalLM.from_pretrained(
+                gemma_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
             )
 
             # Try loading the tokenizer as well
             try:
-                tokenizer = GemmaTokenizer.from_pretrained(gemma2_toy_model_path)
+                tokenizer = GemmaTokenizer.from_pretrained(gemma_toy_model_path)
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
@@ -174,7 +163,7 @@ class TestGemma2Conversion:
             assert hasattr(model.model, "layers")
             assert len(model.model.layers) == 2  # num_hidden_layers
 
-            print(f"SUCCESS: Toy model created and validated at {gemma2_toy_model_path}")
+            print(f"SUCCESS: Toy model created and validated at {gemma_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")
 
         except Exception as e:
@@ -188,19 +177,20 @@ class TestGemma2Conversion:
             (1, 2, "PP"),
         ],
     )
-    def test_gemma2_conversion_parallelism(self, gemma2_toy_model_path, tmp_path, tp, pp, test_name):
+    def test_gemma_conversion_parallelism(self, gemma_toy_model_path, tmp_path, tp, pp, test_name):
         """
-        Test Gemma2 model conversion with different parallelism configurations.
+        Test Gemma model conversion with different parallelism configurations.
 
         Args:
-            gemma2_toy_model_path: Path to the toy Gemma2 model (from fixture)
+            gemma_toy_model_path: Path to the toy Gemma model (from fixture)
             tmp_path: Pytest temporary path fixture
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
             test_name: Name of the test for identification
         """
+
         # Create temporary output directory for conversion results
-        test_output_dir = tmp_path / f"gemma2_{test_name}"
+        test_output_dir = tmp_path / f"gemma_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
         cmd = [
@@ -217,7 +207,7 @@ class TestGemma2Conversion:
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
-            gemma2_toy_model_path,
+            gemma_toy_model_path,
             "--output-dir",
             str(test_output_dir),
             "--tp",
@@ -228,18 +218,17 @@ class TestGemma2Conversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
-
             # Check that the conversion completed successfully
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                assert False, f"Gemma2 {test_name} conversion failed with return code {result.returncode}"
+                assert False, f"Gemma {test_name} conversion failed with return code {result.returncode}"
 
             # Verify that the converted model was saved
             # The output directory should be named after the last part of the model path
-            model_name = Path(gemma2_toy_model_path).name  # "gemma2_toy"
+            model_name = Path(gemma_toy_model_path).name  # "gemma_toy"
             converted_model_dir = test_output_dir / model_name
             assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
@@ -254,25 +243,19 @@ class TestGemma2Conversion:
                 f"Model weights file not found in converted model at {converted_model_dir}"
             )
 
-            # Verify the config contains Gemma2-specific parameters
+            # Verify the config contains Gemma-specific parameters
             with open(config_file) as f:
                 saved_config = json.load(f)
 
-            assert saved_config["model_type"] == "gemma2", "Model type should be gemma2"
+            assert saved_config["model_type"] == "gemma", "Model type should be gemma"
             assert saved_config["hidden_size"] == 1024, "Hidden size should match toy config"
-            assert saved_config["intermediate_size"] == 2048, "Intermediate size should match toy config"
             assert saved_config["num_attention_heads"] == 8, "Number of attention heads should match toy config"
             assert saved_config["num_key_value_heads"] == 2, "Number of key-value heads should match toy config"
             assert saved_config["head_dim"] == 256, "Head dimension should match toy config"
-            # Verify Gemma2-specific parameters
-            assert saved_config["attn_logit_softcapping"] == 50.0, "Attention logit softcapping should match"
-            assert saved_config["final_logit_softcapping"] == 30.0, "Final logit softcapping should match"
-            assert saved_config["query_pre_attn_scalar"] == 256, "Query pre-attention scalar should match"
-            assert saved_config["sliding_window"] == 4096, "Sliding window should match"
 
-            print(f"SUCCESS: Gemma2 {test_name} conversion test completed successfully")
+            print(f"SUCCESS: Gemma {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
 
         except Exception as e:
-            print(f"Error during Gemma2 {test_name} conversion test: {e}")
+            print(f"Error during Gemma {test_name} conversion test: {e}")
             raise

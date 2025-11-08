@@ -215,8 +215,8 @@ class TestLlamaNemotronConversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/tmp/workspace/.coverage",
-            "--source=/tmp/workspace/",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
@@ -231,7 +231,7 @@ class TestLlamaNemotronConversion:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
             # Check that the conversion completed successfully
@@ -408,8 +408,8 @@ class TestLlamaNemotronHeterogeneousRoundtrip:
             "-m",
             "coverage",
             "run",
-            "--data-file=/tmp/workspace/.coverage",
-            "--source=/tmp/workspace/",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
@@ -422,7 +422,9 @@ class TestLlamaNemotronHeterogeneousRoundtrip:
             str(pp),
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
+        )
 
         if result.returncode != 0:
             print(f"STDOUT: {result.stdout}")

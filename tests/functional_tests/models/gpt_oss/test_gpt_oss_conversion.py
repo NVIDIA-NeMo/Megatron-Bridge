@@ -92,8 +92,8 @@ class TestGptOssConversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/workspace/.coverage",
-            "--source=/workspace/",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
@@ -112,7 +112,7 @@ class TestGptOssConversion:
             cmd,
             capture_output=True,
             text=True,
-            cwd=Path(__file__).parent.parent.parent.parent,
+            cwd=Path(__file__).parent.parent.parent.parent.parent,
         )
 
         if result.returncode != 0:

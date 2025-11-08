@@ -18,57 +18,42 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import AutoTokenizer, Qwen3NextConfig, Qwen3NextForCausalLM
+from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM
 
 
-# Toy model config based on Qwen3-Next-80B-A3B but with minimal layers for testing
-HF_QWEN3_NEXT_TOY_MODEL_CONFIG = {
-    "architectures": ["Qwen3NextForCausalLM"],
+HF_QWEN3_TOY_MODEL_CONFIG = {
+    "architectures": ["Qwen3ForCausalLM"],  # Qwen3 models use Qwen3ForCausalLM architecture
     "attention_dropout": 0.0,
     "bos_token_id": 151643,
     "eos_token_id": 151643,
     "hidden_act": "silu",
-    "hidden_size": 128,
-    "head_dim": 256,
+    "hidden_size": 1536,  # Matches Qwen3ModelProvider1P7B
     "initializer_range": 0.02,
-    "intermediate_size": 5120,
-    "max_position_embeddings": 262144,
-    "model_type": "qwen3_next",
-    "num_attention_heads": 16,
+    "intermediate_size": 8960,  # Matches Qwen3ModelProvider1P7B
+    "max_position_embeddings": 8192,  # Matches Qwen3ModelProvider1P7B
+    "model_type": "qwen2",  # Qwen3 models use qwen2 model type in transformers
+    "num_attention_heads": 12,  # Matches Qwen3ModelProvider1P7B
     "num_hidden_layers": 2,  # Reduced for toy model testing
-    "num_key_value_heads": 2,
+    "num_key_value_heads": 2,  # Matches Qwen3ModelProvider1P7B
     "rms_norm_eps": 1e-06,
-    "rope_theta": 10000000.0,
-    "tie_word_embeddings": False,
+    "rope_theta": 1000000.0,
+    "tie_word_embeddings": True,
     "torch_dtype": "bfloat16",
     "transformers_version": "4.40.1",
     "use_cache": True,
-    "vocab_size": 151936,
-    # MoE specific
-    "num_experts": 8,
-    "num_experts_per_tok": 2,
-    "moe_intermediate_size": 512,
-    "shared_expert_intermediate_size": 512,
-    # Qwen3-Next specific
-    "full_attention_interval": 2,  # 1 standard attention layer per 4 layers
-    "partial_rotary_factor": 0.25,  # RoPE only applies to first 25% of dims
-    "linear_conv_kernel_dim": 4,
-    "linear_key_head_dim": 32,
-    "linear_value_head_dim": 32,
-    "linear_num_key_heads": 16,
-    "linear_num_value_heads": 32,
+    "vocab_size": 151936,  # Matches Qwen3ModelProvider1P7B
 }
 
 
-class TestQwen3NextConversion:
+class TestQwen3Conversion:
     """
-    Test Qwen3Next model conversion from local HuggingFace model with different parallelism configurations.
+    Test Qwen3 model conversion from local HuggingFace model with different parallelism configurations.
     """
 
     @pytest.fixture(scope="class")
-    def qwen3_next_toy_model_path(self, tmp_path_factory):
+    def qwen3_toy_model_path(self, tmp_path_factory):
         """
-        Create and save a HuggingFace Qwen3Next toy model from config to a temporary directory.
+        Create and save a HuggingFace Qwen3 toy model from config to a temporary directory.
 
         Args:
             tmp_path_factory: Pytest temporary path factory for class-scoped fixtures
@@ -77,15 +62,16 @@ class TestQwen3NextConversion:
             str: Path to the saved HuggingFace model directory
         """
         # Create a temporary directory for this test class
-        temp_dir = tmp_path_factory.mktemp("qwen3_next_toy_model")
-        model_dir = temp_dir / "qwen3_next_toy"
+        temp_dir = tmp_path_factory.mktemp("qwen3_toy_model")
+        model_dir = temp_dir / "qwen3_toy"
 
-        # Create Qwen3Next config from the toy model config
-        config = Qwen3NextConfig(**HF_QWEN3_NEXT_TOY_MODEL_CONFIG)
+        # Create Qwen3 config from the toy model config (using as base for Qwen3)
+        config = Qwen3Config(**HF_QWEN3_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
         # Create model with random weights and convert to bfloat16
-        model = Qwen3NextForCausalLM(config)
+        # Use Qwen3ForCausalLM if available, otherwise fallback to Qwen3ForCausalLM
+        model = Qwen3ForCausalLM(config)
         model = model.bfloat16()  # Use .bfloat16() method instead of .to()
 
         # Debug: Check model dtype before saving
@@ -101,22 +87,22 @@ class TestQwen3NextConversion:
         model.save_pretrained(model_dir, safe_serialization=True)
 
         # Also save config.json explicitly to ensure compatibility with correct torch_dtype
-        config_to_save = HF_QWEN3_NEXT_TOY_MODEL_CONFIG.copy()
+        config_to_save = HF_QWEN3_TOY_MODEL_CONFIG.copy()
         config_path = model_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(config_to_save, f, indent=2)
 
         return str(model_dir)
 
-    def test_toy_model_creation(self, qwen3_next_toy_model_path):
+    def test_toy_model_creation(self, qwen3_toy_model_path):
         """
         Test that the toy model is created correctly and can be loaded.
 
         Args:
-            qwen3_next_toy_model_path: Path to the toy Qwen3Next model (from fixture)
+            qwen3_toy_model_path: Path to the toy Qwen3 model (from fixture)
         """
         # Verify the model directory exists
-        model_path = Path(qwen3_next_toy_model_path)
+        model_path = Path(qwen3_toy_model_path)
         assert model_path.exists(), f"Model directory not found at {model_path}"
 
         # Check essential files exist
@@ -127,19 +113,6 @@ class TestQwen3NextConversion:
         weights_file = model_path / "model.safetensors"
         if not weights_file.exists():
             weights_file = model_path / "pytorch_model.bin"
-
-        # If neither single file exists, check for sharded files
-        if not weights_file.exists():
-            # Check for sharded safetensors files
-            sharded_files = list(model_path.glob("model-*-of-*.safetensors"))
-            if sharded_files:
-                weights_file = sharded_files[0]  # Use first shard as representative
-            else:
-                # Check for sharded pytorch files
-                sharded_files = list(model_path.glob("pytorch_model-*-of-*.bin"))
-                if sharded_files:
-                    weights_file = sharded_files[0]  # Use first shard as representative
-
         assert weights_file.exists(), f"Model weights file not found in {model_path}"
 
         # Check for tokenizer files
@@ -150,25 +123,31 @@ class TestQwen3NextConversion:
         with open(config_file) as f:
             config_data = json.load(f)
 
-        assert config_data["model_type"] == "qwen3_next"
-        assert config_data["hidden_size"] == 128
+        assert config_data["model_type"] == "qwen2"  # Qwen3 uses qwen2 model type
+        assert config_data["hidden_size"] == 1536
         assert config_data["num_hidden_layers"] == 2  # Updated to match toy config
-        assert config_data["num_attention_heads"] == 16
+        assert config_data["num_attention_heads"] == 12
         assert config_data["vocab_size"] == 151936
-        assert config_data["num_experts"] == 8
-        assert config_data["num_experts_per_tok"] == 2
 
         # Try loading the model to verify it's valid
         try:
-            model = Qwen3NextForCausalLM.from_pretrained(
-                qwen3_next_toy_model_path,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=False,  # Ensure full loading
-            )
+            # Try to load with Qwen3ForCausalLM first, fallback to Qwen3ForCausalLM
+            try:
+                model = Qwen3ForCausalLM.from_pretrained(
+                    qwen3_toy_model_path,
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=False,  # Ensure full loading
+                )
+            except Exception:
+                model = Qwen3ForCausalLM.from_pretrained(
+                    qwen3_toy_model_path,
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=False,  # Ensure full loading
+                )
 
             # Try loading the tokenizer as well
             try:
-                tokenizer = AutoTokenizer.from_pretrained(qwen3_next_toy_model_path)
+                tokenizer = AutoTokenizer.from_pretrained(qwen3_toy_model_path)
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
@@ -178,7 +157,7 @@ class TestQwen3NextConversion:
             assert hasattr(model.model, "layers")
             assert len(model.model.layers) == 2  # num_hidden_layers updated to match toy config
 
-            print(f"SUCCESS: Toy model created and validated at {qwen3_next_toy_model_path}")
+            print(f"SUCCESS: Toy model created and validated at {qwen3_toy_model_path}")
             print("Model weights are correctly in bfloat16 format")
 
         except Exception as e:
@@ -186,28 +165,26 @@ class TestQwen3NextConversion:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "tp,pp,ep,test_name",
+        "tp,pp,test_name",
         [
-            (2, 1, 1, "TP"),
-            (1, 2, 1, "PP"),
-            (1, 1, 2, "EP"),
+            (2, 1, "TP"),
+            (1, 2, "PP"),
         ],
     )
-    def test_qwen3_next_conversion_parallelism(self, qwen3_next_toy_model_path, tmp_path, tp, pp, ep, test_name):
+    def test_qwen3_conversion_parallelism(self, qwen3_toy_model_path, tmp_path, tp, pp, test_name):
         """
-        Test Qwen3Next model conversion with different parallelism configurations.
+        Test Qwen3 model conversion with different parallelism configurations.
 
         Args:
-            qwen3_next_toy_model_path: Path to the toy Qwen3Next model (from fixture)
+            qwen3_toy_model_path: Path to the toy Qwen3 model (from fixture)
             tmp_path: Pytest temporary path fixture
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
-            ep: Expert parallelism size
             test_name: Name of the test for identification
         """
 
         # Create temporary output directory for conversion results
-        test_output_dir = tmp_path / f"qwen3_next_{test_name}"
+        test_output_dir = tmp_path / f"qwen3_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
         # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration on our toy model
@@ -225,31 +202,29 @@ class TestQwen3NextConversion:
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
-            qwen3_next_toy_model_path,  # Use our local toy model instead of downloading
+            qwen3_toy_model_path,  # Use our local toy model instead of downloading
             "--output-dir",
             str(test_output_dir),
             "--tp",
             str(tp),
             "--pp",
             str(pp),
-            "--ep",
-            str(ep),
         ]
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
+                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
             )
 
             # Check that the conversion completed successfully
             if result.returncode != 0:
                 print(f"STDOUT: {result.stdout}")
                 print(f"STDERR: {result.stderr}")
-                assert False, f"Qwen3Next {test_name} conversion failed with return code {result.returncode}"
+                assert False, f"Qwen3 {test_name} conversion failed with return code {result.returncode}"
 
             # Verify that the converted model was saved
             # The output directory should be named after the last part of the model path
-            model_name = Path(qwen3_next_toy_model_path).name  # "qwen3_next_toy"
+            model_name = Path(qwen3_toy_model_path).name  # "qwen3_toy"
             converted_model_dir = test_output_dir / model_name
             assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
 
@@ -264,18 +239,17 @@ class TestQwen3NextConversion:
                 f"Model weights file not found in converted model at {converted_model_dir}"
             )
 
-            # Verify the config contains Qwen3Next-specific parameters
+            # Verify the config contains Qwen3-specific parameters
             with open(config_file) as f:
                 saved_config = json.load(f)
 
-            assert saved_config["model_type"] == "qwen3_next", "Model type should be qwen3_next"
-            assert saved_config["hidden_size"] == 128, "Hidden size should match toy config"
-            assert saved_config["num_attention_heads"] == 16, "Number of attention heads should match toy config"
-            assert saved_config["num_experts"] == 8, "Number of experts should match toy config"
+            assert saved_config["model_type"] == "qwen2", "Model type should be qwen2 (Qwen3 uses Qwen3ForCausalLM)"
+            assert saved_config["hidden_size"] == 1536, "Hidden size should match toy config"
+            assert saved_config["num_attention_heads"] == 12, "Number of attention heads should match toy config"
 
-            print(f"SUCCESS: Qwen3Next {test_name} conversion test completed successfully")
+            print(f"SUCCESS: Qwen3 {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
 
         except Exception as e:
-            print(f"Error during Qwen3Next {test_name} conversion test: {e}")
+            print(f"Error during Qwen3 {test_name} conversion test: {e}")
             raise
