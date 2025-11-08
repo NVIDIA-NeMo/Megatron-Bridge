@@ -42,7 +42,7 @@ QWEN3_235B_A22B_GB300_BF16_BASE_CONFIG = replace(
     global_batch_size=1024,
     micro_batch_size=4,
     cuda_graph_impl="none",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -54,7 +54,7 @@ QWEN3_235B_A22B_GB300_FP8_CS_BASE_CONFIG = replace(
     global_batch_size=1024,
     micro_batch_size=4,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -68,7 +68,7 @@ QWEN3_235B_A22B_GB200_BF16_BASE_CONFIG = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -79,7 +79,7 @@ QWEN3_235B_A22B_GB200_FP8_CS_BASE_CONFIG = replace(
     expert_model_parallel_size=8,
     global_batch_size=1024,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -139,7 +139,7 @@ QWEN3_30B_A3B_GB300_BF16_BASE_CONFIG = replace(
     num_gpus=8,
     micro_batch_size=8,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -148,7 +148,7 @@ QWEN3_30B_A3B_GB300_FP8_CS_BASE_CONFIG = replace(
     num_gpus=8,
     micro_batch_size=8,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -160,7 +160,7 @@ QWEN3_30B_A3B_GB200_BF16_BASE_CONFIG = replace(
     num_gpus=8,
     micro_batch_size=4,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -169,7 +169,7 @@ QWEN3_30B_A3B_GB200_FP8_CS_BASE_CONFIG = replace(
     num_gpus=8,
     micro_batch_size=4,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -180,7 +180,7 @@ QWEN3_30B_A3B_B200_BF16_BASE_CONFIG = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
@@ -188,7 +188,7 @@ QWEN3_30B_A3B_B200_FP8_CS_BASE_CONFIG = replace(
     BASE_QWEN3_30B_A3B_CONFIG,
     num_gpus=8,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 

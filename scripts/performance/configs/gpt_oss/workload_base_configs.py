@@ -26,7 +26,7 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
     micro_batch_size=8,
     global_batch_size=512,
     cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=["full_iteration"],
 )
 
 
