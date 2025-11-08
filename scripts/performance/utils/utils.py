@@ -14,7 +14,7 @@
 
 import importlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
@@ -46,7 +46,7 @@ class WorkloadBaseConfig:
 
     use_megatron_fsdp: Optional[bool] = None
     cuda_graph_impl: Optional[str] = None
-    cuda_graph_scope: List[str] = ["full"]
+    cuda_graph_scope: List[str] = field(default_factory=lambda: ["full"])
     cpu_offloading_num_layers: Optional[int] = None
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
