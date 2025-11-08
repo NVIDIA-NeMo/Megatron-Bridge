@@ -270,16 +270,7 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    if get_rank_safe() == 0:
-        if cfg.logger.save_config_filepath is not None:
-            try:
-                cfg.to_yaml(cfg.logger.save_config_filepath)
-            except Exception as e:
-                print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
-        # Print final resolved/updated/overridden configs
-        print("------- Task Configuration -------")
-        cfg.print_yaml()
-        print("----------------------------------")
+    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -451,3 +442,20 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
                 f" {model_vocab_size - tokenizer_vocab_size}."
             )
         return model_vocab_size, False
+
+
+def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
+    """Save configuration to disk and log it on rank 0."""
+
+    if get_rank_safe() != 0:
+        return
+
+    if cfg.logger.save_config_filepath is not None:
+        try:
+            cfg.to_yaml(cfg.logger.save_config_filepath)
+        except Exception as e:
+            print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
+
+    print("------- Task Configuration -------")
+    cfg.print_yaml()
+    print("----------------------------------")
