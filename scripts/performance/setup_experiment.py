@@ -35,6 +35,7 @@ except (ImportError, ModuleNotFoundError):
 import logging
 
 
+logging.basicConfig(level=logging.DEBUG)
 logger: logging.Logger = logging.getLogger(__name__)
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
@@ -116,7 +117,7 @@ def main(
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
         "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
     )
-    print(
+    logger.debug(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
             entrypoint="python",
