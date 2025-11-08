@@ -116,6 +116,14 @@ def main(
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
         "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
     )
+    print(
+        run.Script(
+            path=str(RUN_SCRIPT_PATH),
+            entrypoint="python",
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
+            args=list(sys.argv[1:]),
+        )
+    )
     run.run(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
