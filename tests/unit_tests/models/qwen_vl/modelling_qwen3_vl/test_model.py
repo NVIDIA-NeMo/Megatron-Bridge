@@ -19,9 +19,13 @@ Run with: torchrun --nproc_per_node=8 -m pytest tests/unit_tests/models/qwen_vl/
 Or for single GPU: pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_model.py
 """
 
+import datetime
+import os
+
 import numpy as np
 import pytest
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -58,16 +62,29 @@ class TestQwen3VLModel:
     @classmethod
     def setup_class(cls):
         """Setup distributed process group once for all tests in this class."""
-        if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group("nccl")
+        if not dist.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = "29500"
+            os.environ["RANK"] = "0"
+            os.environ["LOCAL_RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
 
-        torch.cuda.set_device(torch.distributed.get_rank() % torch.cuda.device_count())
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                torch.cuda.set_device(0)
+
+            dist.init_process_group(
+                backend="nccl" if device_count > 0 else "gloo",
+                world_size=1,
+                rank=0,
+                timeout=datetime.timedelta(minutes=30),
+            )
 
     @classmethod
     def teardown_class(cls):
         """Teardown distributed process group once after all tests in this class."""
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
     def _setup_parallel_state(self, tp_size=1, ep_size=1, pp_size=1, cp_size=1):
         """Setup Megatron parallel state with specified parallelism configuration.
