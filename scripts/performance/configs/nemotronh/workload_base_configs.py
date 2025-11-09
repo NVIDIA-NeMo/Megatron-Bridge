@@ -20,6 +20,7 @@ from utils.utils import WorkloadBaseConfig
 
 
 BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
+    num_gpus=64,
     global_batch_size=192,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
@@ -28,25 +29,25 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
 
 # NemotronH 56B presets ---------------------------------------------------------
 
-NEMOTRONH_56B_GB300_64GPUS_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
 )
 
 
-NEMOTRONH_56B_GB200_64GPUS_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
 )
 
 
-NEMOTRONH_56B_H100_64GPUS_FP8_CS_BASE_CONFIG = replace(
+NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=8,
 )
 
 __all__ = [
-    "NEMOTRONH_56B_GB300_64GPUS_FP8_CS_BASE_CONFIG",
-    "NEMOTRONH_56B_GB200_64GPUS_FP8_CS_BASE_CONFIG",
-    "NEMOTRONH_56B_H100_64GPUS_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG",
+    "NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG",
 ]

@@ -15,7 +15,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from utils.utils import WorkloadBaseConfig, get_model_recipe
+from utils.utils import WorkloadBaseConfig, get_model_recipe, get_workload_base_config
 
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer
@@ -25,6 +25,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
+    recipe.logger.save_config_filepath = "/nemo_run/configs/ConfigContainer.yaml"
 
     recipe.ddp.check_for_nan_in_grad = False
     recipe.ddp.check_for_large_grads = False
@@ -230,7 +232,16 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    return recipe
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
@@ -242,21 +253,20 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     compute_dtype = kwargs.get("compute_dtype")
     fp8_recipe = kwargs.get("fp8_recipe")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
-
-    recipe = set_user_overrides(recipe, kwargs)
-
+    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, fp8_recipe)
     set_common_perf_overrides(recipe)
+    set_user_overrides(recipe, kwargs)
 
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-
-    dp = int(num_gpus / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+    # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    default_num_gpus = workload_base_config.num_gpus
+    user_gbs = kwargs.get("global_batch_size")
+    if user_gbs is None:
+        if num_gpus != default_num_gpus:
+            new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
+            recipe.train.global_batch_size = new_gbs
+            logger.info(
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
+            )
 
     return recipe

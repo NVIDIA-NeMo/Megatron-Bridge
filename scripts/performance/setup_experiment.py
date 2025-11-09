@@ -84,7 +84,6 @@ def main(
     logger.info(f"Run script path: {RUN_SCRIPT_PATH}")
     if not RUN_SCRIPT_PATH.is_file():
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
-        logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
     enable_deepep = False

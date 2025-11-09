@@ -46,16 +46,16 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def llama31_405b_gb300_128gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB300, 128xGPU, baseline config."""
+def llama31_405b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB300, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA31_405B_GB300_128GPUS_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA31_405B_GB300_128GPUS_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_GB300_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA31_405B_GB300_128GPUS_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA31_405B_GB300_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
@@ -71,16 +71,16 @@ def llama31_405b_gb300_128gpus_config(precision: str = "bf16", fp8_recipe: str =
     return cfg
 
 
-def llama31_405b_gb200_128gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 128xGPU, baseline config."""
+def llama31_405b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA31_405B_GB200_128GPUS_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA31_405B_GB200_128GPUS_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_GB200_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA31_405B_GB200_128GPUS_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA31_405B_GB200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
@@ -96,16 +96,16 @@ def llama31_405b_gb200_128gpus_config(precision: str = "bf16", fp8_recipe: str =
     return cfg
 
 
-def llama31_405b_b200_128gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """B200, 128xGPU, baseline config."""
+def llama31_405b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """B200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA31_405B_B200_128GPUS_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA31_405B_B200_128GPUS_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_B200_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.LLAMA31_405B_B200_128GPUS_FP8_MX_BASE_CONFIG
+            base_cfg = base_cfgs.LLAMA31_405B_B200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
@@ -118,14 +118,14 @@ def llama31_405b_b200_128gpus_config(precision: str = "bf16", fp8_recipe: str = 
     return cfg
 
 
-def llama31_405b_h100_1024gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 1024xGPU, baseline config."""
+def llama31_405b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """H100, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.LLAMA31_405B_H100_1024GPUS_BF16_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
     else:
-        base_cfg = base_cfgs.LLAMA31_405B_H100_1024GPUS_FP8_CS_BASE_CONFIG
+        base_cfg = base_cfgs.LLAMA31_405B_H100_FP8_CS_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
         comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
