@@ -102,7 +102,7 @@ def get_workload_base_config(
     module_name = f"configs.{model_name}.workload_base_configs"
     try:
         module = importlib.import_module(module_name)
-        logger.debug(f"Imported module '{module_name}'.")
+        logger.info(f"Imported module '{module_name}'.")
     except ModuleNotFoundError as exc:
         raise ValueError(f"Failed to import module '{module_name}'") from exc
 
