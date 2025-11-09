@@ -153,7 +153,7 @@ def _qwen3_next_common(
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
     enable_deepep: bool = False,
-    disable_jit_fuser: bool = False,
+    disable_jit_fuser: Optional[bool] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3 MoE models using a given HuggingFace path.
@@ -194,6 +194,7 @@ def _qwen3_next_common(
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
         enable_deepep (bool): Whether to enable DEEPEP for MoE.
+        disable_jit_fuser (bool): Whether to disable the JIT fuser. Necessary for Qwen3-Next to work on Blackwell.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -257,6 +258,10 @@ def _qwen3_next_common(
         min_lr=min_lr,
     )
     scheduler.no_weight_decay_cond_type = "qwen3_next"
+
+    # If user does not specify, check if we are on Blackwell.
+    if disable_jit_fuser is None:
+        disable_jit_fuser =  torch.cuda.get_device_properties(0).major == 10
 
     # Config Container
     cfg = ConfigContainer(
