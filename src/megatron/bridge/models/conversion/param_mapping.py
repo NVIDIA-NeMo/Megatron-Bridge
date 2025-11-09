@@ -1905,7 +1905,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     num_query_groups = config.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = config.kv_channels or (config.hidden_size // head_num)
-    if config.attention_output_gate:
+    if getattr(config, "attention_output_gate", False):
         qkv_total_dim = 2 * head_num + 2 * num_query_groups
         total_heads_per_group = 2 * heads_per_group + 2
     else:
@@ -1925,7 +1925,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
     v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    if config.attention_output_gate:
+    if getattr(config, "attention_output_gate", False):
         z_slice = torch.cat(
             [
                 torch.arange(
