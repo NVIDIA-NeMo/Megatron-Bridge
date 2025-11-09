@@ -218,10 +218,10 @@ def llama3_8b_low_precision_pretrain_config(
     precision_config = get_mixed_precision_config(mixed_precision_recipe)
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 2,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
         "precision_config": precision_config,
         "lr": 6e-4,
         "min_lr": 6e-6,
