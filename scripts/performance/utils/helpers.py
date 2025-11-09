@@ -25,6 +25,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 
 logger = logging.getLogger(__name__)
