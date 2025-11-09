@@ -261,7 +261,7 @@ def _qwen3_next_common(
 
     # If user does not specify, check if we are on Blackwell.
     if disable_jit_fuser is None:
-        disable_jit_fuser =  torch.cuda.get_device_properties(0).major == 10
+        disable_jit_fuser = torch.cuda.get_device_properties(0).major == 10
 
     # Config Container
     cfg = ConfigContainer(
