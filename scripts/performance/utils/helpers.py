@@ -258,6 +258,8 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the user
     workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    print(f"\n\nWorkload base config: {workload_base_config}\n\n")
+    print(f"\n\nNum GPUs: {num_gpus}\n\n")
     default_num_gpus = workload_base_config.num_gpus
     user_gbs = kwargs.get("global_batch_size")
     if user_gbs is None:
