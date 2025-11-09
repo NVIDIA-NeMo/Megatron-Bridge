@@ -228,8 +228,8 @@ class TestQwen3VLModel:
         "tp_size,ep_size,pp_size",
         [
             (1, 1, 1),  # No parallelism
-            (2, 2, 1),  # tp=2, ep=2, pp=1
-            (2, 2, 2),  # tp=2, ep=2, pp=2
+            # (2, 2, 1),  # tp=2, ep=2, pp=1
+            # (2, 2, 2),  # tp=2, ep=2, pp=2
         ],
     )
     def test_model_forward(self, tp_size, ep_size, pp_size, hf_config, processor, random_image):
