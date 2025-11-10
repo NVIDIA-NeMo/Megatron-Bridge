@@ -103,7 +103,6 @@ Note:
 - This full finetuning recipe requires at least 4xH100 (80G) GPUs.
 
 ### Parameter-Efficient Finetuning (PEFT)
-
 Parameter-efficient finetuning (PEFT) using LoRA is supported. 
 LoRA can be independently applied to the vision model, vision projection, and language model. We support two commonly used
 settings out of the box in the example script:
@@ -165,6 +164,7 @@ Megatron Bridge supports various vision-language dataset examples which can be u
 | [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
 | [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 | [LLaVA-Video-178K (0_30_s_nextqa subset)](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K) | `make_llava_video_178k_dataset` | Video understanding: video question-answer dataset covering every-day scenarios. |
+`cord-v2` is a tiny dataset and is included for demonstration only. This dataset is not recommended for PEFT tuning for this model since the XML output format interacts with the special tokens, leading to unexpected results. 
 
 Note on video training example:
 - We provide a video config yaml file instead of the default config yaml file that overwrites a few commands. Please
