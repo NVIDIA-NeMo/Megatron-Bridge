@@ -263,7 +263,7 @@ class PerfEnvPlugin(Plugin):
         if gpu in ["h100"]:
             if model_name == "llama3" and model_size == "8b":
                 if compute_dtype == "fp8" and fp8_recipe == "cs":
-                    executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                    executor.env_vars["NCCL_NVLS_ENABLE"] = "0"
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
@@ -357,7 +357,9 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
-        workload_base_config = get_workload_base_config(self.model_name, self.model_size, self.gpu, self.compute_dtype)
+        workload_base_config = get_workload_base_config(
+            self.model_name, self.model_size, self.gpu, self.compute_dtype, self.fp8_recipe
+        )
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
