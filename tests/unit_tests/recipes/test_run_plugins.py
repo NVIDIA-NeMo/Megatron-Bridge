@@ -61,14 +61,12 @@ def create_test_config(**kwargs):
     )
 
     # Extract model-specific args
-    tensor_parallelism = kwargs.pop("tensor_parallelism", 1)
-    pipeline_parallelism = kwargs.pop("pipeline_parallelism", 1)
-    pipeline_parallelism_dtype = kwargs.pop(
-        "pipeline_parallelism_dtype", torch.float32 if pipeline_parallelism > 1 else None
-    )
-    virtual_pipeline_parallelism = kwargs.pop("virtual_pipeline_parallelism", None)
-    context_parallelism = kwargs.pop("context_parallelism", 2)
-    sequence_parallelism = kwargs.pop("sequence_parallelism", False)
+    tensor_model_parallel_size = kwargs.pop("tensor_model_parallel_size", 1)
+    pipeline_model_parallel_size = kwargs.pop("pipeline_model_parallel_size", 1)
+    pipeline_dtype = kwargs.pop("pipeline_dtype", torch.float32 if pipeline_model_parallel_size > 1 else None)
+    virtual_pipeline_model_parallel_size = kwargs.pop("virtual_pipeline_model_parallel_size", None)
+    context_parallel_size = kwargs.pop("context_parallel_size", 2)
+    sequence_parallel = kwargs.pop("sequence_parallel", False)
 
     # Extract training args with defaults
     train_iters = kwargs.pop("train_iters", 100)
@@ -81,12 +79,12 @@ def create_test_config(**kwargs):
     # Create model config with apply_rope_fusion=False
     model_cfg = Llama3ModelProvider8B(
         apply_rope_fusion=False,  # Disable to avoid TE/Apex requirement
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        sequence_parallel=sequence_parallel,
     )
 
     # Create a minimal ConfigContainer

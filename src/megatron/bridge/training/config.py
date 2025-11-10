@@ -828,6 +828,9 @@ class LoggerConfig:
     log_energy: bool = False
     """If set, log energy consumption (in Joules)."""
 
+    save_config_filepath: Optional[str] = None
+    """If set, save the task configuration (ConfigContainer) to this file."""
+
 
 @dataclass(kw_only=True)
 class ProfilingConfig:

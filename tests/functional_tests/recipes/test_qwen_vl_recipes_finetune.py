@@ -23,7 +23,12 @@ from tests.functional_tests.recipes.utils import run_pretrain_vl_recipe_test
 QWEN_VL_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides)
     # Two-GPU TP for local/CI multi-GPU runs
-    (qwen25_vl_3b_finetune_config, "qwen25_vl_3b", {"tensor_parallelism": 2, "pipeline_parallelism": 1}),
+    (
+        qwen25_vl_3b_finetune_config,
+        "qwen25_vl_3b",
+        {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
+        {"num_layers": 2},
+    ),
 ]
 
 
