@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -27,6 +27,7 @@ class TestApplyMoETokenDrop:
     def valid_model_provider(self):
         """Create a valid GPTModelProvider mock for testing."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall"
         mock_provider.moe_router_load_balancing_type = "aux_loss"
         return mock_provider
@@ -92,6 +93,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_valid_dispatcher_types(self, dispatcher_type):
         """Test apply_moe_token_drop with valid dispatcher types."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = dispatcher_type
         mock_provider.moe_router_load_balancing_type = "aux_loss"
 
@@ -104,6 +106,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_valid_load_balancing_types(self, load_balancing_type):
         """Test apply_moe_token_drop with valid load balancing types."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall"
         mock_provider.moe_router_load_balancing_type = load_balancing_type
 
@@ -122,6 +125,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_invalid_dispatcher_type(self, invalid_dispatcher):
         """Test apply_moe_token_drop with invalid dispatcher types raises AssertionError."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = invalid_dispatcher
         mock_provider.moe_router_load_balancing_type = "aux_loss"
 
@@ -134,6 +138,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_invalid_load_balancing_type(self, invalid_load_balancing):
         """Test apply_moe_token_drop with invalid load balancing types raises AssertionError."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall"
         mock_provider.moe_router_load_balancing_type = invalid_load_balancing
 
@@ -145,6 +150,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_padding_with_none_capacity_factor_raises_error(self):
         """Test that enabling padding with None capacity factor raises ValueError."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall"
         mock_provider.moe_router_load_balancing_type = "aux_loss"
 
@@ -160,6 +166,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_padding_disabled_with_none_capacity_factor(self):
         """Test that disabling padding with None capacity factor works."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall"
         mock_provider.moe_router_load_balancing_type = "aux_loss"
 
@@ -183,6 +190,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_combination_alltoall_seq_with_seq_aux_loss(self):
         """Test valid combination of alltoall_seq dispatcher with seq_aux_loss."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall_seq"
         mock_provider.moe_router_load_balancing_type = "seq_aux_loss"
 
@@ -194,6 +202,7 @@ class TestApplyMoETokenDrop:
     def test_apply_moe_token_drop_combination_alltoall_with_none_load_balancing(self):
         """Test valid combination of alltoall dispatcher with none load balancing."""
         mock_provider = Mock()
+        mock_provider.num_moe_experts = 8  # MoE model
         mock_provider.moe_token_dispatcher_type = "alltoall"
         mock_provider.moe_router_load_balancing_type = "none"
 
@@ -201,3 +210,47 @@ class TestApplyMoETokenDrop:
 
         assert mock_provider.moe_expert_capacity_factor == 0.8
         assert mock_provider.moe_pad_expert_input_to_capacity is True
+
+    @patch("megatron.bridge.training.utils.moe_token_drop.logger")
+    def test_apply_moe_token_drop_warns_for_non_moe_model_none_experts(self, mock_logger):
+        """Test that apply_moe_token_drop logs warning and returns early when num_moe_experts is None."""
+        # Create a mock TransformerConfig without MoE
+        mock_provider = Mock()
+        mock_provider.num_moe_experts = None  # Explicitly set to None (default value)
+
+        # Store initial state before applying
+        initial_capacity_factor = getattr(mock_provider, "moe_expert_capacity_factor", "UNSET")
+        initial_pad_capacity = getattr(mock_provider, "moe_pad_expert_input_to_capacity", "UNSET")
+
+        # Apply MoE token drop
+        apply_moe_token_drop(mock_provider)
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once()
+        assert "MoE token drop is only applicable to MoE models" in mock_logger.warning.call_args[0][0]
+
+        # Verify configs were NOT modified (still in initial state)
+        assert getattr(mock_provider, "moe_expert_capacity_factor", "UNSET") == initial_capacity_factor
+        assert getattr(mock_provider, "moe_pad_expert_input_to_capacity", "UNSET") == initial_pad_capacity
+
+    @patch("megatron.bridge.training.utils.moe_token_drop.logger")
+    def test_apply_moe_token_drop_warns_for_non_moe_model_zero_experts(self, mock_logger):
+        """Test that apply_moe_token_drop logs warning and returns early when num_moe_experts is 0."""
+        # Create a mock TransformerConfig without MoE
+        mock_provider = Mock()
+        mock_provider.num_moe_experts = 0  # Explicitly set to 0
+
+        # Store initial state before applying
+        initial_capacity_factor = getattr(mock_provider, "moe_expert_capacity_factor", "UNSET")
+        initial_pad_capacity = getattr(mock_provider, "moe_pad_expert_input_to_capacity", "UNSET")
+
+        # Apply MoE token drop
+        apply_moe_token_drop(mock_provider)
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once()
+        assert "MoE token drop is only applicable to MoE models" in mock_logger.warning.call_args[0][0]
+
+        # Verify configs were NOT modified (still in initial state)
+        assert getattr(mock_provider, "moe_expert_capacity_factor", "UNSET") == initial_capacity_factor
+        assert getattr(mock_provider, "moe_pad_expert_input_to_capacity", "UNSET") == initial_pad_capacity
