@@ -141,7 +141,7 @@ def set_cuda_graph_overrides(
 
         if cuda_graph_impl == "transformer_engine":
             valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-            assert cuda_graph_scope in valid_te_scopes, (
+            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
                 f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
             )
 
