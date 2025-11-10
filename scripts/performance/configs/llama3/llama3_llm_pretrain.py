@@ -50,7 +50,7 @@ def set_llama3_common_configs(cfg: ConfigContainer) -> None:
 # Llama3 70B configs ---------------------------------------------------------
 
 
-def llama3_70b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_70b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_GB300_BF16_BASE_CONFIG
@@ -58,9 +58,9 @@ def llama3_70b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> 
         comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA3_70B_GB300_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA3_70B_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
@@ -77,7 +77,7 @@ def llama3_70b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> 
     return cfg
 
 
-def llama3_70b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_70b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_GB200_BF16_BASE_CONFIG
@@ -85,9 +85,9 @@ def llama3_70b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> 
         comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA3_70B_GB200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA3_70B_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
@@ -104,7 +104,7 @@ def llama3_70b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> 
     return cfg
 
 
-def llama3_70b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_70b_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_B200_BF16_BASE_CONFIG
@@ -112,9 +112,9 @@ def llama3_70b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> C
         comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA3_70B_B200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA3_70B_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
@@ -131,7 +131,7 @@ def llama3_70b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> C
     return cfg
 
 
-def llama3_70b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_70b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_H100_BF16_BASE_CONFIG
@@ -139,7 +139,7 @@ def llama3_70b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> C
         comm_overlap_cfg = userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA3_70B_H100_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192
 
     cfg = llama3_70b_pretrain_config(mock=True, precision_config=precision_config)
@@ -154,16 +154,16 @@ def llama3_70b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> C
 # Llama3 8B configs ---------------------------------------------------------
 
 
-def llama3_8b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_8b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.LLAMA3_8B_GB300_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA3_8B_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
     set_llama3_common_configs(cfg)
@@ -174,16 +174,16 @@ def llama3_8b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> C
     return cfg
 
 
-def llama3_8b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_8b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.LLAMA3_8B_GB200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA3_8B_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
     set_llama3_common_configs(cfg)
@@ -194,16 +194,16 @@ def llama3_8b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> C
     return cfg
 
 
-def llama3_8b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_8b_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.LLAMA3_8B_B200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA3_8B_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
     set_llama3_common_configs(cfg)
@@ -214,14 +214,14 @@ def llama3_8b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> Co
     return cfg
 
 
-def llama3_8b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama3_8b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.LLAMA3_8B_H100_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
     set_llama3_common_configs(cfg)
