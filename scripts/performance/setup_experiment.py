@@ -24,18 +24,13 @@ except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.executors import slurm_executor
 
+import nemo_run as run
+
+
 try:
-    import nemo_run as run
-
-    HAS_NEMO_RUN = True
-except ImportError:
-    HAS_NEMO_RUN = False
-
-if HAS_NEMO_RUN:
-    try:
-        from perf_plugins import NsysPlugin, PerfEnvPlugin
-    except (ImportError, ModuleNotFoundError):
-        from .perf_plugins import NsysPlugin, PerfEnvPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin
+except (ImportError, ModuleNotFoundError):
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin
 
 import logging
 
@@ -56,7 +51,6 @@ def main(
     fp8_recipe: str,
     gpu: str,
     num_gpus: int,
-    gpus_per_node: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
@@ -115,21 +109,7 @@ def main(
             f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
         ]
-        if HAS_NEMO_RUN
-        else []
     )
-    if HAS_NEMO_RUN and enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
-    if HAS_NEMO_RUN and wandb_key is not None:
-        assert wandb_prj_name is not None and wandb_exp_name is not None, (
-            "wandb_prj_name and wandb_exp_name must be set together if one is set"
-        )
-
-    custom_mounts = custom_mounts + [
-        f"{RUN_SCRIPT_PATH}:{RUN_SCRIPT_PATH}",
-        f"{SCRIPT_DIR}:{SCRIPT_DIR}",
-    ]
-    executor.container_mounts.extend(custom_mounts)
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
@@ -148,8 +128,10 @@ def main(
         detach=detach,
         name=exp_name,
     )
+
     exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).items()).pop()
-    job_status = job_dict["status"]
+    job_status = str(job_dict["status"])
+
     if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING"]:
         raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
 
@@ -169,7 +151,6 @@ if __name__ == "__main__":
         fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
         num_gpus=args.num_gpus,
-        gpus_per_node=args.gpus_per_node,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,
