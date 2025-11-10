@@ -63,8 +63,8 @@ class GPTOSSProvider(GPTModelProvider):
     yarn_beta_fast: float = 32.0
     yarn_beta_slow: float = 1.0
     yarn_correction_range_round_to_int: bool = False
-    yarn_mscale: float = 1.0
-    yarn_mscale_all_dim: float = 1.0
+    yarn_mscale: Optional[float] = None
+    yarn_mscale_all_dim: Optional[float] = None
 
     moe_router_topk: int = 4
     moe_router_pre_softmax: bool = False

@@ -44,22 +44,22 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB300, 256xGPU, baseline config."""
+def deepseek_v3_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB300, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB300_256GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=False,
         layout=None,
     )
@@ -76,22 +76,22 @@ def deepseek_v3_gb300_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     return cfg
 
 
-def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """GB200, 256xGPU, baseline config."""
+def deepseek_v3_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """GB200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_GB200_256GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=False,
         layout=None,
     )
@@ -108,22 +108,22 @@ def deepseek_v3_gb200_256gpus_config(precision: str = "bf16", fp8_recipe: str = 
     return cfg
 
 
-def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """B200, 256xGPU, baseline config."""
+def deepseek_v3_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """B200, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG
         if fp8_recipe == "mx":
-            base_cfg = base_cfgs.DEEPSEEK_V3_B200_256GPUS_FP8_MX_PARALLEL_CONFIG
+            base_cfg = base_cfgs.DEEPSEEK_V3_B200_FP8_MX_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=False,
         layout=None,
     )
@@ -135,22 +135,22 @@ def deepseek_v3_b200_256gpus_config(precision: str = "bf16", fp8_recipe: str = "
     return cfg
 
 
-def deepseek_v3_h100_1024gpus_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
-    """H100, 1024xGPU, baseline config."""
+def deepseek_v3_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+    """H100, baseline config."""
     if precision == "bf16":
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_BF16_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
-        base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_CS_PARALLEL_CONFIG
+        base_cfg = base_cfgs.DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG
         if fp8_recipe == "sc":
-            base_cfg = base_cfgs.DEEPSEEK_V3_H100_1024GPUS_FP8_SC_PARALLEL_CONFIG
+            base_cfg = base_cfgs.DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG
         precision_config = get_precision_config(precision, fp8_recipe)
 
     cfg = pretrain_config(
         mock=True,
         precision_config=precision_config,
-        pipeline_parallelism=base_cfg.pipeline_model_parallel_size,
-        virtual_pipeline_parallelism=base_cfg.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_size=base_cfg.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=base_cfg.virtual_pipeline_model_parallel_size,
         enable_deepep=True,
         layout="Et|(tt|)*30mL",
     )
