@@ -311,6 +311,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         self,
         seq_length: int,
         skip_getting_attention_mask_from_dataset: bool = True,
+        *args,
         **kwargs,
     ):
         """
@@ -321,7 +322,10 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         """
         self.skip_getting_attention_mask_from_dataset = skip_getting_attention_mask_from_dataset
         kwargs["sequence_length"] = seq_length
-        super().__init__(**kwargs)
+
+        dataloader_kwargs = {k: kwargs.pop(k) for k in list(kwargs) if k in DataloaderConfig.__dataclass_fields__}
+        MCoreGPTDatasetConfig.__init__(self, *args, **kwargs)
+        DataloaderConfig.__init__(self, **dataloader_kwargs)
 
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.

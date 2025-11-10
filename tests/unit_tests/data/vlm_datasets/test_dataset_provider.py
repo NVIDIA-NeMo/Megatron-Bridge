@@ -94,7 +94,7 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     monkeypatch.setattr(dp_mod.HFDatasetConversationProvider, "_get_maker", _fake_get_maker)
 
     provider = dp_mod.HFDatasetConversationProvider(
-        sequence_length=16, hf_processor_path="dummy/model", maker_name="rdr"
+        seq_length=16, hf_processor_path="dummy/model", maker_name="rdr"
     )
 
     ctx = DatasetBuildContext(train_samples=2, valid_samples=1, test_samples=0)
