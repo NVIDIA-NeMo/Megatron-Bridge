@@ -103,7 +103,6 @@ Note:
 - This full finetuning recipe requires at least 4xH100 (80G) GPUs.
 
 ### Parameter-Efficient Finetuning (PEFT)
-Full finetuning requires at least 2xH100 (80G) GPUs. 
 
 Parameter-efficient finetuning (PEFT) using LoRA is supported. 
 LoRA can be independently applied to the vision model, vision projection, and language model. We support two commonly used
