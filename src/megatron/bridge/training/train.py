@@ -589,7 +589,6 @@ def train_step(
         seq_length = model_config.seq_length  # Default for pretraining
         forward_backward_data_iterator = data_iterator  # Default for pretraining
 
-
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
