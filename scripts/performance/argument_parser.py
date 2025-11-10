@@ -55,13 +55,12 @@ def is_cuda_graph_impl_valid(arg):
 def is_cuda_graph_scope_valid(arg):
     """Validate the CUDA graph scope argument."""
     args = arg.split(",")
-    args = [a.lower() for a in args]
     if all(a in VALID_CUDA_GRAPH_SCOPES for a in args):
         return args
     else:
         raise ValueError(
             f"Invalid value for cuda_graph_scope: {arg}. Valid options are: {VALID_CUDA_GRAPH_SCOPES}. "
-            "If you want to disable CUDA graphs, set `--cuda_graph_impl none`"
+            "Comma separated list of scopes is allowed."
         )
 
 
@@ -291,8 +290,7 @@ def parse_cli_args():
     )
     parser.add_argument(
         "--cuda_graph_scope",
-        help=f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. "
-        "If you want to disable CUDA graphs, set `--cuda_graph_impl none`",
+        help=f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of scopes is allowed.",
         type=is_cuda_graph_scope_valid,
         required=False,
         default=None,
