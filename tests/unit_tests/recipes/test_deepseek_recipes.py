@@ -48,9 +48,9 @@ def _safe_overrides_for(name: str) -> dict:
         "lr": 1e-4,
         "min_lr": 1e-5,
         "lr_warmup_iters": 2,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
         "use_null_tokenizer": True,
     }
 
@@ -60,6 +60,7 @@ class _FakeModelCfg:
     def __init__(self):
         # Provide defaults for attributes that recipes might read
         self.rotary_base = 10000.0
+        self.num_moe_experts = 0
 
     def finalize(self):
         return None

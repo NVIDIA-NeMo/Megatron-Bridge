@@ -141,6 +141,7 @@ class GPTOSSBridge(MegatronModelBridge):
                 merged_hf_weights = torch.cat(
                     [self.hf_weights_cache[key][i].unsqueeze(0) for i in range(num_experts)], dim=0
                 )
+                del self.hf_weights_cache[key]
                 return {key: merged_hf_weights}
             else:
                 # not all experts are loaded yet, return empty dict

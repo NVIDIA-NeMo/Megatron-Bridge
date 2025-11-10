@@ -52,14 +52,14 @@ class Qwen3NextCommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    expert_parallelism: Optional[int]
-    expert_tensor_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    expert_model_parallel_size: Optional[int]
+    expert_tensor_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     enable_recompute: bool
     account_for_embedding_in_pipeline_split: bool
@@ -93,12 +93,12 @@ def qwen3_next_80b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3NextCommonKwar
     """
     recommended_kwargs: Qwen3NextCommonKwargs = {
         "hf_path": "Qwen/Qwen3-Next-80B-A3B-Instruct",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 1,
-        "expert_parallelism": 8,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 1,
+        "expert_model_parallel_size": 8,
+        "sequence_parallel": False,
         "enable_recompute": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -120,14 +120,14 @@ def _qwen3_next_common(
     mock: bool = False,
     path_to_cache: Optional[str] = None,
     # Model configuration
-    tensor_parallelism: int = 4,
-    pipeline_parallelism: int = 2,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: Optional[int] = 4,
-    expert_tensor_parallelism: int = 1,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 4,
+    pipeline_model_parallel_size: int = 2,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: Optional[int] = 4,
+    expert_tensor_parallel_size: int = 1,
+    sequence_parallel: bool = True,
     use_megatron_fsdp: bool = False,
     enable_recompute: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
@@ -166,14 +166,14 @@ def _qwen3_next_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        expert_parallelism (Optional[int]): Degree of expert parallelism for MoE.
-        expert_tensor_parallelism (int): Expert tensor parallelism for MoE.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
+        expert_model_parallel_size (Optional[int]): Degree of expert parallelism for MoE.
+        expert_tensor_parallel_size (int): Expert tensor parallelism for MoE.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         enable_recompute (bool): Whether to enable recompute for memory optimization.
         account_for_embedding_in_pipeline_split (bool): Whether to account for embedding in pipeline split.
@@ -206,14 +206,14 @@ def _qwen3_next_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.expert_model_parallel_size = expert_parallelism
-    model_cfg.expert_tensor_parallel_size = expert_tensor_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.expert_model_parallel_size = expert_model_parallel_size
+    model_cfg.expert_tensor_parallel_size = expert_tensor_parallel_size
 
     model_cfg.mtp_num_layers = 0 if mtp_num_layers is None else mtp_num_layers
     model_cfg.mtp_loss_scaling_factor = mtp_loss_scaling_factor

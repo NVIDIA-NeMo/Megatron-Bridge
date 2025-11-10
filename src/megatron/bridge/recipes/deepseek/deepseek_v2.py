@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.bridge.training.deepep import apply_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
@@ -52,13 +53,13 @@ class DeepSeekCommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    expert_parallelism: Optional[int]
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    expert_model_parallel_size: Optional[int]
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
     # Recompute configuration
@@ -89,11 +90,11 @@ def deepseek_v2_lite_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]
     """
     recommended_kwargs: DeepSeekCommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V2-Lite",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "expert_parallelism": 8,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "expert_model_parallel_size": 8,
         # Match old defaults
-        "pipeline_parallelism_dtype": None,
+        "pipeline_dtype": None,
         "recompute_granularity": "full",
         "recompute_method": "uniform",
         "recompute_num_layers": 1,
@@ -109,9 +110,9 @@ def deepseek_v2_pretrain_config(**user_kwargs: Unpack[DeepSeekCommonKwargs]) -> 
     """
     recommended_kwargs: DeepSeekCommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V2",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 4,
-        "expert_parallelism": 32,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 4,
+        "expert_model_parallel_size": 32,
         "recompute_granularity": "full",
         "recompute_method": "uniform",
         "recompute_num_layers": 1,
@@ -133,13 +134,13 @@ def _deepseek_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: Optional[int] = None,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: Optional[int] = None,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = True,
     # Recompute configuration
@@ -176,20 +177,21 @@ def _deepseek_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    if expert_parallelism is not None:
-        model_cfg.expert_model_parallel_size = expert_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    if expert_model_parallel_size is not None:
+        model_cfg.expert_model_parallel_size = expert_model_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
     model_cfg.rotary_base = float(model_cfg.rotary_base)
 
     model_cfg.recompute_granularity = recompute_granularity
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
+    apply_deepep(model_cfg)
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
