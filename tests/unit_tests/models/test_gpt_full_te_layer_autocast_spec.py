@@ -213,6 +213,7 @@ class TestTETransformerLayerAutocast:
         config.bf16 = False
         config.num_layers = 12
         config.cuda_graph_impl = "none"
+        config.cuda_graph_scope = []
         config.cpu_offloading = False
         config.recompute_granularity = None
         config.virtual_pipeline_model_parallel_size = None
@@ -303,6 +304,7 @@ class TestTETransformerLayerAutocast:
 
         mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "local"
+        mock_config.cuda_graph_scope = []  # Empty list means layerwise graph
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
             with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
@@ -329,6 +331,7 @@ class TestTETransformerLayerAutocast:
 
         mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
         mock_config.cuda_graph_impl = "transformer_engine"
+        mock_config.cuda_graph_scope = ["attn", "mlp"]  # TE supports multi-scope
 
         with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer") as mock_autocast:
             mock_transformer = Mock()
