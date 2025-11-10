@@ -41,6 +41,7 @@ _LLAMA3_FINETUNE_FUNCS = [
     if callable(getattr(_llama_module, name, None))
 ]
 
+
 def _safe_overrides_for(name: str) -> dict:
     # Detect if this is a finetune recipe
     is_finetune = "finetune" in name.lower()
@@ -76,9 +77,9 @@ def _safe_overrides_for(name: str) -> dict:
                 "mock": True,
                 "lr": 1e-4,
                 "use_null_tokenizer": True,
-                "tensor_parallelism": 1,
-                "pipeline_parallelism": 1,
-                "context_parallelism": 1,
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "context_parallel_size": 1,
             }
         )
 
@@ -86,8 +87,8 @@ def _safe_overrides_for(name: str) -> dict:
         if "70b" in lname or "405b" in lname:
             overrides.update(
                 {
-                    "virtual_pipeline_parallelism": None,
-                    "sequence_parallelism": True,
+                    "virtual_pipeline_model_parallel_size": None,
+                    "sequence_parallel": True,
                 }
             )
 
@@ -96,7 +97,7 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     def __init__(self):
-        self.cross_entropy_fusion_impl = "native"
+        self.cross_entropy_fusion_impl = "te"
 
     def finalize(self):
         return None
@@ -196,7 +197,7 @@ def test_llama3_finetune_config_builds(recipe_func: Callable, monkeypatch: pytes
 
 
 @pytest.mark.parametrize("recipe_func", _LLAMA3_FINETUNE_FUNCS)
-@pytest.mark.parametrize("peft", ["lora", "none"])
+@pytest.mark.parametrize("peft", ["lora", "dora", "none"])
 def test_llama3_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT and full SFT configurations are correctly applied."""
     module_name = recipe_func.__module__
@@ -211,7 +212,7 @@ def test_llama3_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monk
     _assert_basic_config(cfg)
 
     # Check PEFT config presence
-    if peft == "lora":
+    if peft in ["lora", "dora"]:
         assert cfg.peft is not None
     elif peft == "none":
         assert cfg.peft is None
@@ -382,3 +383,69 @@ def test_llama3_70b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # For LoRA, 70B should use TP=8
     assert cfg.model.tensor_model_parallel_size == 8
+
+
+def test_llama3_8b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 8B DoRA has correct default parallelism and performance optimizations."""
+    from megatron.bridge.recipes.llama import llama3_8b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_8b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = llama3_8b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, 8B should use TP=1 (same as LoRA)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+
+    # Check PEFT-specific performance settings
+    assert cfg.model.cross_entropy_loss_fusion is False  # Disabled for PEFT
+    assert cfg.optimizer.use_distributed_optimizer is False  # Disabled for PEFT
+
+    # Check manual GC is enabled
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 100
+
+
+def test_llama3_70b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 70B DoRA has correct default parallelism."""
+    from megatron.bridge.recipes.llama import llama3_70b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_70b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = llama3_70b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, 70B should use TP=8 (same as LoRA)
+    assert cfg.model.tensor_model_parallel_size == 8
+
+
+def test_llama31_405b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 405B DoRA has correct default parallelism (performance mode)."""
+    from megatron.bridge.recipes.llama import llama31_405b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama31_405b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = llama31_405b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, 405B should use same parallelism as LoRA
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.virtual_pipeline_model_parallel_size == 8
+    assert cfg.train.global_batch_size == 32
