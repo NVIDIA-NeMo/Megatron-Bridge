@@ -182,8 +182,7 @@ def nemotron_nano_v2_vl_12b_finetune_config(
     while additionally wiring up the :class:`CheckpointConfig` for finetuning from a
     given *``pretrained_checkpoint``*.
 
-    Parameters
-    ----------
+    Parameters:
     pretrained_checkpoint: str
         Path to a Megatron-Bridge checkpoint (or a directory produced by
         ``convert_ckpt_hf_to_megatron``) that will be loaded before training.

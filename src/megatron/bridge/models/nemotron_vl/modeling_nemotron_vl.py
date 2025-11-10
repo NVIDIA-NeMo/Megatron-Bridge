@@ -41,8 +41,7 @@ class NemotronVLModel(MegatronModule):
         """Create a wrapper that exposes an existing :class:`LLaVAModel` via the
         Bridge API.
 
-        Parameters
-        ----------
+        Parameters:
         llava_model:
             A fully-assembled instance of :class:`~megatron.core.models.multimodal.llava_model.LLaVAModel`.
         config:
