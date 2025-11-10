@@ -314,7 +314,7 @@ class TestAutoBridge:
     def test_to_megatron_provider_sets_hf_model_id_from_pretrained(self):
         """to_megatron_provider falls back to HF model name_or_path."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_hf_model.name_or_path = "hf/model-id"
+        type(mock_hf_model).model_name_or_path = PropertyMock(return_value="hf/model-id")
         mock_model_bridge = Mock()
         mock_provider = Mock(spec=GPTModelProvider)
         mock_provider.hf_model_id = None
