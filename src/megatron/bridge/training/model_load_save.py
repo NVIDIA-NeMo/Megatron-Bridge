@@ -110,9 +110,15 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     # This is needed even for CPU/gloo backend as some model components
     # (like MambaMixer) may use get_cuda_rng_tracker().fork() during __init__
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+        try:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
 
-        model_parallel_cuda_manual_seed(0)
+            model_parallel_cuda_manual_seed(0)
+        except Exception:
+            # If RNG tracker initialization fails (e.g., in test environments
+            # or when parallel groups aren't fully initialized), continue anyway.
+            # Models that need the RNG tracker will fail later with a clearer error.
+            pass
 
     try:
         yield

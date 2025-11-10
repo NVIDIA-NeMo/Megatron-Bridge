@@ -95,7 +95,7 @@ def test_nemotron_vl_pretrain_builds_config(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
     overrides = _safe_overrides()
-    cfg = _nemotron_module.pretrain_config(**overrides)
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_pretrain_config(**overrides)
 
     _assert_basic_config(cfg)
 
@@ -122,7 +122,7 @@ def test_nemotron_vl_pretrain_pipeline_dtype(monkeypatch: pytest.MonkeyPatch):
     overrides = _safe_overrides()
     overrides["pipeline_parallelism_dtype"] = torch.bfloat16
 
-    cfg = _nemotron_module.pretrain_config(**overrides)
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_pretrain_config(**overrides)
 
     assert getattr(cfg.model, "pipeline_dtype", None) is torch.bfloat16
 
@@ -132,7 +132,7 @@ def test_nemotron_vl_finetune_with_lora(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
     overrides = _safe_overrides()
-    cfg = _nemotron_module.finetune_config(
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_finetune_config(
         pretrained_checkpoint="/fake/ckpt",
         lora_on_language_model=True,
         lora_on_vision_model=False,
@@ -162,7 +162,7 @@ def test_nemotron_vl_finetune_without_lora(monkeypatch: pytest.MonkeyPatch):
     overrides = _safe_overrides()
     del overrides["lr"]
     del overrides["min_lr"]
-    cfg = _nemotron_module.finetune_config(
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_finetune_config(
         pretrained_checkpoint="/fake/ckpt",
         lora_on_language_model=False,
         **overrides,
@@ -183,7 +183,7 @@ def test_nemotron_vl_finetune_custom_save_dir(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_nemotron_module, "AutoBridge", _FakeAutoBridge)
 
     overrides = _safe_overrides()
-    cfg = _nemotron_module.finetune_config(
+    cfg = _nemotron_module.nemotron_nano_v2_vl_12b_finetune_config(
         pretrained_checkpoint="/fake/ckpt",
         save_checkpoint_dir="/fake/save",
         **overrides,
