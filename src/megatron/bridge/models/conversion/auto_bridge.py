@@ -741,8 +741,7 @@ class AutoBridge(Generic[MegatronModelT]):
             if hf_name_or_path:
                 hf_identifier = str(hf_name_or_path)
 
-        existing_hf_model_id = getattr(provider, "hf_model_id", None)
-        if hf_identifier and not existing_hf_model_id:
+        if hf_identifier:
             setattr(provider, "hf_model_id", hf_identifier)
 
         return provider
