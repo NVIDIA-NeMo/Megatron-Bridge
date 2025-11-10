@@ -213,8 +213,7 @@ QWEN3_30B_A3B_H100_FP8_CS_BASE_CONFIG = replace(
     pipeline_model_parallel_size=2,
     virtual_pipeline_model_parallel_size=12,
     micro_batch_size=2,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["mlp"],
+    cuda_graph_impl="none",
 )
 
 
