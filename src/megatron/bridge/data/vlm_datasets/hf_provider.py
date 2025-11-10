@@ -30,6 +30,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_rdr_dataset,
 )
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+from megatron.bridge.utils.common_utils import if_trust_remote_code
 
 
 @dataclass(kw_only=True)
@@ -107,7 +108,13 @@ class HFDatasetConversationProvider(DatasetProvider):
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
         # Bind processor for the requested model
-        processor = AutoProcessor.from_pretrained(self.hf_processor_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(
+            self.hf_processor_path,
+            trust_remote_code=if_trust_remote_code(
+                trust_remote_code=self.trust_remote_code,
+                hf_path=self.hf_processor_path,
+            )
+        )
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)
         valid_ds = self._build_split_dataset("validation", context.valid_samples, processor)

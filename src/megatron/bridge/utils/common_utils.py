@@ -39,6 +39,11 @@ except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
 
 
+SAFE_LIST = [
+
+]
+
+
 def get_rank_safe() -> int:
     """Get the distributed rank safely, even if torch.distributed is not initialized.
 
@@ -264,3 +269,13 @@ def extract_expert_number_from_param(param_name: str) -> int:
             f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
         )
     return int(match.group(1))
+
+
+def if_trust_remote_code(trust_remote_code: bool, hf_path: str, safe_list: list = SAFE_LIST) -> bool:
+    if trust_remote_code:
+        return True
+
+    if hf_path in SAFE_LIST:
+        return True
+    
+    return False
