@@ -68,9 +68,12 @@ class TestLoRAFinetune:
         """Test end to end LoRA finetuning: pretrain -> save checkpoint -> finetune with LoRA."""
         initialize_distributed()
         shared_base_dir = broadcast_path(tmp_path)
-        pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir = (
-            self._setup_directories(shared_base_dir)
-        )
+        (
+            pretrain_checkpoint_dir,
+            pretrain_tensorboard_dir,
+            lora_checkpoint_dir,
+            lora_tensorboard_dir,
+        ) = self._setup_directories(shared_base_dir)
 
         torch.distributed.barrier()
 
@@ -81,18 +84,27 @@ class TestLoRAFinetune:
 
             # Create pretrain config and run
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters,
+                pretrain_checkpoint_dir,
+                pretrain_tensorboard_dir,
+                seq_length,
             )
             pretrain(pretrain_cfg, forward_step)
             verify_checkpoint_files(pretrain_checkpoint_dir, pretrain_iters)
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
-                lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(lora_checkpoint_dir, lora_iters)
-            verify_peft_checkpoint_smaller(pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters)
+            verify_peft_checkpoint_smaller(
+                pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, lora_iters
+            )
 
         finally:
             clear_directories(shared_base_dir)
@@ -106,9 +118,12 @@ class TestLoRAFinetune:
         initialize_distributed()
         shared_base_dir = broadcast_path(tmp_path)
 
-        pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir = (
-            self._setup_directories(shared_base_dir, "_resume")
-        )
+        (
+            pretrain_checkpoint_dir,
+            pretrain_tensorboard_dir,
+            lora_checkpoint_dir,
+            lora_tensorboard_dir,
+        ) = self._setup_directories(shared_base_dir, "_resume")
 
         torch.distributed.barrier()
 
@@ -120,7 +135,11 @@ class TestLoRAFinetune:
 
             # First run: Pretrain and save checkpoint
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
+                pretrain_iters,
+                pretrain_checkpoint_dir,
+                pretrain_tensorboard_dir,
+                seq_length,
+                fully_reshardable=True,
             )
 
             # Run pretrain
@@ -156,24 +175,36 @@ class TestLoRAFinetune:
                 scheduler_total_iters=total_lora_iters,  # Keep total for scheduler calculation
             )
             # Override save interval for final phase and use checkpoint scheduler settings
-            lora_resume_cfg.checkpoint.save_interval = total_lora_iters - initial_lora_iters
-            lora_resume_cfg.scheduler.use_checkpoint_opt_param_scheduler = True  # Use scheduler state from checkpoint
+            lora_resume_cfg.checkpoint.save_interval = (
+                total_lora_iters - initial_lora_iters
+            )
+            lora_resume_cfg.scheduler.use_checkpoint_opt_param_scheduler = (
+                True  # Use scheduler state from checkpoint
+            )
 
             # Run resumed LoRA finetuning (should continue from iteration 6 to 12)
             finetune(lora_resume_cfg, forward_step)
 
             verify_checkpoint_files(lora_checkpoint_dir, total_lora_iters)
             verify_peft_checkpoint_smaller(
-                pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, initial_lora_iters
+                pretrain_checkpoint_dir,
+                lora_checkpoint_dir,
+                pretrain_iters,
+                initial_lora_iters,
             )
             verify_peft_checkpoint_smaller(
-                pretrain_checkpoint_dir, lora_checkpoint_dir, pretrain_iters, total_lora_iters
+                pretrain_checkpoint_dir,
+                lora_checkpoint_dir,
+                pretrain_iters,
+                total_lora_iters,
             )
 
         finally:
             clear_directories(shared_base_dir)
 
-    def _create_model_provider(self, seq_length=512, tensor_parallel_size=1, pipeline_parallel_size=1):
+    def _create_model_provider(
+        self, seq_length=512, tensor_parallel_size=1, pipeline_parallel_size=1
+    ):
         """Create a model provider with specified configuration."""
         return Llama3ModelProvider145M(
             seq_length=seq_length,
@@ -183,7 +214,9 @@ class TestLoRAFinetune:
             sequence_parallel=(tensor_parallel_size > 1),
         )
 
-    def _create_training_config(self, train_iters, global_batch_size=8, micro_batch_size=1):
+    def _create_training_config(
+        self, train_iters, global_batch_size=8, micro_batch_size=1
+    ):
         """Create a training configuration."""
         return TrainingConfig(
             train_iters=train_iters,
@@ -246,7 +279,9 @@ class TestLoRAFinetune:
             num_workers=1,
         )
 
-    def _create_squad_dataset_config(self, seq_length, seed=5678, packed_sequences=False):
+    def _create_squad_dataset_config(
+        self, seq_length, seed=5678, packed_sequences=False
+    ):
         """Create a SQuAD dataset configuration."""
         if packed_sequences:
             dataset_kwargs = {"pad_to_max_length": True}
@@ -293,7 +328,14 @@ class TestLoRAFinetune:
             tensorboard_dir=tensorboard_dir,
         )
 
-    def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None):
+    def _create_checkpoint_config(
+        self,
+        save_interval,
+        save_dir,
+        pretrained_checkpoint=None,
+        load_dir=None,
+        fully_reshardable=False,
+    ):
         """Create a checkpoint configuration."""
         return CheckpointConfig(
             save_interval=save_interval,
@@ -303,6 +345,7 @@ class TestLoRAFinetune:
             ckpt_format="torch_dist",
             fully_parallel_save=True,
             async_save=True,
+            dist_ckpt_optim_fully_reshardable=fully_reshardable,
         )
 
     def _create_rng_config(self, seed=1234):
@@ -326,9 +369,12 @@ class TestLoRAFinetune:
         seq_length=512,
         tensor_parallel_size=1,
         pipeline_parallel_size=1,
+        fully_reshardable=False,
     ):
         """Create complete pretrain configuration with model."""
-        model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
+        model = self._create_model_provider(
+            seq_length, tensor_parallel_size, pipeline_parallel_size
+        )
 
         return ConfigContainer(
             model=model,
@@ -339,7 +385,9 @@ class TestLoRAFinetune:
             dataset=self._create_mock_dataset_config(seq_length),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=self._create_pretrain_tokenizer_config(),
-            checkpoint=self._create_checkpoint_config(train_iters, checkpoint_dir),
+            checkpoint=self._create_checkpoint_config(
+                train_iters, checkpoint_dir, fully_reshardable=fully_reshardable
+            ),
             rng=self._create_rng_config(),
         )
 
@@ -357,11 +405,15 @@ class TestLoRAFinetune:
         scheduler_total_iters=None,
     ):
         """Create complete LoRA finetuning configuration with model and PEFT."""
-        model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
+        model = self._create_model_provider(
+            seq_length, tensor_parallel_size, pipeline_parallel_size
+        )
         lora_peft = self._create_lora_peft()
 
         # Use scheduler_total_iters if provided, otherwise use train_iters
-        scheduler_iters = scheduler_total_iters if scheduler_total_iters is not None else train_iters
+        scheduler_iters = (
+            scheduler_total_iters if scheduler_total_iters is not None else train_iters
+        )
 
         return ConfigContainer(
             model=model,
@@ -369,7 +421,9 @@ class TestLoRAFinetune:
             optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(scheduler_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_squad_dataset_config(seq_length, packed_sequences=packed_sequences),
+            dataset=self._create_squad_dataset_config(
+                seq_length, packed_sequences=packed_sequences
+            ),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=self._create_finetune_tokenizer_config(),
             checkpoint=self._create_checkpoint_config(
@@ -381,8 +435,12 @@ class TestLoRAFinetune:
 
     def _setup_directories(self, base_dir, suffix=""):
         """Setup test directories."""
-        pretrain_checkpoint_dir = os.path.join(base_dir, f"pretrain_checkpoints{suffix}")
-        pretrain_tensorboard_dir = os.path.join(base_dir, f"pretrain_tensorboard{suffix}")
+        pretrain_checkpoint_dir = os.path.join(
+            base_dir, f"pretrain_checkpoints{suffix}"
+        )
+        pretrain_tensorboard_dir = os.path.join(
+            base_dir, f"pretrain_tensorboard{suffix}"
+        )
         lora_checkpoint_dir = os.path.join(base_dir, f"lora_checkpoints{suffix}")
         lora_tensorboard_dir = os.path.join(base_dir, f"lora_tensorboard{suffix}")
 
@@ -392,4 +450,9 @@ class TestLoRAFinetune:
             os.makedirs(lora_checkpoint_dir, exist_ok=True)
             os.makedirs(lora_tensorboard_dir, exist_ok=True)
 
-        return pretrain_checkpoint_dir, pretrain_tensorboard_dir, lora_checkpoint_dir, lora_tensorboard_dir
+        return (
+            pretrain_checkpoint_dir,
+            pretrain_tensorboard_dir,
+            lora_checkpoint_dir,
+            lora_tensorboard_dir,
+        )
