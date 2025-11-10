@@ -175,8 +175,8 @@ QWEN3_30B_A3B_GB200_FP8_CS_BASE_CONFIG = replace(
 
 QWEN3_30B_A3B_GB200_FP8_MX_BASE_CONFIG = replace(
     QWEN3_30B_A3B_GB200_FP8_CS_BASE_CONFIG,
-    cuda_graph_scope=["full"],
     cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["full"],
 )
 
 
