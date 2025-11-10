@@ -83,7 +83,10 @@ def pretrain_train_valid_test_datasets_provider(
 
 
 def hf_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: HFDatasetConfig, tokenizer: MegatronTokenizer
+    train_val_test_num_samples: list[int],
+    dataset_config: HFDatasetConfig,
+    tokenizer: MegatronTokenizer,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[Any, Any, Any]:
     """Build train, validation, and test datasets from a Hugging Face dataset.
 
@@ -105,13 +108,23 @@ def hf_train_valid_test_datasets_provider(
     # Get field names from DataloaderConfig to exclude
     dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
 
+    # Build kwargs from dataset_config (excluding dataloader fields)
+    builder_kwargs = {
+        field.name: getattr(dataset_config, field.name)
+        for field in fields(dataset_config)
+        if field.name not in dataloader_field_names
+    }
+    # Ensure dataset_kwargs exists and inject pg_collection so SFT dataset receives it
+    if builder_kwargs.get("dataset_kwargs") is None:
+        builder_kwargs["dataset_kwargs"] = {"pg_collection": pg_collection}
+    else:
+        dk = dict(builder_kwargs["dataset_kwargs"])
+        dk["pg_collection"] = pg_collection
+        builder_kwargs["dataset_kwargs"] = dk
+
     train_ds, valid_ds, test_ds = HFDatasetBuilder(
         tokenizer=tokenizer,
-        **{
-            field.name: getattr(dataset_config, field.name)
-            for field in fields(dataset_config)
-            if field.name not in dataloader_field_names
-        },
+        **builder_kwargs,
     ).build()
 
     print_rank_0(f"> finished creating Huggingface dataset {dataset_config.dataset_name} ...")
@@ -120,7 +133,10 @@ def hf_train_valid_test_datasets_provider(
 
 
 def finetuning_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: FinetuningDatasetConfig, tokenizer: MegatronTokenizer
+    train_val_test_num_samples: list[int],
+    dataset_config: FinetuningDatasetConfig,
+    tokenizer: MegatronTokenizer,
+    pg_collection: ProcessGroupCollection,
 ) -> tuple[Any, Any, Any]:
     """Build finetuning train, validation, and test datasets.
 
@@ -142,13 +158,22 @@ def finetuning_train_valid_test_datasets_provider(
     # Get field names from DataloaderConfig to exclude
     dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
 
+    builder_kwargs = {
+        field.name: getattr(dataset_config, field.name)
+        for field in fields(dataset_config)
+        if field.name not in dataloader_field_names
+    }
+    # Ensure dataset_kwargs exists and inject pg_collection for SFT dataset creation
+    if builder_kwargs.get("dataset_kwargs") is None:
+        builder_kwargs["dataset_kwargs"] = {"pg_collection": pg_collection}
+    else:
+        # Copy to avoid mutating shared config objects
+        dk = dict(builder_kwargs["dataset_kwargs"])
+        dk["pg_collection"] = pg_collection
+        builder_kwargs["dataset_kwargs"] = dk
+
     train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(
-        tokenizer=tokenizer,
-        **{
-            field.name: getattr(dataset_config, field.name)
-            for field in fields(dataset_config)
-            if field.name not in dataloader_field_names
-        },
+        tokenizer=tokenizer, **builder_kwargs
     ).build()
 
     print_rank_0(f"> finished creating Finetuning dataset from {dataset_config.dataset_root} ...")
