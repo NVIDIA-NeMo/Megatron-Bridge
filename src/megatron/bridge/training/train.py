@@ -197,7 +197,6 @@ def train(
             prof = initialize_pytorch_profiler(prof_config, config.logger.tensorboard_dir)
             prof.start()
 
-    start_iteration = global_state.train_state.step
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
         config.ddp.use_megatron_fsdp,
@@ -223,6 +222,7 @@ def train(
         print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
 
     # Capture CUDA Graphs.
+    cuda_graph_helper = None
     if model_config.cuda_graph_impl == "transformer_engine":
         cuda_graph_helper = TECudaGraphHelper(
             model=model,
@@ -231,14 +231,21 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
-        # TODO: Fix #991
-        cuda_graph_helper.create_cudagraphs()
 
     # Track train step elapsed time for throughput logging
     history_wct = None
     if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
+
+    # Wrap forward_backward_func for Full iteration CUDA graph
+    forward_backward_func = get_forward_backward_func()
+    if config.model.cuda_graph_impl == "local" and "full_iteration" in config.model.cuda_graph_scope:
+        forward_backward_func = FullCudaGraphWrapper(
+            forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+        )
+
     # Run training iterations till done.
+    start_iteration = global_state.train_state.step
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -282,10 +289,30 @@ def train(
         if _should_skip_and_handle_iteration(global_state, train_data_iterator):
             continue
 
+        # Capture CUDA Graphs after warmup.
+        if (
+            model_config.cuda_graph_impl == "transformer_engine"
+            and cuda_graph_helper is not None
+            and not cuda_graph_helper.graphs_created()
+            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+        ):
+            if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
+                disable_forward_pre_hook(model, param_sync=False)
+            cuda_graph_helper.create_cudagraphs()
+            if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
+                enable_forward_pre_hook(model)
+                cuda_graph_helper.cuda_graph_set_manual_hooks()
+
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
+            wrapped_forward_step_func,
+            train_data_iterator,
+            model,
+            optimizer,
+            scheduler,
+            global_state,
+            forward_backward_func,
         )
         fault_tolerance.on_training_step_end(global_state)
         if config.logger.log_throughput_to_tensorboard:
@@ -321,8 +348,12 @@ def train(
                     enable_forward_pre_hook(model)
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
-                    # Set the manual hooks when CUDA Graphs are used.
-                    if model_config.cuda_graph_impl == "transformer_engine":
+                    # Set the manual hooks here since it's not set right after the capturing.
+                    if (
+                        model_config.cuda_graph_impl == "transformer_engine"
+                        and model_config.cuda_graph_warmup_steps == 0
+                    ):
+                        assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
@@ -485,6 +516,7 @@ def train_step(
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
     global_state: GlobalState,
+    forward_backward_func: Callable,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -495,6 +527,7 @@ def train_step(
         optimizer: Optimizer for model parameters
         scheduler: Learning rate scheduler
         global_state: Global training state
+        forward_backward_func: forward-backward function
 
     Returns:
         tuple containing:
@@ -548,14 +581,7 @@ def train_step(
             decoder_seq_length=model_config.seq_length,
         )
 
-        # Forward pass.
-        if cfg.model.cuda_graph_impl == "local" and cfg.model.cuda_graph_scope == "full_iteration":
-            forward_backward_func = FullCudaGraphWrapper(
-                get_forward_backward_func(), cuda_graph_warmup_steps=cfg.model.cuda_graph_warmup_steps
-            )
-        else:
-            forward_backward_func = get_forward_backward_func()
-
+        # Forward-backward pass.
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,

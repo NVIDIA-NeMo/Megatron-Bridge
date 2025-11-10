@@ -228,7 +228,7 @@ class TETransformerLayerAutocast(MegatronModule, BaseTransformerLayer):  # type:
         if (
             self.config.cuda_graph_impl == "local"
             and self.training
-            and self.config.cuda_graph_scope != "full_iteration"
+            and "full_iteration" not in self.config.cuda_graph_scope
         ):
             assert not config.cpu_offloading and config.recompute_granularity is None, "Cudagraphs not supported"
             self.add_module("cudagraph_manager", CudaGraphManager(config))
