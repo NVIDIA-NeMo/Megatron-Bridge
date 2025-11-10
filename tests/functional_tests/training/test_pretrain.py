@@ -201,6 +201,7 @@ class TestPretrain:
                 seq_length=seq_length,
                 make_vocab_size_divisible_by=128,
                 vocab_size=None,
+                num_layers=4,
             )
 
             # Create other configurations

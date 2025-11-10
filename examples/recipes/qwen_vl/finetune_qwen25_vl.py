@@ -154,8 +154,7 @@ def main() -> None:
     pretrain_config = getattr(qwen_vl_recipes, recipe_name)
 
     # Determine dataset type based on CLI flag (overrides) or fall back to auto-detect
-    use_preloaded_flag = bool(args.data_path) or bool(getattr(args, "use_preloaded", False))
-    dataset_type = args.dataset_type or ("preloaded" if use_preloaded_flag else "mock")
+    dataset_type = args.dataset_type or ("preloaded" if bool(args.data_path) else "mock")
 
     cfg: ConfigContainer = pretrain_config(
         dataset_type=dataset_type,
