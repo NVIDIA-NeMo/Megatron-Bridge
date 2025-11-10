@@ -82,7 +82,7 @@ def get_model_recipe(
     except AttributeError as err:
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
-    return recipe_builder(compute_dtype=compute_dtype)
+    return recipe_builder(precision=compute_dtype)
 
 
 def get_workload_base_config(
