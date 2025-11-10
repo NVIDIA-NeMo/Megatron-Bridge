@@ -140,8 +140,9 @@ def set_cuda_graph_overrides(
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
         if cuda_graph_impl == "transformer_engine":
-            assert cuda_graph_scope in ["full", "attn"], (
-                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: full, attn"
+            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+            assert cuda_graph_scope in valid_te_scopes, (
+                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
             )
 
     if cuda_graph_scope is not None:
