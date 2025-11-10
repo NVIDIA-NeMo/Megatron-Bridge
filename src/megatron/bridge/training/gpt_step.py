@@ -119,8 +119,7 @@ def get_batch(
     )
 
     # slice batch along sequence dimension for context parallelism
-    # need to fix for m4
-    # batch = get_batch_on_this_cp_rank(batch)
+    batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],

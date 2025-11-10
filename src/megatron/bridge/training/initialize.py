@@ -21,20 +21,19 @@ import torch
 import torch.distributed
 import torch.nn.functional as F
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.hyper_comm_grid import HyperCommGrid
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.fusions.fused_bias_dropout import bias_dropout_add_fused_train
 from megatron.core.fusions.fused_bias_gelu import bias_gelu
 from megatron.core.fusions.fused_bias_swiglu import bias_swiglu
+from megatron.core.hyper_comm_grid import HyperCommGrid
 from megatron.core.num_microbatches_calculator import (
     destroy_num_microbatches_calculator,
     init_num_microbatches_calculator,
 )
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
 from megatron.core.utils import (
     configure_nvtx_profiling,
     get_pg_rank,
-    get_pg_size,
     get_te_version,
     is_te_min_version,
     is_torch_min_version,
@@ -388,7 +387,7 @@ def _create_pg_collection(
     embd_pg = None
     pos_embd_pg = None
     # Enumerate ranks per PP group
-    pp_rank_lists = grid._gen_rank_enum(['pp'])
+    pp_rank_lists = grid._gen_rank_enum(["pp"])
     # Determine embedding ranks for each pp group
     for ranks in pp_rank_lists:
         if not ranks:
@@ -399,13 +398,17 @@ def _create_pg_collection(
         if current_rank in embedding_ranks and embd_pg is None:
             embd_pg, _ = torch.distributed.new_subgroups_by_enumeration([embedding_ranks], backend="nccl")
         if current_rank in position_embedding_ranks and pos_embd_pg is None:
-            pos_embd_pg, _ = torch.distributed.new_subgroups_by_enumeration(
-                [position_embedding_ranks], backend="nccl"
-            )
+            pos_embd_pg, _ = torch.distributed.new_subgroups_by_enumeration([position_embedding_ranks], backend="nccl")
 
     # Expert/MoE related groups (refer to original parallel_state.initialize_model_parallel)
-    expert_tp_size = int(model_config.expert_tensor_parallel_size) if getattr(model_config, "expert_tensor_parallel_size", None) else tp_size
-    ep_size = int(model_config.expert_model_parallel_size) if getattr(model_config, "expert_model_parallel_size", 1) else 1
+    expert_tp_size = (
+        int(model_config.expert_tensor_parallel_size)
+        if getattr(model_config, "expert_tensor_parallel_size", None)
+        else tp_size
+    )
+    ep_size = (
+        int(model_config.expert_model_parallel_size) if getattr(model_config, "expert_model_parallel_size", 1) else 1
+    )
     # Expert data-parallel size folds CP into DP (as in original expert rank generator)
     expt_model_block = expert_tp_size * ep_size * pp_size
     if world_size % expt_model_block != 0:
@@ -430,12 +433,12 @@ def _create_pg_collection(
     inter_dist_opt_pg = None
     intra_dist_opt_pg = None
     if num_distributed_optimizer_instances > 1:
-        assert (
-            expt_dp_size % num_distributed_optimizer_instances == 0
-        ), "Expert DP size must be divisible by the number of optimizer instances."
+        assert expt_dp_size % num_distributed_optimizer_instances == 0, (
+            "Expert DP size must be divisible by the number of optimizer instances."
+        )
         intra_size = expt_dp_size // num_distributed_optimizer_instances
         # Enumerate expert DP ranks per (tp, ep, pp) block
-        expt_dp_rank_lists = expert_grid._gen_rank_enum(['dp'])
+        expt_dp_rank_lists = expert_grid._gen_rank_enum(["dp"])
         # Build intra (rows) and inter (columns) groups
         intra_groups = []
         inter_groups = []
