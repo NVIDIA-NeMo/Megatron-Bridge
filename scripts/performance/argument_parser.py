@@ -55,7 +55,7 @@ def is_cuda_graph_impl_valid(arg):
 
 def is_cuda_graph_scope_valid(arg):
     """Validate the CUDA graph scope argument."""
-    choices = ["full_iteration", "full", "attn"]
+    choices = ["full_iteration", "full", "attn", None]
     if arg.lower() in choices:
         if arg.lower() == "full_iteration":
             logger.warning("Make sure cuda_graph_impl is `local`. You can set it using `--cuda_graph_impl local`")
@@ -295,7 +295,7 @@ def parse_cli_args():
         type=is_cuda_graph_scope_valid,
         choices=["full_iteration", "full", "attn"],
         required=False,
-        default="full",
+        default=None,
     )
     parser.add_argument(
         "-tp",
