@@ -120,7 +120,7 @@ class TestLoRAFinetune:
 
             # First run: Pretrain and save checkpoint
             pretrain_cfg = self._create_pretrain_config(
-                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length, fully_reshardable=True,
+                pretrain_iters, pretrain_checkpoint_dir, pretrain_tensorboard_dir, seq_length
             )
 
             # Run pretrain
@@ -293,7 +293,7 @@ class TestLoRAFinetune:
             tensorboard_dir=tensorboard_dir,
         )
 
-    def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None, fully_reshardable=False):
+    def _create_checkpoint_config(self, save_interval, save_dir, pretrained_checkpoint=None, load_dir=None):
         """Create a checkpoint configuration."""
         return CheckpointConfig(
             save_interval=save_interval,
@@ -303,7 +303,6 @@ class TestLoRAFinetune:
             ckpt_format="torch_dist",
             fully_parallel_save=True,
             async_save=True,
-            dist_ckpt_optim_fully_reshardable=fully_reshardable,
         )
 
     def _create_rng_config(self, seed=1234):
@@ -327,7 +326,6 @@ class TestLoRAFinetune:
         seq_length=512,
         tensor_parallel_size=1,
         pipeline_parallel_size=1,
-        fully_reshardable=False,
     ):
         """Create complete pretrain configuration with model."""
         model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
@@ -341,7 +339,7 @@ class TestLoRAFinetune:
             dataset=self._create_mock_dataset_config(seq_length),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=self._create_pretrain_tokenizer_config(),
-            checkpoint=self._create_checkpoint_config(train_iters, checkpoint_dir, fully_reshardable=fully_reshardable),
+            checkpoint=self._create_checkpoint_config(train_iters, checkpoint_dir),
             rng=self._create_rng_config(),
         )
 
