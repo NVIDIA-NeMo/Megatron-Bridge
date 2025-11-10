@@ -232,5 +232,6 @@ def llama3_8b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> Co
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.nccl_ub = True
         cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
+        cfg.ddp.keep_fp8_transpose_cache = True
 
     return cfg
