@@ -178,8 +178,6 @@ class PerfEnvPlugin(Plugin):
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
-        tp_size (int): Tensor parallelism size. Default is 1.
-        cp_size (int): Context parallelism size. Default is 1.
         pp_size (int): Pipeline parallelism size. Default is 1.
         script_args_converter_fn (Optional[Callable]): A function that takes PerfEnvPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
@@ -190,11 +188,8 @@ class PerfEnvPlugin(Plugin):
     enable_vboost: bool = False
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
-    tp_size: int = 1
-    cp_size: int = 1
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
-    num_gpus: int = 8
     moe_a2a_overlap: bool = False
     model_name: str
     model_size: str
@@ -207,36 +202,28 @@ class PerfEnvPlugin(Plugin):
         self,
         task: Union["run.Partial", "run.Script"],
         executor: "run.Executor",
-        num_gpus: int,
-        tp_size: int,
-        cp_size: int,
-        pp_size: int,
         moe_a2a_overlap: bool,
         enable_deepep: bool,
         gpu_sm100_or_newer: bool,
     ):
-        dp_size = num_gpus // (tp_size * cp_size * pp_size)
-
         cuda_device_max_connections = 8
         if enable_deepep:
             cuda_device_max_connections = 32
         if gpu_sm100_or_newer:
-            if (tp_size > 1 or cp_size > 1) and (dp_size > 1 or pp_size > 1):
-                """
-                We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
-                of the default device connection of 8.
-                """
-                cuda_device_max_connections = 32
-        else:
+            """
+            We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
+            of the default device connection of 8.
+            """
+            cuda_device_max_connections = 32
+        elif not moe_a2a_overlap:
             # Hopper or earlier generation GPUs
-            if (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
-                """
-                Set the device connection to 1 to enforce kernel queuing order from host to execution order on GPU.
-                This is needed to schedule a communication kernel before the overlapping persistent GEMM kernel.
-                Otherwise, communication kernel will be pushed to the end of the GEMM kernel, failing to overlap the
-                kernels.
-                """
-                cuda_device_max_connections = 1
+            """
+            Set the device connection to 1 to enforce kernel queuing order from host to execution order on GPU.
+            This is needed to schedule a communication kernel before the overlapping persistent GEMM kernel.
+            Otherwise, communication kernel will be pushed to the end of the GEMM kernel, failing to overlap the
+            kernels.
+            """
+            cuda_device_max_connections = 1
 
         executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
         logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
@@ -360,9 +347,7 @@ class PerfEnvPlugin(Plugin):
         workload_base_config = get_workload_base_config(
             self.model_name, self.model_size, self.gpu, self.compute_dtype, self.fp8_recipe
         )
-        tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
-        cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
 
         # Force program order kernel launch for TP, CP overlap
         enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
@@ -370,10 +355,6 @@ class PerfEnvPlugin(Plugin):
         self._set_num_cuda_device_max_connections(
             task,
             executor,
-            self.num_gpus,
-            tp_size,
-            cp_size,
-            pp_size,
             moe_a2a_overlap=moe_a2a_overlap,
             enable_deepep=enable_deepep,
             gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
