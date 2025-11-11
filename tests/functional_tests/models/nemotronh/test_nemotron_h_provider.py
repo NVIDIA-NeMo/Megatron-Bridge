@@ -22,6 +22,7 @@ from megatron.bridge.models.nemotronh import (
     NemotronNano9Bv2Provider,
     NemotronNano12Bv2Provider,
 )
+from megatron.bridge.utils.common_utils import if_safe_repo
 from tests.functional_tests.utils import compare_provider_configs
 
 
@@ -42,7 +43,10 @@ class TestNemotronHModelProviderMapping:
     def test_bridge_vs_predefined_provider_config_equivalence(self, hf_model_id, provider_class):
         """Test that bridge converted provider config matches predefined provider config."""
         # Create bridge from HF model
-        bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            hf_model_id,
+            trust_remote_code=if_safe_repo(hf_path=hf_model_id),
+        )
         converted_provider = bridge.to_megatron_provider(load_weights=False)
         converted_provider.finalize()
 

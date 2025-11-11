@@ -45,7 +45,8 @@ Or, with explicit provider and parallelism settings (similar to [nemo_rl/models/
 ```python
 from megatron.bridge import AutoBridge
 
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
+# Set trust_remote_code to True only if you trust the repository
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
 provider = bridge.to_megatron_provider(load_weights=True)
 
 # Configure distributed parallelism used during IMPORT
@@ -315,7 +316,8 @@ Two common pathways:
 ```python
 from megatron.bridge import AutoBridge
 
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
+# Set trust_remote_code to True only if you trust the repository
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
 # Load Megatron model from your training checkpoint
 megatron_model = bridge.load_megatron_model("/path/to/train_ckpt")
 
@@ -345,7 +347,8 @@ import torch
 from collections import defaultdict
 from megatron.bridge import AutoBridge
 
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
+# Set trust_remote_code to True only if you trust the repository
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
 
 # 1) Plan: inspect names/shapes/dtypes and estimate memory
 refit_param_info_hf = {}
@@ -472,9 +475,9 @@ class MegatronBridgeAdapter:
                         num_floating_point_operations_so_far=self.state.train_state.floating_point_operations_so_far,
                         checkpointing_context=self.ckpt_ctx)
 
-    def export_hf(self, out_dir: str):
+    def export_hf(self, out_dir: str, trust_remote_code: bool = False):
         from megatron.bridge import AutoBridge
-        bridge = AutoBridge.from_hf_pretrained(self.rl_cfg["model_name"], trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(self.rl_cfg["model_name"], trust_remote_code=trust_remote_code)
         # Stream weights directly using AutoBridge.export_hf_weights; consume (save/IPC) as needed
         for name, tensor in bridge.export_hf_weights([self.model], show_progress=False):
             # process_or_save(name, tensor, out_dir)  # implement your consumer (e.g., safetensors or IPC)

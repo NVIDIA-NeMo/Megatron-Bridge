@@ -24,6 +24,7 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
+from megatron.bridge.utils.common_utils import if_safe_repo
 
 # Overrides for 8B size
 HF_NEMOTRONH_TOY_MODEL_OVERRIDES = {
@@ -70,7 +71,11 @@ class TestNemotronHConversion:
 
         # Create NemotronH toy model config by starting with 8B and applying overrides
         # This avoids attempting import of NemotronHConfig from Transformers
-        config = AutoConfig.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        model_path = "nvidia/Nemotron-H-8B-Base-8K"
+        config = AutoConfig.from_pretrained(
+            model_path,
+            trust_remote_code=if_safe_repo(hf_path=model_path),
+        )
         for k, v in HF_NEMOTRONH_TOY_MODEL_OVERRIDES.items():
             setattr(config, k, v)
 
@@ -78,7 +83,7 @@ class TestNemotronHConversion:
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
         model_class = get_class_from_dynamic_module(
             class_reference=model_class_ref,
-            pretrained_model_name_or_path="nvidia/Nemotron-H-8B-Base-8K",
+            pretrained_model_name_or_path=model_path,
             cache_dir=None,
             force_download=False,
             resume_download=True,
@@ -86,13 +91,16 @@ class TestNemotronHConversion:
             use_auth_token=None,
             revision=None,
             local_files_only=False,
-            repo_id="nvidia/Nemotron-H-8B-Base-8K",
+            repo_id=model_path,
         )
         model = model_class(config)
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 
         # Download and save tokenizer from a reference NemotronH model
-        tokenizer = AutoTokenizer.from_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=if_safe_repo(hf_path=model_path),
+        )
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory
@@ -155,12 +163,15 @@ class TestNemotronHConversion:
                 nemotronh_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=True,
+                trust_remote_code=if_safe_repo(hf_path=nemotronh_toy_model_path),
             )
 
             # Try loading the tokenizer as well
             try:
-                tokenizer = AutoTokenizer.from_pretrained(nemotronh_toy_model_path, trust_remote_code=True)
+                tokenizer = AutoTokenizer.from_pretrained(
+                    nemotronh_toy_model_path,
+                    trust_remote_code=if_safe_repo(hf_path=nemotronh_toy_model_path),
+                )
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")

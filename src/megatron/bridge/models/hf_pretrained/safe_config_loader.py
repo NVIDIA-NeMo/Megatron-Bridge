@@ -65,11 +65,12 @@ def safe_load_config_with_retry(
         >>> print(config.model_type)
 
         >>> # With custom retry settings
+        >>> # Set trust_remote_code to True only if you trust the repository
         >>> config = safe_load_config_with_retry(
         ...     "gpt2",
         ...     max_retries=5,
         ...     base_delay=0.5,
-        ...     trust_remote_code=True
+        ...     trust_remote_code=trust_remote_code
         ... )
 
         >>> # Multi-node setup with shared lock directory

@@ -24,6 +24,7 @@ import torch
 from transformers import PreTrainedTokenizer
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils.common_utils import if_safe_repo
 
 
 class TestPreTrainedCausalLMInitialization:
@@ -86,7 +87,7 @@ class TestPreTrainedCausalLMInitialization:
             model_path,
             device="cuda",
             torch_dtype=torch.float16,
-            trust_remote_code=True,
+            trust_remote_code=if_safe_repo(hf_path=model_path),
             use_fast=True,
         )
 
@@ -142,11 +143,19 @@ class TestPreTrainedCausalLMConfigProperty:
         """Test config loading with additional kwargs."""
         mock_from_pretrained.return_value = mock_config
 
-        lm = PreTrainedCausalLM(model_name_or_path="gpt2", trust_remote_code=True, revision="main")
+        lm = PreTrainedCausalLM(
+            model_name_or_path="gpt2",
+            trust_remote_code=if_safe_repo(hf_path="gpt2"),
+            revision="main"
+        )
 
         _ = lm.config
 
-        mock_from_pretrained.assert_called_once_with("gpt2", trust_remote_code=True, revision="main")
+        mock_from_pretrained.assert_called_once_with(
+            "gpt2",
+            trust_remote_code=if_safe_repo(hf_path="gpt2"),
+            revision="main"
+        )
 
     def test_config_setter(self, mock_config):
         """Test setting config manually."""

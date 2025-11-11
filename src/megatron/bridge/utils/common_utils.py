@@ -39,8 +39,17 @@ except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
 
 
-SAFE_LIST = [
-
+SAFE_REPOS = [
+    "nvidia",
+    "Qwen",
+    "deepseek-ai",
+    "meta-llama",
+    "google",
+    "openai",
+    "mistralai",
+    "moonshotai",
+    "llava-hf",
+    "gpt2",
 ]
 
 
@@ -271,11 +280,23 @@ def extract_expert_number_from_param(param_name: str) -> int:
     return int(match.group(1))
 
 
-def if_trust_remote_code(trust_remote_code: bool, hf_path: str, safe_list: list = SAFE_LIST) -> bool:
-    if trust_remote_code:
+def if_safe_repo(trust_remote_code: bool = None, hf_path: str = None) -> bool:
+    """
+    Determine whether remote code execution should be trusted for a given
+    Hugging Face repository path.
+
+    Args:
+        trust_remote_code (bool): whther to define repo as safe w/o checking SAFE_REPOS.
+        hf_path (str): path to HF's model or dataset.
+    
+    Returns:
+        True if remote code execution is allowed; False otherwise.
+    """
+    if trust_remote_code is not None:
+        return trust_remote_code
+
+    hf_repo = hf_path.split("/")[0]
+    if hf_repo in SAFE_REPOS:
         return True
 
-    if hf_path in SAFE_LIST:
-        return True
-    
     return False

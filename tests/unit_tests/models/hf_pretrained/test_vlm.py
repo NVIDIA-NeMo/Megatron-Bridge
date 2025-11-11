@@ -23,6 +23,7 @@ import torch
 from transformers import AutoConfig, PreTrainedTokenizer, ProcessorMixin
 
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.utils.common_utils import if_safe_repo
 
 
 @pytest.fixture
@@ -119,7 +120,7 @@ class TestPreTrainedVLMInitialization:
 
     def test_init_with_trust_remote_code(self):
         """Test initialization with trust_remote_code."""
-        vlm = PreTrainedVLM(trust_remote_code=True)
+        vlm = PreTrainedVLM(trust_remote_code=if_safe_repo(trust_remote_code=True))
         assert vlm.trust_remote_code is True
 
     @patch("torch.cuda.is_available", return_value=False)
@@ -137,7 +138,7 @@ class TestPreTrainedVLMInitialization:
             model_path,
             device="cpu",
             torch_dtype=torch.float16,
-            trust_remote_code=True,
+            trust_remote_code=if_safe_repo(hf_path=model_path),
             use_fast=True,
         )
 
@@ -572,7 +573,9 @@ class TestPreTrainedVLMRepr:
     def test_repr_with_processor(self, mock_processor):
         """Test repr with loaded components."""
         vlm = PreTrainedVLM(
-            model_name_or_path="llava-hf/llava-1.5-7b-hf", torch_dtype=torch.float16, trust_remote_code=True
+            model_name_or_path="llava-hf/llava-1.5-7b-hf",
+            torch_dtype=torch.float16,
+            trust_remote_code=if_safe_repo(hf_path="llava-hf/llava-1.5-7b-hf"),
         )
         vlm._processor = mock_processor
 

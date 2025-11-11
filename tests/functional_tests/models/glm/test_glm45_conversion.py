@@ -20,6 +20,7 @@ import pytest
 import torch
 from transformers import AutoConfig, AutoTokenizer
 
+from megatron.bridge.utils.common_utils import if_safe_repo
 
 HF_GLM45_TOY_MODEL_CONFIG = {
     "architectures": ["Glm4MoeForCausalLM"],
@@ -176,7 +177,10 @@ class TestGLM45Conversion:
                 glm45_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=True,
+                trust_remote_code=if_safe_repo(
+                    trust_remote_code=True,
+                    hd_path=glm45_toy_model_path,
+                ),
             )
 
             # Verify model structure

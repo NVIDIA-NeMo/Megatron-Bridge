@@ -183,7 +183,8 @@ A minimal bidirectional end-to-end check:
 from megatron.bridge import AutoBridge
 
 # HF → Megatron
-bridge = AutoBridge.from_hf_pretrained("<org>/<model-id>", trust_remote_code=True)
+# Set trust_remote_code to True only if you trust the repository
+bridge = AutoBridge.from_hf_pretrained("<org>/<model-id>", trust_remote_code=trust_remote_code)
 provider = bridge.to_megatron_provider()
 provider.tensor_model_parallel_size = 1
 provider.pipeline_model_parallel_size = 1
