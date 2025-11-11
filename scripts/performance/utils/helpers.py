@@ -66,9 +66,11 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
 
     if settings.use_megatron_fsdp:
         set_megatron_fsdp_overrides(cfg)
-    if settings.cuda_graph_impl is not None:
+    if settings.cuda_graph_impl is not None or settings.cuda_graph_scope is not None:
         set_cuda_graph_overrides(
-            cfg, cuda_graph_impl=settings.cuda_graph_impl, cuda_graph_scope=settings.cuda_graph_scope
+            cfg,
+            cuda_graph_impl=settings.cuda_graph_impl,
+            cuda_graph_scope=settings.cuda_graph_scope,
         )
     set_recompute_overrides(
         cfg,
@@ -137,12 +139,14 @@ def set_cuda_graph_overrides(
         else:  # this condition ensures we unset in case of user override to "none" from default
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
-    if cuda_graph_impl == "transformer_engine":
-        assert cuda_graph_scope in ["full", "attn"], (
-            f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: full, attn"
-        )
+        if cuda_graph_impl == "transformer_engine":
+            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
+                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
+            )
 
-    recipe.model.cuda_graph_scope = cuda_graph_scope
+    if cuda_graph_scope is not None:
+        recipe.model.cuda_graph_scope = cuda_graph_scope
 
 
 def set_recompute_overrides(
@@ -187,7 +191,12 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     cuda_graph_impl = kwargs.get("cuda_graph_impl")
     cuda_graph_scope = kwargs.get("cuda_graph_scope")
-    set_cuda_graph_overrides(recipe, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+    if cuda_graph_impl is not None or cuda_graph_scope is not None:
+        set_cuda_graph_overrides(
+            recipe,
+            cuda_graph_impl=cuda_graph_impl,
+            cuda_graph_scope=cuda_graph_scope,
+        )
 
     recompute_num_layers = kwargs.get("recompute_num_layers")
     cpu_offloading_num_layers = kwargs.get("activation_offload_layers")
