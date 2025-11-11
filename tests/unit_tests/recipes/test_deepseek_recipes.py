@@ -60,6 +60,7 @@ class _FakeModelCfg:
     def __init__(self):
         # Provide defaults for attributes that recipes might read
         self.rotary_base = 10000.0
+        self.num_moe_experts = 0
 
     def finalize(self):
         return None

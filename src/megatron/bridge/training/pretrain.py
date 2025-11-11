@@ -126,6 +126,7 @@ def _pretrain(
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
     ckpt_context = setup_output.checkpointing_context
+    pg_collection = setup_output.pg_collection
 
     # TRAINING
     if not config.train.skip_train:
@@ -140,6 +141,7 @@ def _pretrain(
                 valid_data_iterator,
                 state,
                 ckpt_context,
+                pg_collection,
             )
 
         barrier_and_log("after training is done")

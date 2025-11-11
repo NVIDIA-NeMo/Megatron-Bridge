@@ -20,7 +20,9 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -33,7 +35,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
 
 class Qwen3MoeCommonKwargs(TypedDict, total=False):
@@ -79,6 +81,45 @@ class Qwen3MoeCommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
+
+
+class Qwen3MoeFinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen3 MoE finetuning recipe helper functions.
+
+    This is separate from Qwen3MoeCommonKwargs to avoid confusion - finetuning
+    uses SQuAD dataset by default, not the data path fields.
+    """
+
+    # Core identifiers
+    dir: Optional[str]
+    name: str
+
+    # Finetuning-specific
+    pretrained_checkpoint: Optional[str]
+    peft: Union[str, PEFT, None]
+    packed_sequence: bool
+
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: Optional[int]
+    micro_batch_size: int
+    seq_length: Optional[int]
+    eval_interval: int
+    save_interval: int
+
+    # Optimizer
+    finetune_lr: Optional[float]
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
+
+    # Precision
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
 
 
 def qwen3_30b_a3b_pretrain_config(**user_kwargs: Unpack[Qwen3MoeCommonKwargs]) -> ConfigContainer:
@@ -306,6 +347,258 @@ def _qwen3_moe_common(
         ),
         rng=RNGConfig(seed=1234),
         comm_overlap=comm_overlap_config,
+        mixed_precision=precision_config,
+    )
+
+    return cfg
+
+
+def qwen3_30b_a3b_finetune_config(**user_kwargs: Unpack[Qwen3MoeFinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3-30B-A3B MoE.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=4, PP=1, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
+    - DoRA: TP=4, PP=1, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
+    - Full SFT (peft=None): TP=4, PP=2, EP=4, LR=5e-6, SP=True
+
+    Matches NeMo2 recipe at nemo/collections/llm/recipes/qwen3_30b_a3b.py
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _qwen3_moe_finetune_common(hf_path="Qwen/Qwen3-30B-A3B", **user_kwargs)
+
+    # Model-specific parallelism settings (match NeMo pattern)
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 4
+        config.model.expert_model_parallel_size = 4
+        config.model.pipeline_model_parallel_size = 2
+        config.model.expert_tensor_parallel_size = 1
+        config.model.sequence_parallel = True
+        config.peft = None
+    else:
+        # PEFT (LoRA, DoRA, or custom)
+        config.model.tensor_model_parallel_size = 4
+        config.model.expert_model_parallel_size = 4
+        config.model.pipeline_model_parallel_size = 1
+        config.model.expert_tensor_parallel_size = 1
+        config.model.sequence_parallel = True
+
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 8
+            config.peft.alpha = 16
+            config.peft.target_modules = ["linear_qkv", "linear_proj"]
+        else:
+            config.peft = peft
+
+    return config
+
+
+def qwen3_235b_a22b_finetune_config(**user_kwargs: Unpack[Qwen3MoeFinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen3-235B-A22B MoE.
+
+    Default configuration: 8 nodes (LoRA) or 16 nodes (Full SFT), 8 GPUs per node
+    - LoRA (default): TP=4, PP=4, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
+      Total: 64 GPUs (8 nodes)
+    - DoRA: TP=4, PP=4, EP=4, LR=1e-4, dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
+      Total: 64 GPUs (8 nodes)
+    - Full SFT (peft=None): TP=4, PP=16, EP=4, LR=5e-6, SP=True
+      Total: 64 GPUs (8 nodes)
+
+    Matches NeMo2 recipe at nemo/collections/llm/recipes/qwen3_235b_a22b.py
+
+    Note: Uses account_for_embedding_in_pipeline_split and account_for_loss_in_pipeline_split
+    for proper layer distribution in pipeline parallelism.
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _qwen3_moe_finetune_common(hf_path="Qwen/Qwen3-235B-A22B", **user_kwargs)
+
+    # Enable pipeline split accounting (required for 235B model)
+    config.model.account_for_embedding_in_pipeline_split = True
+    config.model.account_for_loss_in_pipeline_split = True
+
+    # Model-specific parallelism settings (match NeMo pattern)
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 4
+        config.model.pipeline_model_parallel_size = 16
+        config.model.expert_model_parallel_size = 4
+        config.model.expert_tensor_parallel_size = 1
+        config.model.sequence_parallel = True
+        config.peft = None
+    else:
+        # PEFT (LoRA, DoRA, or custom)
+        config.model.tensor_model_parallel_size = 4
+        config.model.pipeline_model_parallel_size = 4
+        config.model.expert_model_parallel_size = 4
+        config.model.expert_tensor_parallel_size = 1
+        config.model.sequence_parallel = True
+
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 8
+            config.peft.alpha = 16
+            config.peft.target_modules = ["linear_qkv", "linear_proj"]
+        else:
+            config.peft = peft
+
+    return config
+
+
+def _qwen3_moe_finetune_common(
+    hf_path: str,
+    dir: Optional[str] = None,
+    name: str = "default",
+    # Finetuning-specific
+    pretrained_checkpoint: Optional[str] = None,
+    packed_sequence: bool = False,
+    # Training hyperparameters
+    train_iters: int = 100,
+    global_batch_size: Optional[int] = None,
+    micro_batch_size: int = 1,
+    seq_length: Optional[int] = None,
+    eval_interval: int = 50,
+    save_interval: int = 100,
+    # Optimizer
+    finetune_lr: Optional[float] = None,
+    min_lr: float = 0.0,
+    lr_warmup_iters: int = 10,
+    lr_decay_iters: Optional[int] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
+    # Precision
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
+) -> ConfigContainer:
+    """
+    Create a finetuning configuration for Qwen3 MoE models using a given HuggingFace path.
+
+    Args:
+        hf_path (str): HuggingFace model path (e.g., "Qwen/Qwen3-30B-A3B", "Qwen/Qwen3-235B-A22B").
+        dir (Optional[str]): Base directory for saving logs and checkpoints.
+        name (str): Name of the finetuning run.
+        pretrained_checkpoint (Optional[str]): Path to pretrained checkpoint to load.
+        packed_sequence (bool): Whether to use packed sequences for training efficiency.
+        train_iters (int): Total number of training iterations.
+        global_batch_size (Optional[int]): Global batch size for training.
+        micro_batch_size (int): Micro batch size for training.
+        seq_length (Optional[int]): Sequence length for training data.
+        eval_interval (int): Evaluation interval.
+        save_interval (int): Checkpoint save interval.
+        finetune_lr (Optional[float]): Learning rate for finetuning.
+        min_lr (float): Minimum learning rate for cosine decay.
+        lr_warmup_iters (int): Number of warmup iterations for the learning rate.
+        lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
+        wandb_project (Optional[str]): Weights & Biases project name.
+        wandb_entity (Optional[str]): Weights & Biases entity name.
+        wandb_exp_name (Optional[str]): Weights & Biases experiment name.
+        precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
+
+    Returns:
+        ConfigContainer: Configuration for finetuning.
+    """
+    # Default sequence length for finetuning
+    if seq_length is None:
+        seq_length = 2048 if packed_sequence else 4096
+
+    # Default global batch size
+    if global_batch_size is None:
+        global_batch_size = 32
+
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+
+    # Precision configuration
+    if precision_config is None:
+        precision_config = bf16_mixed()
+    elif isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+
+    # Sequence length
+    model_cfg.seq_length = seq_length
+    model_cfg.cross_entropy_fusion_impl = "te"
+
+    # Optimizer and scheduler
+    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
+        max_lr=finetune_lr if finetune_lr is not None else 1e-4,
+        min_lr=min_lr,
+    )
+
+    # Dataset configuration (SQuAD by default)
+    dataset_config = default_squad_config(seq_length=seq_length, packed_sequence=packed_sequence)
+
+    # W&B logger configuration
+    logger_config = LoggerConfig(
+        log_interval=10,
+        tensorboard_dir=tensorboard_dir,
+        log_timers_to_tensorboard=True,
+        wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
+        wandb_exp_name=wandb_exp_name,
+    )
+
+    # Config Container
+    cfg = ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=eval_interval,
+            eval_iters=10,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
+        ),
+        optimizer=opt_config,
+        scheduler=scheduler,
+        ddp=DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=True,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
+            use_distributed_optimizer=True,
+        ),
+        dataset=dataset_config,
+        logger=logger_config,
+        tokenizer=TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=hf_path,
+        ),
+        checkpoint=CheckpointConfig(
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=pretrained_checkpoint,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=5678),  # Different seed for finetuning
         mixed_precision=precision_config,
     )
 

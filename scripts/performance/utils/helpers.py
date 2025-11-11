@@ -15,7 +15,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from utils.utils import WorkloadBaseConfig, get_model_recipe
+from utils.utils import WorkloadBaseConfig, get_model_recipe, get_workload_base_config
 
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer
@@ -25,6 +25,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
 )
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 
 logger = logging.getLogger(__name__)
@@ -65,9 +66,11 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
 
     if settings.use_megatron_fsdp:
         set_megatron_fsdp_overrides(cfg)
-    if settings.cuda_graph_impl is not None:
+    if settings.cuda_graph_impl is not None or settings.cuda_graph_scope is not None:
         set_cuda_graph_overrides(
-            cfg, cuda_graph_impl=settings.cuda_graph_impl, cuda_graph_scope=settings.cuda_graph_scope
+            cfg,
+            cuda_graph_impl=settings.cuda_graph_impl,
+            cuda_graph_scope=settings.cuda_graph_scope,
         )
     set_recompute_overrides(
         cfg,
@@ -86,6 +89,7 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
 
     recipe.logger.log_interval = 1
     recipe.logger.tensorboard_dir = None
+    recipe.logger.save_config_filepath = "/nemo_run/configs/ConfigContainer.yaml"
 
     recipe.ddp.check_for_nan_in_grad = False
     recipe.ddp.check_for_large_grads = False
@@ -95,7 +99,7 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if recipe.model.use_transformer_engine_op_fuser:
+    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
         recipe.model.use_transformer_engine_op_fuser = False
     recipe.model.apply_rope_fusion = True
     recipe.model.cross_entropy_fusion_impl = "te"
@@ -135,12 +139,14 @@ def set_cuda_graph_overrides(
         else:  # this condition ensures we unset in case of user override to "none" from default
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
-    if cuda_graph_impl == "transformer_engine":
-        assert cuda_graph_scope in ["full", "attn"], (
-            f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: full, attn"
-        )
+        if cuda_graph_impl == "transformer_engine":
+            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
+                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
+            )
 
-    recipe.model.cuda_graph_scope = cuda_graph_scope
+    if cuda_graph_scope is not None:
+        recipe.model.cuda_graph_scope = cuda_graph_scope
 
 
 def set_recompute_overrides(
@@ -185,7 +191,12 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     cuda_graph_impl = kwargs.get("cuda_graph_impl")
     cuda_graph_scope = kwargs.get("cuda_graph_scope")
-    set_cuda_graph_overrides(recipe, cuda_graph_impl=cuda_graph_impl, cuda_graph_scope=cuda_graph_scope)
+    if cuda_graph_impl is not None or cuda_graph_scope is not None:
+        set_cuda_graph_overrides(
+            recipe,
+            cuda_graph_impl=cuda_graph_impl,
+            cuda_graph_scope=cuda_graph_scope,
+        )
 
     recompute_num_layers = kwargs.get("recompute_num_layers")
     cpu_offloading_num_layers = kwargs.get("activation_offload_layers")
@@ -230,7 +241,16 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    return recipe
+    tp = recipe.model.tensor_model_parallel_size
+    pp = recipe.model.pipeline_model_parallel_size
+    cp = recipe.model.context_parallel_size
+    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
+
+    dp = int(kwargs.get("num_gpus") / (tp * pp * cp))
+    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
+    if dp > 1 and pp > 1 and vp > 1:
+        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
+        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
@@ -242,21 +262,20 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     compute_dtype = kwargs.get("compute_dtype")
     fp8_recipe = kwargs.get("fp8_recipe")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
-
-    recipe = set_user_overrides(recipe, kwargs)
-
+    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, fp8_recipe)
     set_common_perf_overrides(recipe)
+    set_user_overrides(recipe, kwargs)
 
-    tp = recipe.model.tensor_model_parallel_size
-    pp = recipe.model.pipeline_model_parallel_size
-    cp = recipe.model.context_parallel_size
-    vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-
-    dp = int(num_gpus / (tp * pp * cp))
-    logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    if dp > 1 and pp > 1 and vp > 1:
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+    # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    default_num_gpus = workload_base_config.num_gpus
+    user_gbs = kwargs.get("global_batch_size")
+    if user_gbs is None:
+        if num_gpus != default_num_gpus:
+            new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
+            recipe.train.global_batch_size = new_gbs
+            logger.info(
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
+            )
 
     return recipe

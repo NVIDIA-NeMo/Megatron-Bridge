@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.bridge.training.deepep import apply_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
@@ -187,7 +188,7 @@ def _deepseek_v3_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
-    enable_deepep: bool = False,
+    enable_deepep: bool = True,
     apply_rope_fusion: bool = False,
     layout: Optional[Union[str, List[List[str]]]] = None,
 ) -> ConfigContainer:
@@ -257,9 +258,7 @@ def _deepseek_v3_common(
     # Performance optimization knobs
     model_cfg.moe_permute_fusion = True
     if enable_deepep:
-        model_cfg.moe_token_dispatcher_type = "flex"
-        model_cfg.moe_enable_deepep = True
-        model_cfg.moe_shared_expert_overlap = False
+        apply_deepep(model_cfg)
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
