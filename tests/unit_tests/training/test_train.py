@@ -25,11 +25,11 @@ from megatron.bridge.training.train import (
     _handle_mxfp8_param_buffer_copy,
     _should_skip_and_handle_iteration,
     checkpoint_and_decide_exit,
+    force_param_sync,
     maybe_check_weight_hash_across_dp_replicas,
     maybe_report_stragglers,
     maybe_run_manual_gc,
     maybe_synchronize_training_step,
-    force_param_sync,
     save_checkpoint_and_time,
     should_disable_forward_pre_hook,
 )
