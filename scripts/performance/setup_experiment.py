@@ -50,7 +50,6 @@ def main(
     compute_dtype: str,
     fp8_recipe: str,
     gpu: str,
-    num_gpus: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
@@ -87,7 +86,6 @@ def main(
     plugins.append(
         PerfEnvPlugin(
             enable_vboost=enable_vboost,
-            num_gpus=num_gpus,
             moe_a2a_overlap=moe_a2a_overlap,
             tp_size=tp_size,
             pp_size=pp_size,
@@ -150,7 +148,6 @@ if __name__ == "__main__":
         compute_dtype=args.compute_dtype,
         fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
-        num_gpus=args.num_gpus,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,
