@@ -30,7 +30,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, if_safe_repo
+from megatron.bridge.utils.common_utils import get_last_rank, if_safe_repo, print_rank_0
 
 
 class SingleBatchIterator:
@@ -116,7 +116,7 @@ def main(args) -> None:
             trust_remote_code=if_safe_repo(
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
-            )
+            ),
         )
 
         # Initialize model parallel before loading
@@ -152,7 +152,7 @@ def main(args) -> None:
             trust_remote_code=if_safe_repo(
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
-            )
+            ),
         )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
@@ -176,7 +176,7 @@ def main(args) -> None:
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
-        )
+        ),
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token

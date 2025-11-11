@@ -250,7 +250,7 @@ def main() -> None:
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=hf_policy_model,
-        )
+        ),
     )
     # Use left padding for decoder-only models to avoid generation warnings and ensure correctness
     gen_tokenizer.padding_side = "left"
@@ -261,7 +261,7 @@ def main() -> None:
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=hf_policy_model,
-        )
+        ),
     )
     # Ensure pad_token_id is set on model config/generation config
     if getattr(hf_gen_model.config, "pad_token_id", None) is None:
@@ -286,7 +286,7 @@ def main() -> None:
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=hf_policy_model,
-        )
+        ),
     )
     provider = bridge.to_megatron_provider(load_weights=True)
 

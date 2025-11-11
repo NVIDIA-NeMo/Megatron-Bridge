@@ -83,7 +83,7 @@ def main(
         trust_remote_code=if_safe_repo(
             trust_remote_code=trust_remote_code,
             hf_path=hf_model_id,
-        )
+        ),
     )
 
     if megatron_load_path:

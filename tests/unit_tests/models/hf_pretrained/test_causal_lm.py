@@ -144,17 +144,13 @@ class TestPreTrainedCausalLMConfigProperty:
         mock_from_pretrained.return_value = mock_config
 
         lm = PreTrainedCausalLM(
-            model_name_or_path="gpt2",
-            trust_remote_code=if_safe_repo(hf_path="gpt2"),
-            revision="main"
+            model_name_or_path="gpt2", trust_remote_code=if_safe_repo(hf_path="gpt2"), revision="main"
         )
 
         _ = lm.config
 
         mock_from_pretrained.assert_called_once_with(
-            "gpt2",
-            trust_remote_code=if_safe_repo(hf_path="gpt2"),
-            revision="main"
+            "gpt2", trust_remote_code=if_safe_repo(hf_path="gpt2"), revision="main"
         )
 
     def test_config_setter(self, mock_config):

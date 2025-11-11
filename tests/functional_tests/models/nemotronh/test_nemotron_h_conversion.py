@@ -26,6 +26,7 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from megatron.bridge.utils.common_utils import if_safe_repo
 
+
 # Overrides for 8B size
 HF_NEMOTRONH_TOY_MODEL_OVERRIDES = {
     "attention_head_dim": 48,

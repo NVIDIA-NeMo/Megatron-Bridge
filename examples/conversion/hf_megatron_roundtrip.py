@@ -56,7 +56,7 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_co
         trust_remote_code=if_safe_repo(
             trust_remote_code=trust_remote_code,
             hf_path=hf_model_id,
-        )
+        ),
     )
     megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
     console.print(weights_verification_table(bridge, megatron_model))

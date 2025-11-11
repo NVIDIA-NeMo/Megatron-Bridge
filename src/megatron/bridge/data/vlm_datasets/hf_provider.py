@@ -113,7 +113,7 @@ class HFDatasetConversationProvider(DatasetProvider):
             trust_remote_code=if_safe_repo(
                 trust_remote_code=self.trust_remote_code,
                 hf_path=self.hf_processor_path,
-            )
+            ),
         )
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)

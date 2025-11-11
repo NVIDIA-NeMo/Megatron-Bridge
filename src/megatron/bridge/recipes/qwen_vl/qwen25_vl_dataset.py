@@ -225,7 +225,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
             trust_remote_code=if_safe_repo(
                 trust_remote_code=self.trust_remote_code,
                 hf_path=self.hf_model_path,
-            )
+            ),
         )
 
         def _maybe_make(size: int) -> Optional[MockQwen25VLDataset]:

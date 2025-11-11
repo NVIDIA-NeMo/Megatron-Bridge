@@ -288,7 +288,7 @@ def if_safe_repo(trust_remote_code: bool = None, hf_path: str = None) -> bool:
     Args:
         trust_remote_code (bool): whther to define repo as safe w/o checking SAFE_REPOS.
         hf_path (str): path to HF's model or dataset.
-    
+
     Returns:
         True if remote code execution is allowed; False otherwise.
     """

@@ -25,6 +25,7 @@ from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
 from megatron.bridge.utils.common_utils import if_safe_repo
 
+
 DEEPSEEK_V3_OVERRIDES = {
     "first_k_dense_replace": 1,
     "hidden_act": "silu",

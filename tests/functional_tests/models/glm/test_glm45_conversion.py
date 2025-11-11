@@ -22,6 +22,7 @@ from transformers import AutoConfig, AutoTokenizer
 
 from megatron.bridge.utils.common_utils import if_safe_repo
 
+
 HF_GLM45_TOY_MODEL_CONFIG = {
     "architectures": ["Glm4MoeForCausalLM"],
     "attention_bias": True,

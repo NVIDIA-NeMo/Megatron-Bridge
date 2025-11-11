@@ -119,7 +119,7 @@ import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, if_safe_repo
+from megatron.bridge.utils.common_utils import get_last_rank,  if_safe_repo, print_rank_0
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -218,7 +218,7 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool = False) -
             trust_remote_code=if_safe_repo(
                 trust_remote_code=trust_remote_code,
                 hf_path=model_path,
-            )
+            ),
         )
 
         # Check for VL model indicators in config
@@ -410,7 +410,7 @@ def _load_hf_model(args, is_vl_model: bool):
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
-        )
+        ),
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
@@ -521,7 +521,7 @@ def _load_megatron_model(args):
             trust_remote_code=if_safe_repo(
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
-            )
+            ),
         )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
@@ -560,7 +560,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
-        )
+        ),
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -573,8 +573,8 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
                 trust_remote_code=if_safe_repo(
                     trust_remote_code=args.trust_remote_code,
                     hf_path=args.hf_model_path,
-                )
-        )
+                ),
+            )
         except Exception as e:
             print_rank_0(f"Warning: Could not load processor for VL model: {e}")
             print_rank_0("Falling back to tokenizer-only mode")

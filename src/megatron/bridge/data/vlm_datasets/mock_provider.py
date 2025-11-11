@@ -98,7 +98,7 @@ class MockVLMConversationProvider(DatasetProvider):
             trust_remote_code=if_safe_repo(
                 trust_remote_code=self.trust_remote_code,
                 hf_path=self.hf_processor_path,
-            )
+            ),
         )
 
         base_examples = self._make_base_examples()
