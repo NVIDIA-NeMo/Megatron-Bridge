@@ -266,6 +266,9 @@ class PerfEnvPlugin(Plugin):
                     executor.env_vars["NCCL_NVLS_ENABLE"] = "0"
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
+            if model_name == "qwen3" and model_size == "30b_a3b":
+                if compute_dtype == "fp8_cs":
+                    executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         if gpu in ["gb200", "gb300"]:
             if model_name == "llama3" and model_size == "70b":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
