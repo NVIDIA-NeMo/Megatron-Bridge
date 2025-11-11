@@ -386,6 +386,7 @@ class Qwen3MoEModelProvider(GPTModelProvider):
     autocast_dtype: torch.dtype = torch.bfloat16
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
+    bias_dropout_fusion: bool = True
 
     # MoE specific parameters
     num_moe_experts: int = 128
