@@ -138,7 +138,7 @@ def test_save_artifacts_with_trust_remote_code_true():
             trust_remote_code=if_safe_repo(
                 trust_remote_code=True,
                 hf_path=str(source_dir),
-            )
+            ),
         )
 
         # Mock the config to avoid loading issues

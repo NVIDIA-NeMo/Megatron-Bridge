@@ -119,7 +119,7 @@ import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank,  if_safe_repo, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, if_safe_repo, print_rank_0
 
 
 sys.path.append(os.path.dirname(__file__))

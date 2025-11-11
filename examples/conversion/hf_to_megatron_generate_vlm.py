@@ -243,14 +243,14 @@ def main(args) -> None:
         args.hf_model_path,
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
-            hf_path= args.hf_model_path,
+            hf_path=args.hf_model_path,
         ),
     )
     processor = AutoProcessor.from_pretrained(
         args.hf_model_path,
         trust_remote_code=if_safe_repo(
             trust_remote_code=args.trust_remote_code,
-            hf_path= args.hf_model_path,
+            hf_path=args.hf_model_path,
         ),
     )
     if tokenizer.pad_token is None:
