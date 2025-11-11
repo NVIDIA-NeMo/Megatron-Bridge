@@ -45,7 +45,7 @@ class TestDataUtils:
         # Configure dataset
         dataset_config = GPTDatasetConfig(
             random_seed=1234,
-            sequence_length=8192,
+            seq_length=8192,
             split="950,45,5",
             tokenizer=tokenizer,
             reset_position_ids=False,
