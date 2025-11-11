@@ -241,6 +241,7 @@ class TestQwen3VLModel:
 
         return batch
 
+    @pytest.mark.timeout(50)
     @pytest.mark.parametrize(
         "tp_size,ep_size,pp_size",
         [
