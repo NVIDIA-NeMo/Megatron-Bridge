@@ -167,6 +167,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # Additional parameters that might be needed
     init_model_with_meta_device: bool = False
+    cuda_graph_impl: Literal["none", "local", "te", "transformer_engine"] = "none"
     use_te_rng_tracker: bool = False
     virtual_pipeline_model_parallel_size: Optional[int] = None
     account_for_embedding_in_pipeline_split: bool = False
