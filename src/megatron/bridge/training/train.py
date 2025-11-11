@@ -592,12 +592,21 @@ def train_step(
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
                 num_microbatches=get_num_microbatches(),
                 default_seq_length=model_config.seq_length,
                 seq_key="tokens",
+            )
+
+            # Forward-backward pass.
+            # Convert to list of iterators for virtual pipeline parallelism
+            # With virtual PP, each model chunk needs independent access to the same microbatch
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
@@ -608,7 +617,8 @@ def train_step(
             decoder_seq_length=model_config.seq_length,
         )
 
-        # Forward-backward pass.
+        # Forward pass.
+        forward_backward_func = get_forward_backward_func()
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -845,7 +855,7 @@ def compute_throughputs_and_append_to_progress_log(
 ) -> None:
     """Computes job and cumulative throughputs and appends to progress log.
 
-    Calculates TFLOP/s/GPU based on floating-point operations and elapsed time.
+    Calculates Model TFLOP/s/GPU based on floating-point operations and elapsed time.
     Appends the computed throughputs, total FLOPs, and processed tokens to the
     progress log file.
 
@@ -877,8 +887,8 @@ def compute_throughputs_and_append_to_progress_log(
     append_to_progress_log(
         state.cfg.checkpoint.save,
         f"{saved_ckpt_prefix}\tIteration: {state.train_state.step}\t"
-        f"Job throughput: {job_throughput:.1f} TFLOP/s/GPU\t"
-        f"Cumulative throughput: {cumulative_throughput:.1f} TFLOP/s/GPU\t"
+        f"Job throughput: {job_throughput:.1f} MODEL_TFLOP/s/GPU\t"
+        f"Cumulative throughput: {cumulative_throughput:.1f} MODEL_TFLOP/s/GPU\t"
         f"Floating-point operations: {num_floating_point_operations_so_far:.2e}\t"
         f"Tokens (in billions): {tokens_so_far / 10**9:.2f}",
     )
@@ -905,7 +915,7 @@ def save_checkpoint_and_time(
         model: list of model chunks (MegatronModule instances).
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
-        num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
+        num_floating_point_operations_so_far: Cumulative Model TFLOPs up to this point.
         checkpointing_context: Dictionary holding checkpointing-related state.
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
