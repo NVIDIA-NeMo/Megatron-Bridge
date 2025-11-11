@@ -23,7 +23,7 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
     num_gpus=64,
     global_batch_size=192,
     cuda_graph_impl="local",
-    cuda_graph_scope=["full_iteration"],
+    cuda_graph_scope="full_iteration",
 )
 
 
