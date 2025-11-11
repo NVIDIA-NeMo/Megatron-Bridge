@@ -430,6 +430,7 @@ def _qwen3_next_finetune_common(
     precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
     comm_overlap_config: CommOverlapConfig | None = None,
     enable_deepep: bool = False,
+    disable_jit_fuser: bool | None = None,
 ) -> ConfigContainer:
     """Common finetuning configuration for Qwen3-Next model."""
 
@@ -517,6 +518,10 @@ def _qwen3_next_finetune_common(
         tokenizer_model=hf_path,
     )
 
+    # If user does not specify, check if we are on Blackwell.
+    if disable_jit_fuser is None:
+        disable_jit_fuser = torch.cuda.get_device_properties(0).major == 10
+
     return ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -531,6 +536,7 @@ def _qwen3_next_finetune_common(
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
+        dist=DistributedInitConfig(disable_jit_fuser=disable_jit_fuser),
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
