@@ -20,7 +20,7 @@ docker build \
 Start your container:
 
 ```bash
-docker run --rm -it -w /workdir -v $(pwd):/workdir \
+docker run --rm -it -w /workdir -v $(pwd):/opt/Megatron-Bridge \
   --entrypoint bash \
   --gpus all \
   megatron-bridge
