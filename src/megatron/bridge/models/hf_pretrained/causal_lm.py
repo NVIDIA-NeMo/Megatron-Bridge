@@ -120,8 +120,8 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         ...     print(f"Prompt {i+1}: {model.decode(output, skip_special_tokens=True)}")
     """
 
-    ARTIFACTS = ["tokenizer", "processor", "image_processor"]
-    OPTIONAL_ARTIFACTS = ["generation_config"]
+    ARTIFACTS = ["tokenizer"]
+    OPTIONAL_ARTIFACTS = ["generation_config", "processor", "image_processor"]
 
     def __init__(
         self,
@@ -196,10 +196,10 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    def _load_processor(self) -> ProcessorMixin:
+    def _load_processor(self) -> Optional[ProcessorMixin]:
         """Lazy load and return the processor."""
         if self.model_name_or_path is None:
-            raise ValueError("model_name_or_path must be provided to load processor")
+            return None
 
         try:
             return AutoProcessor.from_pretrained(

@@ -386,6 +386,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 This is useful when converting from Megatron checkpoints where the original
                 HuggingFace model with custom modeling files needs to be referenced. If not specified,
                 the path will be automatically determined from the HuggingFace configuration.
+            strict: Whether to perform strict validation during weight export
 
 
         Example:
@@ -641,6 +642,7 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_path: Directory path where the Megatron checkpoint is stored
             hf_path: Directory path where the HuggingFace model will be saved
             show_progress: Display progress bar during weight export
+            strict: Whether to perform strict validation during weight export
             source_path: Path to the directory containing custom modeling files to be preserved.
                 This is useful when converting from Megatron checkpoints where the original
                 HuggingFace model with custom modeling files needs to be referenced. If not specified,
