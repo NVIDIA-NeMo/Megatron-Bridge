@@ -132,7 +132,7 @@ def main(
     exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).items()).pop()
     job_status = str(job_dict["status"])
 
-    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING"]:
+    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
         raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
 
 
