@@ -258,7 +258,7 @@ def llama3_8b_low_precision_pretrain_config(
         "bf16_with_mxfp8_mixed",
         "bf16_with_fp8_current_scaling_mixed",
         "bf16_with_nvfp4_mixed",
-    ], f"Invalid low precision recipe: {mixed_precision_recipe}"
+    ], f"Invalid low precision recipe: {mixed_precision_recipe}. This recipe has not been tested yet."
     precision_config = get_mixed_precision_config(mixed_precision_recipe)
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
