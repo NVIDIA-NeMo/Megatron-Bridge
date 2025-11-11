@@ -12,17 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .gpt_oss import (
-    gpt_oss_20b_finetune_config,
-    gpt_oss_20b_pretrain_config,
-    gpt_oss_120b_finetune_config,
-    gpt_oss_120b_pretrain_config,
-)
+# Example override file for Qwen3-Next 80B-A3B Finetuning
 
+model:
+  seq_length: 2048
+  cross_entropy_loss_fusion: False
 
-__all__ = [
-    "gpt_oss_20b_pretrain_config",
-    "gpt_oss_120b_pretrain_config",
-    "gpt_oss_20b_finetune_config",
-    "gpt_oss_120b_finetune_config",
-]
+train:
+  train_iters: 600
+  global_batch_size: 64
+  micro_batch_size: 1
+  eval_iters: 5
+
+optimizer:
+  finetune_lr: 0.000005
+  min_lr: 0.000005
+
+scheduler:
+  lr_warmup_iters: 0
+
+dist:
+  use_megatron_fsdp: false
+  use_torch_fsdp2: false
+
+logger:
+  log_interval: 1
+
+dataset:
+  seq_length: 2048
+
+rng:
+  seed: 42
+
+ddp:
+  grad_reduce_in_fp32: true

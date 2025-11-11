@@ -46,7 +46,7 @@ class WorkloadBaseConfig:
 
     use_megatron_fsdp: Optional[bool] = None
     cuda_graph_impl: Optional[str] = None
-    cuda_graph_scope: str = "full"
+    cuda_graph_scope: Optional[str] = None
     cpu_offloading_num_layers: Optional[int] = None
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
