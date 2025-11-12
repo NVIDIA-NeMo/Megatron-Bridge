@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Example override file for Kimi-K2 (1T) pretraining
+# Example override file for Kimi-K2 Proxy model that fits in 1 Node.
 
 # To override a parameter, ensure the structure matches the ConfigContainer
 # and its sub-configurations (e.g., model, train, etc.)
@@ -21,15 +21,17 @@
 model:
   seq_length: 4096
   num_layers: 8
+  num_moe_experts: 48
   tensor_model_parallel_size: 2
   pipeline_model_parallel_size: 1
-  expert_model_parallel_size: 64
+  expert_model_parallel_size: 8
   apply_rope_fusion: false
   moe_layer_freq: [0, 1, 1, 1, 1, 1, 1, 1]
   pipeline_model_parallel_layout: null
+  qk_clip: true
 
 train:
-  train_iters: 1000
+  train_iters: 100
   global_batch_size: 16
   micro_batch_size: 1
   eval_iters: 10
@@ -51,8 +53,8 @@ dist:
 
 logger:
   log_interval: 1
-  wandb_project: aot-muon
-  wandb_exp_name: kimi-k2-proxy-muon-8layers-1k
+  wandb_project: aot-muon-benchmarks
+  wandb_exp_name: kimi-k2-proxy-muon-8layers-qk-clip-new
   wandb_entity: joc
   wandb_save_dir: checkpoints/wandb
 
