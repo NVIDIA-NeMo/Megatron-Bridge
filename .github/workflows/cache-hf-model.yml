@@ -37,7 +37,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install torch transformers "huggingface_hub[cli]"
+          pip install torch "huggingface_hub[cli]"
+          pip install -U transformers
 
       - name: Log in to HuggingFace
         env:
