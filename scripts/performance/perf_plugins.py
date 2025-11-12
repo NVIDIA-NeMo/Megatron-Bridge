@@ -262,7 +262,7 @@ class PerfEnvPlugin(Plugin):
             if model_name == "llama3" and model_size == "70b":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_name == ["llama31"] and model_size == "405b":
+            if model_name == "llama31" and model_size == "405b":
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
