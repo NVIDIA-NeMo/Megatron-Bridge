@@ -62,6 +62,8 @@ def _safe_destroy_distributed():
 
 @dataclass
 class GeneratedData:
+    """Alias for model generation outputs."""
+
     ids: list[int]
     text: str
     logits: list[torch.Tensor]
@@ -467,7 +469,8 @@ def megatron_generate_from_hf(
     return generated
 
 
-def parse_cli_args():
+def parse_cli_args() -> argparse.Namespace:
+    """Set up argument parser and parse CLI args."""
     parser = argparse.ArgumentParser(
         description="Compare text generated through various Megatron-Bridge conversion methods against HuggingFace direct"
     )
@@ -613,6 +616,7 @@ def compare_generated(
 
 
 def main():
+    """Run generation methods and compare outputs."""
     _safe_init_distributed()
 
     args = parse_cli_args()
