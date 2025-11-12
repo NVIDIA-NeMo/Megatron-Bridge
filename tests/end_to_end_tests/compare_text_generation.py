@@ -258,7 +258,7 @@ def megatron_generate(
         )
 
     generated_text = tokenizer.detokenize(generated_ids[0])
-    generated_ids = generated_ids[0, num_input_tokens:].tolist()
+    generated_ids = generated_ids[0].tolist()
 
     print_rank_0("====== MEGATRON GENERATED TEXT OUTPUT ======")
     print_rank_0(f"Prompt: {prompt}")
