@@ -369,4 +369,3 @@ class TestMixtralBridgeMoEFeatures:
         non_causal_config = Mock()
         non_causal_config.architectures = ["MixtralModel"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
-

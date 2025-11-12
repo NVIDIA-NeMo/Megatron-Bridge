@@ -42,4 +42,3 @@ class TestMixtralModelProviderMapping:
 
         # Compare configs
         compare_provider_configs(converted_provider, predefined_provider, hf_model_id)
-

@@ -14,10 +14,10 @@
 
 # Mixtral models
 from .mixtral import (
-    mixtral_8x7b_pretrain_config,
     mixtral_8x7b_finetune_config,
-    mixtral_8x22b_pretrain_config,
+    mixtral_8x7b_pretrain_config,
     mixtral_8x22b_finetune_config,
+    mixtral_8x22b_pretrain_config,
 )
 
 
