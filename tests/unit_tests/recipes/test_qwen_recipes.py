@@ -37,6 +37,9 @@ _QWEN_RECIPE_FUNCS = [
 
 def _safe_overrides_for(name: str) -> dict:
     # Minimal, dependency-light overrides for fast unit testing
+    # Detect if this is a finetune recipe
+    is_finetune = "finetune" in name.lower()
+
     overrides = {
         "name": f"unit_{name}",
         "dir": ".",  # keep paths local
@@ -44,14 +47,7 @@ def _safe_overrides_for(name: str) -> dict:
         "global_batch_size": 2,
         "micro_batch_size": 1,
         "seq_length": 64,
-        # Keep parallelism tiny so provider shaping is trivial
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
     }
-
-    # Detect if this is a finetune recipe
-    is_finetune = "finetune" in name.lower()
 
     if is_finetune:
         # Finetuning-specific overrides
@@ -64,6 +60,7 @@ def _safe_overrides_for(name: str) -> dict:
                 "pretrained_checkpoint": "/fake/checkpoint/path",  # Required for finetuning
             }
         )
+        # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
         # Note: Finetuning always uses HF tokenizer, never null tokenizer
     else:
         # Pretrain-specific overrides
@@ -75,25 +72,33 @@ def _safe_overrides_for(name: str) -> dict:
                 "lr_warmup_iters": 2,
                 # Prefer NullTokenizer in tests to avoid HF tokenizer I/O
                 "use_null_tokenizer": True,
+                # Keep parallelism tiny so provider shaping is trivial
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "context_parallel_size": 1,
             }
         )
 
-    # For MoE recipes, ensure expert settings are small/valid
-    lname = name.lower()
-    if "a3b" in lname or "a22b" in lname or "moe" in lname:
-        overrides.update(
-            {
-                "expert_parallelism": 2,
-                "expert_tensor_parallelism": 1,
-                "sequence_parallelism": True,
-            }
-        )
+        # For MoE pretrain recipes, ensure expert settings are small/valid
+        lname = name.lower()
+        if "a3b" in lname or "a22b" in lname or "moe" in lname:
+            overrides.update(
+                {
+                    "expert_model_parallel_size": 2,
+                    "expert_tensor_parallel_size": 1,
+                    "sequence_parallel": True,
+                }
+            )
 
     return overrides
 
 
 class _FakeModelCfg:
     # Minimal provider to accept attribute assignments used in recipes
+
+    def __init__(self):
+        self.cross_entropy_fusion_impl = "native"
+
     def finalize(self):
         # qwen3 recipe may call finalize(); make it a no-op
         return None
@@ -173,6 +178,10 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
+    recipe_name = recipe_func.__name__.lower()
+    if "qwen3" in recipe_name and "pretrain" in recipe_name and "next" not in recipe_name:
+        assert cfg.model.cross_entropy_fusion_impl == "te"
+
     # Finetuning-specific assertions
     if is_finetune:
         # Should have pretrained_checkpoint set (even if fake)
@@ -181,3 +190,201 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
         assert hasattr(cfg, "peft")  # peft field should exist
         # Dataset should be configured (SQuAD by default)
         assert cfg.dataset is not None
+
+
+# Qwen3 MoE finetune-specific tests
+_QWEN3_MOE_FINETUNE_FUNCS = [
+    getattr(_qwen_module, name)
+    for name in [
+        "qwen3_30b_a3b_finetune_config",
+        "qwen3_235b_a22b_finetune_config",
+    ]
+    if callable(getattr(_qwen_module, name, None))
+]
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN3_MOE_FINETUNE_FUNCS)
+@pytest.mark.parametrize("peft", ["lora", "dora", "none"])
+def test_qwen3_moe_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT and full SFT configurations are correctly applied for Qwen3 MoE models."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    overrides["peft"] = peft
+
+    cfg = recipe_func(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check PEFT config presence
+    if peft in ["lora", "dora"]:
+        assert cfg.peft is not None
+    elif peft == "none":
+        assert cfg.peft is None
+
+
+def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 30B-A3B LoRA has correct default parallelism."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("qwen3_30b_a3b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = qwen3_30b_a3b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, 30B-A3B should use TP=4, PP=1, EP=4
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+
+    # Check PEFT config
+    assert cfg.peft is not None
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
+
+
+def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 30B-A3B DoRA has correct default parallelism."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("qwen3_30b_a3b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = qwen3_30b_a3b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, 30B-A3B should use same parallelism as LoRA
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+
+    # Check PEFT config
+    assert cfg.peft is not None
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
+
+
+def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 30B-A3B full SFT has correct default parallelism."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("qwen3_30b_a3b_finetune_config")
+    overrides["peft"] = "none"
+
+    cfg = qwen3_30b_a3b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, 30B-A3B should use TP=4, PP=2, EP=4
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+    assert cfg.peft is None
+
+
+def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 235B-A22B LoRA has correct default parallelism."""
+    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("qwen3_235b_a22b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = qwen3_235b_a22b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, 235B-A22B should use TP=4, PP=4, EP=4
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+
+    # Check account_for settings
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
+
+    # Check PEFT config
+    assert cfg.peft is not None
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
+
+
+def test_qwen3_235b_a22b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 235B-A22B DoRA has correct default parallelism."""
+    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("qwen3_235b_a22b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = qwen3_235b_a22b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, 235B-A22B should use same parallelism as LoRA
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+
+    # Check account_for settings
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
+
+    # Check PEFT config
+    assert cfg.peft is not None
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
+
+
+def test_qwen3_235b_a22b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 235B-A22B full SFT has correct default parallelism."""
+    from megatron.bridge.recipes.qwen import qwen3_235b_a22b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("qwen3_235b_a22b_finetune_config")
+    overrides["peft"] = "none"
+
+    cfg = qwen3_235b_a22b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, 235B-A22B should use TP=4, PP=16, EP=4
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 16
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+
+    # Check account_for settings
+    assert cfg.model.account_for_embedding_in_pipeline_split is True
+    assert cfg.model.account_for_loss_in_pipeline_split is True
+
+    assert cfg.peft is None
