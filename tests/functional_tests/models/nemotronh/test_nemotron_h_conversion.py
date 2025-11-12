@@ -164,14 +164,20 @@ class TestNemotronHConversion:
                 nemotronh_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=if_safe_repo(hf_path=nemotronh_toy_model_path),
+                trust_remote_code=if_safe_repo(
+                    trust_remote_code=True,
+                    hf_path=nemotronh_toy_model_path,
+                ),
             )
 
             # Try loading the tokenizer as well
             try:
                 tokenizer = AutoTokenizer.from_pretrained(
                     nemotronh_toy_model_path,
-                    trust_remote_code=if_safe_repo(hf_path=nemotronh_toy_model_path),
+                    trust_remote_code=if_safe_repo(
+                        trust_remote_code=True,
+                        hf_path=nemotronh_toy_model_path,
+                    ),
                 )
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:

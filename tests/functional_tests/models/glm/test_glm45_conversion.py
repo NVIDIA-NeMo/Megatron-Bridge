@@ -180,7 +180,7 @@ class TestGLM45Conversion:
                 low_cpu_mem_usage=False,  # Ensure full loading
                 trust_remote_code=if_safe_repo(
                     trust_remote_code=True,
-                    hd_path=glm45_toy_model_path,
+                    hf_path=glm45_toy_model_path,
                 ),
             )
 
