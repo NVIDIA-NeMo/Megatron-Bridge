@@ -257,7 +257,7 @@ class PerfEnvPlugin(Plugin):
         if gpu in ["h100"]:
             if model_name == "llama3" and model_size == "8b":
                 if compute_dtype == "fp8" and fp8_recipe == "cs":
-                    executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                    # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
