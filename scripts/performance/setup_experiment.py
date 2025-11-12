@@ -35,6 +35,7 @@ except (ImportError, ModuleNotFoundError):
 import logging
 
 
+logging.basicConfig(level=logging.DEBUG)
 logger: logging.Logger = logging.getLogger(__name__)
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
@@ -48,7 +49,6 @@ def main(
     domain: str,
     task: str,
     compute_dtype: str,
-    fp8_recipe: str,
     gpu: str,
     hf_token: str,
     custom_mounts: List[str],
@@ -94,7 +94,6 @@ def main(
             model_size=model_size,
             gpu=gpu,
             compute_dtype=compute_dtype,
-            fp8_recipe=fp8_recipe,
             use_tokendrop=use_tokendrop,
         )
     )
@@ -111,7 +110,15 @@ def main(
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
-        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
+        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
+    )
+    logger.debug(
+        run.Script(
+            path=str(RUN_SCRIPT_PATH),
+            entrypoint="python",
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
+            args=list(sys.argv[1:]),
+        )
     )
     run.run(
         run.Script(
@@ -146,7 +153,6 @@ if __name__ == "__main__":
         domain=args.domain,
         task=args.task,
         compute_dtype=args.compute_dtype,
-        fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,

@@ -67,7 +67,6 @@ def get_model_recipe(
     model_size: str,
     gpu: str,
     compute_dtype: str,
-    fp8_recipe: Optional[str] = None,
 ):
     """Get the model recipe factory by its name."""
     recipe_name = f"{model_name}_{model_size}_{gpu}_config"
@@ -83,7 +82,7 @@ def get_model_recipe(
     except AttributeError as err:
         raise ValueError(f"Failed to get recipe builder '{recipe_name}' from module '{module_name}'") from err
 
-    return recipe_builder(precision=compute_dtype, fp8_recipe=fp8_recipe)
+    return recipe_builder(precision=compute_dtype)
 
 
 def get_workload_base_config(
@@ -91,12 +90,9 @@ def get_workload_base_config(
     model_size: str,
     gpu: str,
     compute_dtype: str,
-    fp8_recipe: Optional[str] = None,
 ) -> Dict[str, int]:
     """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
     workload_base_config_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
-    if compute_dtype == "fp8":
-        workload_base_config_name += f"_{fp8_recipe}"
     workload_base_config_name = workload_base_config_name.upper() + "_BASE_CONFIG"
 
     module_name = f"configs.{model_name}.workload_base_configs"
