@@ -327,7 +327,7 @@ def export_megatron_to_hf(
     checkpoint_path = validate_path(megatron_path, must_exist=True)
     print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model)
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
     print_rank_0("📤 Exporting to HuggingFace format...")
     bridge.export_ckpt(
         megatron_path=megatron_path,
