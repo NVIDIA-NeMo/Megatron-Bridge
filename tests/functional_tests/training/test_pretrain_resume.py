@@ -149,6 +149,7 @@ class TestPretrainResume:
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
+                    dist_ckpt_optim_fully_reshardable=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )
@@ -231,6 +232,7 @@ class TestPretrainResume:
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
                     async_save=True,
+                    dist_ckpt_optim_fully_reshardable=True,
                 ),
                 rng=RNGConfig(seed=1234),
             )
