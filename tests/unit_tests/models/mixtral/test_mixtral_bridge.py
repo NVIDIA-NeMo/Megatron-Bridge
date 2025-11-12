@@ -349,3 +349,24 @@ class TestMixtralBridgeMoEFeatures:
         assert result.moe_grouped_gemm is True
         assert result.moe_permute_fusion is True
 
+    def test_supports_mixtral_architectures(self, mixtral_8x7b_config_dict, mixtral_8x22b_config_dict):
+        """Test that AutoBridge.supports correctly identifies Mixtral models."""
+        from megatron.bridge.models import AutoBridge
+
+        # Test Mixtral 8x7B
+        config_8x7b = Mock()
+        for key, value in mixtral_8x7b_config_dict.items():
+            setattr(config_8x7b, key, value)
+        assert AutoBridge.supports(config_8x7b) == True
+
+        # Test Mixtral 8x22B
+        config_8x22b = Mock()
+        for key, value in mixtral_8x22b_config_dict.items():
+            setattr(config_8x22b, key, value)
+        assert AutoBridge.supports(config_8x22b) == True
+
+        # Test non-causal LM architecture
+        non_causal_config = Mock()
+        non_causal_config.architectures = ["MixtralModel"]  # Not ForCausalLM
+        assert AutoBridge.supports(non_causal_config) == False
+
