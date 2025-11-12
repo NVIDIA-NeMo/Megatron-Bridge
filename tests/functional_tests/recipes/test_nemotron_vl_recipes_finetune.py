@@ -30,7 +30,7 @@ def _finetune_wrapper(**kwargs):
     everything to finetune_config and inject a dummy pretrained_checkpoint.
     """
     kwargs.setdefault("pretrained_checkpoint", "/tmp/fake_nemotron_vl_ckpt")
-    return nemotron_recipe.finetune_config(**kwargs)
+    return nemotron_recipe.nemotron_nano_v2_vl_12b_finetune_config(**kwargs)
 
 
 NEMOTRON_VL_FINETUNE_RECIPES = [
