@@ -277,7 +277,8 @@ def _mixtral_common(
     if enable_recompute:
         model_cfg.recompute_granularity = recompute_granularity if recompute_granularity else "selective"
         model_cfg.recompute_method = recompute_method if recompute_method else "uniform"
-        model_cfg.recompute_num_layers = recompute_num_layers if recompute_num_layers else 1
+        # Note: recompute_num_layers must be None when using selective granularity
+        model_cfg.recompute_num_layers = recompute_num_layers
 
     model_cfg.seq_length = seq_length
     model_cfg.cross_entropy_fusion_impl = "te"

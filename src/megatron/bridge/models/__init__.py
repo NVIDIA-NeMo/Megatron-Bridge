@@ -123,6 +123,10 @@ from megatron.bridge.models.mistral import (
     MistralModelProvider,
     MistralSmall3ModelProvider24B,
 )
+from megatron.bridge.models.mixtral import (
+    MixtralBridge,
+    MixtralModelProvider,
+)
 from megatron.bridge.models.nemotron import (
     Nemotron3ModelProvider4B,
     Nemotron3ModelProvider8B,
@@ -245,6 +249,8 @@ __all__ = [
     "Llama33NemotronSuper49BProvider",
     "MistralModelProvider",
     "MistralSmall3ModelProvider24B",
+    "MixtralBridge",
+    "MixtralModelProvider",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "Qwen2ModelProvider",
