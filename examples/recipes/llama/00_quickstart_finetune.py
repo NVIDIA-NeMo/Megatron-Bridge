@@ -69,7 +69,7 @@ def main() -> None:
     args = parse_args()
 
     # Load the base finetune configuration
-    # By default: LoRA with rank=8, alpha=16, works on single GPU
+    # Uses LoRA for efficient finetuning on a single GPU
     config = llama32_1b_finetune_config()
 
     # Load from the pretrained checkpoint
@@ -84,7 +84,7 @@ def main() -> None:
 
     # === Use your own dataset ===
     # Replace SQuAD with your custom dataset
-    # Option 1: Simple path override (uses default FinetuningDatasetConfig)
+    # Option 1: Simple path override
     # config.data.data_path = "/path/to/your/dataset.jsonl"
 
     # Option 2: Use FinetuningDatasetConfig for custom JSONL datasets
@@ -95,16 +95,16 @@ def main() -> None:
     # from megatron.bridge.training.data import HFDatasetConfig
     # config.data = HFDatasetConfig(hf_dataset="squad", split="train")
 
-    # === Change learning rate ===
-    # config.optimizer.lr = 5e-5  # Default for LoRA: 1e-4
+    # === Adjust learning rate ===
+    # config.optimizer.lr = 5e-5
 
-    # === Modify checkpoint frequency ===
+    # === Change checkpoint save frequency ===
     # config.train.save_interval = 100
 
     # === Adjust LoRA hyperparameters ===
-    # Higher rank = more parameters = potentially better quality but slower
-    # config.peft.dim = 16  # LoRA rank (default: 8)
-    # config.peft.alpha = 32  # LoRA alpha scaling (default: 16)
+    # Higher rank = more trainable parameters, potentially better quality but slower
+    # config.peft.dim = 16  # LoRA rank
+    # config.peft.alpha = 32  # LoRA alpha scaling
 
     # === Full supervised finetuning (no LoRA) ===
     # For full finetuning, reload config with peft=None:

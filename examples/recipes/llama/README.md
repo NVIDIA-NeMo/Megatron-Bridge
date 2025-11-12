@@ -191,8 +191,8 @@ Customize in the script:
 config.data.data_path = "/path/to/your/dataset.jsonl"
 
 # Adjust LoRA hyperparameters
-config.peft.dim = 16  # LoRA rank (default: 8)
-config.peft.alpha = 32  # LoRA alpha (default: 16)
+config.peft.dim = 16  # LoRA rank
+config.peft.alpha = 32  # LoRA alpha scaling
 ```
 
 ### Configuration with YAML

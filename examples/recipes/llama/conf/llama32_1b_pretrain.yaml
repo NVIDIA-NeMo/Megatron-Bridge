@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # Example YAML configuration for Llama 3.2 1B pretraining
-# This file demonstrates the most commonly customized settings.
-# Uncomment and modify values as needed for your use case.
+# This file demonstrates commonly customized settings.
+# Modify values as needed for your use case.
 
 # Data configuration
 data:
@@ -50,8 +50,7 @@ checkpoint:
   # load: ./checkpoints/llama32_1b/iter_0000050
 
 # Model configuration
-# Llama 3.2 1B defaults: TP=1, PP=1, CP=1 (works on single GPU)
-# Note: seq_length must match data.seq_length
+# Note: seq_length must match data.sequence_length
 model:
   seq_length: 4096
   tensor_model_parallel_size: 1

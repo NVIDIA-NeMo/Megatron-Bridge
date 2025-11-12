@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # Example YAML configuration for Llama 3.2 1B finetuning with LoRA
-# This file demonstrates the most commonly customized settings.
-# Uncomment and modify values as needed for your use case.
+# This file demonstrates commonly customized settings.
+# Modify values as needed for your use case.
 
 # Data configuration
 data:
@@ -33,7 +33,7 @@ train:
   # Load from pretrained checkpoint
   # load: /path/to/pretrained/checkpoint
 
-# Optimizer configuration (higher LR for LoRA)
+# Optimizer configuration
 optimizer:
   lr: 0.0001
   min_lr: 0.00001
@@ -50,18 +50,12 @@ checkpoint:
   save: ./checkpoints/llama32_1b_finetuned
   save_interval: 50
 
-# LoRA configuration (default: rank=8, alpha=16)
+# LoRA configuration
 peft:
   dim: 8  # LoRA rank
   alpha: 16  # LoRA alpha scaling
 
-# For full finetuning instead of LoRA:
-# peft: null
-# And adjust parallelism if needed:
-# model:
-#   tensor_model_parallel_size: 2
-
-# Model configuration (LoRA default: single GPU)
+# Model configuration
 # Note: seq_length must match data.seq_length
 model:
   seq_length: 4096

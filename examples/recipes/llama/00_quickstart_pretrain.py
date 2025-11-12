@@ -16,9 +16,6 @@
 """
 Quickstart: Pretrain Llama 3.2 1B with Megatron Bridge
 
-This is the simplest way to start pretraining with Megatron-Bridge.
-We use Llama 3.2 1B because it fits on a single GPU, making it easy to test.
-
 Usage:
     Single GPU:
         torchrun --nproc_per_node=1 00_quickstart_pretrain.py
@@ -27,9 +24,8 @@ Usage:
         torchrun --nproc_per_node=8 00_quickstart_pretrain.py
 
 The script uses sensible defaults and mock data for quick testing.
-For custom configurations, see 01_pretrain_with_yaml.py
+For custom configurations through YAML and Hydra-style overrides, see 01_pretrain_with_yaml.py
 For multi-node training, see 02_launch_pretrain_slurm.py
-For larger models (8B, 70B), see 01_pretrain_with_yaml.py
 """
 
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
@@ -47,17 +43,17 @@ def main() -> None:
     # OPTIONAL: Customize key settings here
     # Uncomment and modify as needed:
 
-    # For a quick test run (10 iterations):
+    # For a quick test run:
     # config.train.train_iters = 10
 
-    # Use your own data (replace mock data):
+    # Use your own data:
     # config.data.data_path = "/path/to/your/dataset"
 
-    # Change batch sizes:
+    # Adjust batch sizes for your GPU memory:
     # config.train.global_batch_size = 256
     # config.train.micro_batch_size = 2
 
-    # Modify checkpoint frequency:
+    # Change checkpoint save frequency:
     # config.train.save_interval = 500
 
     # Start pretraining
