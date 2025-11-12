@@ -78,6 +78,8 @@ def slurm_executor(
                 #SBATCH --constraint=gpu
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else custom_bash_cmds
+    if additional_slurm_params is None:
+        additional_slurm_params = {}
     err_msgs = []
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
@@ -110,13 +112,18 @@ def slurm_executor(
     PERF_ENV_VARS.update(custom_env_vars)
     mounts.extend(custom_mounts)
 
-    # add --segment flag to sbatch if job uses GB200 and goes beyond one rack.
+    # add --segment flag to sbatch if job uses GB200.
     segment = None
-    if num_gpus_per_node == 4 and nodes > 18:
-        for segment_candidate in range(18, 0, -1):
-            if nodes % segment_candidate == 0:
-                segment = segment_candidate
-                break
+    if "segment" in additional_slurm_params:
+        segment = additional_slurm_params.pop("segment")
+    elif num_gpus_per_node == 4:
+        if nodes <= 18:
+            segment = nodes
+        else:  # nodes > 18
+            for segment_candidate in range(18, 0, -1):
+                if nodes % segment_candidate == 0:
+                    segment = segment_candidate
+                    break
 
     numa_divisor = 2 if gpu.lower() in ["gb200", "gb300"] else 4
     numa_cmd = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
