@@ -22,6 +22,7 @@ import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
+from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
@@ -113,6 +114,11 @@ def setup(
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
+
+    # Disable the JIT fuser if requested
+    if cfg.dist.disable_jit_fuser:
+        print_rank_0("Disabling JIT fuser.")
+        disable_jit_fuser()
 
     # Initialize async checkpoint worker if enabled (idempotent if already initialized)
     state.initialize_async_checkpoint_worker()
