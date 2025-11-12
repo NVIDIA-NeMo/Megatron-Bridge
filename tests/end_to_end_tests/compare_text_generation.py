@@ -27,6 +27,7 @@ Supports loading the Megatron model with different parallelisms.
 """
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +55,13 @@ def _safe_destroy_distributed():
         torch.distributed.destroy_process_group()
 
 
+@dataclass
+class GeneratedData:
+    ids: list[int]
+    text: str
+    logits: list[torch.Tensor]
+
+
 def validate_path(path: str, must_exist: bool = False) -> Path:
     """Validate and convert string path to Path object."""
     path_obj = Path(path)
@@ -62,9 +70,7 @@ def validate_path(path: str, must_exist: bool = False) -> Path:
     return path_obj
 
 
-def transformers_generate(
-    hf_model: str, prompt: str, max_new_tokens: int = 20
-) -> tuple[list[str], tuple[torch.Tensor]]:
+def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) -> GeneratedData:
     """
     Generate text from a HuggingFace model using transformers.
 
@@ -91,6 +97,7 @@ def transformers_generate(
         output_scores=True,
     )
 
+    generated_ids = output.sequences[0].tolist()
     generated_text = tokenizer.decode(output.sequences[0])
     generated_logits = [token_logits[0].cpu() for token_logits in output.scores]
 
@@ -98,7 +105,7 @@ def transformers_generate(
     print_rank_0(f"Prompt: {prompt}")
     print_rank_0(f"Generated: {generated_text}")
     print_rank_0("======================================")
-    return generated_text, generated_logits
+    return GeneratedData(generated_ids, generated_text, generated_logits)
 
 
 class SingleBatchIterator:
@@ -157,7 +164,7 @@ def text_forward_step(data_iterator: SingleBatchIterator, model: MegatronModule,
 
 def megatron_generate(
     megatron_model: list[MegatronModule], tokenizer: MegatronTokenizer, prompt: str, max_new_tokens: int = 20
-) -> tuple[list[str], list[torch.Tensor]]:
+) -> GeneratedData:
     """
     Generate text from a Megatron model using MCore.
 
@@ -246,12 +253,13 @@ def megatron_generate(
         )
 
     generated_text = tokenizer.detokenize(generated_ids[0])
+    generated_ids = generated_ids[0, num_input_tokens:].tolist()
 
     print_rank_0("====== MEGATRON GENERATED TEXT OUTPUT ======")
     print_rank_0(f"Prompt: {prompt}")
     print_rank_0(f"Generated: {generated_text}")
     print_rank_0("============================================")
-    return generated_text, generated_logits
+    return GeneratedData(generated_ids, generated_text, generated_logits)
 
 
 def get_torch_dtype(dtype_str: str) -> torch.dtype:
@@ -343,7 +351,7 @@ def export_megatron_to_hf(
 
 def megatron_generate_from_checkpoint(
     megatron_path: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
-) -> tuple[list[str], list[torch.Tensor]]:
+) -> GeneratedData:
     """
     Generate text from a Megatron checkpoint.
 
@@ -407,7 +415,7 @@ def megatron_generate_from_checkpoint(
 
 def megatron_generate_from_hf(
     hf_model: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
-) -> tuple[list[str], list[torch.Tensor]]:
+) -> GeneratedData:
     """
     Generate text from a Megatron model with weights loaded from HuggingFace using AutoBridge.
 
@@ -484,21 +492,11 @@ def parse_cli_args():
     return parser.parse_args()
 
 
-def compare_text(
-    hf_text_preconvert: list[str],
-    megatron_text_fromhf: list[str],
-    megatron_text_fromckpt: list[str],
-    hf_text_postconvert: list[str],
-):
-    # TODO: implement
-    pass
-
-
-def compare_logits(
-    hf_logits_preconvert: list[torch.Tensor],
-    megatron_logits_fromhf: list[torch.Tensor],
-    megatron_logits_fromckpt: list[torch.Tensor],
-    hf_logits_postconvert: list[torch.Tensor],
+def compare_generated(
+    hf_preconvert: GeneratedData,
+    megatron_fromhf: GeneratedData,
+    megatron_fromckpt: GeneratedData,
+    hf_postconvert: GeneratedData,
 ):
     # TODO: implement
     pass
@@ -509,30 +507,25 @@ def main():
 
     args = parse_cli_args()
 
-    hf_text_preconvert, hf_logits_preconvert = transformers_generate(
-        args.hf_model_id, args.prompt, args.max_new_tokens
-    )
+    hf_preconvert = transformers_generate(args.hf_model_id, args.prompt, args.max_new_tokens)
 
-    megatron_text_fromhf, megatron_logits_fromhf = megatron_generate_from_hf(
+    megatron_fromhf = megatron_generate_from_hf(
         args.hf_model_id, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp
     )
 
     # Generate from imported checkpoint
     import_hf_to_megatron(args.hf_model_id, args.megatron_path, args.torch_dtype, args.device_map)
-    megatron_text_fromckpt, megatron_logits_fromckpt = megatron_generate_from_checkpoint(
+    megatron_fromckpt = megatron_generate_from_checkpoint(
         args.megatron_path, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp
     )
 
     # Generate from exported checkpoint
     _safe_destroy_distributed()  # Export happens on cpu-only and creates new gloo groups
     export_megatron_to_hf(args.hf_model_id, args.megatron_path, args.hf_save_path)
-    hf_text_postconvert, hf_logits_postconvert = transformers_generate(
-        args.hf_save_path, args.prompt, args.max_new_tokens
-    )
+    hf_postconvert = transformers_generate(args.hf_save_path, args.prompt, args.max_new_tokens)
 
     # Compare results
-    compare_text(hf_text_preconvert, megatron_text_fromhf, megatron_text_fromckpt, hf_text_postconvert)
-    compare_logits(hf_logits_preconvert, megatron_logits_fromhf, megatron_logits_fromckpt, hf_logits_postconvert)
+    compare_generated(hf_preconvert, megatron_fromhf, megatron_fromckpt, hf_postconvert)
 
 
 if __name__ == "__main__":
