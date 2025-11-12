@@ -726,6 +726,10 @@ class TestCanonicalLoRAMegatronIntegration:
             ffn_hidden_size=256,
         )
 
+        from megatron.core.process_groups_config import ProcessGroupCollection
+
+        model_provider.pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+
         # Create CanonicalLoRA instance targeting linear layers
         lora = CanonicalLoRA(
             target_modules=[

@@ -951,11 +951,8 @@ class TestIterationSkipping:
         return _PG(dp_size)
 
     @patch("megatron.bridge.training.train._dummy_train_step")
-    @patch("megatron.bridge.training.train.parallel_state.get_data_parallel_world_size", return_value=2)
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
-    def test_should_skip_iteration_when_step_in_skip_list(
-        self, mock_get_microbatches, mock_get_dp_world_size, mock_dummy_step
-    ):
+    def test_should_skip_iteration_when_step_in_skip_list(self, mock_get_microbatches, mock_dummy_step):
         """Test that iteration is skipped when step is in iterations_to_skip list."""
         # Setup
         global_state = self._create_mock_global_state(step=5, iterations_to_skip=[3, 5, 10])
@@ -967,7 +964,7 @@ class TestIterationSkipping:
 
         # Verify
         assert result is True
-        mock_dummy_step.assert_called_once_with(global_state, train_data_iterator)
+        mock_dummy_step.assert_called_once_with(global_state, train_data_iterator, fake_pg)
 
         # Verify state updates
         assert global_state.train_state.step == 6  # incremented
@@ -1011,11 +1008,8 @@ class TestIterationSkipping:
         mock_dummy_step.assert_not_called()
 
     @patch("megatron.bridge.training.train._dummy_train_step")
-    @patch("megatron.bridge.training.train.parallel_state.get_data_parallel_world_size", return_value=8)
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
-    def test_batch_size_calculation_with_different_parallelism(
-        self, mock_get_microbatches, mock_get_dp_world_size, mock_dummy_step
-    ):
+    def test_batch_size_calculation_with_different_parallelism(self, mock_get_microbatches, mock_dummy_step):
         """Test batch size calculation with different parallelism settings."""
         # Setup
         global_state = self._create_mock_global_state(step=10, iterations_to_skip=[10], micro_batch_size=8)
@@ -1037,8 +1031,8 @@ class TestDummyTrainStep:
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=3)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=False)
     def test_dummy_train_step_advances_iterator_on_first_stage(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1056,15 +1050,16 @@ class TestDummyTrainStep:
         train_data_iterator.__next__ = Mock(return_value={})
 
         # Call function
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
 
         # Verify next() was called correct number of times (num_microbatches)
         assert train_data_iterator.__next__.call_count == 3
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=3)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=False)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=True)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=True)
     def test_dummy_train_step_advances_iterator_on_last_stage(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1082,15 +1077,16 @@ class TestDummyTrainStep:
         train_data_iterator.__next__ = Mock(return_value={})
 
         # Call function
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
 
         # Verify next() was called correct number of times
         assert train_data_iterator.__next__.call_count == 3
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=3)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=False)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=False)
     def test_dummy_train_step_does_not_advance_iterator_on_middle_stage(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1108,15 +1104,16 @@ class TestDummyTrainStep:
         train_data_iterator.__next__ = Mock(return_value={})
 
         # Call function
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
 
         # Verify next() was NOT called
         train_data_iterator.__next__.assert_not_called()
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=False)
     def test_dummy_train_step_handles_multiple_rerun_cycles(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1135,15 +1132,16 @@ class TestDummyTrainStep:
         train_data_iterator.__next__ = Mock(return_value={})
 
         # Call function
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
 
         # Verify next() was called 2 cycles * 2 microbatches = 4 times
         assert train_data_iterator.__next__.call_count == 4
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=1)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=False)
     def test_dummy_train_step_no_rerun_cycles(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1161,15 +1159,16 @@ class TestDummyTrainStep:
         train_data_iterator.__next__ = Mock(return_value={})
 
         # Call function
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
 
         # Verify next() was not called at all
         train_data_iterator.__next__.assert_not_called()
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=0)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=False)
     def test_dummy_train_step_zero_microbatches(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1187,15 +1186,16 @@ class TestDummyTrainStep:
         train_data_iterator.__next__ = Mock(return_value={})
 
         # Call function
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
 
         # Verify next() was not called when num_microbatches is 0
         train_data_iterator.__next__.assert_not_called()
 
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
     @patch("megatron.bridge.training.train.get_rerun_state_machine")
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_first_stage", return_value=True)
-    @patch("megatron.bridge.training.train.parallel_state.is_pipeline_last_stage", return_value=False)
+    @patch("megatron.bridge.training.train.is_pp_first_stage", return_value=True)
+    @patch("megatron.bridge.training.train.is_pp_last_stage", return_value=False)
     def test_dummy_train_step_handles_none_iterator(
         self, mock_is_last_stage, mock_is_first_stage, mock_get_rerun_machine, mock_get_microbatches
     ):
@@ -1209,4 +1209,5 @@ class TestDummyTrainStep:
         train_data_iterator = None  # None iterator
 
         # Call function - should not raise an error
-        _dummy_train_step(global_state, train_data_iterator)
+        fake_pg = type("PG", (), {"pp": object()})()
+        _dummy_train_step(global_state, train_data_iterator, fake_pg)
