@@ -36,6 +36,7 @@ from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
@@ -53,7 +54,6 @@ from megatron.bridge.training.nvrx_straggler import (
     safe_shutdown_nvrx_straggler_manager,
 )
 from megatron.bridge.training.profiling import (
-    TNvtxContext,
     handle_profiling_step,
     handle_profiling_stop,
     initialize_pytorch_profiler,
@@ -85,6 +85,7 @@ def train(
     valid_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
     global_state: GlobalState,
     checkpointing_context: dict[str, Any],
+    pg_collection: ProcessGroupCollection,
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
 ) -> None:
@@ -202,7 +203,6 @@ def train(
             prof = initialize_pytorch_profiler(prof_config, config.logger.tensorboard_dir)
             prof.start()
 
-    start_iteration = global_state.train_state.step
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
         config.ddp.use_megatron_fsdp,
@@ -228,6 +228,7 @@ def train(
         print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
 
     # Capture CUDA Graphs.
+    cuda_graph_helper = None
     if model_config.cuda_graph_impl == "transformer_engine":
         cuda_graph_helper = TECudaGraphHelper(
             model=model,
@@ -236,13 +237,19 @@ def train(
             micro_batch_size=config.train.micro_batch_size,
             optimizers=[optimizer],
         )
-        # TODO: Fix #991
-        cuda_graph_helper.create_cudagraphs()
 
     # Track train step elapsed time for throughput logging
     history_wct = None
     if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
+
+    # Wrap forward_backward_func for Full iteration CUDA graph
+    forward_backward_func = get_forward_backward_func()
+    if config.model.cuda_graph_impl == "local" and "full_iteration" in config.model.cuda_graph_scope:
+        forward_backward_func = FullCudaGraphWrapper(
+            forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+        )
+
     # Run training iterations till done.
     start_iteration = global_state.train_state.step
     while global_state.train_state.step < train_config.train_iters:
@@ -293,13 +300,34 @@ def train(
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=True, verbose=True)
 
         # Completely skip iteration if needed.
-        if _should_skip_and_handle_iteration(global_state, train_data_iterator):
+        if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
             continue
+
+        # Capture CUDA Graphs after warmup.
+        if (
+            model_config.cuda_graph_impl == "transformer_engine"
+            and cuda_graph_helper is not None
+            and not cuda_graph_helper.graphs_created()
+            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+        ):
+            if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
+                disable_forward_pre_hook(model, param_sync=False)
+            cuda_graph_helper.create_cudagraphs()
+            if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
+                enable_forward_pre_hook(model)
+                cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
-            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
+            wrapped_forward_step_func,
+            train_data_iterator,
+            model,
+            optimizer,
+            scheduler,
+            global_state,
+            pg_collection,
+            forward_backward_func,
         )
         fault_tolerance.on_training_step_end(global_state)
 
@@ -340,14 +368,17 @@ def train(
                     enable_forward_pre_hook(model)
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
-                    # Set the manual hooks when CUDA Graphs are used.
-                    if model_config.cuda_graph_impl == "transformer_engine":
+                    # Set the manual hooks here since it's not set right after the capturing.
+                    if (
+                        model_config.cuda_graph_impl == "transformer_engine"
+                        and model_config.cuda_graph_warmup_steps == 0
+                    ):
+                        assert cuda_graph_helper.graphs_created(), "CUDA Graphs should have been created."
                         cuda_graph_helper.cuda_graph_set_manual_hooks()
 
         global_state.train_state.step += 1
-        batch_size = (
-            parallel_state.get_data_parallel_world_size() * train_config.micro_batch_size * get_num_microbatches()
-        )
+        dp_size = pg_collection.dp.size()
+        batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
         global_state.train_state.consumed_train_samples += batch_size
         num_skipped_samples_in_batch = get_current_global_batch_size() - get_current_running_global_batch_size()
         if train_config.decrease_batch_size_if_needed:
@@ -439,15 +470,31 @@ def train(
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
-        post_training_step_callbacks(
-            model,
-            num_floating_point_operations_since_last_log_event,
+        maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
+        num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
+            config.logger.log_interval,
+            bool(getattr(config.straggler, "log_straggler", False)),
             straggler_timer,
             global_state.train_state.step,
-            prof,
-            config,
+            num_floating_point_operations_since_last_log_event,
+        )
+        maybe_check_weight_hash_across_dp_replicas(
+            model,
+            config.train.check_weight_hash_across_dp_replicas_interval,
+            global_state.train_state.step,
             should_toggle_forward_pre_hook,
+        )
+        handle_profiling_stop(
+            config.profiling,
+            global_state.train_state.step,
+            torch.distributed.get_rank(),
+            prof,
             nsys_nvtx_context,
+        )
+        maybe_run_manual_gc(
+            config.train.manual_gc,
+            config.train.manual_gc_interval,
+            global_state.train_state.step,
         )
 
         # Checkpoint and decide whether to exit.
@@ -509,6 +556,8 @@ def train_step(
     optimizer: MegatronOptimizer,
     scheduler: OptimizerParamScheduler,
     global_state: GlobalState,
+    pg_collection: ProcessGroupCollection,
+    forward_backward_func: Callable,
 ) -> tuple[dict[str, torch.Tensor], int, bool, bool, int, Optional[float], Optional[int]]:
     """Single training step.
 
@@ -519,6 +568,8 @@ def train_step(
         optimizer: Optimizer for model parameters
         scheduler: Learning rate scheduler
         global_state: Global training state
+        pg_collection: Process group collection
+        forward_backward_func: forward-backward function
 
     Returns:
         tuple containing:
@@ -556,12 +607,21 @@ def train_step(
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
                 num_microbatches=get_num_microbatches(),
                 default_seq_length=model_config.seq_length,
                 seq_key="tokens",
+            )
+
+            # Forward-backward pass.
+            # Convert to list of iterators for virtual pipeline parallelism
+            # With virtual PP, each model chunk needs independent access to the same microbatch
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
@@ -573,13 +633,7 @@ def train_step(
         )
 
         # Forward pass.
-        if cfg.model.cuda_graph_impl == "local" and cfg.model.cuda_graph_scope == "full_iteration":
-            forward_backward_func = FullCudaGraphWrapper(
-                get_forward_backward_func(), cuda_graph_warmup_steps=cfg.model.cuda_graph_warmup_steps
-            )
-        else:
-            forward_backward_func = get_forward_backward_func()
-
+        forward_backward_func = get_forward_backward_func()
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -635,9 +689,8 @@ def train_step(
                 # there is one dict per microbatch. in new reporting, we average
                 # over the total number of tokens across the global batch.
                 val = torch.vstack(val).sum(dim=0)
-                torch.distributed.all_reduce(
-                    val, group=parallel_state.get_data_parallel_group(with_context_parallel=True)
-                )
+                dp_cp_group = pg_collection.dp_cp
+                torch.distributed.all_reduce(val, group=dp_cp_group)
                 loss_reduced[key] = val[0] / val[1]
             elif val[0].numel() == 1:
                 # legacy behavior, we average over the number of microbatches
@@ -657,70 +710,91 @@ def train_step(
     return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
 
 
-def post_training_step_callbacks(
-    model: list[MegatronModule],
-    num_floating_point_operations_since_last_log_event: float,
-    straggler_timer: Any,
-    iteration: int,
-    prof: Optional[torch.profiler.profile],
-    config: ConfigContainer,
-    should_toggle_forward_pre_hook: bool,
-    nsys_nvtx_context: Optional[TNvtxContext] = None,
-) -> None:
-    """Run all post-training-step functions (e.g., FT heartbeats, GC).
+def maybe_synchronize_training_step(train_sync_interval: Optional[int], iteration: int) -> None:
+    """Synchronizes CUDA streams when the configured interval is reached.
 
     Args:
-        model: list of model chunks wrapped in DDP
-        num_floating_point_operations_since_last_log_event: Number of floating point operations since last log
-        straggler_timer: Timer for straggler detection
-        iteration: Current training iteration
-        prof: PyTorch profiler instance
-        config: Configuration container
-        should_toggle_forward_pre_hook: Whether to toggle forward pre-hook
-        nsys_nvtx_context: NVTX context for nsys profiling (if active)
+        train_sync_interval: Number of iterations between synchronizations; ``None`` disables it.
+        iteration: Zero-based training iteration counter.
     """
-    train_config = config.train
 
-    # Bring CPU and GPU back in sync if on right iteration.
-    if train_config.train_sync_interval and iteration % train_config.train_sync_interval == 0:
+    if train_sync_interval and iteration % train_sync_interval == 0:
         torch.cuda.synchronize()
 
-    # Straggler detector.
-    if config.straggler:
-        if iteration % config.logger.log_interval == 0 and config.straggler.log_straggler:
+
+def maybe_report_stragglers(
+    log_interval: int,
+    log_straggler: bool,
+    straggler_timer: Any,
+    iteration: int,
+    num_floating_point_operations_since_last_log_event: float,
+) -> float:
+    """Reports straggler metrics if logging is enabled.
+
+    Args:
+        log_interval: Iteration interval for logging.
+        log_straggler: Whether straggler logging is enabled.
+        straggler_timer: Timer utility used to record straggler metrics.
+        iteration: Zero-based training iteration counter.
+        num_floating_point_operations_since_last_log_event: FLOPs accumulated since the last
+            logging event.
+
+    Returns:
+        float: Updated FLOP counter, reset to ``0.0`` when a report is emitted; otherwise the
+        original value.
+    """
+
+    if log_straggler and log_interval:
+        if iteration % log_interval == 0:
             straggler_timer.report(
                 num_floating_point_operations_since_last_log_event,
-                config.logger.log_interval,
+                log_interval,
             )
-            num_floating_point_operations_since_last_log_event = 0.0
+            return 0.0
+    return num_floating_point_operations_since_last_log_event
 
-    # Check weight hash across DP replicas.
-    if (
-        train_config.check_weight_hash_across_dp_replicas_interval is not None
-        and iteration % train_config.check_weight_hash_across_dp_replicas_interval == 0
-    ):
-        if should_toggle_forward_pre_hook:
-            disable_forward_pre_hook(model)
-        assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
-            "Parameter hashes not matching across DP replicas"
-        )
-        torch.distributed.barrier()
-        print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
-        if should_toggle_forward_pre_hook:
-            enable_forward_pre_hook(model)
 
-    # Profiling.
-    handle_profiling_stop(
-        config.profiling,
-        iteration,
-        torch.distributed.get_rank(),
-        prof,
-        nsys_nvtx_context,
+def maybe_check_weight_hash_across_dp_replicas(
+    model: list[MegatronModule],
+    check_weight_hash_across_dp_replicas_interval: Optional[int],
+    iteration: int,
+    should_toggle_forward_pre_hook: bool,
+) -> None:
+    """Verifies weight hashes across data-parallel replicas when requested.
+
+    Args:
+        model: List of model chunks to validate.
+        check_weight_hash_across_dp_replicas_interval: Interval at which to verify; ``None`` to skip.
+        iteration: Zero-based training iteration counter.
+        should_toggle_forward_pre_hook: Whether the pre-hook must be disabled during the check.
+    """
+
+    interval = check_weight_hash_across_dp_replicas_interval
+    if interval is None or iteration % interval != 0:
+        return
+
+    if should_toggle_forward_pre_hook:
+        disable_forward_pre_hook(model)
+    assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
+        "Parameter hashes not matching across DP replicas"
     )
+    torch.distributed.barrier()
+    print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
+    if should_toggle_forward_pre_hook:
+        enable_forward_pre_hook(model)
 
-    # Manual garbage collection.
-    if train_config.manual_gc:
-        if train_config.manual_gc_interval != 0 and iteration % train_config.manual_gc_interval == 0:
+
+def maybe_run_manual_gc(manual_gc_enabled: bool, manual_gc_interval: int, iteration: int) -> None:
+    """Runs manual garbage collection according to the configured interval.
+
+    Args:
+        manual_gc_enabled: Whether manual garbage collection is enabled.
+        manual_gc_interval: Number of iterations between collections; ``0`` disables periodic runs.
+        iteration: Zero-based training iteration counter.
+    """
+
+    if manual_gc_enabled and manual_gc_interval != 0:
+        if iteration % manual_gc_interval == 0:
             gc.collect()
 
 
@@ -817,7 +891,7 @@ def compute_throughputs_and_append_to_progress_log(
 ) -> None:
     """Computes job and cumulative throughputs and appends to progress log.
 
-    Calculates TFLOP/s/GPU based on floating-point operations and elapsed time.
+    Calculates Model TFLOP/s/GPU based on floating-point operations and elapsed time.
     Appends the computed throughputs, total FLOPs, and processed tokens to the
     progress log file.
 
@@ -849,8 +923,8 @@ def compute_throughputs_and_append_to_progress_log(
     append_to_progress_log(
         state.cfg.checkpoint.save,
         f"{saved_ckpt_prefix}\tIteration: {state.train_state.step}\t"
-        f"Job throughput: {job_throughput:.1f} TFLOP/s/GPU\t"
-        f"Cumulative throughput: {cumulative_throughput:.1f} TFLOP/s/GPU\t"
+        f"Job throughput: {job_throughput:.1f} MODEL_TFLOP/s/GPU\t"
+        f"Cumulative throughput: {cumulative_throughput:.1f} MODEL_TFLOP/s/GPU\t"
         f"Floating-point operations: {num_floating_point_operations_so_far:.2e}\t"
         f"Tokens (in billions): {tokens_so_far / 10**9:.2f}",
     )
@@ -877,7 +951,7 @@ def save_checkpoint_and_time(
         model: list of model chunks (MegatronModule instances).
         optimizer: The optimizer instance.
         opt_param_scheduler: The optimizer parameter scheduler instance.
-        num_floating_point_operations_so_far: Cumulative TFLOPs up to this point.
+        num_floating_point_operations_so_far: Cumulative Model TFLOPs up to this point.
         checkpointing_context: Dictionary holding checkpointing-related state.
         non_persistent_ckpt: Flag indicating if this is a non-persistent
                              (local) checkpoint. Defaults to False.
@@ -1087,7 +1161,9 @@ def _finish_train(global_state: GlobalState):
 
 
 def _should_skip_and_handle_iteration(
-    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+    global_state: GlobalState,
+    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    pg_collection: ProcessGroupCollection,
 ) -> bool:
     """Check if the current iteration should be skipped and handle it if so.
 
@@ -1110,7 +1186,8 @@ def _should_skip_and_handle_iteration(
 
     # Update step and sample counters
     global_state.train_state.step += 1
-    batch_size = parallel_state.get_data_parallel_world_size() * cfg.train.micro_batch_size * get_num_microbatches()
+    dp_size = pg_collection.dp.size()
+    batch_size = dp_size * cfg.train.micro_batch_size * get_num_microbatches()
     global_state.train_state.consumed_train_samples += batch_size
     global_state.train_state.skipped_train_samples += batch_size
 

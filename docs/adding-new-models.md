@@ -212,7 +212,9 @@ python examples/conversion/convert_checkpoints.py import --hf-model <org>/<model
 ```
 ## 7) Add tests
 
-Add or extend tests under `tests/functional_tests/models/` and `tests/unit_tests/models/`:
+Add or extend tests under `tests/functional_tests/models/<your_model>/` and `tests/unit_tests/models/`:
+
+Tests are organized in model-specific subdirectories that mirror the source structure in `src/megatron/bridge/models/`.
 
 - Conversion coverage:
   - HF → Megatron load succeeds without missing params
@@ -223,13 +225,13 @@ Add or extend tests under `tests/functional_tests/models/` and `tests/unit_tests
   - Forward parity on a handful of tokens comparing HF vs Megatron outputs
 
 Examples to reference:
-- `tests/functional_tests/models/test_qwen3_provider.py`
-- `tests/functional_tests/models/test_qwen3_conversion.py`
+- `tests/functional_tests/models/qwen/test_qwen3_provider.py`
+- `tests/functional_tests/models/qwen/test_qwen3_conversion.py`
 
 Run fast tests locally:
 ```sh
-uv run pytest -q tests/functional_tests/models/test_<your_model>_provider.py -k your_model | cat
-uv run pytest -q tests/functional_tests/models/test_<your_model>_conversion.py -k your_model | cat
+uv run pytest -q tests/functional_tests/models/<your_model>/test_<your_model>_provider.py -k your_model | cat
+uv run pytest -q tests/functional_tests/models/<your_model>/test_<your_model>_conversion.py -k your_model | cat
 ```
 
 Full suite (slower):
@@ -253,7 +255,7 @@ you are adding support for in your PR.
 ```text
 You are working in the Megatron Bridge repo. Add tests for a new model `<your_model>`.
 
-Create two test modules under `tests/functional_tests/models/`:
+Create a subdirectory `tests/functional_tests/models/<your_model>/` with an `__init__.py` file and two test modules:
 1) `test_<your_model>_provider.py`
    - Build a tiny HF model/config (or use `<org>/<tiny-model-id>` if available).
    - Use the bridge to derive a provider and construct the model with TP=PP=1.
@@ -264,7 +266,7 @@ Create two test modules under `tests/functional_tests/models/`:
    - Megatron → HF: export a subset of tensors; assert shape/dtype parity with HF.
    - Optionally run a short generation on CPU and compare logits numerically within tolerance.
 
-Use `tests/functional_tests/models/test_qwen3_provider.py` and `test_qwen3_conversion.py` as templates.
+Use `tests/functional_tests/models/qwen/test_qwen3_provider.py` and `test_qwen3_conversion.py` as templates.
 
 Provide `-k your_model` selectors and guard long tests with `pytest.skip` if external weights are unavailable.
 ```

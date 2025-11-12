@@ -59,12 +59,12 @@ class NemotronHCommonKwargs(TypedDict, total=False):
     per_split_data_args_path: str | None
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: torch.dtype | None
-    virtual_pipeline_parallelism: int | None
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    sequence_parallel: bool
     # Training hyperparameters
     train_iters: int
     global_batch_size: int
@@ -92,9 +92,9 @@ def nemotronh_4b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) -
     """
     recommended_kwargs: NemotronHCommonKwargs = {
         "model_provider": NemotronHModel4BProvider,
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": False,
         "precision_config": "bf16_mixed",
         "enable_default_comm_overlap": True,
     }
@@ -112,9 +112,9 @@ def nemotronh_8b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) -
     """
     recommended_kwargs: NemotronHCommonKwargs = {
         "model_provider": NemotronHModel8BProvider,
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": True,
         "precision_config": "bf16_mixed",
         "enable_default_comm_overlap": True,
     }
@@ -135,9 +135,9 @@ def nemotronh_47b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) 
     """
     recommended_kwargs: NemotronHCommonKwargs = {
         "model_provider": NemotronHModel47BProvider,
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": True,
         "precision_config": "nemotron_h_bf16_with_fp8_current_scaling_mixed",
         "enable_default_comm_overlap": True,
     }
@@ -158,9 +158,9 @@ def nemotronh_56b_pretrain_config(**user_kwargs: Unpack[NemotronHCommonKwargs]) 
     """
     recommended_kwargs: NemotronHCommonKwargs = {
         "model_provider": NemotronHModel56BProvider,
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 1,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 1,
+        "sequence_parallel": True,
         "precision_config": "nemotron_h_bf16_with_fp8_current_scaling_mixed",
         "enable_default_comm_overlap": True,
     }
@@ -187,12 +187,12 @@ def _nemotronh_common(
     per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: torch.dtype | None = torch.bfloat16,
-    virtual_pipeline_parallelism: int | None = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     # Training hyperparameters
     train_iters: int = 1_168_251,
     global_batch_size: int = 768,
@@ -224,12 +224,12 @@ def _nemotronh_common(
         test_data_path: List of test data paths.
         per_split_data_args_path: Path to JSON file with per-split data configuration.
         mock: Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism: Degree of tensor model parallelism.
-        pipeline_parallelism: Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype: Data type for pipeline parallelism.
-        virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism to be passed to model_config.
-        sequence_parallelism: Whether to use sequence parallelism.
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
+        pipeline_dtype: Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism.
+        context_parallel_size: Degree of context parallelism to be passed to model_config.
+        sequence_parallel: Whether to use sequence parallelism.
         train_iters: Total number of training iterations.
         global_batch_size: Global batch size for training.
         micro_batch_size: Micro batch size for training.
@@ -256,12 +256,12 @@ def _nemotronh_common(
     )
 
     model_cfg = model_provider(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        sequence_parallel=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        sequence_parallel=sequence_parallel,
     )
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(

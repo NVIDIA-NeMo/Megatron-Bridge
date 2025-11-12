@@ -27,7 +27,7 @@ GEMMA3_VL_FINETUNE_RECIPES = [
     (
         gemma3_vl_4b_finetune_config,
         "gemma3_vl_4b",
-        {"tensor_parallelism": 1, "pipeline_parallelism": 1, "num_layers": 2},
+        {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1, "num_layers": 2},
     ),
 ]
 

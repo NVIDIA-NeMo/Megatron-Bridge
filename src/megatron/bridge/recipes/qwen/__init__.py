@@ -45,12 +45,15 @@ from .qwen3 import (
 
 # Qwen3 MoE models
 from .qwen3_moe import (
+    qwen3_30b_a3b_finetune_config,
     qwen3_30b_a3b_pretrain_config,
+    qwen3_235b_a22b_finetune_config,
     qwen3_235b_a22b_pretrain_config,
 )
 
 # Qwen3-Next models
 from .qwen3_next import (
+    qwen3_next_80b_a3b_finetune_config,
     qwen3_next_80b_a3b_pretrain_config,
 )
 
@@ -83,7 +86,10 @@ __all__ = [
     "qwen3_32b_finetune_config",
     # Qwen3 MoE models
     "qwen3_30b_a3b_pretrain_config",
+    "qwen3_30b_a3b_finetune_config",
     "qwen3_235b_a22b_pretrain_config",
+    "qwen3_235b_a22b_finetune_config",
     # Qwen3-Next models
     "qwen3_next_80b_a3b_pretrain_config",
+    "qwen3_next_80b_a3b_finetune_config",
 ]
