@@ -172,12 +172,21 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider12B", FakeProvider)
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider27B", FakeProvider)
 
-    # For finetune recipes, also monkeypatch AutoBridge
+    # For finetune recipes, also monkeypatch AutoBridge and AutoTokenizer
     is_finetune = "finetune" in recipe_func.__name__.lower()
     if is_finetune:
         module_name = recipe_func.__module__
         mod = importlib.import_module(module_name)
         monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+        # Mock AutoTokenizer to avoid HF I/O
+        import transformers
+
+        monkeypatch.setattr(
+            transformers,
+            "AutoTokenizer",
+            type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+        )
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
