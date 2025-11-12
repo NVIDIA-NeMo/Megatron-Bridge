@@ -208,11 +208,9 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
                 **self.init_kwargs,
             )
         except Exception:
-            # Some VLMs might not have a processor, fall back to manual loading
-            raise ValueError(
-                f"Could not load processor for {self.model_name_or_path}. "
-                "This model might require manual processor setup."
-            )
+            # Processor is optional - not all models have one
+            # VLMs typically have a processor, but it might not be saved during export
+            return None
 
     def _load_image_processor(self) -> Optional[Any]:
         """
