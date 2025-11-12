@@ -217,6 +217,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     use_tokendrop = kwargs.get("use_tokendrop")
     if use_tokendrop:
         recipe.model = apply_moe_token_drop(recipe.model)
+        recipe.model.moe_router_force_load_balancing = False
     if use_tokendrop is not None and not use_tokendrop:  # explicitly set to False by user
         recipe.model = apply_moe_token_drop(
             recipe.model, moe_expert_capacity_factor=-1.0, moe_pad_expert_input_to_capacity=False
