@@ -15,13 +15,18 @@
 """
 End to end test that compares text generated from a HuggingFace model
 using the following methods:
-    - Generate with Transformers
-    - Load a Megatron model directly from the HuggingFace weights and
+    1. Generate with Transformers
+    2. Load a Megatron model directly from the HuggingFace weights and
         generate text from it (AutoBridge.from_hf_pretrained method)
-    - Convert the HuggingFace weights to a Megatron checkpoint,
+    3. Convert the HuggingFace weights to a Megatron checkpoint,
         load that checkpoint, and generate text from it (AutoBridge.import_ckpt method)
-    - Export the Megatron checkpoint (that was previously imported from HF) back
+    4. Export the Megatron checkpoint (that was previously imported from HF) back
         to HuggingFace format and generate using Transformers again, as a sanity test.
+
+Token ids and detokenized text from 1. and 4. are always checked for exact matching. Logits
+from 1. and 4. are always compared by position using cosine similarity. The same applies
+for 2. and 3. Across HuggingFace and Megatron (1, 4 vs 2, 3), comparison method is
+specified via CLI arguments.
 
 Supports loading the Megatron model with different parallelisms.
 """
@@ -489,7 +494,52 @@ def parse_cli_args():
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
 
-    return parser.parse_args()
+    # Generation comparison settings
+    parser.add_argument(
+        "--token-compare-method",
+        type=str,
+        choices=["exact", "ignore", "jaccard"],
+        default="exact",
+        help="How to compare HF and Megatron generated tokens.",
+    )
+    parser.add_argument(
+        "--logits-compare-method",
+        type=str,
+        choices=["cosine", "ignore"],
+        default="ignore",
+        help="How to compare HF and Megatron logits.",
+    )
+    parser.add_argument(
+        "--token-jaccard-threshold",
+        type=float,
+        default=None,
+        help="threshold if using Jaccard similarity to compare generated tokens.",
+    )
+
+    args = parser.parse_args()
+    if args.token_compare_method == "jaccard":
+        assert args.token_jaccard_threshold is not None, (
+            "Must specify '--token-jaccard-threshold' if using '--token-compare-method jaccard'."
+        )
+
+    return args
+
+
+def _logit_cosine_similarity(x: list[torch.Tensor], y: list[torch.Tensor], threshold: float):
+    """
+    For two lists of generated logits, ensure the logits at each step are similar via cosine similarity.
+
+    Args:
+        x: first list of logits
+        y: second list of logits
+        threshold: absolute tolerance in cosine similarity
+    """
+
+    assert len(x) == len(y), (
+        f"This method requires the same number of tokens to have been generated. First: {len(x)}, Second: {len(y)}."
+    )
+    for i in range(len(x)):
+        assert torch.cosine_similarity(x[i], y[i], dim=0) >= threshold, f"Logits at position {i} are not close."
 
 
 def compare_generated(
@@ -497,9 +547,57 @@ def compare_generated(
     megatron_fromhf: GeneratedData,
     megatron_fromckpt: GeneratedData,
     hf_postconvert: GeneratedData,
+    crossfw_token_method: str,
+    crossfw_logit_method: str,
+    jaccard_threshold: Optional[float] = None,
 ):
-    # TODO: implement
-    pass
+    """
+    Make assertions on generated ids, tokens, and logits.
+
+    Args:
+        hf_preconvert: Generations directly from HF Transformers.
+        megatron_fromhf: Generations from AutoBridge.from_hf_pretrained.
+        megatron_fromckpt: Generations from AutoBridge.import_ckpt.
+        hf_postconvert: Generations from AutoBridge.export_ckpt -> HF Transformers.
+    """
+
+    # HF-HF and Megatron-Megatron comparisons should be exact/strict matches
+    assert hf_preconvert.ids == hf_postconvert.ids
+    assert hf_preconvert.text == hf_postconvert.text
+    _logit_cosine_similarity(hf_preconvert.logits, hf_postconvert.logits, 0.9)
+
+    assert megatron_fromhf.ids == megatron_fromckpt.ids
+    assert megatron_fromhf.text == megatron_fromckpt.text
+    _logit_cosine_similarity(megatron_fromhf.logits, megatron_fromckpt.logits, 0.9)
+
+    # HF-Megatron comparison depends on model and parallel config
+    if crossfw_token_method == "ignore":
+        pass
+    elif crossfw_token_method == "exact":
+        assert hf_preconvert.ids == megatron_fromckpt.ids
+        assert hf_preconvert.text == megatron_fromckpt.text
+    elif crossfw_token_method == "jaccard":
+        # calculate Jaccard index of token ids
+        assert jaccard_threshold is not None, (
+            "Must pass 'jaccard_threshold' if using Jaccard similarity for text comparison."
+        )
+
+        hf_id_set = set(hf_preconvert.ids)
+        megatron_id_set = set(megatron_fromckpt.ids)
+
+        intersect_size = len(hf_id_set.intersection(megatron_id_set))
+        union_size = len(hf_id_set.union(megatron_id_set))
+        index = intersect_size / union_size
+        assert index > jaccard_threshold, f"Jaccard index {index} lower than threshold {jaccard_threshold}"
+    else:
+        raise ValueError(f"Provided value for 'crossfw_text_method' ({crossfw_token_method}) not supported.")
+
+    if crossfw_logit_method == "ignore":
+        pass
+    elif crossfw_logit_method == "cosine":
+        _logit_cosine_similarity(hf_preconvert.logits == megatron_fromckpt.logits, 0.9)
+    else:
+        raise ValueError(f"Provided value for 'crossfw_logit_method' ({crossfw_logit_method}) not supported.")
 
 
 def main():
@@ -525,7 +623,15 @@ def main():
     hf_postconvert = transformers_generate(args.hf_save_path, args.prompt, args.max_new_tokens)
 
     # Compare results
-    compare_generated(hf_preconvert, megatron_fromhf, megatron_fromckpt, hf_postconvert)
+    compare_generated(
+        hf_preconvert,
+        megatron_fromhf,
+        megatron_fromckpt,
+        hf_postconvert,
+        args.token_compare_method,
+        args.logits_compare_method,
+        args.token_jaccard_threshold,
+    )
 
 
 if __name__ == "__main__":
