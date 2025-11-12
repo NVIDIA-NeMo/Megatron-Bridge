@@ -134,23 +134,10 @@ def parse_cli_args():
         "-c",
         "--compute_dtype",
         type=str,
-        choices=["bf16", "fp8"],
+        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc"],
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
-    )
-    fp8_recipe_msg = (
-        "FP8 recipe. Options- ds (per-tensor delayed scaling), cs (per-tensor current scaling), "
-        "mxfp8, ss (subchannel scaling). Defaults to ds"
-    )
-    parser.add_argument(
-        "-fr",
-        "--fp8_recipe",
-        type=str,
-        choices=["cs", "mx", "sc"],
-        help=fp8_recipe_msg,
-        required=False,
-        default="cs",
     )
     parser.add_argument(
         "--task",
