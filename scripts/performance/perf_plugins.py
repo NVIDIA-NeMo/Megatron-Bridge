@@ -30,24 +30,16 @@ use hydra-style overrides.
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
-
-MISSING_NEMO_RUN_MSG = "nemo-run is not available. Please install it with `pip install nemo-run`."
+import nemo_run as run
+from nemo_run import Plugin, Script, SlurmExecutor
 
 
 try:
-    import nemo_run as run
-    from nemo_run import Partial, Plugin, Script, SlurmExecutor
-
-    HAVE_NEMO_RUN = True
+    from utils.utils import get_workload_base_config
 except (ImportError, ModuleNotFoundError):
-    Partial, Plugin, Script, SlurmExecutor = object, object, object, object
-    HAVE_NEMO_RUN = False
-
-if TYPE_CHECKING:
-    import nemo_run as run
-
+    from .utils.utils import get_workload_base_config
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -120,8 +112,6 @@ class NsysPlugin(Plugin):
     script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
-        if not HAVE_NEMO_RUN:
-            raise ImportError(MISSING_NEMO_RUN_MSG)
         """Set up the nsys profiling plugin."""
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
@@ -184,11 +174,8 @@ class PerfEnvPlugin(Plugin):
     Attributes:
         enable_layernorm_sm_margin (bool): Set SM margin for TransformerEngine's Layernorm, so
             in order to not block DP level communication overlap.
-        layernorm_sm_margin (int): The SM margin for TransformerEngine Layernorm.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
-        nccl_pp_comm_chunksize (Optional[int]): Chunk size for P2P communications.
-        gpu_sm100_or_newer (bool): Whether GPU is SM100 or newer architecture.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
@@ -200,56 +187,42 @@ class PerfEnvPlugin(Plugin):
     """
 
     enable_layernorm_sm_margin: bool = True
-    layernorm_sm_margin: int = 16
     enable_vboost: bool = False
-    nccl_pp_comm_chunksize: Optional[int] = None
-    gpu_sm100_or_newer: bool = False
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int = 1
     cp_size: int = 1
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
-    num_gpus: int = 8
-    deepep_enabled: bool = False
-    a2a_overlap: bool = False
+    moe_a2a_overlap: bool = False
+    model_name: str
+    model_size: str
+    gpu: str
+    compute_dtype: str
+    use_tokendrop: str
 
-    def get_vboost_srun_cmd(self, nodes, job_dir):
-        """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
-        import shlex
-
-        vboost_cmd = " ".join(
-            [
-                "\n# Command 0: enable vboost\n\n",
-                "srun",
-                f"--ntasks={nodes}",
-                "--output",
-                os.path.join(job_dir, "vboost.out"),
-                "--error",
-                os.path.join(job_dir, "vboost.err"),
-                "bash -c ",
-                shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
-            ],
-        )
-
-        return vboost_cmd
-
-    def _set_num_cuda_device_max_connections(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
-        self.dp_size = self.num_gpus // (self.tp_size * self.cp_size * self.pp_size)
-
+    def _set_num_cuda_device_max_connections(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        tp_size: int,
+        cp_size: int,
+        moe_a2a_overlap: bool,
+        enable_deepep: bool,
+        gpu_sm100_or_newer: bool,
+    ):
         cuda_device_max_connections = 8
-        if self.deepep_enabled:
+        if enable_deepep:
             cuda_device_max_connections = 32
-        if self.gpu_sm100_or_newer:
-            if (self.tp_size > 1 or self.cp_size > 1) and (self.dp_size > 1 or self.pp_size > 1):
-                """
-                We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
-                of the default device connection of 8.
-                """
-                cuda_device_max_connections = 32
+        if gpu_sm100_or_newer:
+            """
+            We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
+            of the default device connection of 8.
+            """
+            cuda_device_max_connections = 32
         else:
             # Hopper or earlier generation GPUs
-            if (self.tp_size > 1 or self.cp_size > 1) and not self.a2a_overlap:
+            if (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
                 """
                 Set the device connection to 1 to enforce kernel queuing order from host to execution order on GPU.
                 This is needed to schedule a communication kernel before the overlapping persistent GEMM kernel.
@@ -261,33 +234,79 @@ class PerfEnvPlugin(Plugin):
         executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
         logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
-        """Enable the performance environment settings"""
+    def _set_model_specific_environment_variables(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        model_name: str,
+        model_size: str,
+        gpu: str,
+        compute_dtype: str,
+        use_tokendrop: bool,
+    ):
+        """Set model-specific environment variables"""
+        if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
+            if compute_dtype in ["fp8_cs", "fp8_mx"]:
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+        if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
+            if compute_dtype == "bf16" and (not use_tokendrop):
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
+        del_cudnn_ln = True
+        if gpu in ["h100"]:
+            if model_name == "llama3" and model_size == "8b":
+                if compute_dtype == "fp8_cs":
+                    executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                    executor.env_vars["NCCL_CTA_POLICY"] = "1"
+                    del_cudnn_ln = False
+        if gpu in ["gb200", "gb300"]:
+            if model_name == "llama3" and model_size == "70b":
+                if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
+                    del_cudnn_ln = False
+            if model_name == ["llama31"] and model_size == "405b":
+                if compute_dtype == "fp8_cs":
+                    del_cudnn_ln = False
+        if del_cudnn_ln:
+            if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
+                executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
+            if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
+                executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
-        if not HAVE_NEMO_RUN:
-            raise ImportError(MISSING_NEMO_RUN_MSG)
+    def _set_layernorm_sm_margin(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        enable_layernorm_sm_margin: bool,
+        layernorm_sm_margin: int,
+    ):
+        if enable_layernorm_sm_margin:
+            executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
+            executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
 
-        # Force program order kernel launch for TP, CP overlap
-        self._set_num_cuda_device_max_connections(task, executor)
+    def _set_nccl_pp_comm_chunksize(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        nccl_pp_comm_chunksize: int,
+        pp_size: int,
+    ):
+        if pp_size > 1 and nccl_pp_comm_chunksize is not None:
+            assert isinstance(nccl_pp_comm_chunksize, int) and nccl_pp_comm_chunksize > 1
+            executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(nccl_pp_comm_chunksize)
 
-        # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
-        if self.enable_layernorm_sm_margin:
-            executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin)
-            executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin)
-
-        # Set the chunk size of P2P communications
-        if self.pp_size > 1 and self.nccl_pp_comm_chunksize is not None:
-            assert isinstance(self.nccl_pp_comm_chunksize, int) and self.nccl_pp_comm_chunksize > 1
-            executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(self.nccl_pp_comm_chunksize)
-
-        # Configure manual garbage collection
-        if self.enable_manual_gc:
+    def _set_manual_gc(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        enable_manual_gc: bool,
+        manual_gc_interval: int,
+    ):
+        if enable_manual_gc:
             if isinstance(task, Script):
                 # For run.Script, append CLI overrides
                 # Create args dataclass
                 script_args = PerfEnvPluginScriptArgs(
-                    enable_manual_gc=self.enable_manual_gc,
-                    manual_gc_interval=self.manual_gc_interval,
+                    enable_manual_gc=enable_manual_gc,
+                    manual_gc_interval=manual_gc_interval,
                 )
 
                 # Use custom converter or default
@@ -299,11 +318,78 @@ class PerfEnvPlugin(Plugin):
             else:
                 raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
 
-        # Improve perf by steering power to tensor cores, may not work on all systems
-        if self.enable_vboost and isinstance(executor, SlurmExecutor):
-            vboost_cmd = self.get_vboost_srun_cmd(executor.nodes, executor.tunnel.job_dir)
+    def _set_vboost(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", enable_vboost: bool):
+        def get_vboost_srun_cmd(nodes, job_dir):
+            """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
+            import shlex
+
+            vboost_cmd = " ".join(
+                [
+                    "\n# Command 0: enable vboost\n\n",
+                    "srun",
+                    f"--ntasks={nodes}",
+                    "--output",
+                    os.path.join(job_dir, "vboost.out"),
+                    "--error",
+                    os.path.join(job_dir, "vboost.err"),
+                    "bash -c ",
+                    shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
+                ],
+            )
+
+            return vboost_cmd
+
+        if enable_vboost and isinstance(executor, SlurmExecutor):
+            vboost_cmd = get_vboost_srun_cmd(executor.nodes, executor.tunnel.job_dir)
             executor.setup_lines = (
                 executor.setup_lines + vboost_cmd
                 if (executor.setup_lines and len(executor.setup_lines) > 0)
                 else vboost_cmd
             )
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        """Enable the performance environment settings"""
+        workload_base_config = get_workload_base_config(self.model_name, self.model_size, self.gpu, self.compute_dtype)
+        tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
+        pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
+        cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
+
+        # Force program order kernel launch for TP, CP overlap
+        enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
+        moe_a2a_overlap = enable_deepep or (False if self.moe_a2a_overlap is None else self.moe_a2a_overlap)
+        self._set_num_cuda_device_max_connections(
+            task,
+            executor,
+            tp_size,
+            cp_size,
+            moe_a2a_overlap=moe_a2a_overlap,
+            enable_deepep=enable_deepep,
+            gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
+        )
+
+        # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
+        layernorm_sm_margin = 20 if enable_deepep else 16
+        self._set_layernorm_sm_margin(
+            task, executor, self.enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
+        )
+
+        # Set the chunk size of P2P communications
+        nccl_pp_comm_chunksize = 2097152 if self.model_size in ["70b", "405b"] else None
+        self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
+
+        # Configure manual garbage collection
+        self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
+
+        # Improve perf by steering power to tensor cores, may not work on all systems
+        self._set_vboost(task, executor, self.enable_vboost)
+
+        # Set model-specific environment variables
+        self._set_model_specific_environment_variables(
+            task,
+            executor,
+            self.model_name,
+            self.model_size,
+            self.gpu,
+            self.compute_dtype,
+            self.use_tokendrop,
+        )

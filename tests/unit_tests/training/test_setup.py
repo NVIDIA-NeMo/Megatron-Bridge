@@ -13,9 +13,11 @@
 # limitations under the License.
 
 
+from unittest.mock import Mock, patch
+
 import pytest
 
-from megatron.bridge.training.setup import _validate_and_set_vocab_size
+from megatron.bridge.training.setup import _validate_and_set_vocab_size, maybe_log_and_save_config
 
 
 class TestValidateAndSetVocabSize:
@@ -55,3 +57,52 @@ class TestValidateAndSetVocabSize:
         )
         assert vocab_size == 32004
         assert should_pad_vocab is False
+
+
+class TestMaybeLogAndSaveConfig:
+    """Tests for maybe_log_and_save_config."""
+
+    @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
+    def test_rank_zero_saves_and_logs(self, mock_get_rank, tmp_path, capsys):
+        filepath = tmp_path / "config.yaml"
+        cfg = Mock()
+        cfg.logger.save_config_filepath = str(filepath)
+        cfg.to_yaml = Mock()
+        cfg.print_yaml = Mock()
+
+        maybe_log_and_save_config(cfg)
+
+        cfg.to_yaml.assert_called_once_with(str(filepath))
+        cfg.print_yaml.assert_called_once()
+        captured = capsys.readouterr()
+        assert "------- Task Configuration -------" in captured.out
+        assert "----------------------------------" in captured.out
+
+    @patch("megatron.bridge.training.setup.get_rank_safe", return_value=1)
+    def test_non_zero_rank_noop(self, mock_get_rank):
+        cfg = Mock()
+        cfg.logger.save_config_filepath = "unused"
+        cfg.to_yaml = Mock()
+        cfg.print_yaml = Mock()
+
+        maybe_log_and_save_config(cfg)
+
+        cfg.to_yaml.assert_not_called()
+        cfg.print_yaml.assert_not_called()
+
+    @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
+    def test_save_failure_is_logged(self, mock_get_rank, capsys):
+        cfg = Mock()
+        cfg.logger.save_config_filepath = "path"
+
+        def raise_io_error(_):
+            raise IOError("boom")
+
+        cfg.to_yaml.side_effect = raise_io_error
+        cfg.print_yaml = Mock()
+
+        maybe_log_and_save_config(cfg)
+
+        captured = capsys.readouterr()
+        assert "Error saving config" in captured.out
+        cfg.print_yaml.assert_called_once()

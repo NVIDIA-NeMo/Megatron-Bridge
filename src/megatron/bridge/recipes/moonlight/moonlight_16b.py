@@ -54,13 +54,13 @@ class MoonlightCommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    expert_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    expert_model_parallel_size: int
+    sequence_parallel: bool
     # Recomputation
     recompute_granularity: str
     recompute_modules: Optional[List[str]]
@@ -90,13 +90,13 @@ def moonlight_16b_pretrain_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) 
     See `_moonlight_common` for the full list of parameters.
     """
     recommended_kwargs: MoonlightCommonKwargs = {
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": None,
-        "context_parallelism": 1,
-        "expert_parallelism": 4,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": None,
+        "context_parallel_size": 1,
+        "expert_model_parallel_size": 8,
+        "sequence_parallel": True,
         "recompute_granularity": "selective",
         "enable_deepep": False,
         "apply_rope_fusion": False,
@@ -127,13 +127,13 @@ def _moonlight_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 2,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = torch.bfloat16,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 4,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 2,
+    pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 4,
+    sequence_parallel: bool = True,
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
@@ -169,13 +169,13 @@ def _moonlight_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        expert_parallelism (int): Degree of expert model parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism.
+        expert_model_parallel_size (int): Degree of expert model parallelism.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         recompute_granularity (str): Recomputation granularity.
         recompute_modules (Optional[List[str]]): Modules to recompute.
         recompute_method (Optional[str]): Recomputation method.
@@ -208,13 +208,13 @@ def _moonlight_common(
     )
 
     model_cfg = _model_config(
-        tensor_parallelism=tensor_parallelism,
-        pipeline_parallelism=pipeline_parallelism,
-        pipeline_parallelism_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_parallelism=virtual_pipeline_parallelism,
-        context_parallelism=context_parallelism,
-        expert_parallelism=expert_parallelism,
-        sequence_parallelism=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        expert_model_parallel_size=expert_model_parallel_size,
+        sequence_parallel=sequence_parallel,
         recompute_granularity=recompute_granularity,
         recompute_modules=recompute_modules,
         recompute_method=recompute_method,
@@ -321,13 +321,13 @@ def _moonlight_common(
 
 
 def _model_config(
-    tensor_parallelism: int = 2,
-    pipeline_parallelism: int = 2,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    expert_parallelism: int = 4,
-    sequence_parallelism: bool = True,
+    tensor_model_parallel_size: int = 2,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    expert_model_parallel_size: int = 8,
+    sequence_parallel: bool = True,
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
@@ -340,13 +340,13 @@ def _model_config(
     Configure the Moonlight-16B model.
 
     Args:
-        tensor_parallelism: Degree of tensor model parallelism.
-        pipeline_parallelism: Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype: Data type for pipeline parallelism.
-        virtual_pipeline_parallelism: Size of virtual pipeline parallelism.
-        context_parallelism: Degree of context parallelism.
-        expert_parallelism: Degree of expert model parallelism.
-        sequence_parallelism: Whether to use sequence parallelism.
+        tensor_model_parallel_size: Degree of tensor model parallelism.
+        pipeline_model_parallel_size: Degree of pipeline model parallelism.
+        pipeline_dtype: Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size: Size of virtual pipeline parallelism.
+        context_parallel_size: Degree of context parallelism.
+        expert_model_parallel_size: Degree of expert model parallelism.
+        sequence_parallel: Whether to use sequence parallelism.
         recompute_granularity: Recomputation granularity.
         recompute_modules: Modules to recompute.
         recompute_method: Recomputation method.
@@ -358,13 +358,13 @@ def _model_config(
         MoonlightModelProvider16B: Configuration for the Moonlight-16B model.
     """
     cfg = MoonlightModelProvider16B(
-        tensor_model_parallel_size=tensor_parallelism,
-        pipeline_model_parallel_size=pipeline_parallelism,
-        pipeline_dtype=pipeline_parallelism_dtype,
-        virtual_pipeline_model_parallel_size=virtual_pipeline_parallelism,
-        context_parallel_size=context_parallelism,
-        expert_model_parallel_size=expert_parallelism,
-        sequence_parallel=sequence_parallelism,
+        tensor_model_parallel_size=tensor_model_parallel_size,
+        pipeline_model_parallel_size=pipeline_model_parallel_size,
+        pipeline_dtype=pipeline_dtype,
+        virtual_pipeline_model_parallel_size=virtual_pipeline_model_parallel_size,
+        context_parallel_size=context_parallel_size,
+        expert_model_parallel_size=expert_model_parallel_size,
+        sequence_parallel=sequence_parallel,
         expert_tensor_parallel_size=1,  # Do not use ETP
         # Recomputation
         recompute_granularity=recompute_granularity,
@@ -393,8 +393,8 @@ def _model_config(
         (2, 2): [["embedding"] + ["decoder"] * 7] + [["decoder"] * 7] * 2 + [["decoder"] * 6 + ["loss"]],
         (4, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 6 + [["decoder"] * 3 + ["loss"]],
     }
-    pp_size = pipeline_parallelism or 1
-    vp_size = virtual_pipeline_parallelism or 1
+    pp_size = pipeline_model_parallel_size or 1
+    vp_size = virtual_pipeline_model_parallel_size or 1
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "

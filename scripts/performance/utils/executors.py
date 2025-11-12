@@ -40,8 +40,6 @@ PERF_ENV_VARS = {
     "TRANSFORMERS_OFFLINE": "1",  # Enable online downloads from HuggingFace
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
-    "NVTE_FLASH_ATTN": "1",  # Enable Flash Attention, which is needed to enable cuDNN fused attention
-    "NVTE_FUSED_ATTN": "1",  # Enable cuDNN fused attention
     "NVTE_NORM_FWD_USE_CUDNN": "1",
     "NVTE_NORM_BWD_USE_CUDNN": "1",
     "TORCH_NCCL_HIGH_PRIORITY": "1",

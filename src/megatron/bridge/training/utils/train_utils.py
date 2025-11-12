@@ -566,7 +566,9 @@ def training_log(
         # Calculate GPU utilization
         num_flops = num_floating_point_operations(config, batch_size)
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
-        print_rank_0(f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}TFLOP/s/GPU")
+        print_rank_0(
+            f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
+        )
 
         if logger_config.log_throughput_to_tensorboard:
             if writer:

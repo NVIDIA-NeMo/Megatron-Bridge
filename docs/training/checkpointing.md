@@ -219,3 +219,10 @@ Local checkpointing leverages the [NVIDIA Resiliency Extension](https://nvidia.g
 | `replication_jump` | `Optional[int]` | `None` | Spacing between ranks storing replicas |
 | `replication_factor` | `int` | `2` | Number of machines storing replica of each rank's data |
 
+### Checkpointing Distributed Optimizer
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `dist_ckpt_save_pre_mcore_014` | `bool` | `False` | Revert checkpointing simplifications introduced in Megatron-Core v0.14 |
+| `dist_ckpt_optim_fully_reshardable` | `bool` | `False` | Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability |
+| `distrib_optim_fully_reshardable_mem_efficient` | `bool` | `False` | Use as little memory as possible during save and load by using Gloo. Has affect only with `dist_ckpt_optim_fully_reshardable` flag |

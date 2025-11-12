@@ -213,14 +213,25 @@ jobs:
           - script: L2_Launch_training
             timeout: 40
           - script: L2_Launch_converter
-          - script: L2_Launch_models
-            timeout: 40
+          - script: L2_Launch_models_deepseek
+          - script: L2_Launch_models_gemma
+          - script: L2_Launch_models_gemma_vl
+          - script: L2_Launch_models_glm
+          - script: L2_Launch_models_gpt_oss
+          - script: L2_Launch_models_llama_nemotron
+          - script: L2_Launch_models_mistral
+          - script: L2_Launch_models_nemotron
+          - script: L2_Launch_models_nemotronh
+          - script: L2_Launch_models_olmoe
+          - script: L2_Launch_models_qwen
+          - script: L2_Launch_models_qwen_vl
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
+          - script: L2_Launch_quantization
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |
