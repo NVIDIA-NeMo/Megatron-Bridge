@@ -82,6 +82,13 @@ def _safe_overrides_for(name: str) -> dict:
                 "context_parallel_size": 1,
             }
         )
+        # Low precision recipes require an additional mixed_precision_recipe argument
+        if "low_precision" in lname:
+            overrides.update(
+                {
+                    "mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed",
+                }
+            )
 
         # Large models/variants may set additional flags in pretrain recipes
         if "70b" in lname or "405b" in lname:
