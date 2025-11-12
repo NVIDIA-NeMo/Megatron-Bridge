@@ -644,7 +644,7 @@ def train_step(
         p2p_comm = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
         forward_backward_func = get_forward_backward_func(
             pp_size=pg_collection.pp.size(),
-            vp_size=model_config.model.virtual_pipeline_model_parallel_size,
+            vp_size=model_config.virtual_pipeline_model_parallel_size,
         )
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
