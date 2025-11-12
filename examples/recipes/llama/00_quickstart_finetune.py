@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Quickstart: Finetune Llama 3.2 1B with Megatron-Bridge
+
+This is the simplest way to start finetuning with Megatron-Bridge.
+By default, this uses LoRA (Low-Rank Adaptation) for efficient finetuning.
+
+Usage:
+    Single GPU with LoRA:
+        torchrun --nproc_per_node=1 00_quickstart_finetune.py \
+            --pretrained-checkpoint /path/to/megatron/checkpoint
+
+    Multiple GPUs (automatic data parallelism):
+        torchrun --nproc_per_node=8 00_quickstart_finetune.py \
+            --pretrained-checkpoint /path/to/megatron/checkpoint
+
+Prerequisites:
+    You need a checkpoint in Megatron format. You can either:
+    1. Convert HF checkpoint to Megatron format:
+       python examples/conversion/convert_checkpoints.py import \
+           --hf-model meta-llama/Llama-3.2-1B \
+           --megatron-path ./checkpoints/llama32_1b
+    2. Use a checkpoint from pretraining (see 00_quickstart_pretrain.py)
+
+The script uses SQuAD dataset by default. See inline comments for:
+- Using your own dataset
+- Adjusting LoRA hyperparameters
+- Switching to full supervised finetuning
+"""
+
+import argparse
+
+from megatron.bridge.recipes.llama import llama32_1b_finetune_config
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.gpt_step import forward_step
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Finetune Llama 3.2 1B with LoRA",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    parser.add_argument(
+        "--pretrained-checkpoint",
+        type=str,
+        required=True,
+        help="Path to pretrained checkpoint in Megatron format",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Run Llama 3.2 1B finetuning with LoRA."""
+    args = parse_args()
+
+    # Load the base finetune configuration
+    # By default: LoRA with rank=8, alpha=16, works on single GPU
+    config = llama32_1b_finetune_config()
+
+    # Load from the pretrained checkpoint
+    config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+
+    # === Quick test run (10 iterations) ===
+    config.train.train_iters = 10
+    config.scheduler.lr_warmup_iters = 2
+
+    # ===== OPTIONAL CUSTOMIZATIONS =====
+    # Uncomment and modify as needed:
+
+    # === Use your own dataset ===
+    # Replace SQuAD with your custom dataset
+    # Option 1: Simple path override (uses default FinetuningDatasetConfig)
+    # config.data.data_path = "/path/to/your/dataset.jsonl"
+
+    # Option 2: Use FinetuningDatasetConfig for custom JSONL datasets
+    # from megatron.bridge.training.data import FinetuningDatasetConfig
+    # config.data = FinetuningDatasetConfig(data_path="/path/to/your/dataset.jsonl")
+
+    # Option 3: Use HFDatasetConfig for HuggingFace datasets
+    # from megatron.bridge.training.data import HFDatasetConfig
+    # config.data = HFDatasetConfig(hf_dataset="squad", split="train")
+
+    # === Change learning rate ===
+    # config.optimizer.lr = 5e-5  # Default for LoRA: 1e-4
+
+    # === Modify checkpoint frequency ===
+    # config.train.save_interval = 100
+
+    # === Adjust LoRA hyperparameters ===
+    # Higher rank = more parameters = potentially better quality but slower
+    # config.peft.dim = 16  # LoRA rank (default: 8)
+    # config.peft.alpha = 32  # LoRA alpha scaling (default: 16)
+
+    # === Full supervised finetuning (no LoRA) ===
+    # For full finetuning, reload config with peft=None:
+    # config = llama32_1b_finetune_config(peft=None)
+    # config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+    # Note: Full finetuning uses more memory than LoRA
+    # The recipe automatically adjusts parallelism for full SFT
+
+    # Start finetuning
+    finetune(config=config, forward_step_func=forward_step)
+
+
+if __name__ == "__main__":
+    main()
