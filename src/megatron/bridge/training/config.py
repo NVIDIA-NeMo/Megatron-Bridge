@@ -882,6 +882,44 @@ class ProfilingConfig:
         )
 
 
+@dataclass(kw_only=True)
+class TensorInspectConfig:
+    """Configuration for Nvidia-DL-Framework-Inspect integration."""
+
+    enabled: bool = False
+    """Enable tensor inspection and statistics collection."""
+
+    features: dict[str, Any] | str | Path | None = None
+    """Feature configuration as a Python dict or a YAML file path."""
+
+    feature_dirs: list[str] | None = None
+    """Directories containing feature implementations (searched recursively)."""
+
+    log_dir: str | None = None
+    """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
+
+    init_training_step: int = 0
+    """Initial training step for the inspector (used when resuming)."""
+
+    def finalize(self) -> None:
+        """Populate sensible defaults when inspection is enabled.
+        - If feature_dirs is unset, default to the installed TransformerEngine
+          debug features package path (transformer_engine.debug.features), when available.
+        """
+        if not self.enabled:
+            return
+        if not self.feature_dirs:
+            try:
+                import importlib
+
+                te_features_mod = importlib.import_module("transformer_engine.debug.features")
+                te_features_dir = Path(te_features_mod.__file__).parent
+                if te_features_dir.exists():
+                    self.feature_dirs = [str(te_features_dir)]
+            except Exception:
+                pass
+
+
 @dataclass
 class FaultToleranceConfig:
     """Configuration settings related to fault tolerance mechanisms (NVIDIA internal use)."""
@@ -1066,6 +1104,7 @@ class ConfigContainer(Container):
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
@@ -1144,6 +1183,8 @@ class ConfigContainer(Container):
             self.profiling.finalize()
         if self.nvrx_straggler is not None:
             self.nvrx_straggler.finalize()
+        if self.tensor_inspect is not None:
+            self.tensor_inspect.finalize()
 
         # Sync config. If TE RNG tracker is set in either ways, set them in both places.
         if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
@@ -1213,6 +1254,13 @@ class ConfigContainer(Container):
             assert self.checkpoint.ckpt_format == "torch_dist", (
                 "async_save is only supported with ckpt_format='torch_dist'"
             )
+
+        # Set defaults for tensor inspect callback
+        if self.tensor_inspect is not None and self.tensor_inspect.enabled:
+            if self.tensor_inspect.log_dir is None:
+                self.tensor_inspect.log_dir = self.checkpoint.save or "."
+            if self.tensor_inspect.init_training_step == 0 and self.checkpoint.ckpt_step is not None:
+                self.tensor_inspect.init_training_step = int(self.checkpoint.ckpt_step)
 
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 
