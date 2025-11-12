@@ -29,6 +29,26 @@ for 2. and 3. Across HuggingFace and Megatron (1, 4 vs 2, 3), comparison method 
 specified via CLI arguments.
 
 Supports loading the Megatron model with different parallelisms.
+
+Usage examples:
+    # Nemtron-H 8B Base with PP=2
+    torchrun --nproc-per-node=2 examples/conversion/compare_text_generation.py \
+      --hf-model-id nvidia/Nemotron-H-8B-Base-8K \
+      --max-new-tokens 40 \
+      --megatron-path /tmp/nemotronh-8b-megatron-import \
+      --hf-save-path /tmp/nemotronh-8b-hf-export \
+      --pp 2 \
+      --logits-compare-method cosine
+
+    # Llama-3.2-1B Instruct with TP=2
+    torchrun --nproc-per-node=2 examples/conversion/compare_text_generation.py \
+      --hf-model-id meta-llama/Llama-3.2-1B-Instruct \
+      --max-new-tokens 40 \
+      --megatron-path /tmp/llama32-1b-megatron-import \
+      --hf-save-path /tmp/llama32-1b-hf-export \
+      --tp 2 \
+      --token-compare-method jaccard \
+      --token-jaccard-threshold 0.8
 """
 
 import argparse
