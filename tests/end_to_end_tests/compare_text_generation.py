@@ -607,7 +607,7 @@ def compare_generated(
     if crossfw_logit_method == "ignore":
         pass
     elif crossfw_logit_method == "cosine":
-        _logit_cosine_similarity(hf_preconvert.logits == megatron_fromckpt.logits, 0.9)
+        _logit_cosine_similarity(hf_preconvert.logits, megatron_fromckpt.logits, 0.9)
     else:
         raise ValueError(f"Provided value for 'crossfw_logit_method' ({crossfw_logit_method}) not supported.")
 
