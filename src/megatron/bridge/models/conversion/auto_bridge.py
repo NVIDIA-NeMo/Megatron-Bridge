@@ -719,7 +719,6 @@ class AutoBridge(Generic[MegatronModelT]):
             GPTModelProvider: The provider class for creating models
             load_weights: Method to load weights into existing models
         """
-
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
@@ -734,7 +733,34 @@ class AutoBridge(Generic[MegatronModelT]):
                 pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
                 provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
+        hf_identifier: str | None = None
+        if hf_path is not None:
+            hf_identifier = str(hf_path)
+        else:
+            hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
+            if hf_name_or_path:
+                hf_identifier = str(hf_name_or_path)
+
+        if hf_identifier:
+            setattr(provider, "hf_model_id", hf_identifier)
+
         return provider
+
+    @staticmethod
+    def get_hf_model_id_from_checkpoint(path: str | Path) -> str | None:
+        """Get the HuggingFace model identifier stored in a checkpoint.
+
+        Args:
+            path: Path to a Megatron checkpoint directory, either the root directory
+                containing iteration subdirectories or a specific iteration directory.
+
+        Returns:
+            The HuggingFace model ID or path recorded in the checkpoint metadata if present,
+            otherwise `None`.
+        """
+        from megatron.bridge.training.utils import checkpoint_utils as _checkpoint_utils
+
+        return _checkpoint_utils.get_hf_model_id_from_checkpoint(path)
 
     def get_conversion_tasks(
         self,

@@ -146,6 +146,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     use_transformer_engine_op_fuser: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
 
+    hf_model_id: str | None = None
+    """Optional HuggingFace model identifier associated with this provider."""
+
     generation_config: Optional[Any] = None
 
     # This represents the unpadded vocab size
