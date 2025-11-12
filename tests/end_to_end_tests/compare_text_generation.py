@@ -562,20 +562,32 @@ def compare_generated(
     """
 
     # HF-HF and Megatron-Megatron comparisons should be exact/strict matches
-    assert hf_preconvert.ids == hf_postconvert.ids
-    assert hf_preconvert.text == hf_postconvert.text
+    assert hf_preconvert.ids == hf_postconvert.ids, (
+        f"HF-generated ids do not match. Before conversion: {hf_preconvert.ids}, After conversion: {hf_postconvert.ids}"
+    )
+    assert hf_preconvert.text == hf_postconvert.text, (
+        f"HF-generated text does not match. Before conversion: {hf_preconvert.text}, After conversion: {hf_postconvert.text}"
+    )
     _logit_cosine_similarity(hf_preconvert.logits, hf_postconvert.logits, 0.9)
 
-    assert megatron_fromhf.ids == megatron_fromckpt.ids
-    assert megatron_fromhf.text == megatron_fromckpt.text
+    assert megatron_fromhf.ids == megatron_fromckpt.ids, (
+        f"Megatron-generated ids do not match. Before conversion: {megatron_fromhf.ids}, After conversion: {megatron_fromckpt.ids}"
+    )
+    assert megatron_fromhf.text == megatron_fromckpt.text, (
+        f"Megatron-generated text does not match. Before conversion: {megatron_fromhf.text}, After conversion: {megatron_fromckpt.text}"
+    )
     _logit_cosine_similarity(megatron_fromhf.logits, megatron_fromckpt.logits, 0.9)
 
     # HF-Megatron comparison depends on model and parallel config
     if crossfw_token_method == "ignore":
         pass
     elif crossfw_token_method == "exact":
-        assert hf_preconvert.ids == megatron_fromckpt.ids
-        assert hf_preconvert.text == megatron_fromckpt.text
+        assert hf_preconvert.ids == megatron_fromckpt.ids, (
+            f"HF and Megatron generated ids do not match. HF: {hf_preconvert.ids}, Megatron: {megatron_fromckpt.ids}"
+        )
+        assert hf_preconvert.text == megatron_fromckpt.text, (
+            f"HF and Megatron generated text does not match. HF: {hf_preconvert.text}, Megatron: {megatron_fromckpt.text}"
+        )
     elif crossfw_token_method == "jaccard":
         # calculate Jaccard index of token ids
         assert jaccard_threshold is not None, (
