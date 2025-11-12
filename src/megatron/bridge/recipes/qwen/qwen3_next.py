@@ -28,6 +28,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DistributedInitConfig,
     FinetuningDatasetConfig,
     GPTDatasetConfig,
     LoggerConfig,
@@ -86,6 +87,7 @@ class Qwen3NextCommonKwargs(TypedDict, total=False):
     comm_overlap_config: CommOverlapConfig | None
     # Performance optimization knobs
     enable_deepep: bool
+    disable_jit_fuser: bool
 
 
 class Qwen3NextFinetuneKwargs(Qwen3NextCommonKwargs, total=False):
@@ -173,6 +175,7 @@ def _qwen3_next_common(
     precision_config: MixedPrecisionConfig | str | None = None,
     comm_overlap_config: CommOverlapConfig | None = None,
     enable_deepep: bool = False,
+    disable_jit_fuser: bool | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3-Next models using a given HuggingFace path.
@@ -213,6 +216,7 @@ def _qwen3_next_common(
         precision_config (MixedPrecisionConfig | str | None): Precision configuration for the model.
         comm_overlap_config (CommOverlapConfig | None): Communication overlap configuration.
         enable_deepep (bool): Whether to enable DEEPEP for MoE.
+        disable_jit_fuser (bool): Whether to disable the JIT fuser. Necessary for Qwen3-Next to work on Blackwell.
 
     Returns:
         ConfigContainer: Configuration for pre-training.
@@ -277,6 +281,10 @@ def _qwen3_next_common(
     )
     scheduler.no_weight_decay_cond_type = "qwen3_next"
 
+    # If user does not specify, check if we are on Blackwell.
+    if disable_jit_fuser is None:
+        disable_jit_fuser = torch.cuda.get_device_properties(0).major == 10
+
     # Config Container
     cfg = ConfigContainer(
         model=model_cfg,
@@ -292,6 +300,7 @@ def _qwen3_next_common(
         ),
         optimizer=opt_config,
         scheduler=scheduler,
+        dist=DistributedInitConfig(disable_jit_fuser=disable_jit_fuser),
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
@@ -421,6 +430,7 @@ def _qwen3_next_finetune_common(
     precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
     comm_overlap_config: CommOverlapConfig | None = None,
     enable_deepep: bool = False,
+    disable_jit_fuser: bool | None = None,
 ) -> ConfigContainer:
     """Common finetuning configuration for Qwen3-Next model."""
 
@@ -508,6 +518,10 @@ def _qwen3_next_finetune_common(
         tokenizer_model=hf_path,
     )
 
+    # If user does not specify, check if we are on Blackwell.
+    if disable_jit_fuser is None:
+        disable_jit_fuser = torch.cuda.get_device_properties(0).major == 10
+
     return ConfigContainer(
         model=model_cfg,
         train=TrainingConfig(
@@ -522,6 +536,7 @@ def _qwen3_next_finetune_common(
         ),
         optimizer=opt_cfg,
         scheduler=scheduler_cfg,
+        dist=DistributedInitConfig(disable_jit_fuser=disable_jit_fuser),
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
