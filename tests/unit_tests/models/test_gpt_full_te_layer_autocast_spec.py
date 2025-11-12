@@ -320,6 +320,27 @@ class TestTETransformerLayerAutocast:
 
                 assert hasattr(layer, "cudagraph_manager")
 
+    def test_te_transformer_layer_autocast_with_full_iteration_cuda_graph(self, mock_config):
+        """Test TETransformerLayerAutocast with full_iteration CUDA graph (cudagraph_manager should NOT be created)."""
+        mock_config.tensor_model_parallel_size = 1
+        mock_config.pipeline_model_parallel_size = 1
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        mock_config.pg_collection = type("PGC", (), {"pp": _PG()})()
+        mock_config.cuda_graph_impl = "local"
+        mock_config.cuda_graph_scope = ["full_iteration"]  # Full iteration graph
+
+        with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.AutocastTransformerLayer"):
+            with patch("megatron.bridge.models.gpt_full_te_layer_autocast_spec.CudaGraphManager") as mock_cuda_manager:
+                layer = TETransformerLayerAutocast(mock_config, layer_number=0)
+                layer.training = True
+                # cudagraph_manager should NOT be created for full_iteration scope
+                assert not hasattr(layer, "cudagraph_manager")
+                mock_cuda_manager.assert_not_called()
+
     def test_te_transformer_layer_autocast_external_cuda_graph(self, mock_config):
         """Test TETransformerLayerAutocast with external CUDA graph."""
         mock_config.tensor_model_parallel_size = 1

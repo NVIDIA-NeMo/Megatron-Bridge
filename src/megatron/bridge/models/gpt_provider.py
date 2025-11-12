@@ -100,6 +100,8 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
+    from megatron.core import parallel_state
+
     use_arbitrary_attention_mask = parallel_state.get_context_parallel_world_size() == 1
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
