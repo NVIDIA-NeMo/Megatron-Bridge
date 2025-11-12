@@ -235,14 +235,15 @@ def megatron_generate(
             if next_token_ids.item() in [tokenizer.eos_id, tokenizer.eod_id]:
                 break
 
-    num_generated_tokens = generated_ids.shape[1] - num_input_tokens
-    if not parallel_state.is_pipeline_last_stage():
-        generated_logits = [None for _ in range(num_generated_tokens)]
-    torch.distributed.broadcast_object_list(
-        generated_logits,
-        group=parallel_state.get_pipeline_model_parallel_group(),
-        group_src=parallel_state.get_pipeline_model_parallel_last_rank(),
-    )
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        num_generated_tokens = generated_ids.shape[1] - num_input_tokens
+        if not parallel_state.is_pipeline_last_stage():
+            generated_logits = [None for _ in range(num_generated_tokens)]
+        torch.distributed.broadcast_object_list(
+            generated_logits,
+            group=parallel_state.get_pipeline_model_parallel_group(),
+            group_src=parallel_state.get_pipeline_model_parallel_last_rank(),
+        )
 
     generated_text = tokenizer.detokenize(generated_ids[0])
 
