@@ -58,7 +58,6 @@ from typing import Tuple
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.kimi.kimi_k2 import pretrain_config as kimi_k2_pretrain_config
-from megatron.bridge.recipes.kimi.kimi_k2_proxy import pretrain_config as kimi_k2_proxy_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -93,7 +92,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         help="Path to the YAML OmegaConf override file. Default: conf/kimi_k2_pretrain_override_example.yaml",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--proxy", action="store_true", help="Use proxy model")
     parser.add_argument("--optimizer-type", type=str, default="muon", help="Optimizer type, [muon, adam]")
     parser.add_argument(
         "--data-paths", 
@@ -150,9 +148,6 @@ def main() -> None:
 
     # Load base configuration from the recipe as a Python dataclass
     cfg: ConfigContainer = kimi_k2_pretrain_config(
-        optimizer_type=args.optimizer_type,
-        data_paths=args.data_paths,
-    ) if not args.proxy else kimi_k2_proxy_pretrain_config(
         optimizer_type=args.optimizer_type,
         data_paths=args.data_paths,
     )
