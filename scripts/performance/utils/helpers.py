@@ -129,7 +129,7 @@ def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
 
 
 def set_cuda_graph_overrides(
-    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: str = "full"
+    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str | List[str]] = None
 ) -> None:
     """Set the CUDA graph overrides."""
     if cuda_graph_impl is not None:
@@ -146,6 +146,8 @@ def set_cuda_graph_overrides(
             )
 
     if cuda_graph_scope is not None:
+        if isinstance(cuda_graph_scope, str):
+            cuda_graph_scope = [cuda_graph_scope]
         recipe.model.cuda_graph_scope = cuda_graph_scope
 
 
