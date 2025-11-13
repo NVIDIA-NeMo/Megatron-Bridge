@@ -48,6 +48,7 @@ provider.sequence_parallel = False
 
 model = provider.provide_distributed_model(wrap_with_ddp=False)
 
+provider.finalize()
 # You can also use older versions:
 # bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0924")
 ```
