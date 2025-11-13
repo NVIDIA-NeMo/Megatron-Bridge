@@ -80,6 +80,8 @@ class Qwen3VLModelProvider(Qwen3ModelProvider):
 
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
+    attention_dropout: float = 0.0
+    attention_softmax_in_fp32: bool = True
 
     # Multimodal rope section for [temporal, height, width] dimensions
     # Based on HuggingFace Qwen3-VL config: mrope_section: [24, 20, 20]
@@ -196,6 +198,8 @@ class Qwen3VLMoEModelProvider(Qwen3MoEModelProvider):
 
     head_dim: int = 128
     qk_layernorm: bool = True
+    attention_softmax_in_fp32: bool = True
+    attention_dropout: float = 0.0
 
     # Override position embedding for multimodal rope
     position_embedding_type: str = "mrope"
