@@ -48,13 +48,8 @@ class Qwen3VLMoETextRotaryEmbedding(Qwen3VLMoeTextRotaryEmbedding):
         # shape (3, bs, seq_length, dim)
         freqs = (inv_freq_expanded @ seq_expanded).transpose(2, 3)
         freqs = self.apply_interleaved_mrope(freqs, mrope_section)
-
-        # DON'T double the freqs for Megatron Core - it computes cos/sin internally
-        # emb = torch.cat((freqs, freqs), dim=-1)  # This was causing dimension mismatch!
-
-        # Apply attention scaling here since Megatron Core doesn't know about it
-        # shape (seq_length, bs, 1, dim)
-        emb = (freqs * self.attention_scaling)[..., None, :].transpose(0, 1).contiguous()
+        emb = torch.cat((freqs, freqs), dim=-1)
+        emb = emb[..., None, :].transpose(0, 1).contiguous()
         return emb
 
 
@@ -68,7 +63,6 @@ class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
             position_ids: Position IDs tensor
             mrope_section: Optional mrope section (if not provided, uses self.mrope_section)
         """
-        # Use provided mrope_section or fall back to self.mrope_section
         if mrope_section is None:
             mrope_section = self.mrope_section
 
@@ -78,5 +72,6 @@ class Qwen3VLTextRotaryEmbedding(Qwen3VLTextRotaryEmbedding):
         position_ids_expanded = position_ids[:, :, None, :].float()  # shape (3, bs, 1, positions)
         freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(2, 3)
         freqs = self.apply_interleaved_mrope(freqs, mrope_section)
-        emb = (freqs * 1.0)[..., None, :].transpose(0, 1).contiguous()
+        emb = torch.cat((freqs, freqs), dim=-1)
+        emb = emb[..., None, :].transpose(0, 1).contiguous()
         return emb
