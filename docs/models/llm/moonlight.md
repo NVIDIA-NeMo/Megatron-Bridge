@@ -22,35 +22,32 @@ Moonlight models are supported via the Bridge system with specialized configurat
 
 Moonlight shares the same architecture as DeepSeek-V3, which enables compatibility with various inference engines like vLLM and SGLang. The model can be loaded from HuggingFace or used with Megatron checkpoints.
 
-### Load from HuggingFace → Megatron
+### Load HF → Megatron
 ```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from megatron.bridge import AutoBridge
 
-# Load from HuggingFace
-model_name = "moonshotai/Moonlight-16B-A3B"
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    torch_dtype="auto",
-    device_map="auto",
-    trust_remote_code=True,
-)
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+# Example: Moonlight-16B-A3B
+bridge = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B")
+provider = bridge.to_megatron_provider()
+
+# Configure parallelism before instantiating the model
+provider.tensor_model_parallel_size = 2
+provider.pipeline_model_parallel_size = 1
+provider.expert_model_parallel_size = 8
+provider.sequence_parallel = True
+
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+
+provider.finalize()
 ```
 
-### Configure for Megatron training
+### Export Megatron → HF
 ```python
-from megatron.bridge.models.deepseek import MoonlightModelProvider16B
-
-# Create model configuration for distributed training
-provider = MoonlightModelProvider16B(
-    tensor_model_parallel_size=2,
-    pipeline_model_parallel_size=1,
-    expert_model_parallel_size=8,
-    sequence_parallel=True,
+# Convert from a Megatron checkpoint directory to HF format
+bridge.export_ckpt(
+    megatron_path="/results/moonlight_16b/checkpoints/iter_0500000",
+    hf_path="./moonlight-hf-export",
 )
-
-# Instantiate the model
-model = provider.provide_distributed_model(wrap_with_ddp=False)
 ```
 
 ## Examples
