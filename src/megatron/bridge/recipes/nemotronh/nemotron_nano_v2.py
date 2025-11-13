@@ -473,7 +473,6 @@ def _nemotron_nano_v2_finetune_common(
 
     # PEFT config
     mamba_target_modules = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-    # mamba_target_modules = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
     peft_config = default_peft_config(peft, target_modules=mamba_target_modules)
 
     # Logger
@@ -510,7 +509,7 @@ def _nemotron_nano_v2_finetune_common(
             overlap_param_gather=False,
             use_distributed_optimizer=True,
         ),
-        dataset=default_squad_config(seq_length, packed_sequence),
+        dataset=default_squad_config(seq_length, packed_sequence, add_bos=False),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(
