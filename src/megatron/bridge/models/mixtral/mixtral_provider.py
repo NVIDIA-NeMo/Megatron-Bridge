@@ -87,14 +87,3 @@ class MixtralModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-5
     params_dtype: torch.dtype = torch.bfloat16
     bf16: bool = True
-
-    def __post_init__(self):
-        """Initialize computed fields after dataclass initialization."""
-        # Explicitly set kv_channels before calling parent __post_init__
-        # This is needed because dataclass field ordering can prevent parent's
-        # automatic initialization from working
-        if self.kv_channels is None:
-            self.kv_channels = self.hidden_size // self.num_attention_heads
-
-        # Call parent __post_init__ for other initialization
-        super().__post_init__()

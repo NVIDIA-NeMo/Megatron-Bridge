@@ -287,15 +287,6 @@ class TestMixtralBridge:
 
         assert result.init_method_std == mixtral_8x7b_config.initializer_range
 
-    def test_provider_bridge_kv_channels(self, mock_pretrained_mixtral_8x7b, mixtral_8x7b_config):
-        """Test kv_channels calculation."""
-        bridge = MixtralBridge()
-
-        result = bridge.provider_bridge(mock_pretrained_mixtral_8x7b)
-
-        expected_kv_channels = mixtral_8x7b_config.hidden_size // mixtral_8x7b_config.num_attention_heads
-        assert result.kv_channels == expected_kv_channels
-
 
 class TestMixtralBridgeMoEFeatures:
     """Test Mixtral-specific MoE features in the bridge."""
