@@ -46,16 +46,16 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
-def qwen3_235b_a22b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_235B_A22B_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
         mock=True,
@@ -68,16 +68,16 @@ def qwen3_235b_a22b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs"
     return cfg
 
 
-def qwen3_235b_a22b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_235B_A22B_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
         mock=True,
@@ -90,16 +90,16 @@ def qwen3_235b_a22b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs"
     return cfg
 
 
-def qwen3_235b_a22b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_B200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_235B_A22B_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
         mock=True,
@@ -112,14 +112,14 @@ def qwen3_235b_a22b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs")
     return cfg
 
 
-def qwen3_235b_a22b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_235b_a22b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_235B_A22B_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_235B_A22B_H100_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_235b_a22b_pretrain_config(
         mock=True,
@@ -132,16 +132,16 @@ def qwen3_235b_a22b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs")
     return cfg
 
 
-def qwen3_30b_a3b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_30b_a3b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_30B_A3B_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
         mock=True,
@@ -154,16 +154,16 @@ def qwen3_30b_a3b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") 
     return cfg
 
 
-def qwen3_30b_a3b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_30b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_30B_A3B_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
         mock=True,
@@ -176,16 +176,16 @@ def qwen3_30b_a3b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") 
     return cfg
 
 
-def qwen3_30b_a3b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_30b_a3b_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_B200_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_B200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.QWEN3_30B_A3B_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
         mock=True,
@@ -198,14 +198,14 @@ def qwen3_30b_a3b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -
     return cfg
 
 
-def qwen3_30b_a3b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def qwen3_30b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.QWEN3_30B_A3B_H100_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
     else:
         base_cfg = base_cfgs.QWEN3_30B_A3B_H100_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
 
     cfg = qwen3_30b_a3b_pretrain_config(
         mock=True,
