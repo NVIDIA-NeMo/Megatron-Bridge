@@ -31,9 +31,8 @@ class TestNemotronVLConversion:
     @pytest.mark.parametrize(
         "tp,pp,test_name",
         [
-            (1, 1, "single_gpu"),
-            # (2, 1, "TP2"),
-            # (1, 2, "PP2"),
+            (2, 1, "TP2"),
+            (1, 2, "PP2"),
         ],
     )
     def test_nemotron_vl_conversion_parallelism(self, tmp_path, tp, pp, test_name):
