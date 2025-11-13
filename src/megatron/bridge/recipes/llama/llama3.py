@@ -73,6 +73,7 @@ class Llama3CommonKwargs(TypedDict, total=False):
     seq_length: int
     lr: float
     min_lr: float
+    adam_eps: float
     lr_warmup_iters: int
     lr_decay_iters: int | None
     eval_interval: int
@@ -231,6 +232,46 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
         "context_parallel_size": 8,
         "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_128K,
+    }
+    combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _llama3_common(**combined_kwargs)
+
+
+def llama3_8b_low_precision_pretrain_config(
+    mixed_precision_recipe: str, **user_kwargs: Unpack[Llama3CommonKwargs]
+) -> ConfigContainer:
+    """Return a low precision (FP8 Current Scaling/MXFP8/NVFP4) pre-training config for Llama 3 8B.
+
+    Args:
+        mixed_precision_recipe (str): The mixed precision recipe to use. Valid options are:
+            - "bf16_with_mxfp8_mixed"
+            - "bf16_with_fp8_current_scaling_mixed"
+            - "bf16_with_nvfp4_mixed"
+        user_kwargs (Unpack[Llama3CommonKwargs]): Additional user-specified configuration options.
+
+    Returns:
+        ConfigContainer: The pre-training configuration for Llama 3 8B.
+
+    See `_llama3_common` for the full list of parameters.
+    """
+    assert mixed_precision_recipe in [
+        "bf16_with_mxfp8_mixed",
+        "bf16_with_fp8_current_scaling_mixed",
+        "bf16_with_nvfp4_mixed",
+    ], f"Invalid low precision recipe: {mixed_precision_recipe}. This recipe has not been tested yet."
+    precision_config = get_mixed_precision_config(mixed_precision_recipe)
+    recommended_kwargs: Llama3CommonKwargs = {
+        "hf_path": "meta-llama/Meta-Llama-3-8B",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
+        "precision_config": precision_config,
+        "lr": 6e-4,
+        "min_lr": 6e-6,
+        "adam_eps": 1e-8,
+        "micro_batch_size": 1,
+        "global_batch_size": 768,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -405,6 +446,7 @@ def _llama3_common(
     seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
+    adam_eps: float = 1e-5,
     lr_warmup_iters: int = 2000,
     lr_decay_iters: int | None = None,
     eval_interval: int = 2000,
@@ -443,6 +485,7 @@ def _llama3_common(
         seq_length (int): Sequence length for training data.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
+        adam_eps (float): AdamW epsilon.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
@@ -482,6 +525,7 @@ def _llama3_common(
         lr_decay_iters=lr_decay_iters,
         max_lr=lr,
         min_lr=min_lr,
+        adam_eps=adam_eps,
     )
 
     # Config Container

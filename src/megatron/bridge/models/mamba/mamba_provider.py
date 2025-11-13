@@ -88,6 +88,8 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_mamba_stack_spec
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
+    hf_model_id: Optional[str] = None
+    """Optional HuggingFace model identifier associated with this provider."""
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.

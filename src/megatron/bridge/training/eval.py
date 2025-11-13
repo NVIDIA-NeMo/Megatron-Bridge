@@ -17,10 +17,10 @@ import time
 from typing import Any, Callable, Optional, Union
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.rerun_state_machine import RerunDataIterator, RerunMode, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 
@@ -30,6 +30,7 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.train_utils import prepare_forward_step_func
 from megatron.bridge.utils.common_utils import is_last_rank, print_rank_0, print_rank_last
 
@@ -72,6 +73,9 @@ def evaluate(
     # Turn on evaluation mode which disables dropout.
     for model_module in model:
         model_module.eval()
+
+    # Retrieve process group collection from the model
+    pg_collection = get_pg_collection(model)
 
     # Disable result validation during evaluation
     rerun_state_machine = get_rerun_state_machine()
@@ -141,7 +145,7 @@ def evaluate(
             if state.cfg.train.empty_unused_memory_level >= 1:
                 torch.cuda.empty_cache()
 
-            if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
+            if is_pp_last_stage(pg_collection.pp):
                 # Reduce across processes.
                 for key in loss_dicts[0].keys():
                     if key not in total_loss_dict:
@@ -150,9 +154,7 @@ def evaluate(
 
                     if val[0].numel() == 2:
                         val = torch.vstack(val).sum(dim=0)
-                        torch.distributed.all_reduce(
-                            val, group=parallel_state.get_data_parallel_group(with_context_parallel=True)
-                        )
+                        torch.distributed.all_reduce(val, group=pg_collection.dp_cp)
                         total_loss_dict[key] += val
                     elif val[0].numel() == 1:
                         val = torch.cat(val).sum()
