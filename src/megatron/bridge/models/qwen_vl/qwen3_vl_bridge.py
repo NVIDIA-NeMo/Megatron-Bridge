@@ -84,9 +84,8 @@ class Qwen3VLBridge(MegatronModelBridge):
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
-            # Use hf_config (main config) for dtype, not text_config
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
+            fp16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.float16),
+            bf16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.bfloat16),
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             generation_config=hf_pretrained.generation_config,
             # Qwen3 specific parameters
