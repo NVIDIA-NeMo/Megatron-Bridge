@@ -32,38 +32,33 @@ OLMoE models are supported via the Bridge system with specialized configurations
 
 ## Conversion with 🤗 Hugging Face
 
-### Load from HuggingFace → Megatron
+### Load HF → Megatron
 ```python
-from transformers import OlmoeForCausalLM, AutoTokenizer
-import torch
+from megatron.bridge import AutoBridge
 
-# Load from HuggingFace (latest version)
-model_name = "allenai/OLMoE-1B-7B-0125"
-model = OlmoeForCausalLM.from_pretrained(
-    model_name,
-    torch_dtype=torch.bfloat16,
-    device_map="auto",
-)
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+# Example: OLMoE-1B-7B-0125 (latest version)
+bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125")
+provider = bridge.to_megatron_provider()
 
-# You can also use older versions
-# model_name = "allenai/OLMoE-1B-7B-0924"
+# Configure parallelism before instantiating the model
+provider.tensor_model_parallel_size = 1
+provider.pipeline_model_parallel_size = 1
+provider.expert_model_parallel_size = 8
+provider.sequence_parallel = False
+
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+
+# You can also use older versions:
+# bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0924")
 ```
 
-### Configure for Megatron training
+### Export Megatron → HF
 ```python
-from megatron.bridge.models.olmoe import OlMoEModelProvider
-
-# Create model configuration for distributed training
-provider = OlMoEModelProvider(
-    tensor_model_parallel_size=1,
-    pipeline_model_parallel_size=1,
-    expert_model_parallel_size=8,
-    sequence_parallel=False,
+# Convert from a Megatron checkpoint directory to HF format
+bridge.export_ckpt(
+    megatron_path="/results/olmoe_7b/checkpoints/iter_0500000",
+    hf_path="./olmoe-hf-export",
 )
-
-# Instantiate the model
-model = provider.provide_distributed_model(wrap_with_ddp=False)
 ```
 
 ## Examples
