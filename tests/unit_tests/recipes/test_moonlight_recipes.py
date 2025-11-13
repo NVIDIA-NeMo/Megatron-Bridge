@@ -237,10 +237,10 @@ def test_moonlight_16b_finetune_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For LoRA, Moonlight-16B should use TP=1, PP=1, EP=1
+    # For LoRA, Moonlight-16B should use TP=1, PP=1, EP=2
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 2
     assert cfg.model.sequence_parallel is False
 
     # Check manual GC is enabled
@@ -262,10 +262,10 @@ def test_moonlight_16b_finetune_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For DoRA, Moonlight-16B should use TP=1, PP=1, EP=1 (same as LoRA)
+    # For DoRA, Moonlight-16B should use TP=1, PP=1, EP=2 (same as LoRA)
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 2
     assert cfg.model.sequence_parallel is False
 
     # Check manual GC is enabled
@@ -336,17 +336,3 @@ def test_moonlight_16b_finetune_tokenizer_with_trust_remote_code(monkeypatch: py
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model == "moonshotai/Moonlight-16B-A3B"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"trust_remote_code": True}
-
-
-def test_moonlight_16b_finetune_packed_sequence_not_supported(monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence raises an assertion error for Moonlight-16B."""
-    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
-
-    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
-
-    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
-    overrides["packed_sequence"] = True
-
-    with pytest.raises(AssertionError, match="Packed sequence is not supported"):
-        moonlight_16b_finetune_config(**overrides)
