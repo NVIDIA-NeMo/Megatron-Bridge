@@ -68,7 +68,7 @@ def create_simple_test_config():
         scheduler=SchedulerConfig(),
         dataset=MockGPTDatasetConfig(
             random_seed=1234,
-            sequence_length=512,
+            seq_length=512,
             reset_position_ids=False,
             reset_attention_mask=False,
             eod_mask_loss=False,

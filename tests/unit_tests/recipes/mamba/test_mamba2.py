@@ -93,7 +93,7 @@ class TestMamba2Recipes:
         assert cfg.optimizer.fp16 is False
 
         # Dataset in mock mode by default
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.dataset.split == "1,1,1"
         assert cfg.dataset.blend is None
         assert cfg.dataset.blend_per_split is None
@@ -122,7 +122,7 @@ class TestMamba2Recipes:
         assert cfg.train.train_iters == 10000
         assert cfg.train.global_batch_size == 256
         assert cfg.train.micro_batch_size == 2
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.optimizer.lr == 1e-4
         assert cfg.optimizer.min_lr == 1e-5
         assert cfg.scheduler.lr_warmup_iters == 1000
@@ -283,7 +283,7 @@ class TestMamba2Recipes:
     @pytest.mark.parametrize("seq_length", [1024, 2048, 4096, 8192, 16384])
     def test_pretrain_config_sequence_lengths(self, name, config_func, provider, uses_null_tokenizer, seq_length):
         cfg = config_func(seq_length=seq_length)
-        assert cfg.dataset.sequence_length == seq_length
+        assert cfg.dataset.seq_length == seq_length
 
     @pytest.mark.unit
     @pytest.mark.parametrize("name,config_func,provider,uses_null_tokenizer", RECIPE_CASES)

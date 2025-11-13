@@ -136,11 +136,8 @@ def _assert_basic_config(cfg):
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
 
-    # Check sequence length (different attribute names for different dataset types)
-    if hasattr(cfg.dataset, "sequence_length"):
-        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
-    elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    if hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1
     else:
         # Some other dataset type
         assert cfg.dataset is not None

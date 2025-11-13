@@ -43,7 +43,7 @@ class HFDatasetConversationProvider(DatasetProvider):
     """
 
     # Required to match model.seq_length (enforced by ConfigContainer.validate)
-    sequence_length: int
+    seq_length: int
 
     # HF processor/model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
     hf_processor_path: str

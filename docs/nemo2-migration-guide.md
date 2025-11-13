@@ -156,7 +156,7 @@ def create_config():
         # Data configuration
         dataset=GPTDatasetConfig(
             blend=["/path/to/data_text_document"],
-            sequence_length=8192,
+            seq_length=8192,
         ),
         # Checkpointing and logging  
         checkpoint=CheckpointConfig(
@@ -419,7 +419,7 @@ def llama3_8b_config(
         ),
         dataset=GPTDatasetConfig(
             blend=[data_path],
-            sequence_length=seq_length,
+            seq_length=seq_length,
         ),
         optimizer=OptimizerConfig(
             optimizer="adam",
@@ -567,7 +567,7 @@ from megatron.bridge.training.config import GPTDatasetConfig, TrainingConfig
 # Single dataset
 dataset_config = GPTDatasetConfig(
     blend=["/path/to/train_data_text_document"],
-    sequence_length=4096,
+    seq_length=4096,
     split="949,50,1",
 )
 train_config = TrainingConfig(
@@ -582,7 +582,7 @@ dataset_config = GPTDatasetConfig(
         "/path/to/dataset2_text_document",
     ],
     blend_weights=[0.3, 0.7],  # Explicit weights (not zipped with paths)
-    sequence_length=4096,
+    seq_length=4096,
     split="949,50,1",
 )
 ```
@@ -1300,7 +1300,7 @@ config = ConfigContainer(
     ),
     dataset=GPTDatasetConfig(
         blend=["/path/to/train_data_text_document"],
-        sequence_length=4096,
+        seq_length=4096,
         split="949,50,1",
     ),
     optimizer=OptimizerConfig(optimizer="adam", lr=3e-4),

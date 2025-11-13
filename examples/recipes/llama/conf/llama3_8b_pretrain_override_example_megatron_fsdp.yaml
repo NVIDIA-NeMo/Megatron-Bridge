@@ -48,7 +48,7 @@ logger:
   log_interval: 1
 
 dataset:
-  sequence_length: 4096
+  seq_length: 4096
 
 rng:
   seed: 42

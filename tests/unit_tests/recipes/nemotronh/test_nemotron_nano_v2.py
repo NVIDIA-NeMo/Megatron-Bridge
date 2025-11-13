@@ -52,7 +52,7 @@ class TestNemotronNano9Bv2:
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration (should be in mock mode)
-        assert config.dataset.sequence_length == 8192
+        assert config.dataset.seq_length == 8192
         assert config.dataset.split == "1,1,1"
 
         # Check tokenizer (default is NullTokenizer for pretraining)
@@ -189,7 +189,7 @@ class TestNemotronNanoV2Common:
         assert config.train.train_iters == 10000
         assert config.train.global_batch_size == 256
         assert config.train.micro_batch_size == 2
-        assert config.dataset.sequence_length == 4096
+        assert config.dataset.seq_length == 4096
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-5
 
