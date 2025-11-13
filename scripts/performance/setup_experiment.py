@@ -20,11 +20,9 @@ from typing import List, Optional
 try:
     from argument_parser import parse_cli_args
     from utils.executors import slurm_executor
-    from utils.utils import get_parallelism_defaults
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
     from .utils.executors import slurm_executor
-    from .utils.utils import get_parallelism_defaults
 
 import nemo_run as run
 
@@ -37,6 +35,7 @@ except (ImportError, ModuleNotFoundError):
 import logging
 
 
+logging.basicConfig(level=logging.DEBUG)
 logger: logging.Logger = logging.getLogger(__name__)
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
@@ -50,9 +49,7 @@ def main(
     domain: str,
     task: str,
     compute_dtype: str,
-    fp8_recipe: str,
     gpu: str,
-    num_gpus: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
@@ -82,35 +79,24 @@ def main(
     logger.info(f"Run script path: {RUN_SCRIPT_PATH}")
     if not RUN_SCRIPT_PATH.is_file():
         logger.error(f"Specified run script not found: {RUN_SCRIPT_PATH}")
-        logger.error("Ensure the path passed to --run_script is correct.")
         sys.exit(1)
 
-    enable_deepep = False
-    moe_a2a_overlap = False if moe_a2a_overlap is None else moe_a2a_overlap
-    if gpu in ["h100"] and model_name == "deepseek" and model_size == "v3":
-        enable_deepep, moe_a2a_overlap = True, True
+    plugins = []
 
-    parallelism_defaults = get_parallelism_defaults(model_name, model_size, gpu, num_gpus, compute_dtype, fp8_recipe)
-
-    tp_size = tp_size if tp_size is not None else parallelism_defaults.tensor_model_parallel_size
-    pp_size = pp_size if pp_size is not None else parallelism_defaults.pipeline_model_parallel_size
-    cp_size = cp_size if cp_size is not None else parallelism_defaults.context_parallel_size
-
-    plugins = [
+    plugins.append(
         PerfEnvPlugin(
             enable_vboost=enable_vboost,
-            nccl_pp_comm_chunksize=2097152 if model_size in ["70b", "405b"] else None,
-            gpu_sm100_or_newer=gpu in ["b200", "gb200", "gb300"],
-            layernorm_sm_margin=20 if enable_deepep else 16,
-            num_gpus=num_gpus,
-            deepep_enabled=enable_deepep,
-            a2a_overlap=moe_a2a_overlap,
+            moe_a2a_overlap=moe_a2a_overlap,
             tp_size=tp_size,
             pp_size=pp_size,
             cp_size=cp_size,
+            model_name=model_name,
+            model_size=model_size,
+            gpu=gpu,
+            compute_dtype=compute_dtype,
+            use_tokendrop=use_tokendrop,
         )
-    ]
-
+    )
     if enable_nsys:
         plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
 
@@ -123,34 +109,16 @@ def main(
     )
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
-    if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
-        if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
-        if compute_dtype == "bf16" and (not use_tokendrop):
-            executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # OOM if not set
-    del_cudnn_ln = True
-    if gpu in ["h100"]:
-        if model_name == "llama3" and model_size == "8b":
-            if compute_dtype == "fp8" and fp8_recipe == "cs":
-                executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
-                executor.env_vars["NCCL_CTA_POLICY"] = "1"
-                del_cudnn_ln = False
-    if gpu in ["gb200", "gb300"]:
-        if model_name == "llama3" and model_size == "70b":
-            if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
-                del_cudnn_ln = False
-        if model_name == ["llama31"] and model_size == "405b":
-            if compute_dtype == "fp8" and fp8_recipe == "cs":
-                del_cudnn_ln = False
-    if del_cudnn_ln:
-        if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
-            executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
-        if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
-            executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
-
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
-        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
+        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
+    )
+    logger.debug(
+        run.Script(
+            path=str(RUN_SCRIPT_PATH),
+            entrypoint="python",
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
+            args=list(sys.argv[1:]),
+        )
     )
     run.run(
         run.Script(
@@ -169,7 +137,7 @@ def main(
     exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).items()).pop()
     job_status = str(job_dict["status"])
 
-    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING"]:
+    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
         raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
 
 
@@ -185,9 +153,7 @@ if __name__ == "__main__":
         domain=args.domain,
         task=args.task,
         compute_dtype=args.compute_dtype,
-        fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
-        num_gpus=args.num_gpus,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,

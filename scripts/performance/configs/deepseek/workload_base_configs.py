@@ -24,8 +24,9 @@ BASE_DEEPSEEK_V3_CONFIG = WorkloadBaseConfig(
 )
 
 
-DEEPSEEK_V3_GB300_256GPUS_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB300_BF16_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -36,8 +37,9 @@ DEEPSEEK_V3_GB300_256GPUS_BF16_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_GB300_256GPUS_FP8_CS_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -48,8 +50,9 @@ DEEPSEEK_V3_GB300_256GPUS_FP8_CS_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_GB300_256GPUS_FP8_MX_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -58,8 +61,9 @@ DEEPSEEK_V3_GB300_256GPUS_FP8_MX_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB200_BF16_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -68,8 +72,9 @@ DEEPSEEK_V3_GB200_256GPUS_BF16_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -78,8 +83,9 @@ DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
@@ -87,8 +93,9 @@ DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG = replace(
     recompute_modules=["mla_up_proj", "mlp"],
 )
 
-DEEPSEEK_V3_B200_256GPUS_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_B200_BF16_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=16,
     expert_model_parallel_size=8,
     global_batch_size=2048,
@@ -96,8 +103,9 @@ DEEPSEEK_V3_B200_256GPUS_BF16_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG = replace(
+DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
     pipeline_model_parallel_size=16,
     expert_model_parallel_size=8,
     global_batch_size=2048,
@@ -105,11 +113,12 @@ DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_B200_256GPUS_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG
+DEEPSEEK_V3_B200_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG
 
 
-DEEPSEEK_V3_H100_1024GPUS_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_H100_BF16_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=1024,
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
@@ -119,8 +128,9 @@ DEEPSEEK_V3_H100_1024GPUS_BF16_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG = replace(
+DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=1024,
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
     virtual_pipeline_model_parallel_size=4,
@@ -130,17 +140,20 @@ DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG = replace(
 )
 
 
-DEEPSEEK_V3_H100_1024GPUS_FP8_SC_BASE_CONFIG = DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG
+DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG = DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG
 
 
 __all__ = [
-    "DEEPSEEK_V3_GB200_256GPUS_BF16_BASE_CONFIG",
-    "DEEPSEEK_V3_GB200_256GPUS_FP8_CS_BASE_CONFIG",
-    "DEEPSEEK_V3_GB200_256GPUS_FP8_MX_BASE_CONFIG",
-    "DEEPSEEK_V3_B200_256GPUS_BF16_BASE_CONFIG",
-    "DEEPSEEK_V3_B200_256GPUS_FP8_CS_BASE_CONFIG",
-    "DEEPSEEK_V3_B200_256GPUS_FP8_MX_BASE_CONFIG",
-    "DEEPSEEK_V3_H100_1024GPUS_BF16_BASE_CONFIG",
-    "DEEPSEEK_V3_H100_1024GPUS_FP8_CS_BASE_CONFIG",
-    "DEEPSEEK_V3_H100_1024GPUS_FP8_SC_BASE_CONFIG",
+    "DEEPSEEK_V3_GB300_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG",
+    "DEEPSEEK_V3_GB200_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG",
+    "DEEPSEEK_V3_B200_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_B200_FP8_MX_BASE_CONFIG",
+    "DEEPSEEK_V3_H100_BF16_BASE_CONFIG",
+    "DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG",
+    "DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG",
 ]

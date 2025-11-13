@@ -33,6 +33,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.bridge.training.deepep import apply_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
@@ -190,6 +191,7 @@ def _deepseek_common(
     model_cfg.recompute_granularity = recompute_granularity
     model_cfg.recompute_method = recompute_method
     model_cfg.recompute_num_layers = recompute_num_layers
+    apply_deepep(model_cfg)
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,

@@ -22,6 +22,7 @@ import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
+from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.rerun_state_machine import RerunDataIterator
@@ -113,6 +114,11 @@ def setup(
 
     # Conditionally enable experimental features for Megatron Core
     set_experimental_flag(cfg.dist.enable_megatron_core_experimental)
+
+    # Disable the JIT fuser if requested
+    if cfg.dist.disable_jit_fuser:
+        print_rank_0("Disabling JIT fuser.")
+        disable_jit_fuser()
 
     # Initialize async checkpoint worker if enabled (idempotent if already initialized)
     state.initialize_async_checkpoint_worker()
@@ -293,16 +299,7 @@ def setup(
     # Print setup timing.
     print_rank_0("done with setup ...")
     timers.log(["model-and-optimizer-setup", "train/valid/test-data-iterators-setup"], barrier=True)
-    if get_rank_safe() == 0:
-        if cfg.logger.save_config_filepath is not None:
-            try:
-                cfg.to_yaml(cfg.logger.save_config_filepath)
-            except Exception as e:
-                print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
-        # Print final resolved/updated/overridden configs
-        print("------- Task Configuration -------")
-        cfg.print_yaml()
-        print("----------------------------------")
+    maybe_log_and_save_config(cfg)
 
     return SetupOutput(
         state,
@@ -478,3 +475,20 @@ def _validate_and_set_vocab_size(model_vocab_size: Optional[int], tokenizer_voca
                 f" {model_vocab_size - tokenizer_vocab_size}."
             )
         return model_vocab_size, False
+
+
+def maybe_log_and_save_config(cfg: ConfigContainer) -> None:
+    """Save configuration to disk and log it on rank 0."""
+
+    if get_rank_safe() != 0:
+        return
+
+    if cfg.logger.save_config_filepath is not None:
+        try:
+            cfg.to_yaml(cfg.logger.save_config_filepath)
+        except Exception as e:
+            print_rank_0(f"Error saving config to file {cfg.logger.save_config_filepath}: {e}")
+
+    print("------- Task Configuration -------")
+    cfg.print_yaml()
+    print("----------------------------------")
