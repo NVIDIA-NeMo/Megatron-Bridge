@@ -509,7 +509,7 @@ def train(
         )
         if should_exit:
             break
-
+    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
             del FullCudaGraphWrapper.cuda_graph["training"]
 
