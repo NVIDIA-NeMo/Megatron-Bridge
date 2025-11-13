@@ -392,20 +392,10 @@ def parse_cli_args():
         action="store_true",
     )
     parser.add_argument(
-        "-pss",
-        "--profiling_start_step",
-        type=int,
-        help="Defines start step for profiling",
-        required=False, 
-        default=45
+        "-pss", "--profiling_start_step", type=int, help="Defines start step for profiling", required=False, default=45
     )
     parser.add_argument(
-        "-pso",
-        "--profiling_stop_step",
-        type=int,
-        help="Defines start step for profiling",
-        required=False,
-        default=50
+        "-pso", "--profiling_stop_step", type=int, help="Defines start step for profiling", required=False, default=50
     )
     parser.add_argument(
         "--additional_slurm_params",
