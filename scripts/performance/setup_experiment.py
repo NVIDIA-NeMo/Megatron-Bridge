@@ -18,11 +18,13 @@ from typing import List, Optional
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.executors import slurm_executor
+    from utils.helpers import get_model_recipe_with_user_overrides
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.executors import slurm_executor
+    from .utils.helpers import get_model_recipe_with_user_overrides
 
 import nemo_run as run
 
@@ -50,17 +52,25 @@ def main(
     task: str,
     compute_dtype: str,
     gpu: str,
+    num_gpus: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
     dryrun: bool,
     enable_vboost: bool,
     enable_nsys: bool,
+    nsys_gpu_metrics: bool,
+    nsys_profile_step_start: Optional[int],
+    nsys_profile_step_end: Optional[int],
     use_tokendrop: bool,
     moe_a2a_overlap: bool,
     tp_size: Optional[int],
     pp_size: Optional[int],
     cp_size: Optional[int],
+    vp_size: Optional[int],
+    ep_size: Optional[int],
+    micro_batch_size: Optional[int],
+    global_batch_size: Optional[int],
     wandb_key: str,
     wandb_prj_name: str,
     wandb_exp_name: str,
@@ -98,7 +108,16 @@ def main(
         )
     )
     if enable_nsys:
-        plugins.append(NsysPlugin(profile_step_start=10, profile_step_end=11))
+        ranks = list(range(num_gpus))
+        plugins.append(
+            NsysPlugin(
+                profile_step_start=nsys_profile_step_start,
+                profile_step_end=nsys_profile_step_end,
+                profile_ranks=ranks,
+                nsys_gpu_metrics=nsys_gpu_metrics,
+                nsys_trace=["cuda"],
+            )
+        )
 
     executor.container_mounts.extend(
         custom_mounts
@@ -112,6 +131,19 @@ def main(
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
         "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
     )
+
+    exp_config = (
+        f"gpus{num_gpus}_"
+        f"tp{tp_size}_"
+        f"pp{pp_size}_"
+        f"cp{cp_size}_"
+        f"vp{vp_size}_"
+        f"ep{ep_size}_"
+        f"mbs{micro_batch_size}_"
+        f"gbs{global_batch_size}"
+    )
+    exp_name = f"pretrain_{model_name}_{model_size}_{compute_dtype}_{exp_config}"
+
     logger.debug(
         run.Script(
             path=str(RUN_SCRIPT_PATH),
@@ -146,6 +178,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 if __name__ == "__main__":
     args, _ = parse_cli_args()
 
+    recipe = get_model_recipe_with_user_overrides(**vars(args))
+
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, "additional_slurm_params") and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     main(
         script_name=SCRIPT_NAME,
         model_name=args.model_name,
@@ -154,17 +193,25 @@ if __name__ == "__main__":
         task=args.task,
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
+        num_gpus=args.num_gpus,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         enable_nsys=args.enable_nsys,
+        nsys_gpu_metrics=args.profiling_gpu_metrics,
+        nsys_profile_step_start=args.profiling_step_start,
+        nsys_profile_step_end=args.profiling_step_end,
         use_tokendrop=args.use_tokendrop,
         moe_a2a_overlap=args.moe_a2a_overlap,
-        tp_size=args.tensor_model_parallel_size,
-        pp_size=args.pipeline_model_parallel_size,
-        cp_size=args.context_parallel_size,
+        tp_size=recipe.model.tensor_model_parallel_size,
+        pp_size=recipe.model.pipeline_model_parallel_size,
+        cp_size=recipe.model.context_parallel_size,
+        vp_size=recipe.model.virtual_pipeline_model_parallel_size,
+        ep_size=recipe.model.expert_model_parallel_size,
+        micro_batch_size=recipe.train.micro_batch_size,
+        global_batch_size=recipe.train.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_prj_name=args.wandb_prj_name,
         wandb_exp_name=args.wandb_exp_name,
@@ -181,5 +228,6 @@ if __name__ == "__main__":
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
+            additional_slurm_params=additional_slurm_params,
         ),
     )

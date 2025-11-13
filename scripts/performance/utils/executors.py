@@ -63,6 +63,7 @@ def slurm_executor(
     wandb_key: str = None,
     network: str = None,
     custom_bash_cmds: List[str] = None,
+    additional_slurm_params: Dict[str, Any] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -135,6 +136,7 @@ def slurm_executor(
         segment=segment,
         network=network,
         launcher=launcher,
+        additional_parameters=additional_slurm_params,
     )
 
     return executor
