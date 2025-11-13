@@ -19,7 +19,7 @@ from megatron.bridge.models.llama_nemotron import (
     Llama31Nemotron70BProvider,
     Llama31NemotronNano8BProvider,
 )
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 from tests.functional_tests.utils import compare_provider_configs
 
 
@@ -39,7 +39,7 @@ class TestLlamaNemotronModelProviderMapping:
         # Create bridge from HF model (with trust_remote_code for heterogeneous models)
         bridge = AutoBridge.from_hf_pretrained(
             hf_model_id,
-            trust_remote_code=if_safe_repo(hf_path=hf_model_id),
+            trust_remote_code=is_safe_repo(hf_path=hf_model_id),
         )
         converted_provider = bridge.to_megatron_provider(load_weights=False)
         converted_provider.finalize()
@@ -56,7 +56,7 @@ class TestLlamaNemotronModelProviderMapping:
         for model_id in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.keys():
             bridge = AutoBridge.from_hf_pretrained(
                 model_id,
-                trust_remote_code=if_safe_repo(hf_path=model_id),
+                trust_remote_code=is_safe_repo(hf_path=model_id),
             )
 
             # Should be able to create provider without errors

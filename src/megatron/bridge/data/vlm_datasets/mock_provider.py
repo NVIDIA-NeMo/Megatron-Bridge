@@ -30,7 +30,7 @@ from PIL import Image
 
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 
 
 @dataclass(kw_only=True)
@@ -95,7 +95,7 @@ class MockVLMConversationProvider(DatasetProvider):
         # Initialize and store processor
         self._processor = AutoProcessor.from_pretrained(
             self.hf_processor_path,
-            trust_remote_code=if_safe_repo(
+            trust_remote_code=is_safe_repo(
                 trust_remote_code=self.trust_remote_code,
                 hf_path=self.hf_processor_path,
             ),

@@ -20,7 +20,7 @@ import torch
 from PIL import Image
 
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 
 
 class MockQwen25VLDataset(torch.utils.data.Dataset):
@@ -222,7 +222,7 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
         # Initialize and store processor on the provider so the dataset can use it
         self._processor = AutoProcessor.from_pretrained(
             self.hf_model_path,
-            trust_remote_code=if_safe_repo(
+            trust_remote_code=is_safe_repo(
                 trust_remote_code=self.trust_remote_code,
                 hf_path=self.hf_model_path,
             ),

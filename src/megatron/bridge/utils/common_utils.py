@@ -280,7 +280,7 @@ def extract_expert_number_from_param(param_name: str) -> int:
     return int(match.group(1))
 
 
-def if_safe_repo(trust_remote_code: bool = None, hf_path: str = None) -> bool:
+def is_safe_repo(trust_remote_code: bool = None, hf_path: str = None) -> bool:
     """
     Determine whether remote code execution should be trusted for a given
     Hugging Face repository path.

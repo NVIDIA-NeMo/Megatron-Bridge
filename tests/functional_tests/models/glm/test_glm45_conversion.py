@@ -20,7 +20,7 @@ import pytest
 import torch
 from transformers import AutoConfig, AutoTokenizer
 
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 
 
 HF_GLM45_TOY_MODEL_CONFIG = {
@@ -178,7 +178,7 @@ class TestGLM45Conversion:
                 glm45_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=if_safe_repo(
+                trust_remote_code=is_safe_repo(
                     trust_remote_code=True,
                     hf_path=glm45_toy_model_path,
                 ),

@@ -36,7 +36,7 @@ from rich.console import Console
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion import weights_verification_table
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 
 
 console = Console()
@@ -53,7 +53,7 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_co
 
     bridge = AutoBridge.from_hf_pretrained(
         hf_model_id,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=trust_remote_code,
             hf_path=hf_model_id,
         ),

@@ -40,7 +40,7 @@ from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank, if_safe_repo, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, is_safe_repo, print_rank_0
 
 
 class SingleBatchIterator:
@@ -241,14 +241,14 @@ def main(args) -> None:
     # Initialize tokenizer and processor
     tokenizer = AutoTokenizer.from_pretrained(
         args.hf_model_path,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
     )
     processor = AutoProcessor.from_pretrained(
         args.hf_model_path,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),

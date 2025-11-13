@@ -30,7 +30,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank, if_safe_repo, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, is_safe_repo, print_rank_0
 
 
 class SingleBatchIterator:
@@ -113,7 +113,7 @@ def main(args) -> None:
         # Create bridge from HF config only (no weights)
         bridge = AutoBridge.from_hf_pretrained(
             args.hf_model_path,
-            trust_remote_code=if_safe_repo(
+            trust_remote_code=is_safe_repo(
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
@@ -149,7 +149,7 @@ def main(args) -> None:
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
         bridge = AutoBridge.from_hf_pretrained(
             args.hf_model_path,
-            trust_remote_code=if_safe_repo(
+            trust_remote_code=is_safe_repo(
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
@@ -173,7 +173,7 @@ def main(args) -> None:
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         args.hf_model_path,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),

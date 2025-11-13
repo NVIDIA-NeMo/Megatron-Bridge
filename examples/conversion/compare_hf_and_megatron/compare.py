@@ -119,7 +119,7 @@ import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank, if_safe_repo, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, is_safe_repo, print_rank_0
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -215,7 +215,7 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool = False) -
     try:
         config = AutoConfig.from_pretrained(
             model_path,
-            trust_remote_code=if_safe_repo(
+            trust_remote_code=is_safe_repo(
                 trust_remote_code=trust_remote_code,
                 hf_path=model_path,
             ),
@@ -407,7 +407,7 @@ def _load_hf_model(args, is_vl_model: bool):
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
         device_map="cuda",
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
@@ -518,7 +518,7 @@ def _load_megatron_model(args):
         # Convert from HF to Megatron
         bridge = AutoBridge.from_hf_pretrained(
             args.hf_model_path,
-            trust_remote_code=if_safe_repo(
+            trust_remote_code=is_safe_repo(
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
@@ -557,7 +557,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
     """
     tokenizer = AutoTokenizer.from_pretrained(
         args.hf_model_path,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
@@ -570,7 +570,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
         try:
             processor = AutoProcessor.from_pretrained(
                 args.hf_model_path,
-                trust_remote_code=if_safe_repo(
+                trust_remote_code=is_safe_repo(
                     trust_remote_code=args.trust_remote_code,
                     hf_path=args.hf_model_path,
                 ),

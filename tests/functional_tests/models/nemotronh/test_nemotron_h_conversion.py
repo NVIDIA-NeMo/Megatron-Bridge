@@ -24,7 +24,7 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 
 
 # Overrides for 8B size
@@ -75,7 +75,7 @@ class TestNemotronHConversion:
         model_path = "nvidia/Nemotron-H-8B-Base-8K"
         config = AutoConfig.from_pretrained(
             model_path,
-            trust_remote_code=if_safe_repo(hf_path=model_path),
+            trust_remote_code=is_safe_repo(hf_path=model_path),
         )
         for k, v in HF_NEMOTRONH_TOY_MODEL_OVERRIDES.items():
             setattr(config, k, v)
@@ -100,7 +100,7 @@ class TestNemotronHConversion:
         # Download and save tokenizer from a reference NemotronH model
         tokenizer = AutoTokenizer.from_pretrained(
             model_path,
-            trust_remote_code=if_safe_repo(hf_path=model_path),
+            trust_remote_code=is_safe_repo(hf_path=model_path),
         )
         tokenizer.save_pretrained(model_dir)
 
@@ -164,7 +164,7 @@ class TestNemotronHConversion:
                 nemotronh_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=if_safe_repo(
+                trust_remote_code=is_safe_repo(
                     trust_remote_code=True,
                     hf_path=nemotronh_toy_model_path,
                 ),
@@ -174,7 +174,7 @@ class TestNemotronHConversion:
             try:
                 tokenizer = AutoTokenizer.from_pretrained(
                     nemotronh_toy_model_path,
-                    trust_remote_code=if_safe_repo(
+                    trust_remote_code=is_safe_repo(
                         trust_remote_code=True,
                         hf_path=nemotronh_toy_model_path,
                     ),

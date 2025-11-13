@@ -78,7 +78,7 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 
 
 @dataclass
@@ -247,7 +247,7 @@ def main() -> None:
     hf_policy_model = args.hf_policy_model
     gen_tokenizer = AutoTokenizer.from_pretrained(
         hf_policy_model,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=hf_policy_model,
         ),
@@ -258,7 +258,7 @@ def main() -> None:
         gen_tokenizer.pad_token = gen_tokenizer.eos_token
     hf_gen_model = AutoModelForCausalLM.from_pretrained(
         hf_policy_model,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=hf_policy_model,
         ),
@@ -283,7 +283,7 @@ def main() -> None:
     # Bridge: load HF, create Megatron provider and training stack
     bridge = AutoBridge.from_hf_pretrained(
         hf_policy_model,
-        trust_remote_code=if_safe_repo(
+        trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=hf_policy_model,
         ),

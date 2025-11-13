@@ -21,7 +21,7 @@ from megatron.bridge.models.gpt_oss import (
     GPTOSSProvider20B,
     GPTOSSProvider120B,
 )
-from megatron.bridge.utils.common_utils import if_safe_repo
+from megatron.bridge.utils.common_utils import is_safe_repo
 from tests.functional_tests.utils import compare_provider_configs
 
 
@@ -74,7 +74,7 @@ class TestGptOssProviderMapping:
 
         bridge = AutoBridge.from_hf_pretrained(
             hf_model_id,
-            trust_remote_code=if_safe_repo(hf_path=hf_model_id),
+            trust_remote_code=is_safe_repo(hf_path=hf_model_id),
         )
         converted_provider = bridge.to_megatron_provider(load_weights=False)
         converted_provider.finalize()
