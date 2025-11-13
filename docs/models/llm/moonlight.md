@@ -36,10 +36,8 @@ provider.pipeline_model_parallel_size = 1
 provider.expert_model_parallel_size = 8
 provider.sequence_parallel = True
 
-model = provider.provide_distributed_model(wrap_with_ddp=False)
-
 provider.finalize()
-```
+model = provider.provide_distributed_model(wrap_with_ddp=False)
 
 ### Export Megatron → HF
 ```python
