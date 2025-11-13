@@ -123,58 +123,17 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 ```
 
 
-## Dataset Format
+## Example Datasets
 
-The Qwen2.5-VL finetuning script supports three dataset types:
+Megatron Bridge supports various vision-language dataset examples which can be used to finetune Qwen 2.5 VL:
+| Dataset | Maker Name | Description |
+|---------|------------|-------------|
+| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `make_cord_v2_dataset` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
+| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
+| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 
-1. **Mock Dataset** (`--dataset-type mock`): Uses synthetic data for testing. No data path required.
+To change the dataset, specify `dataset.maker_name=make_raven_dataset`
 
-2. **Preloaded Dataset** (`--dataset-type preloaded`): Loads from JSONL files with conversation format:
-   ```json
-   {
-     "conversation": [
-       {
-         "role": "user",
-         "content": [
-           {"type": "image", "image": "path/to/image.jpg"},
-           {"type": "text", "text": "Describe this image."}
-         ]
-       },
-       {
-         "role": "assistant", 
-         "content": [
-           {"type": "text", "text": "This image shows..."}
-         ]
-       }
-     ]
-   }
-   ```
-
-3. **HuggingFace Dataset** (`--dataset-type hf`): Uses HuggingFace datasets. Specify the dataset maker name.
-
-Example with preloaded dataset:
-```bash
-torchrun --nproc-per-node=8 examples/recipes/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---data-path /path/to/train.jsonl \
---image-folder /path/to/images \
---dataset-type preloaded \
---recipe qwen25_vl_3b_finetune_config \
-checkpoint.save $SAVE_DIR/<experiment name>
-```
-
-## Model Variants
-
-Qwen2.5-VL is available in multiple sizes with different recommended parallelism configurations:
-
-| Model Size | HuggingFace Model ID | Recommended TP | Recommended PP |
-|------------|---------------------|----------------|----------------|
-| 3B | `Qwen/Qwen2.5-VL-3B-Instruct` | 1 | 1 |
-| 7B | `Qwen/Qwen2.5-VL-7B-Instruct` | 2 | 1 |
-| 32B | `Qwen/Qwen2.5-VL-32B-Instruct` | 8 | 2 |
-| 72B | `Qwen/Qwen2.5-VL-72B-Instruct` | 8 | 4 |
-
-These can be adjusted based on your hardware configuration. Larger models benefit from pipeline parallelism to fit in memory.
 
 ## Hugging Face Model Cards
 - Qwen2.5-VL-3B: `https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct`
