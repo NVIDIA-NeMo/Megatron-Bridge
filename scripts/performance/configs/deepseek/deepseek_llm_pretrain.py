@@ -73,6 +73,11 @@ def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
@@ -104,6 +109,11 @@ def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
     # we are debugging this and might change this in the future.
     cfg.dataset.num_workers = 0
     cfg.dataset.pin_memory = False
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 

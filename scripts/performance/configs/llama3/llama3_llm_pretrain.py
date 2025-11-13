@@ -74,6 +74,11 @@ def llama3_70b_gb300_config(precision: str = "bf16") -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
@@ -101,6 +106,11 @@ def llama3_70b_gb200_config(precision: str = "bf16") -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
@@ -127,6 +137,11 @@ def llama3_70b_b200_config(precision: str = "bf16") -> ConfigContainer:
         cfg.ddp.suggested_communication_unit_size = 800000000
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 

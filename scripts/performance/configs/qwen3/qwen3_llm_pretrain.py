@@ -22,6 +22,7 @@ from utils.helpers import (
 from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config, qwen3_235b_a22b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 from . import workload_base_configs as base_cfgs
 
@@ -43,7 +44,7 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model = apply_moe_token_drop(cfg.model)
 
 
 def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
