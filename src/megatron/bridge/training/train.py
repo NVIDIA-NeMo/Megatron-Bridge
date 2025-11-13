@@ -510,6 +510,9 @@ def train(
         if should_exit:
             break
 
+    if "training" in FullCudaGraphWrapper.cuda_graph:
+            del FullCudaGraphWrapper.cuda_graph["training"]
+
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
     if writer:
