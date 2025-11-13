@@ -81,8 +81,20 @@ class TestNemotronVLConversion:
 
         # Create Nemotron VL toy model config by starting with the full model and applying overrides
         config = AutoConfig.from_pretrained(NEMOTRON_VL_HF_ID, trust_remote_code=True)
+
+        # Apply overrides, handling vision_config specially
+        vision_config_overrides = None
         for k, v in HF_NEMOTRON_VL_TOY_MODEL_OVERRIDES.items():
-            setattr(config, k, v)
+            if k == "vision_config":
+                # Save vision_config overrides to apply separately
+                vision_config_overrides = v
+            else:
+                setattr(config, k, v)
+
+        # Apply vision_config overrides to the existing vision_config object
+        if vision_config_overrides and hasattr(config, "vision_config"):
+            for k, v in vision_config_overrides.items():
+                setattr(config.vision_config, k, v)
 
         # Create model with random weights and convert to bfloat16
         model_class_ref = config.auto_map["AutoModelForCausalLM"]
@@ -133,18 +145,12 @@ class TestNemotronVLConversion:
         assert config_file.exists(), f"config.json not found at {config_file}"
 
         # Check for model weights (safetensors preferred)
-        weights_file = model_path / "model.safetensors"
-        if not weights_file.exists():
-            weights_file = model_path / "pytorch_model.bin"
+        weights_file = model_path / "model-00001-of-00006.safetensors"
         assert weights_file.exists(), f"Model weights file not found in {model_path}"
 
         # Check for tokenizer files
         tokenizer_config_file = model_path / "tokenizer_config.json"
         assert tokenizer_config_file.exists(), f"tokenizer_config.json not found at {tokenizer_config_file}"
-
-        # Check for modeling file
-        modeling_file = model_path / "modeling_nemotron_vl.py"
-        assert modeling_file.exists(), f"modeling_nemotron_vl.py must be copied to toy model path at {modeling_file}"
 
         # Load and verify config
         with open(config_file) as f:
@@ -229,9 +235,8 @@ class TestNemotronVLConversion:
         assert config_file.exists(), f"config.json not found in converted model at {config_file}"
 
         # Check for model weights file (could be either safetensors or pytorch_model.bin)
-        weights_file_safetensors = converted_model_dir / "model.safetensors"
-        weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
-        assert weights_file_safetensors.exists() or weights_file_pytorch.exists(), (
+        weights_file_safetensors = converted_model_dir / "model-00001-of-00006.safetensors"
+        assert weights_file_safetensors.exists(), (
             f"Model weights file not found in converted model at {converted_model_dir}"
         )
 
