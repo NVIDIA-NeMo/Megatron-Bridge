@@ -467,7 +467,7 @@ def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightFinetuneKwargs]
     """Return a finetuning config for Moonlight-16B.
 
     Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, EP=8, LR=1e-4
+    - LoRA/DoRA: TP=1, PP=1, EP=2, LR=1e-4
     - Full SFT: TP=2, PP=1, EP=8, lower LR (5e-6)
 
     See `_moonlight_finetune_common` for the full list of parameters.
@@ -485,7 +485,7 @@ def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightFinetuneKwargs]
         "pipeline_dtype": torch.bfloat16,
         "virtual_pipeline_model_parallel_size": None,
         "context_parallel_size": 1,
-        "expert_model_parallel_size": 8 if is_full_sft else 1,
+        "expert_model_parallel_size": 8 if is_full_sft else 2,
         "sequence_parallel": True if is_full_sft else False,
         "recompute_granularity": "selective",
         "enable_deepep": False,
@@ -587,8 +587,6 @@ def _moonlight_finetune_common(
     run_output_dir = os.path.join(base_output_dir, name)
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-
-    assert not packed_sequence, "Packed sequence is not supported for Moonlight-16B finetuning"
 
     # Create model config
     model_cfg = _model_config(
