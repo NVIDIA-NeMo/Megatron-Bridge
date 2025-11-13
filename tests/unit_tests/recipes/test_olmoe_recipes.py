@@ -23,8 +23,8 @@
 import importlib
 from typing import Callable
 
-import torch
 import pytest
+import torch
 
 
 _olmoe_module = importlib.import_module("megatron.bridge.recipes.olmoe")
@@ -455,4 +455,3 @@ def test_olmoe_7b_comm_overlap_config(monkeypatch: pytest.MonkeyPatch):
     # Check comm overlap config
     assert cfg.comm_overlap is not None
     assert cfg.comm_overlap.tp_comm_overlap is False
-

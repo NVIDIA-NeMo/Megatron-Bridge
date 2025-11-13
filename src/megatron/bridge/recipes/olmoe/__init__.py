@@ -22,4 +22,3 @@ __all__ = [
     "olmoe_7b_pretrain_config",
     "olmoe_7b_finetune_config",
 ]
-
