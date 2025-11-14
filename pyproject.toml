@@ -84,6 +84,7 @@ dependencies = [
     "mamba-ssm",
     "nvidia-resiliency-ext",
     "causal-conv1d",
+    "setuptools",
 ]
 
 
@@ -116,9 +117,6 @@ override-dependencies = [
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "release_v2.9" }
 megatron-core = { path = "3rdparty/Megatron-LM/" }
 nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "54f85fe422d296cf04ea524130014bd3a2c3add1" }
-
-[tool.uv.extra-build-dependencies]
-transformer-engine = ["setuptools"]
 
 [project.optional-dependencies]
 recipes = [
