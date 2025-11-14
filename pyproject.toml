@@ -84,6 +84,7 @@ dependencies = [
     "mamba-ssm",
     "nvidia-resiliency-ext",
     "causal-conv1d",
+    "timm",
 ]
 
 
