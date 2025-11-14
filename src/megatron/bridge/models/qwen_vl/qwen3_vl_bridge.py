@@ -67,6 +67,14 @@ class Qwen3VLBridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
+        # Get the model dtype from text config
+        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
+
+        # Set vision config dtype to match the language model dtype
+        # This ensures vision model parameters are initialized in the same dtype
+        vision_config = hf_config.vision_config
+        vision_config.torch_dtype = model_dtype
+
         # Create the provider with text model configuration
         provider = Qwen3VLModelProvider(
             # Language model configuration from text_config
@@ -84,15 +92,15 @@ class Qwen3VLBridge(MegatronModelBridge):
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
+            fp16=(model_dtype == torch.float16),
+            bf16=(model_dtype == torch.bfloat16),
+            params_dtype=model_dtype,
             generation_config=hf_pretrained.generation_config,
             # Qwen3 specific parameters
             add_qkv_bias=text_config.attention_bias,  # Qwen3 can have bias in QKV
             qk_layernorm=True,  # Qwen3 uses QK layernorm
             # Vision configuration
-            vision_config=hf_config.vision_config,
+            vision_config=vision_config,
             # Store the original HF text config for RoPE initialization
             hf_text_config=text_config,
             # Vision-Language token IDs
@@ -221,6 +229,14 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
+        # Get the model dtype from text config
+        model_dtype = self.dtype_from_hf(text_config, default=torch.float32)
+
+        # Set vision config dtype to match the language model dtype
+        # This ensures vision model parameters are initialized in the same dtype
+        vision_config = hf_config.vision_config
+        vision_config.torch_dtype = model_dtype
+
         provider = Qwen3VLMoEModelProvider(
             num_layers=text_config.num_hidden_layers,
             hidden_size=text_config.hidden_size,
@@ -237,9 +253,9 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
             vocab_size=text_config.vocab_size,
             seq_length=text_config.max_position_embeddings,
-            fp16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(text_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(text_config, default=torch.float32),
+            fp16=(model_dtype == torch.float16),
+            bf16=(model_dtype == torch.bfloat16),
+            params_dtype=model_dtype,
             generation_config=hf_pretrained.generation_config,
             # Qwen3 specific parameters
             add_qkv_bias=text_config.attention_bias,  # Qwen3 can have bias in QKV
@@ -250,7 +266,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
             decoder_sparse_step=getattr(text_config, "decoder_sparse_step", 1),  # Default to every layer being MoE
             mlp_only_layers=getattr(text_config, "mlp_only_layers", []),  # Default to all layers using MoE
             # Vision configuration
-            vision_config=hf_config.vision_config,
+            vision_config=vision_config,
             # Store the original HF text config for RoPE initialization
             hf_text_config=text_config,
             # Vision-Language token IDs
