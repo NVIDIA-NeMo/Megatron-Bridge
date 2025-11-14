@@ -185,6 +185,9 @@ class DistributedInitConfig:
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
+    disable_jit_fuser: bool = False
+    """Disable the JIT fuser."""
+
 
 @dataclass
 class RerunStateMachineConfig:
