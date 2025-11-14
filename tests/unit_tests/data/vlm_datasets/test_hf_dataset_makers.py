@@ -24,10 +24,18 @@ class _DummyDataset(list):
 
 
 def _monkeypatch_load_dataset(monkeypatch, rows):
-    def _fake_load_dataset(path_or_dataset, split="train", **kwargs):  # noqa: ARG001 - interface
+    def _fake_load_dataset(path_or_dataset, name=None, split="train", **kwargs):  # noqa: ARG001 - interface
         return _DummyDataset(rows)
 
+    def _fake_concatenate_datasets(datasets):  # noqa: ARG001 - interface
+        # Combine all datasets into one _DummyDataset
+        combined = _DummyDataset()
+        for ds in datasets:
+            combined.extend(ds)
+        return combined
+
     monkeypatch.setattr(makers, "load_dataset", _fake_load_dataset)
+    monkeypatch.setattr(makers, "concatenate_datasets", _fake_concatenate_datasets)
 
 
 def test_make_rdr_dataset(monkeypatch):
@@ -68,3 +76,57 @@ def test_make_cv17_dataset(monkeypatch):
     _monkeypatch_load_dataset(monkeypatch, rows)
     out = makers.make_cv17_dataset()
     assert out and isinstance(out[0]["audio"], tuple)
+
+
+def test_make_raven_dataset(monkeypatch):
+    # Simulate a row with images and the expected texts structure
+    rows = [
+        {"images": [SimpleNamespace(), SimpleNamespace()], "texts": [{"user": "What?", "assistant": "Answer."}]},
+        # No images or malformed rows
+        {"images": [], "texts": [{"user": "?", "assistant": "A"}]},
+        {"images": [SimpleNamespace()], "texts": []},
+        {"images": [SimpleNamespace()], "texts": [{}]},
+        {"images": [SimpleNamespace()], "texts": [{"assistant": "A"}]},
+    ]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+    out = makers.make_raven_dataset()
+    # Only the first example should produce a valid output
+    assert isinstance(out, list)
+    assert len(out) == 1
+    assert out[0]["conversation"][0]["role"] == "user"
+    assert out[0]["conversation"][1]["role"] == "assistant"
+    assert out[0]["conversation"][0]["content"][0]["type"] == "image"
+
+
+def test_make_llava_video_178k_dataset(monkeypatch, tmp_path):
+    # Happy path: valid video and conversation
+    video_file = "the_vid.mp4"
+    video_root = tmp_path
+    convs = [{"from": "human", "value": "<video>\nQ?"}, {"from": "gpt", "value": "A."}]
+    valid = {"video": video_file, "conversations": convs}
+    # Invalid variants
+    no_video = {"video": "", "conversations": convs}
+    no_convs = {"video": video_file, "conversations": []}
+    # Note: empty human value gets skipped but gpt turn is kept (results in assistant-only conversation)
+    human_contentless = {
+        "video": video_file,
+        "conversations": [{"from": "human", "value": ""}, {"from": "gpt", "value": "A."}],
+    }
+    rows = [valid, no_video, no_convs, human_contentless]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+    out = makers.make_llava_video_178k_dataset(str(video_root), subsets="sub1")
+    assert isinstance(out, list)
+    # valid and human_contentless both produce output (though human_contentless is malformed)
+    assert len(out) == 2
+
+    # Check the valid conversation (first one)
+    valid_conv = out[0]["conversation"]
+    assert valid_conv[0]["role"] == "user" and any(d["type"] == "video" for d in valid_conv[0]["content"])
+    # Clean prompt is stripped
+    assert "Q?" in valid_conv[0]["content"][-1]["text"]
+    assert valid_conv[1]["role"] == "assistant"
+
+    # The human_contentless case produces an assistant-only conversation (edge case)
+    contentless_conv = out[1]["conversation"]
+    assert len(contentless_conv) == 1
+    assert contentless_conv[0]["role"] == "assistant"

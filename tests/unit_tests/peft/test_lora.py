@@ -24,7 +24,7 @@ import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.peft.lora import LoRA, LoRAMerge
+from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
 
 
@@ -843,3 +843,266 @@ class TestLoRAMegatronIntegration:
             assert first_chunk is second_chunk
             assert first_name == second_name
             assert second_module is first_module, f"LoRA module {first_name} should be identical object"
+
+
+class MockVLMModel(nn.Module):
+    """Mock Vision-Language Model for testing VLMLoRA."""
+
+    def __init__(self, has_vision=True, has_projection=True, has_language=True):
+        super().__init__()
+        self.vision_model = nn.Sequential(nn.Linear(512, 512), nn.ReLU()) if has_vision else None
+        self.vision_projection = nn.Linear(512, 768) if has_projection else None
+        self.language_model = nn.Sequential(nn.Linear(768, 768), nn.ReLU()) if has_language else None
+
+    def parameters(self):
+        """Override to provide all parameters."""
+        params = []
+        if self.vision_model:
+            params.extend(self.vision_model.parameters())
+        if self.vision_projection:
+            params.extend(self.vision_projection.parameters())
+        if self.language_model:
+            params.extend(self.language_model.parameters())
+        return iter(params)
+
+
+class MockLLaVAWrapper(nn.Module):
+    """Mock wrapper model with llava_model attribute."""
+
+    def __init__(self, llava_model):
+        super().__init__()
+        self.llava_model = llava_model
+
+
+class TestVLMLoRA:
+    """Test suite for VLMLoRA PEFT implementation."""
+
+    def test_vlmlora_initialization(self):
+        """Test VLMLoRA class initialization with default and custom parameters."""
+        # Test default initialization
+        vlm_lora = VLMLoRA()
+        assert vlm_lora.freeze_vision_model is True
+        assert vlm_lora.freeze_vision_projection is True
+        assert vlm_lora.freeze_language_model is True
+        # Check inherited LoRA properties
+        assert vlm_lora.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+        assert vlm_lora.dim == 32
+        assert vlm_lora.alpha == 32
+
+        # Test custom initialization
+        custom_vlm_lora = VLMLoRA(
+            freeze_vision_model=False,
+            freeze_vision_projection=False,
+            freeze_language_model=True,
+            dim=16,
+            alpha=16,
+        )
+        assert custom_vlm_lora.freeze_vision_model is False
+        assert custom_vlm_lora.freeze_vision_projection is False
+        assert custom_vlm_lora.freeze_language_model is True
+        assert custom_vlm_lora.dim == 16
+        assert custom_vlm_lora.alpha == 16
+
+    def test_freeze_all_components(self):
+        """Test freezing all components of a VLM model."""
+        model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        vlm_lora = VLMLoRA(freeze_vision_model=True, freeze_vision_projection=True, freeze_language_model=True)
+
+        # Set all parameters to require gradients initially
+        for param in model.parameters():
+            param.requires_grad = True
+
+        # Apply freeze
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=True)
+
+        # Verify all parameters are frozen
+        for param in model.vision_model.parameters():
+            assert not param.requires_grad, "Vision model parameters should be frozen"
+        for param in model.vision_projection.parameters():
+            assert not param.requires_grad, "Vision projection parameters should be frozen"
+        for param in model.language_model.parameters():
+            assert not param.requires_grad, "Language model parameters should be frozen"
+
+    def test_freeze_vision_only(self):
+        """Test freezing only the vision model."""
+        model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        vlm_lora = VLMLoRA(freeze_vision_model=True, freeze_vision_projection=False, freeze_language_model=False)
+
+        # Set all parameters to require gradients initially
+        for param in model.parameters():
+            param.requires_grad = True
+
+        # Apply freeze
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=True)
+
+        # Verify only vision model is frozen
+        for param in model.vision_model.parameters():
+            assert not param.requires_grad, "Vision model parameters should be frozen"
+        for param in model.vision_projection.parameters():
+            assert param.requires_grad, "Vision projection parameters should NOT be frozen"
+        for param in model.language_model.parameters():
+            assert param.requires_grad, "Language model parameters should NOT be frozen"
+
+    def test_freeze_language_only(self):
+        """Test freezing only the language model."""
+        model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        vlm_lora = VLMLoRA(freeze_vision_model=False, freeze_vision_projection=False, freeze_language_model=True)
+
+        # Set all parameters to require gradients initially
+        for param in model.parameters():
+            param.requires_grad = True
+
+        # Apply freeze
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=True)
+
+        # Verify only language model is frozen
+        for param in model.vision_model.parameters():
+            assert param.requires_grad, "Vision model parameters should NOT be frozen"
+        for param in model.vision_projection.parameters():
+            assert param.requires_grad, "Vision projection parameters should NOT be frozen"
+        for param in model.language_model.parameters():
+            assert not param.requires_grad, "Language model parameters should be frozen"
+
+    def test_freeze_no_components(self):
+        """Test that no freezing occurs when all flags are False."""
+        model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        vlm_lora = VLMLoRA(freeze_vision_model=False, freeze_vision_projection=False, freeze_language_model=False)
+
+        # Set all parameters to require gradients initially
+        for param in model.parameters():
+            param.requires_grad = True
+
+        # Apply freeze
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=True)
+
+        # Verify no parameters are frozen
+        for param in model.vision_model.parameters():
+            assert param.requires_grad, "Vision model parameters should NOT be frozen"
+        for param in model.vision_projection.parameters():
+            assert param.requires_grad, "Vision projection parameters should NOT be frozen"
+        for param in model.language_model.parameters():
+            assert param.requires_grad, "Language model parameters should NOT be frozen"
+
+    def test_freeze_with_missing_components(self):
+        """Test freezing when some model components are None."""
+        # Model with only language model
+        model = MockVLMModel(has_vision=False, has_projection=False, has_language=True)
+        vlm_lora = VLMLoRA(freeze_vision_model=True, freeze_vision_projection=True, freeze_language_model=True)
+
+        # Set language model parameters to require gradients
+        for param in model.language_model.parameters():
+            param.requires_grad = True
+
+        # Apply freeze (should not crash even though vision components are None)
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=True)
+
+        # Verify language model is frozen
+        for param in model.language_model.parameters():
+            assert not param.requires_grad, "Language model parameters should be frozen"
+
+    def test_freeze_with_llava_wrapper(self):
+        """Test that freeze_model correctly unwraps llava_model attribute."""
+        inner_model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        wrapper_model = MockLLaVAWrapper(inner_model)
+        vlm_lora = VLMLoRA(freeze_vision_model=True, freeze_vision_projection=True, freeze_language_model=True)
+
+        # Set all parameters to require gradients initially
+        for param in inner_model.parameters():
+            param.requires_grad = True
+
+        # Apply freeze
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [wrapper_model]
+            vlm_lora.freeze_model(wrapper_model, training=True)
+
+        # Verify all parameters are frozen (should have unwrapped to inner_model)
+        for param in inner_model.vision_model.parameters():
+            assert not param.requires_grad, "Vision model parameters should be frozen"
+        for param in inner_model.vision_projection.parameters():
+            assert not param.requires_grad, "Vision projection parameters should be frozen"
+        for param in inner_model.language_model.parameters():
+            assert not param.requires_grad, "Language model parameters should be frozen"
+
+    def test_training_mode_enabled(self):
+        """Test that model is set to training mode when training=True."""
+        model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        model.eval()  # Start in eval mode
+        vlm_lora = VLMLoRA()
+
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=True)
+
+        assert model.training, "Model should be in training mode after freeze_model with training=True"
+
+    def test_training_mode_disabled(self):
+        """Test that model training mode is not changed when training=False."""
+        model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+        model.eval()  # Start in eval mode
+        vlm_lora = VLMLoRA()
+
+        with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+            mock_unwrap.return_value = [model]
+            vlm_lora.freeze_model(model, training=False)
+
+        assert not model.training, "Model should remain in eval mode after freeze_model with training=False"
+
+    def test_vlmlora_inherits_transform(self):
+        """Test that VLMLoRA inherits the transform method from LoRA."""
+        vlm_lora = VLMLoRA(target_modules=["linear_qkv"])
+        model = SimpleModel()
+
+        # Apply transform to a target module
+        transformed = vlm_lora.transform(model.linear_qkv, name="linear_qkv", prefix="model")
+
+        # Should be wrapped with LoRA adapter
+        assert isinstance(transformed, (LoRALinear, LinearAdapter)), (
+            "VLMLoRA should inherit transform from LoRA and wrap modules"
+        )
+
+    def test_vlmlora_selective_freezing_combination(self):
+        """Test various combinations of selective freezing."""
+        test_cases = [
+            (True, False, False),  # Freeze vision only
+            (False, True, False),  # Freeze projection only
+            (False, False, True),  # Freeze language only
+            (True, True, False),  # Freeze vision + projection
+            (True, False, True),  # Freeze vision + language
+            (False, True, True),  # Freeze projection + language
+        ]
+
+        for freeze_vision, freeze_projection, freeze_language in test_cases:
+            model = MockVLMModel(has_vision=True, has_projection=True, has_language=True)
+            vlm_lora = VLMLoRA(
+                freeze_vision_model=freeze_vision,
+                freeze_vision_projection=freeze_projection,
+                freeze_language_model=freeze_language,
+            )
+
+            # Set all parameters to require gradients
+            for param in model.parameters():
+                param.requires_grad = True
+
+            with patch("megatron.bridge.peft.lora.unwrap_model") as mock_unwrap:
+                mock_unwrap.return_value = [model]
+                vlm_lora.freeze_model(model, training=True)
+
+            # Verify freezing matches expectations
+            for param in model.vision_model.parameters():
+                assert param.requires_grad == (not freeze_vision), f"Vision params wrong for config {test_cases}"
+            for param in model.vision_projection.parameters():
+                assert param.requires_grad == (not freeze_projection), (
+                    f"Projection params wrong for config {test_cases}"
+                )
+            for param in model.language_model.parameters():
+                assert param.requires_grad == (not freeze_language), f"Language params wrong for config {test_cases}"
