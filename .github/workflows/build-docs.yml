@@ -32,7 +32,30 @@ jobs:
   build-docs:
     needs: [pre-flight]
     if: needs.pre-flight.outputs.is_deployment_workflow != 'true'
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_docs.yml@v0.57.0
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build docs with isolated environment
+        working-directory: docs
+        run: |
+          uv venv
+          uv sync --no-config
+          uv run sphinx-build --fail-on-warning -b html . _build/html
+
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-html
+          path: docs/_build/html
 
   build-docs-summary:
     needs: [pre-flight, build-docs]
