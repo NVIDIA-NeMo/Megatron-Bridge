@@ -174,7 +174,6 @@ OLMoE (7B) supports several PP configurations with pre-defined symmetric layouts
 - OLMoE Paper: [OLMoE: Open Mixture-of-Experts Language Models](https://arxiv.org/abs/2409.02060)
 - OLMoE Model Card (Latest): [HuggingFace Model Card](https://huggingface.co/allenai/OLMoE-1B-7B-0125)
 - OLMoE GitHub Repository: [allenai/OLMoE](https://github.com/allenai/OLMoE)
-- AI2 Blog Post: [Announcing OLMoE](https://allenai.org/blog/olmoe)
 
 ## Related docs
 
