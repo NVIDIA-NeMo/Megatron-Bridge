@@ -144,6 +144,8 @@ if __name__ == "__main__":
     if args.gpu.lower() in ["h100"]:
         if args.model_name == "llama31" and args.model_size == "405b":
             del_cudnn_ln = True
+            executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
+            executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = "2097152"
         elif args.model_name == "llama3" and args.model_size == "70b" and args.compute_dtype == "bf16":
             del_cudnn_ln = True
     if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["b200"]:
