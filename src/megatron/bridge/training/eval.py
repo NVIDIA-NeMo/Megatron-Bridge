@@ -98,7 +98,7 @@ def evaluate(
                     pp_size=pg_collection.pp.size(),
                     vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
                 ),
-                cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps
+                cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps,
             )
         else:
             forward_backward_func = get_forward_backward_func(

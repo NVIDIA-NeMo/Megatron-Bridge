@@ -231,7 +231,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not isinstance(transformer_layer_spec, ModuleSpec):
             # Check if the transformer_layer_spec function accepts vp_stage parameter
             if "vp_stage" in inspect.signature(transformer_layer_spec).parameters:
-                transformer_layer_spec = transformer_layer_spec(self, vp_stage=vp_stage)
+                transformer_layer_spec = transformer_layer_spec(
+                    self, vp_stage=vp_stage, pp_rank=self.pg_collection.pp.rank()
+                )
             else:
                 transformer_layer_spec = transformer_layer_spec(self)
 
@@ -385,7 +387,7 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
 
         if isinstance(config.transformer_layer_spec, Callable):
             if "vp_stage" in inspect.signature(config.transformer_layer_spec).parameters:
-                spec = config.transformer_layer_spec(config, vp_stage=vp_stage)
+                spec = config.transformer_layer_spec(config, vp_stage=vp_stage, pp_rank=config.pg_collection.pp.rank())
             else:
                 spec = config.transformer_layer_spec(config)
         else:
@@ -394,7 +396,9 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
             # Get the decoder layer spec explicitly if no decoder layer in the last stage,
             # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
             spec = default_layer_spec(config)
-        return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
+        return get_gpt_mtp_block_spec(
+            config, spec, use_transformer_engine=True, vp_stage=vp_stage, pp_rank=config.pg_collection.pp.rank()
+        )
     else:
         return None
 

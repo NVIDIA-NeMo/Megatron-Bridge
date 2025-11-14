@@ -639,7 +639,8 @@ def _warmup_jit_function(model_config: GPTModelProvider | T5ModelProvider, micro
 
     # Warmup fused bias+dropout+add
     if model_config.sequence_parallel:
-        seq_length = model_config.seq_length // parallel_state.get_tensor_model_parallel_world_size()
+        tp_world_size = int(model_config.tensor_model_parallel_size)
+        seq_length = model_config.seq_length // tp_world_size
     else:
         seq_length = model_config.seq_length
     input = torch.rand(

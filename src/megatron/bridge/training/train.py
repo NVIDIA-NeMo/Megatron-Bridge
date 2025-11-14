@@ -34,8 +34,8 @@ from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -45,7 +45,6 @@ from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
-from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint

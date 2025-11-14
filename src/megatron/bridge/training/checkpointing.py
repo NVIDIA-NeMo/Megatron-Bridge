@@ -51,7 +51,6 @@ from megatron.core.utils import get_torch_version, is_torch_min_version, unwrap_
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
-    save_sharded_modelopt_state,
 )
 
 from megatron.bridge.peft.base import PEFT

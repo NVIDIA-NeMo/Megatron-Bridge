@@ -172,9 +172,7 @@ def finetuning_train_valid_test_datasets_provider(
         dk["pg_collection"] = pg_collection
         builder_kwargs["dataset_kwargs"] = dk
 
-    train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(
-        tokenizer=tokenizer, **builder_kwargs
-    ).build()
+    train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(tokenizer=tokenizer, **builder_kwargs).build()
 
     print_rank_0(f"> finished creating Finetuning dataset from {dataset_config.dataset_root} ...")
 
