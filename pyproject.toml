@@ -117,6 +117,9 @@ transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", 
 megatron-core = { path = "3rdparty/Megatron-LM/" }
 nvidia-resiliency-ext = { git = "https://github.com/NVIDIA/nvidia-resiliency-ext.git", rev = "54f85fe422d296cf04ea524130014bd3a2c3add1" }
 
+[tool.uv.extra-build-dependencies]
+transformer-engine = ["setuptools"]
+
 [project.optional-dependencies]
 recipes = [
     "nemo-run>=0.5.0a0,<0.6.0",
