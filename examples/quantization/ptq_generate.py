@@ -92,7 +92,7 @@ def main(
     model_provider.initialize_model_parallel(seed=0)
     megatron_model = bridge.load_megatron_model(
         megatron_load_path,
-        mp_override={
+        mp_overrides={
             "tensor_model_parallel_size": tp,
             "pipeline_model_parallel_size": pp,
             "expert_model_parallel_size": ep,

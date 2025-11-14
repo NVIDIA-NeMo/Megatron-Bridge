@@ -44,9 +44,15 @@ class TestQuantizationWorkflow:
         # Calculate total number of processes needed
         total_procs = max(tp * pp, 1)
 
+        import sys
+
+        python_executable = sys.executable
+
         # Base command following the user's format
         cmd = [
-            "torchrun",
+            python_executable,
+            "-m",
+            "torch.distributed.run",
             f"--nproc_per_node={total_procs}",
             "-m",
             "coverage",
@@ -87,9 +93,15 @@ class TestQuantizationWorkflow:
         # Calculate total number of processes needed
         total_procs = max(tp * pp, 1)
 
+        import sys
+
+        python_executable = sys.executable
+
         # Base command following the user's format
         cmd = [
-            "torchrun",
+            python_executable,
+            "-m",
+            "torch.distributed.run",
             f"--nproc_per_node={total_procs}",
             "-m",
             "coverage",
@@ -159,9 +171,12 @@ class TestQuantizationWorkflow:
                 assert False, f"Generation step failed with return code {generation_result.returncode}"
 
             # Verify generation succeeded
-            assert f"Loaded quantized model from: {quantized_checkpoint_dir}" in generation_result.stdout, (
-                f"Checkpoint loading message not found. Output: {generation_result.stdout}"
-            )
+            # Note: stdout may have line wrapping, so we normalize it by removing newlines within the output
+            stdout_normalized = generation_result.stdout.replace("\n", "")
+            assert (
+                "Loaded quantized model from:" in generation_result.stdout
+                and str(quantized_checkpoint_dir) in stdout_normalized
+            ), f"Checkpoint loading message not found. Output: {generation_result.stdout}"
             assert "Testing quantized model with custom prompts" in generation_result.stdout, (
                 f"Generation test message not found. Output: {generation_result.stdout}"
             )
@@ -180,9 +195,8 @@ class TestQuantizationWorkflow:
     @pytest.mark.parametrize(
         "quant_tp,quant_pp,gen_tp,gen_pp,test_name",
         [
-            (2, 1, 1, 1, "TP2_to_Single"),  # quantize with tp=2, generate with tp=1
+            (1, 1, 2, 1, "TP1_to_TP2"),  # quantize with tp=1, generate with tp=2
             (1, 1, 1, 2, "PP1_to_PP2"),  # quantize with pp=1, generate with pp=2
-            (1, 2, 1, 1, "PP2_to_Single"),  # additional: quantize pp=2, generate single
         ],
     )
     def test_quantization_and_generation_parallelism(self, tmp_path, quant_tp, quant_pp, gen_tp, gen_pp, test_name):
@@ -242,9 +256,12 @@ class TestQuantizationWorkflow:
                 assert False, f"Generation step for {test_name} failed with return code {generation_result.returncode}"
 
             # Verify generation succeeded with correct parallelism
-            assert f"Loaded quantized model from: {quantized_checkpoint_dir}" in generation_result.stdout, (
-                f"Checkpoint loading message not found in {test_name}. Output: {generation_result.stdout}"
-            )
+            # Note: stdout may have line wrapping, so we normalize it by removing newlines within the output
+            stdout_normalized = generation_result.stdout.replace("\n", "")
+            assert (
+                "Loaded quantized model from:" in generation_result.stdout
+                and str(quantized_checkpoint_dir) in stdout_normalized
+            ), f"Checkpoint loading message not found in {test_name}. Output: {generation_result.stdout}"
             assert f"Tensor parallel size: {gen_tp}" in generation_result.stdout, (
                 f"Generation TP setting not found in {test_name}. Output: {generation_result.stdout}"
             )

@@ -14,11 +14,18 @@
 
 """Functional tests for QAT (Quantization Aware Training) workflow."""
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from megatron.bridge.training.utils.checkpoint_utils import (
+    TRACKER_PREFIX,
+    get_checkpoint_name,
+    get_checkpoint_tracker_filename,
+    get_checkpoint_train_state_filename,
+)
 from tests.functional_tests.utils import clear_directories
 
 
@@ -98,6 +105,8 @@ class TestQATWorkflow:
         tp: int = 1,
         pp: int = 1,
         cp: int = 2,
+        train_iters: int = 10,
+        save_interval: int = 10,
     ):
         """
         Run pre-training from a quantized checkpoint using subprocess.
@@ -109,9 +118,12 @@ class TestQATWorkflow:
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
             cp: Context parallelism size (default: 2)
+            train_iters: Number of training iterations
+            save_interval: Interval for saving checkpoints
 
         Returns:
-            subprocess.CompletedProcess: The result of the subprocess run
+            tuple: (subprocess.CompletedProcess, final_iteration)
+                   where final_iteration is the last checkpoint saved
         """
         # Calculate total number of processes needed (tp * pp * cp)
         total_procs = tp * pp * cp
@@ -120,6 +132,10 @@ class TestQATWorkflow:
         import sys
 
         python_executable = sys.executable
+
+        # Calculate the final iteration (last checkpoint that will be saved)
+        # Checkpoints are saved at intervals, so the last one is at train_iters if it's a multiple of save_interval
+        final_iteration = (train_iters // save_interval) * save_interval
 
         # Base command for pre-training from quantized checkpoint
         cmd = [
@@ -139,13 +155,13 @@ class TestQATWorkflow:
             "model.gradient_accumulation_fusion=False",
             f"checkpoint.pretrained_checkpoint={quantized_checkpoint_path}",
             f"checkpoint.save={checkpoint_save_dir}",
-            "checkpoint.save_interval=10",
-            "train.train_iters=10",
+            f"checkpoint.save_interval={save_interval}",
+            f"train.train_iters={train_iters}",
             "train.eval_interval=5",
             "train.eval_iters=2",
             "train.global_batch_size=8",
             "scheduler.lr_warmup_iters=2",
-            "scheduler.lr_decay_iters=10",
+            f"scheduler.lr_decay_iters={train_iters}",
         ]
 
         # Always add parallelism arguments to override script defaults
@@ -154,7 +170,7 @@ class TestQATWorkflow:
         cmd.append(f"model.context_parallel_size={cp}")
 
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent)
-        return result
+        return result, final_iteration
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("recipe_name,parallelism_overrides", QAT_WORKFLOW_CONFIGS)
@@ -212,13 +228,17 @@ class TestQATWorkflow:
 
             print(f"=== STEP 2: Running pre-training from quantized checkpoint for {recipe_name} ===")
             # Step 2: Run pre-training from the quantized checkpoint
-            pretrain_result = self._run_pretrain_from_quantized_checkpoint(
+            train_iters = 10
+            save_interval = 10
+            pretrain_result, expected_iteration = self._run_pretrain_from_quantized_checkpoint(
                 quantized_checkpoint_path=str(quantized_checkpoint_dir),
                 checkpoint_save_dir=str(checkpoint_save_dir),
                 hf_model_id="meta-llama/Llama-3.2-1B",
                 tp=tensor_model_parallel_size or 1,
                 pp=pipeline_model_parallel_size or 1,
                 cp=context_parallel_size or 2,  # Default context parallelism is 2
+                train_iters=train_iters,
+                save_interval=save_interval,
             )
 
             if pretrain_result.returncode != 0:
@@ -227,12 +247,63 @@ class TestQATWorkflow:
                 assert False, f"Pre-training step failed with return code {pretrain_result.returncode}"
 
             print("✓ Pre-training from quantized checkpoint completed successfully")
+            print(f"  Training ran for {train_iters} iterations, saving every {save_interval} iterations")
+            print(f"  Expected final checkpoint iteration: {expected_iteration}")
 
-            # Verify checkpoint files were created (simple existence check, not full distributed verification)
+            # Verify checkpoint files were created with comprehensive checks
+            # (adapted from verify_checkpoint_files but without requiring torch.distributed)
             assert checkpoint_save_dir.exists(), f"Checkpoint save directory not found at {checkpoint_save_dir}"
-            checkpoint_dirs = list(checkpoint_save_dir.iterdir())
-            assert len(checkpoint_dirs) > 0, f"No checkpoints saved in {checkpoint_save_dir}"
-            print(f"✓ Checkpoint files verified: {[d.name for d in checkpoint_dirs]}")
+
+            # Verify Megatron-Bridge tracker file
+            latest_tracker_file = get_checkpoint_train_state_filename(str(checkpoint_save_dir), prefix=TRACKER_PREFIX)
+            assert os.path.exists(latest_tracker_file), (
+                f"Latest checkpoint tracker file not found at {latest_tracker_file}"
+            )
+            print(f"✓ Megatron-Bridge tracker file found: {latest_tracker_file}")
+
+            # Verify Megatron-LM compatibility tracker file
+            megatron_lm_tracker = get_checkpoint_tracker_filename(str(checkpoint_save_dir))
+            assert os.path.exists(megatron_lm_tracker), f"Megatron-LM tracker file not found at {megatron_lm_tracker}"
+            print(f"✓ Megatron-LM tracker file found: {megatron_lm_tracker}")
+
+            # Verify the tracker file contains the correct iteration
+            with open(megatron_lm_tracker, "r") as f:
+                saved_iteration = f.read().strip()
+            assert saved_iteration == str(expected_iteration), (
+                f"Megatron-LM tracker file contains '{saved_iteration}', expected '{expected_iteration}'"
+            )
+            print(f"✓ Tracker file contains correct iteration: {expected_iteration}")
+
+            # Verify final checkpoint directory exists
+            final_iter_dir = get_checkpoint_name(str(checkpoint_save_dir), expected_iteration, release=False)
+            assert os.path.exists(final_iter_dir), f"Final checkpoint directory not found at {final_iter_dir}"
+            print(f"✓ Final checkpoint directory found: {final_iter_dir}")
+
+            # Verify metadata file exists
+            metadata_file = os.path.join(final_iter_dir, ".metadata")
+            assert os.path.exists(metadata_file), f"Checkpoint metadata file not found at {metadata_file}"
+            print(f"✓ Metadata file found: {metadata_file}")
+
+            # Verify .distcp files (torch.distributed.checkpoint format)
+            distcp_files = [f for f in os.listdir(final_iter_dir) if f.endswith(".distcp")]
+
+            # Calculate expected world size from parallelism settings
+            tp = tensor_model_parallel_size or 1
+            pp = pipeline_model_parallel_size or 1
+            cp = context_parallel_size or 2
+            world_size = tp * pp * cp
+
+            # For torch_dist format, expect 2 * world_size .distcp files
+            # (one for model state, one for optimizer state per rank)
+            expected_distcp_files = 2 * world_size
+            assert len(distcp_files) == expected_distcp_files, (
+                f"Expected {expected_distcp_files} .distcp files (2 * {world_size} world_size), "
+                f"found {len(distcp_files)}: {distcp_files}"
+            )
+            print(
+                f"✓ Correct number of .distcp files: {len(distcp_files)} "
+                f"(world_size={world_size}, tp={tp}, pp={pp}, cp={cp})"
+            )
 
             print(f"SUCCESS: Complete QAT workflow test passed for {recipe_name}")
 
