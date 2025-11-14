@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.profiler
+from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
@@ -35,10 +36,6 @@ from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.core.pipeline_parallel.utils import (
-    is_pp_first_stage,
-    is_pp_last_stage,
-)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
@@ -663,12 +660,12 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+    update_successful = logical_and_across_model_parallel_group(update_successful)
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm)
     if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
+        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad)
 
     # Update learning rate.
     if update_successful:
@@ -682,7 +679,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if pg_collection.pp.rank() == pg_collection.pp.size() - 1:
+    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
         # Average loss across microbatches.
         loss_reduced = {}
 
@@ -1194,7 +1191,7 @@ def _should_skip_and_handle_iteration(
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
-    _dummy_train_step(global_state, train_data_iterator, pg_collection)
+    _dummy_train_step(global_state, train_data_iterator)
 
     # Update step and sample counters
     global_state.train_state.step += 1
@@ -1207,9 +1204,7 @@ def _should_skip_and_handle_iteration(
 
 
 def _dummy_train_step(
-    global_state: GlobalState,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
-    pg_collection: ProcessGroupCollection,
+    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.
 
@@ -1227,8 +1222,7 @@ def _dummy_train_step(
     rerun_state_machine = get_rerun_state_machine()
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
-        pp_group = pg_collection.pp
-        if is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
+        if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
             if train_data_iterator is not None:
                 if cfg.dataset.dataloader_type == "batch":
                     # Finetuning: Consume global batch once
