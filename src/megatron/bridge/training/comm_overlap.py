@@ -596,7 +596,8 @@ class CommOverlapConfig:
                 model_config.tp_comm_overlap_cfg = {
                     key: value for key, value in model_config.tp_comm_overlap_cfg.items() if value is not None
                 }
-            model_config.tp_comm_bootstrap_backend = comm_overlap_cfg.tp_comm_bootstrap_backend
+            if comm_overlap_cfg.tp_comm_bootstrap_backend is not None:
+                model_config.tp_comm_bootstrap_backend = comm_overlap_cfg.tp_comm_bootstrap_backend
 
         # Data parallel overlap is only available with the Megatron DDP and Distributed optimizer
         if (
