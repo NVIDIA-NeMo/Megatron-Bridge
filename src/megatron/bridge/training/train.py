@@ -847,6 +847,17 @@ def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
+def force_param_sync(model: list[DDP]) -> None:
+    """Force parameter synchronization for all model chunks.
+
+    Args:
+        model: list of model chunks wrapped in DDP.
+    """
+    for model_chunk in model:
+        assert isinstance(model_chunk, DDP)
+        model_chunk.start_param_sync(force_sync=True)
+
+
 def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, float]:
     """
     Gets start time of earliest job with same world size. Also returns the number
@@ -945,9 +956,9 @@ def save_checkpoint_and_time(
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
-    Wraps the `save_checkpoint` function with timers and potentially disables/
-    enables forward pre-hooks if distributed optimizer with overlapped parameter
-    gather is used.
+    Wraps the `save_checkpoint` function with timers and forces parameter
+    synchronization when using distributed optimizer with overlapped parameter
+    gather to ensure checkpoint correctness.
 
     Args:
         state: The global state object.
@@ -974,13 +985,13 @@ def save_checkpoint_and_time(
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
 
-    should_disable_pre_hook = should_disable_forward_pre_hook(
+    should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
         state.cfg.optimizer.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
     )
-    if should_disable_pre_hook:
-        disable_forward_pre_hook(model)
+    if should_force_param_sync:
+        force_param_sync(model)
     save_checkpoint(
         state,
         model,
@@ -996,8 +1007,6 @@ def save_checkpoint_and_time(
         # dequantized bf16 tensors that were temporarily created during fp8
         # model checkpoint saving.
         gc.collect()
-    if should_disable_pre_hook:
-        enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
     timers.log([timer_key])
 

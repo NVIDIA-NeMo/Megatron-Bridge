@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Gemma3 models
-from .gemma3 import (
-    gemma3_1b_finetune_config,
-    gemma3_1b_pretrain_config,
+from megatron.bridge.recipes.olmoe.olmoe_7b import (
+    olmoe_7b_finetune_config,
+    olmoe_7b_pretrain_config,
 )
 
 
 __all__ = [
-    # Gemma3 models
-    "gemma3_1b_pretrain_config",
-    "gemma3_1b_finetune_config",
+    "olmoe_7b_pretrain_config",
+    "olmoe_7b_finetune_config",
 ]

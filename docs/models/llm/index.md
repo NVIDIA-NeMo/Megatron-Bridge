@@ -7,5 +7,6 @@ This section documents Large Language Models supported by Megatron Bridge, with 
 
 llama3.md
 moonlight.md
+olmoe.md
 qwen.md
 ```
