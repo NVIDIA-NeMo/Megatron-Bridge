@@ -68,6 +68,7 @@ classifiers = [
 dependencies = [
     "transformers>=4.57.1",
     "datasets",
+    "accelerate",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
     "typing-extensions",
