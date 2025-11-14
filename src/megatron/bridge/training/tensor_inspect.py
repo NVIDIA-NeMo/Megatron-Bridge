@@ -34,13 +34,10 @@ try:
     HAVE_NVINSPECT = True
 except (ImportError, ModuleNotFoundError):
     HAVE_NVINSPECT = False
-    nvinspect_api = None  # type: ignore
-    BaseLogger = None  # type: ignore
-    MetricLogger = None  # type: ignore
-
-    def wrap_tensorboard_writer(x):  # type: ignore
-        """identity transform"""
-        return x
+    nvinspect_api = None
+    BaseLogger = None
+    MetricLogger = None
+    wrap_tensorboard_writer = None
 
 
 def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: TensorInspectConfig | None) -> None:

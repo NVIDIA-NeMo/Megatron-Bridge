@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Gemma3 models
-from .gemma3 import (
-    gemma3_1b_finetune_config,
-    gemma3_1b_pretrain_config,
-)
+#!/bin/bash
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+
+# Ensure required packages are installed
+pip install -q datasets
+
+export CUDA_VISIBLE_DEVICES="0,1"
+
+uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/functional_tests/quantization/test_quantization_workflow.py
+coverage combine -q
 
 
-__all__ = [
-    # Gemma3 models
-    "gemma3_1b_pretrain_config",
-    "gemma3_1b_finetune_config",
-]

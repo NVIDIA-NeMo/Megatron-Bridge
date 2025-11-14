@@ -159,6 +159,30 @@ class LoRAMerge(PEFT):
     Implements the LoRA weight merge for parameter-efficient fine-tuning.
     """
 
+    def merge(
+        self,
+        base_weight: torch.Tensor,
+        linear_out: torch.Tensor,
+        linear_in: torch.Tensor,
+        alpha: int,
+        dim: int,
+    ) -> torch.Tensor:
+        """
+        Merges the LoRA adapter weights with the base model weights.
+
+        Args:
+            base_weight (torch.Tensor): The base model weights.
+            linear_out (torch.Tensor): LoRA's B matrix.
+            linear_in (torch.Tensor): LoRA's A matrix.
+            alpha (int): Weighting factor for the low-rank projection.
+            dim (int): Dimension of the low-rank projection space.
+
+        Returns:
+            torch.Tensor: The merged weights.
+        """
+        lora_weight = alpha / dim * (linear_out @ linear_in)
+        return base_weight + lora_weight
+
     @torch.no_grad()
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -176,13 +200,13 @@ class LoRAMerge(PEFT):
         if not isinstance(module, LoRALinear):
             return module
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_weight = module.to_wrap.weight
-        lora_weight = (
-            module.adapter.alpha
-            / module.adapter.dim
-            * module.adapter.linear_out.weight.to(base_weight.device)
-            @ module.adapter.linear_in.weight.to(base_weight.device)
+        base_device = module.to_wrap.weight.device
+        merged_weight = self.merge(
+            module.to_wrap.weight,
+            module.adapter.linear_out.weight.to(base_device),
+            module.adapter.linear_in.weight.to(base_device),
+            module.adapter.alpha,
+            module.adapter.dim,
         )
-        merged_weight = base_weight + lora_weight
         module.to_wrap.weight.data = merged_weight
         return module
