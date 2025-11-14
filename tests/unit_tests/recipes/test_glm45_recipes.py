@@ -508,4 +508,3 @@ def test_glm45_recompute_configuration(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.recompute_granularity == "full"
     assert cfg.model.recompute_method == "uniform"
     assert cfg.model.recompute_num_layers == 2
-
