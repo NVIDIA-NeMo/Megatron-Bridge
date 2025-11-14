@@ -314,6 +314,10 @@ class AutoBridge(Generic[MegatronModelT]):
         gathering of distributed tensors and format conversion. It's useful for
         streaming weight export or custom processing. All ranks get full tensors.
 
+        If the model contains LoRA adapters, they will be automatically merged
+        into the base weights before export. This ensures the exported model
+        contains the full fine-tuned weights.
+
         Args:
             model: Megatron model instance or list of instances
             cpu: Whether to move tensors to CPU before yielding
@@ -363,6 +367,10 @@ class AutoBridge(Generic[MegatronModelT]):
         and weights to a directory that can be loaded with HuggingFace's
         from_pretrained methods.
 
+        If the model contains LoRA adapters, they will be automatically merged
+        into the base weights before saving. This ensures the saved model
+        contains the full fine-tuned weights.
+
         If the original model was loaded with trust_remote_code=True, any custom
         modeling files (e.g., modeling_*.py, configuration_*.py) will be preserved
         to ensure the saved model can be loaded properly.
@@ -408,6 +416,10 @@ class AutoBridge(Generic[MegatronModelT]):
         to safetensors files compatible with HuggingFace. It uses streaming save
         to handle large models efficiently without requiring all weights in memory
         at once.
+
+        If the model contains LoRA adapters, they will be automatically merged
+        into the base weights before saving. This ensures the saved weights
+        contain the full fine-tuned parameters.
 
         The weights are gathered from distributed ranks and saved in the standard
         HuggingFace sharded format when the model is large.
