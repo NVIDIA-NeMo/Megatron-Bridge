@@ -46,26 +46,25 @@ class TestQwen3VLTextRotaryEmbedding:
 
         mrope_section = [24, 20, 20]
 
-        # Get HF outputs: (bs, seq_len, head_dim*2) for both cos and sin
+        # Get HF outputs: (bs, seq_len, head_dim) for both cos and sin
         hf_cos, hf_sin = hf_rope_embedding(rand_hidden_states, position_ids_3d)
 
-        # Get MBridge output: (seq_len, bs, 1, head_dim/2) raw freqs with attention_scaling applied
+        # Get MBridge output: (seq_len, bs, 1, head_dim) raw freqs with concatenation applied
+        # The implementation now concatenates freqs: emb = torch.cat((freqs, freqs), dim=-1)
         mbridge_rope_output = mbridge_rope_embedding(position_ids_3d, mrope_section)
 
-        # MBridge returns raw freqs with attention_scaling already applied
+        # MBridge returns concatenated freqs with attention_scaling already applied
         # Megatron Core will compute cos/sin internally, but for testing we compute them here
-        mbridge_cos = mbridge_rope_output.cos().squeeze(2)  # (seq_len, bs, head_dim/2)
-        mbridge_sin = mbridge_rope_output.sin().squeeze(2)  # (seq_len, bs, head_dim/2)
+        mbridge_cos = mbridge_rope_output.cos().squeeze(2)  # (seq_len, bs, head_dim)
+        mbridge_sin = mbridge_rope_output.sin().squeeze(2)  # (seq_len, bs, head_dim)
 
-        # Transpose MBridge to match HF shape: (seq_len, bs, head_dim/2) -> (bs, seq_len, head_dim/2)
+        # Transpose MBridge to match HF shape: (seq_len, bs, head_dim) -> (bs, seq_len, head_dim)
         mbridge_cos = mbridge_cos.transpose(0, 1)
         mbridge_sin = mbridge_sin.transpose(0, 1)
 
-        # HF doubles the dimension with torch.cat, but we only have half
-        # So we need to compare the actual frequency values (not doubled)
+        # Both HF and MBridge now have the same shape with concatenated freqs
         # HF applies the pattern: [freq_0, freq_1, ..., freq_n, freq_0, freq_1, ..., freq_n]
-        # MBridge just has: [freq_0, freq_1, ..., freq_n]
-        # Let's compare the first half of HF with MBridge
-        head_dim_half = hf_cos.shape[-1] // 2
-        torch.testing.assert_close(hf_cos[..., :head_dim_half], mbridge_cos, rtol=1e-4, atol=1e-4)
-        torch.testing.assert_close(hf_sin[..., :head_dim_half], mbridge_sin, rtol=1e-4, atol=1e-4)
+        # MBridge also applies: torch.cat((freqs, freqs), dim=-1)
+        # So they should match exactly
+        torch.testing.assert_close(hf_cos, mbridge_cos, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(hf_sin, mbridge_sin, rtol=1e-4, atol=1e-4)

@@ -163,7 +163,13 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     hidden_states, context = checkpoint_handler(custom(layer_idx, layer_idx + 1))
                 else:
                     hidden_states, context = custom(layer_idx, layer_idx + 1)(
-                        hidden_states, attention_mask, context, context_mask, rotary_pos_emb
+                        hidden_states,
+                        attention_mask,
+                        context,
+                        context_mask,
+                        rotary_pos_emb,
+                        visual_pos_masks,
+                        deepstack_visual_embeds,
                     )
         else:
             raise ValueError("Invalid activation recompute method.")

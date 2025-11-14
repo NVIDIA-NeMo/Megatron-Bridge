@@ -287,3 +287,39 @@ class TestQwen3VLModel:
 
         assert output is not None
         assert output.shape[0] == inputs["input_ids"].shape[0]
+
+    @pytest.mark.timeout(50)
+    @pytest.mark.parametrize(
+        "freeze_all",
+        [True, False],
+    )
+    def test_model_freeze_api(self, freeze_all, hf_config):
+        """Test model freeze API."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        model = Qwen3VLModel(
+            vision_transformer_config=vision_transformer_config,
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+        )
+
+        if torch.cuda.is_available():
+            model.to("cuda")
+
+        model.freeze(
+            freeze_language_model=freeze_all,
+            freeze_vision_model=freeze_all,
+            freeze_vision_projection=freeze_all,
+        )
+
+        for param in model.parameters():
+            assert param.requires_grad != freeze_all
