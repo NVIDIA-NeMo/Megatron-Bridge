@@ -38,6 +38,7 @@ provider.sequence_parallel = True
 
 provider.finalize()
 model = provider.provide_distributed_model(wrap_with_ddp=False)
+```
 
 ### Export Megatron → HF
 ```python
