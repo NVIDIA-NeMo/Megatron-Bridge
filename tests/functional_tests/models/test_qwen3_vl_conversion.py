@@ -65,6 +65,7 @@ HF_QWEN3_VL_TOY_MODEL_CONFIG = {
     "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
     "text_config": {
         "rope_scaling": {"type": "mrope", "mrope_section": [16, 24, 24]},
+        "torch_dtype": "bfloat16",  # Explicitly set dtype in text_config
     },
     "vocab_size": 152064,
 }
@@ -240,7 +241,6 @@ class TestQwen3VLConversion:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent
             )
-            print(cmd)
 
             # Check that the conversion completed successfully
             if result.returncode != 0:
