@@ -953,7 +953,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         for vp_stage, model in enumerate(megatron_model):
             # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
-                if "_extra_state" in local_name:
+                if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
                     continue
 
                 local_name = self._unwrap_name(local_name)
