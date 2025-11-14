@@ -689,18 +689,23 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         if not all(hasattr(adapter, attr) for attr in required_attrs):
             return converted_weights_dict
 
-        from megatron.bridge.peft.lora import LoRAMerge
-        from megatron.bridge.models.conversion.param_mapping import ColumnParallelMapping, RowParallelMapping
-        from megatron.bridge.peft.utils import HAVE_TE, TECL, TERL
         from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
+
+        from megatron.bridge.models.conversion.param_mapping import ColumnParallelMapping, RowParallelMapping
+        from megatron.bridge.peft.lora import LoRAMerge
+        from megatron.bridge.peft.utils import HAVE_TE, TECL, TERL
 
         mapping_class = None
         if to_wrap is not None:
             # Determine which mapping to use based on the base layer's parallel type
-            if (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TECL)) or isinstance(to_wrap, ColumnParallelLinear):
+            if (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TECL)) or isinstance(
+                to_wrap, ColumnParallelLinear
+            ):
                 # Base layer is ColumnParallel, so use ColumnParallelMapping for linear_in
                 mapping_class = ColumnParallelMapping
-            elif (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TERL)) or isinstance(to_wrap, RowParallelLinear):
+            elif (HAVE_TE and any(isinstance(to_wrap, te_cls) for te_cls in TERL)) or isinstance(
+                to_wrap, RowParallelLinear
+            ):
                 # Base layer is RowParallel, so use RowParallelMapping for linear_in
                 mapping_class = RowParallelMapping
 
@@ -902,8 +907,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                     unwrapped_model.output_layer.weight.data.copy_(embd_weights)
 
     def _get_lora_unwrapped_name(self, megatron_param: str) -> str:
-        """Remove .to_wrap from LoRA parameter names.
-        """
+        """Remove .to_wrap from LoRA parameter names."""
         return megatron_param.replace(".to_wrap.", ".")
 
     def _is_adapter_param_name(self, param_name: str) -> bool:
