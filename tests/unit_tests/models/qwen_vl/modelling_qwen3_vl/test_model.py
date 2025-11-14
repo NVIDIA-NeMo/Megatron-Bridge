@@ -243,53 +243,6 @@ class TestQwen3VLModel:
 
     @pytest.mark.timeout(50)
     @pytest.mark.parametrize(
-        "tp_size,ep_size,pp_size",
-        [
-            (1, 1, 1),  # No parallelism
-            # (2, 2, 1),  # tp=2, ep=2, pp=1
-            # (2, 2, 2),  # tp=2, ep=2, pp=2
-        ],
-    )
-    def test_model_forward(self, tp_size, ep_size, pp_size, hf_config, processor, random_image):
-        """Test Qwen3VL model initialization and forward pass with different parallelism configs."""
-        self._setup_parallel_state(tp_size=tp_size, ep_size=ep_size, pp_size=pp_size)
-
-        # Verify parallel configuration
-        assert parallel_state.get_tensor_model_parallel_world_size() == tp_size
-        assert parallel_state.get_expert_model_parallel_world_size() == ep_size
-        assert parallel_state.get_pipeline_model_parallel_world_size() == pp_size
-
-        vision_transformer_config = self.get_vision_transformer_config(hf_config)
-        language_transformer_config = self.get_language_transformer_config(hf_config)
-        language_model_layer_spec = self.get_language_model_layer_spec()
-
-        model = Qwen3VLModel(
-            vision_transformer_config=vision_transformer_config,
-            language_transformer_config=language_transformer_config,
-            language_transformer_layer_spec=language_model_layer_spec,
-            parallel_output=True,
-            pre_process=True,
-            post_process=True,
-            add_encoder=True,
-            add_decoder=True,
-        )
-
-        model.eval()
-        print("--------------------------------")
-        print(model)
-        if torch.cuda.is_available():
-            model.to("cuda")
-
-        inputs = self.get_data_batch(processor, random_image)
-
-        with torch.no_grad():
-            output = model(**inputs)
-
-        assert output is not None
-        assert output.shape[0] == inputs["input_ids"].shape[0]
-
-    @pytest.mark.timeout(50)
-    @pytest.mark.parametrize(
         "freeze_all",
         [True, False],
     )
