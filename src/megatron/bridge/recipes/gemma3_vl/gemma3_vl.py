@@ -21,6 +21,8 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -77,17 +79,36 @@ class Gemma3VLCommonKwargs(TypedDict, total=False):
     freeze_language_model: bool
     freeze_vision_model: bool
     freeze_vision_projection: bool
+    # Checkpoint options
+    pretrained_checkpoint: str | None
+    # PEFT options
+    peft: str | PEFT | None
+    finetune_lr: float
+    # W&B logging
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
 
 
 def gemma3_vl_4b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Gemma3-VL 4B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+
     See `_gemma3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Gemma3VLCommonKwargs = {
         "hf_path": "google/gemma-3-4b-it",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Gemma3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _gemma3_vl_common(**combined_kwargs)
@@ -96,12 +117,22 @@ def gemma3_vl_4b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) ->
 def gemma3_vl_12b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Gemma3-VL 12B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=4, PP=1, LR=5e-6
+
     See `_gemma3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Gemma3VLCommonKwargs = {
         "hf_path": "google/gemma-3-12b-it",
-        "tensor_model_parallel_size": 4,
+        "tensor_model_parallel_size": 4 if is_full_sft else 1,
         "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Gemma3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _gemma3_vl_common(**combined_kwargs)
@@ -110,13 +141,23 @@ def gemma3_vl_12b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -
 def gemma3_vl_27b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Gemma3-VL 27B Instruct.
 
+    Default configuration: 2 nodes, 16 GPUs total
+    - LoRA/DoRA: TP=4, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=2, LR=5e-6
+
     See `_gemma3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Gemma3VLCommonKwargs = {
         "hf_path": "google/gemma-3-27b-it",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 2,
-        "pipeline_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8 if is_full_sft else 4,
+        "pipeline_model_parallel_size": 2 if is_full_sft else 1,
+        "pipeline_dtype": torch.bfloat16 if is_full_sft else None,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Gemma3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _gemma3_vl_common(**combined_kwargs)
@@ -126,6 +167,7 @@ def _gemma3_vl_common(
     hf_path: str,
     dir: str | None = None,
     name: str = "gemma3_vl_finetune",
+    pretrained_checkpoint: str | None = None,
     # Dataset configuration
     train_data_path: list[str] | None = None,
     valid_data_path: list[str] | None = None,
@@ -159,6 +201,13 @@ def _gemma3_vl_common(
     freeze_language_model: bool = False,
     freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
+    # PEFT options
+    peft: str | PEFT | None = None,
+    finetune_lr: float | None = None,
+    # W&B logging
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
 ) -> ConfigContainer:
     """
     Create a fine-tuning configuration for Gemma3-VL models using a given HuggingFace path.
@@ -185,13 +234,17 @@ def _gemma3_vl_common(
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
 
-    # Optimizer and scheduler
+    # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
+    effective_lr = finetune_lr if finetune_lr is not None else lr
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=lr,
+        max_lr=effective_lr,
         min_lr=min_lr,
     )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
     _dataset_choice = dataset_type or "mock"
@@ -268,9 +321,13 @@ def _gemma3_vl_common(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
         ),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
+        tokenizer=TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_path),
         checkpoint=CheckpointConfig(
+            pretrained_checkpoint=pretrained_checkpoint,
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -278,6 +335,7 @@ def _gemma3_vl_common(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        peft=peft_config,
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )
