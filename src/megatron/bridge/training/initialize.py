@@ -548,15 +548,37 @@ def _initialize_distributed(
 
     # Set the tensor model-parallel, pipeline model-parallel, and
     # data-parallel communicators using HyperCommGrid and populate a ProcessGroupCollection.
-    if device_count > 0:
-        pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
-        if get_rank_safe() == 0:
-            tp = int(model_config.tensor_model_parallel_size)
-            pp = int(model_config.pipeline_model_parallel_size)
-            cp = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
-            dp = torch.distributed.get_world_size() // (tp * pp * cp)
-            print(f"> initialized HyperCommGrid with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
-        return pg_collection
+    parallel_state.initialize_model_parallel(
+        tensor_model_parallel_size=model_config.tensor_model_parallel_size,
+        pipeline_model_parallel_size=model_config.pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=model_config.virtual_pipeline_model_parallel_size,
+        pipeline_model_parallel_comm_backend=model_config.pipeline_model_parallel_comm_backend,
+        context_parallel_size=model_config.context_parallel_size,
+        hierarchical_context_parallel_sizes=model_config.hierarchical_context_parallel_sizes,
+        expert_model_parallel_size=model_config.expert_model_parallel_size,
+        num_distributed_optimizer_instances=num_distributed_optimizer_instances,
+        expert_tensor_parallel_size=model_config.expert_tensor_parallel_size,
+        distributed_timeout_minutes=dist_config.distributed_timeout_minutes,
+        nccl_communicator_config_path=dist_config.nccl_communicator_config_path,
+        order="tp-cp-ep-dp-pp" if not dist_config.use_tp_pp_dp_mapping else "tp-pp-dp",
+        get_embedding_ranks=get_embedding_ranks,
+        get_position_embedding_ranks=get_position_embedding_ranks,
+        create_gloo_process_groups=dist_config.use_gloo_process_groups,
+        use_sharp=dist_config.use_sharp,
+        high_priority_stream_groups=dist_config.high_priority_stream_groups,
+        sharp_enabled_group=dist_config.sharp_enabled_group,
+    )
+    return ProcessGroupCollection.use_mpu_process_groups()
+    # if device_count > 0:
+    #     parallel_state._set_global_memory_buffer()
+    #     pg_collection = _create_pg_collection(model_config, num_distributed_optimizer_instances)
+    #     if get_rank_safe() == 0:
+    #         tp = int(model_config.tensor_model_parallel_size)
+    #         pp = int(model_config.pipeline_model_parallel_size)
+    #         cp = int(model_config.context_parallel_size) if getattr(model_config, "context_parallel_size", 1) else 1
+    #         dp = torch.distributed.get_world_size() // (tp * pp * cp)
+    #         print(f"> initialized HyperCommGrid with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
+    #     return pg_collection
 
 
 def _set_random_seed(
