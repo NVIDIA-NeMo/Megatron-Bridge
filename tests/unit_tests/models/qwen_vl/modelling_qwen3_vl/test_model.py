@@ -276,3 +276,96 @@ class TestQwen3VLModel:
 
         for param in model.parameters():
             assert param.requires_grad != freeze_all
+
+    @pytest.mark.timeout(50)
+    def test_shared_embedding_or_output_weight(self, hf_config):
+        """Test shared_embedding_or_output_weight method."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        # Test with add_decoder=True
+        model = Qwen3VLModel(
+            vision_transformer_config=vision_transformer_config,
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+        )
+
+        weight = model.shared_embedding_or_output_weight()
+        assert weight is not None
+
+        # Test with add_decoder=False
+        model_no_decoder = Qwen3VLModel(
+            vision_transformer_config=vision_transformer_config,
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=False,
+        )
+
+        weight_no_decoder = model_no_decoder.shared_embedding_or_output_weight()
+        assert weight_no_decoder is None
+
+    @pytest.mark.timeout(50)
+    def test_set_input_tensor(self, hf_config):
+        """Test set_input_tensor method."""
+        self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
+
+        vision_transformer_config = self.get_vision_transformer_config(hf_config)
+        language_transformer_config = self.get_language_transformer_config(hf_config)
+        language_model_layer_spec = self.get_language_model_layer_spec()
+
+        # Test with pre_process=True
+        model_pre = Qwen3VLModel(
+            vision_transformer_config=vision_transformer_config,
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            parallel_output=True,
+            pre_process=True,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+        )
+
+        if torch.cuda.is_available():
+            model_pre.to("cuda")
+            test_tensor = torch.randn(2, 4, 2048).cuda()
+        else:
+            test_tensor = torch.randn(2, 4, 2048)
+
+        # Test with single tensor (not a list)
+        model_pre.set_input_tensor(test_tensor)
+        assert model_pre.encoder_hidden_state is not None
+
+        # Test with list of tensors
+        model_pre.set_input_tensor([test_tensor])
+        assert model_pre.encoder_hidden_state is not None
+
+        # Test with pre_process=False
+        model_no_pre = Qwen3VLModel(
+            vision_transformer_config=vision_transformer_config,
+            language_transformer_config=language_transformer_config,
+            language_transformer_layer_spec=language_model_layer_spec,
+            parallel_output=True,
+            pre_process=False,
+            post_process=True,
+            add_encoder=True,
+            add_decoder=True,
+        )
+
+        if torch.cuda.is_available():
+            model_no_pre.to("cuda")
+
+        # This should set the input tensor on the language model instead
+        model_no_pre.set_input_tensor([test_tensor])
+        # No assertion here as it sets internal state

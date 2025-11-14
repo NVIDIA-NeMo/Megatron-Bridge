@@ -20,7 +20,10 @@ import torch
 from transformers import Qwen3VLMoeTextConfig
 from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextRotaryEmbedding
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLTextRotaryEmbedding
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
+    Qwen3VLMoETextRotaryEmbedding,
+    Qwen3VLTextRotaryEmbedding,
+)
 
 
 @pytest.fixture(scope="module")
@@ -68,3 +71,58 @@ class TestQwen3VLTextRotaryEmbedding:
         # So they should match exactly
         torch.testing.assert_close(hf_cos, mbridge_cos, rtol=1e-4, atol=1e-4)
         torch.testing.assert_close(hf_sin, mbridge_sin, rtol=1e-4, atol=1e-4)
+
+    def test_qwen3_vl_text_rotary_embedding_2d_position_ids(self, hf_config):
+        """Test Qwen3VLTextRotaryEmbedding with 2D position_ids (should auto-expand to 3D)."""
+        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+
+        seq_len = 512
+        batch_size = 2
+
+        # Test with 2D position_ids (should be expanded to 3D internally)
+        position_ids_2d = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)  # shape: (bs, seq_len)
+
+        mrope_section = [24, 20, 20]
+
+        # Get MBridge output with 2D position_ids
+        mbridge_rope_output = mbridge_rope_embedding(position_ids_2d, mrope_section)
+
+        # Verify output shape: (seq_len, bs, 1, head_dim)
+        assert mbridge_rope_output.shape[0] == seq_len
+        assert mbridge_rope_output.shape[1] == batch_size
+        assert mbridge_rope_output.shape[2] == 1
+
+    def test_qwen3_vl_text_rotary_embedding_default_mrope_section(self, hf_config):
+        """Test Qwen3VLTextRotaryEmbedding with None mrope_section (should use default)."""
+        mbridge_rope_embedding = Qwen3VLTextRotaryEmbedding(hf_config)
+
+        seq_len = 256
+        batch_size = 1
+
+        position_ids_3d = torch.arange(seq_len).unsqueeze(0).unsqueeze(0).expand(3, batch_size, -1)
+
+        # Test with mrope_section=None (should use self.mrope_section)
+        mbridge_rope_output = mbridge_rope_embedding(position_ids_3d, mrope_section=None)
+
+        # Verify output shape
+        assert mbridge_rope_output.shape[0] == seq_len
+        assert mbridge_rope_output.shape[1] == batch_size
+
+    def test_qwen3_vl_moe_text_rotary_embedding(self, hf_config):
+        """Test Qwen3VLMoETextRotaryEmbedding forward pass."""
+        mbridge_moe_rope = Qwen3VLMoETextRotaryEmbedding(hf_config)
+
+        seq_len = 512
+        batch_size = 2
+
+        position_ids_3d = torch.arange(seq_len).unsqueeze(0).unsqueeze(0).expand(3, batch_size, -1)
+        mrope_section = [24, 20, 20]
+
+        # Forward pass through MoE RoPE
+        output = mbridge_moe_rope(position_ids_3d, mrope_section)
+
+        # Verify output shape: (seq_len, bs, 1, head_dim)
+        assert output.shape[0] == seq_len
+        assert output.shape[1] == batch_size
+        assert output.shape[2] == 1
+        assert output.dtype == torch.float32 or output.dtype == torch.bfloat16 or output.dtype == torch.float16
