@@ -250,8 +250,10 @@ def train(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
 
-    # Run training iterations till done.
     start_iteration = global_state.train_state.step
+    print_rank_0(f"Starting training loop at iteration {start_iteration}")
+
+    # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
