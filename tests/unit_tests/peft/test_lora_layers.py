@@ -19,15 +19,18 @@ Tests LoRA adapters, LinearAdapter, TELinearAdapter, and patch_linear_module
 functionality for Parameter-Efficient Fine-Tuning.
 """
 
+import os
 from copy import deepcopy
 
+import megatron.core.parallel_state as parallel_state
 import pytest
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
 
 from megatron.bridge.peft.lora import TELinearAdapter
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TEFusedLoRALinear, patch_linear_module
 
 
 class MockLinearWithTupleReturn(nn.Module):
@@ -327,6 +330,90 @@ class TestPatchLinearModule:
         assert patched_linear.scale == alpha / dim
         assert patched_linear.lora_a.out_features == dim
         assert patched_linear.lora_b.in_features == dim
+
+
+class TestTEFusedLoRALinear:
+    """Test the TEFusedLoRALinear class."""
+
+    @pytest.fixture
+    def te_linear(self):
+        """Create a TE linear layer."""
+        return te.Linear(128, 64)
+
+    @pytest.fixture
+    def linear_adapter(self):
+        """Create a LinearAdapter for testing."""
+        linear = nn.Linear(128, 64, bias=False)
+        return LinearAdapter(linear, dim=8, alpha=16, dropout=0.0)
+
+    @pytest.fixture(autouse=True)
+    def setup_and_teardown_parallel_state(self):
+        """Setup and teardown parallel state for Megatron tests."""
+
+        if not dist.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = "29500"
+            os.environ["RANK"] = "0"
+            os.environ["LOCAL_RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
+
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                torch.cuda.set_device(0)
+
+            init_process_group_kwargs = {
+                "backend": "nccl" if device_count > 0 else "gloo",
+                "world_size": 1,
+                "rank": 0,
+            }
+
+            dist.init_process_group(**init_process_group_kwargs)
+
+        assert dist.is_initialized(), "Distributed backend not initialized"
+        if not parallel_state.model_parallel_is_initialized():
+            parallel_state.initialize_model_parallel(
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+                context_parallel_size=1,
+            )
+
+        assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+
+        yield
+
+        try:
+            if parallel_state.model_parallel_is_initialized():
+                parallel_state.destroy_model_parallel()
+            if dist.is_initialized():
+                dist.destroy_process_group()
+                # Clean up environment variables
+                for key in ["MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE"]:
+                    os.environ.pop(key, None)
+        except (NameError, AttributeError, RuntimeError):
+            pass
+
+    def test_te_fused_lora_linear_init(self, te_linear, linear_adapter):
+        """Test TEFusedLoRALinear initialization."""
+        fused_lora = TEFusedLoRALinear(te_linear, linear_adapter)
+
+        assert fused_lora.to_wrap is te_linear
+        assert fused_lora.adapter is linear_adapter
+        assert isinstance(fused_lora, TEFusedLoRALinear)
+        assert isinstance(fused_lora, LoRALinear)
+        # Fused branches should be None until first forward pass
+        assert fused_lora._fused_branches is None
+
+    def test_te_fused_lora_linear_forward(self, te_linear, linear_adapter):
+        """Test TEFusedLoRALinear forward pass."""
+        fused_lora = TEFusedLoRALinear(te_linear, linear_adapter)
+        x = torch.randn(4, 128)
+
+        output, bias = fused_lora(x)
+
+        assert isinstance(output, torch.Tensor)
+        assert output.shape == (4, 64)
+        assert bias is None
 
 
 class TestTELinearAdapter:
