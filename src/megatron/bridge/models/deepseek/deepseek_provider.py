@@ -226,7 +226,7 @@ class MoonlightModelProvider16B(DeepSeekModelProvider):
     init_method_std: float = 0.02
     moe_router_bias_update_rate: float = 1e-3
     rotary_percent: float = 1.0
-    vocab_size: int = 163840
+    vocab_size: int = 163842
 
 
 # -----------------------------------------------------------------------------
