@@ -184,6 +184,8 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             max_pixels=1003520,  # 1280*28*28
         )
 
+        batch_with = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_with.items()}
+
     if idx_without:
         texts_without = [texts[i] for i in idx_without]
         batch_without = processor(
@@ -191,6 +193,8 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             padding=True,
             return_tensors="pt",
         )
+
+        batch_without = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_without.items()}
 
     # Merge batches back to original order
     if batch_with is not None and batch_without is None:
@@ -227,7 +231,7 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         if "image_grid_thw" in batch_with:
             batch["image_grid_thw"] = batch_with["image_grid_thw"]
 
-    labels = batch["input_ids"].clone()[:, 1:]
+    labels = batch["input_ids"].clone()[:, 1:].contiguous()
     labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
     labels[torch.isin(labels, skipped_tokens)] = -100
     batch["labels"] = labels
@@ -235,7 +239,7 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).contiguous()
         )
     # Prefer general search-based masking using structured example content (not template-specific)
     loss_masks = [
@@ -313,5 +317,6 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 # Mapping of processor types to their collate functions
 COLLATE_FNS = {
     "Qwen2_5_VLProcessor": qwen2_5_collate_fn,
+    "Qwen3VLProcessor": qwen2_5_collate_fn,
     "default": default_collate_fn,
 }
