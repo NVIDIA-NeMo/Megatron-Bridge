@@ -62,11 +62,12 @@ import torch
 from megatron.bridge import AutoBridge
 
 # Load with specific settings
+# Set trust_remote_code to True only if you trust the repository
 bridge = AutoBridge.from_hf_pretrained(
     "meta-llama/Llama-2-7b-hf",
     torch_dtype=torch.float16,
     device_map="auto",
-    trust_remote_code=True,
+    trust_remote_code=trust_remote_code,
 )
 
 # Load from local path

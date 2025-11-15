@@ -107,9 +107,10 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
 
         Custom preprocessing and generation:
         >>> # Load with custom settings
+        >>> # Set trust_remote_code to True only if you trust the repository
         >>> vlm = PreTrainedVLM.from_pretrained(
         ...     "Qwen/Qwen-VL-Chat",
-        ...     trust_remote_code=True,
+        ...     trust_remote_code=trust_remote_code,
         ...     device_map="auto",
         ...     load_in_4bit=True
         ... )

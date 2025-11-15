@@ -98,7 +98,8 @@ def from_hf_pretrained(
         model = from_hf_pretrained(MyModel, "./saved_model/config.yaml")
 
         # With code references
-        model = from_pretrained(MyModel, "./saved_model/", trust_remote_code=True)
+        # Set trust_remote_code to True only if you trust the repository
+        model = from_pretrained(MyModel, "./saved_model/", trust_remote_code=trust_remote_code)
 
         # Override configuration values
         model = from_pretrained(MyModel, "./saved_model/", temperature=0.8)

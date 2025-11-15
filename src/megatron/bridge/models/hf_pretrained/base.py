@@ -182,7 +182,9 @@ class PreTrainedBase(ABC):
 
                     try:
                         model_class = get_class_from_dynamic_module(
-                            self.auto_map_model_class, self.model_name_or_path, trust_remote_code=True
+                            self.auto_map_model_class,
+                            self.model_name_or_path,
+                            trust_remote_code=self.trust_remote_code,
                         )
                         src_file = sys.modules[model_class.__module__].__file__
                         src_path = Path(src_file).parent
