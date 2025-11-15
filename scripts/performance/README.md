@@ -64,5 +64,3 @@ The following line shows an example of how you can launch a pre-training experim
   ```
   pip install git+https://github.com/NVIDIA-NeMo/Run.git
   ```
-
-- The YAML config files are resolved on compute node inside the container.
