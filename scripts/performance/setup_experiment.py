@@ -178,6 +178,7 @@ if __name__ == "__main__":
             args.time_limit,
             args.container_image,
             custom_env_vars={},
+            gres=args.gres,
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
