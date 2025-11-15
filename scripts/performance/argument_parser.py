@@ -214,7 +214,7 @@ def parse_cli_args():
     parser.add_argument(
         "--gres",
         type=str,
-        help="Slurm generic resources to request (e.g., 'gpu:4')."
+        help="Slurm generic resources to request (e.g., 'gpu:4').",
         required=False,
         default=None,
     )
