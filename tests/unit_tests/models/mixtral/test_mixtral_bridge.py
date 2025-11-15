@@ -23,70 +23,72 @@ from megatron.bridge.models.mixtral.mixtral_bridge import MixtralBridge
 from megatron.bridge.models.mixtral.mixtral_provider import MixtralModelProvider
 
 
+@pytest.fixture
+def mixtral_8x7b_config_dict():
+    """Create a sample Mixtral 8x7B configuration."""
+    return {
+        "architectures": ["MixtralForCausalLM"],
+        "attention_bias": False,
+        "attention_dropout": 0.0,
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "hidden_act": "silu",
+        "hidden_size": 4096,
+        "initializer_range": 0.02,
+        "intermediate_size": 14336,
+        "max_position_embeddings": 32768,
+        "model_type": "mixtral",
+        "num_attention_heads": 32,
+        "num_hidden_layers": 32,
+        "num_key_value_heads": 8,
+        "num_local_experts": 8,
+        "num_experts_per_tok": 2,
+        "rms_norm_eps": 1e-05,
+        "rope_theta": 1000000.0,
+        "router_aux_loss_coef": 0.01,
+        "sliding_window": None,
+        "tie_word_embeddings": False,
+        "torch_dtype": "bfloat16",
+        "transformers_version": "4.40.0",
+        "use_cache": True,
+        "vocab_size": 32000,
+    }
+
+
+@pytest.fixture
+def mixtral_8x22b_config_dict():
+    """Create a sample Mixtral 8x22B configuration."""
+    return {
+        "architectures": ["MixtralForCausalLM"],
+        "attention_bias": False,
+        "attention_dropout": 0.0,
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "hidden_act": "silu",
+        "hidden_size": 6144,
+        "initializer_range": 0.02,
+        "intermediate_size": 16384,
+        "max_position_embeddings": 65536,
+        "model_type": "mixtral",
+        "num_attention_heads": 48,
+        "num_hidden_layers": 56,
+        "num_key_value_heads": 8,
+        "num_local_experts": 8,
+        "num_experts_per_tok": 2,
+        "rms_norm_eps": 1e-05,
+        "rope_theta": 1000000.0,
+        "router_aux_loss_coef": 0.01,
+        "sliding_window": None,
+        "tie_word_embeddings": False,
+        "torch_dtype": "bfloat16",
+        "transformers_version": "4.40.0",
+        "use_cache": True,
+        "vocab_size": 32768,
+    }
+
+
 class TestMixtralBridge:
     """Test cases for MixtralBridge class."""
-
-    @pytest.fixture
-    def mixtral_8x7b_config_dict(self):
-        """Create a sample Mixtral 8x7B configuration."""
-        return {
-            "architectures": ["MixtralForCausalLM"],
-            "attention_bias": False,
-            "attention_dropout": 0.0,
-            "bos_token_id": 1,
-            "eos_token_id": 2,
-            "hidden_act": "silu",
-            "hidden_size": 4096,
-            "initializer_range": 0.02,
-            "intermediate_size": 14336,
-            "max_position_embeddings": 32768,
-            "model_type": "mixtral",
-            "num_attention_heads": 32,
-            "num_hidden_layers": 32,
-            "num_key_value_heads": 8,
-            "num_local_experts": 8,
-            "num_experts_per_tok": 2,
-            "rms_norm_eps": 1e-05,
-            "rope_theta": 1000000.0,
-            "router_aux_loss_coef": 0.01,
-            "sliding_window": None,
-            "tie_word_embeddings": False,
-            "torch_dtype": "bfloat16",
-            "transformers_version": "4.40.0",
-            "use_cache": True,
-            "vocab_size": 32000,
-        }
-
-    @pytest.fixture
-    def mixtral_8x22b_config_dict(self):
-        """Create a sample Mixtral 8x22B configuration."""
-        return {
-            "architectures": ["MixtralForCausalLM"],
-            "attention_bias": False,
-            "attention_dropout": 0.0,
-            "bos_token_id": 1,
-            "eos_token_id": 2,
-            "hidden_act": "silu",
-            "hidden_size": 6144,
-            "initializer_range": 0.02,
-            "intermediate_size": 16384,
-            "max_position_embeddings": 65536,
-            "model_type": "mixtral",
-            "num_attention_heads": 48,
-            "num_hidden_layers": 56,
-            "num_key_value_heads": 8,
-            "num_local_experts": 8,
-            "num_experts_per_tok": 2,
-            "rms_norm_eps": 1e-05,
-            "rope_theta": 1000000.0,
-            "router_aux_loss_coef": 0.01,
-            "sliding_window": None,
-            "tie_word_embeddings": False,
-            "torch_dtype": "bfloat16",
-            "transformers_version": "4.40.0",
-            "use_cache": True,
-            "vocab_size": 32768,
-        }
 
     @pytest.fixture
     def mixtral_8x7b_config(self, mixtral_8x7b_config_dict):
@@ -339,6 +341,10 @@ class TestMixtralBridgeMoEFeatures:
         assert result.moe_token_dispatcher_type == "alltoall"
         assert result.moe_grouped_gemm is True
         assert result.moe_permute_fusion is True
+
+
+class TestAutoBridgeIntegration:
+    """Integration tests for AutoBridge with Mixtral models."""
 
     def test_supports_mixtral_architectures(self, mixtral_8x7b_config_dict, mixtral_8x22b_config_dict):
         """Test that AutoBridge.supports correctly identifies Mixtral models."""
