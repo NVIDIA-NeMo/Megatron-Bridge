@@ -130,12 +130,13 @@ def setup(
         set_level_for_all_loggers=cfg.logger.set_level_for_all_loggers,
     )
 
-    initialize_megatron(
+    pg_collection = initialize_megatron(
         cfg=cfg,
         get_embedding_ranks=get_embedding_ranks,
         get_position_embedding_ranks=get_position_embedding_ranks,
         restart_store=restart_store,
     )
+    cfg.model.pg_collection = pg_collection
 
     timers = state.timers
 
@@ -158,9 +159,6 @@ def setup(
 
     print_rank_0("time to initialize megatron (seconds): {:.3f}".format(time.time() - state.start_time))
     barrier_and_log("after megatron is initialized")
-
-    # Initialize process group collection once and pass through
-    pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Context used for persisting some state between checkpoint saves.
     checkpointing_context = init_checkpointing_context(cfg.checkpoint)
@@ -232,6 +230,7 @@ def setup(
         model=model,
         use_gloo_process_groups=cfg.dist.use_gloo_process_groups,
         no_weight_decay_cond=no_weight_decay_cond,
+        pg_collection=pg_collection,
     )
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
@@ -281,12 +280,18 @@ def setup(
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
     if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
         train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    # Also inject process group collection into provider if it declares this parameter
+    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(
+            train_valid_test_datasets_provider, pg_collection=pg_collection
+        )
 
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+        pg_collection=pg_collection,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")

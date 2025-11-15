@@ -22,7 +22,6 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.profiler
-from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
@@ -35,13 +34,17 @@ from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
-from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.core.pipeline_parallel.p2p_communication import P2PCommunicator
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.utils import check_param_hashes_across_dp_replicas, get_model_config
-from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import maybe_finalize_async_save, save_checkpoint
@@ -244,7 +247,10 @@ def train(
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
 
     # Wrap forward_backward_func for Full iteration CUDA graph
-    forward_backward_func = get_forward_backward_func()
+    forward_backward_func = get_forward_backward_func(
+        pp_size=pg_collection.pp.size(),
+        vp_size=config.model.virtual_pipeline_model_parallel_size,
+    )
     if config.model.cuda_graph_impl == "local" and "full_iteration" in config.model.cuda_graph_scope:
         forward_backward_func = FullCudaGraphWrapper(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
@@ -627,15 +633,20 @@ def train_step(
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
-        adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
-            model,
-            seq_length=model_config.seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=model_config.seq_length,
-        )
+        # adjust_tensor_shapes_fn = get_tensor_shapes_adjust_fn_for_distillation(
+        #     model,
+        #     seq_length=model_config.seq_length,
+        #     micro_batch_size=train_config.micro_batch_size,
+        #     decoder_seq_length=model_config.seq_length,
+        # )
+        adjust_tensor_shapes_fn = None
 
         # Forward pass.
-        forward_backward_func = get_forward_backward_func()
+        p2p_comm = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
+        forward_backward_func = get_forward_backward_func(
+            pp_size=pg_collection.pp.size(),
+            vp_size=model_config.virtual_pipeline_model_parallel_size,
+        )
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -646,6 +657,8 @@ def train_step(
             decoder_seq_length=seq_length,
             forward_only=False,
             adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+            p2p_communicator=p2p_comm,
+            pg_collection=pg_collection,
         )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
@@ -662,12 +675,12 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful)
+    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm)
+    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
     if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad)
+        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
 
     # Update learning rate.
     if update_successful:
@@ -681,7 +694,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
+    if is_pp_last_stage(pg_collection.pp):
         # Average loss across microbatches.
         loss_reduced = {}
 
@@ -1193,7 +1206,7 @@ def _should_skip_and_handle_iteration(
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
-    _dummy_train_step(global_state, train_data_iterator)
+    _dummy_train_step(global_state, train_data_iterator, pg_collection)
 
     # Update step and sample counters
     global_state.train_state.step += 1
@@ -1206,7 +1219,9 @@ def _should_skip_and_handle_iteration(
 
 
 def _dummy_train_step(
-    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
+    global_state: GlobalState,
+    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
+    pg_collection: ProcessGroupCollection,
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.
 
@@ -1224,7 +1239,8 @@ def _dummy_train_step(
     rerun_state_machine = get_rerun_state_machine()
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
-        if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+        pp_group = pg_collection.pp
+        if is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
             if train_data_iterator is not None:
                 if cfg.dataset.dataloader_type == "batch":
                     # Finetuning: Consume global batch once

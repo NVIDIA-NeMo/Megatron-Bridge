@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional, Pattern, Type
 import numpy as np
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.core.process_groups_config import ProcessGroupCollection
 from torch.utils.data import Dataset
 
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -732,10 +733,10 @@ def _get_samples_mapping(
     index_mapping_dir: str = None,
     samples_mapping: Any = None,
     sanity_check_dist_workers: bool = True,
+    *,
+    pg_collection: ProcessGroupCollection,
 ):
     """Get a list that maps a sample index to a starting sentence index, end sentence index, and length"""
-
-    from megatron.core import parallel_state
 
     if not num_epochs:
         if not max_num_samples:
@@ -809,11 +810,11 @@ def _get_samples_mapping(
     if sanity_check_dist_workers:
         torch.distributed.barrier()
         counts = torch.cuda.LongTensor([1])
-        torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group(with_context_parallel=True))
-        torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
+        # First reduce across data-parallel-with-context group, then pipeline-parallel group
+        torch.distributed.all_reduce(counts, group=pg_collection.dp_cp)
+        torch.distributed.all_reduce(counts, group=pg_collection.pp)
         assert counts[0].item() == (
-            torch.distributed.get_world_size()
-            // torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group())
+            torch.distributed.get_world_size() // torch.distributed.get_world_size(group=pg_collection.tp)
         )
     # Load indexed dataset if not given externally.
     if samples_mapping is None:
