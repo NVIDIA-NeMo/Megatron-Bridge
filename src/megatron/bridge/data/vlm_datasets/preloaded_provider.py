@@ -26,8 +26,8 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from transformers import AutoProcessor
 
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 def _split_text_by_placeholders(

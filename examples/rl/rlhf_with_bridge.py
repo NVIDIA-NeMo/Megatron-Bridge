@@ -65,6 +65,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -78,7 +79,6 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import setup_optimizer
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 @dataclass

@@ -19,8 +19,8 @@ import numpy
 import torch
 from PIL import Image
 
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 class MockQwen25VLDataset(torch.utils.data.Dataset):

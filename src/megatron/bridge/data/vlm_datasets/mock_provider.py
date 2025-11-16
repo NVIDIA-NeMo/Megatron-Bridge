@@ -29,8 +29,8 @@ import numpy
 from PIL import Image
 
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
