@@ -203,7 +203,7 @@ def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
         return AutoModelForCausalLM
 
 
-def is_vision_language_model(model_path: str, trust_remote_code: bool = False) -> bool:
+def is_vision_language_model(model_path: str, trust_remote_code: bool | None = False) -> bool:
     """Check if the model is a vision-language model.
 
     Args:

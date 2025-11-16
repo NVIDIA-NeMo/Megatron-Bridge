@@ -23,8 +23,6 @@ import pytest
 from transformers import AutoConfig, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-from megatron.bridge.utils.common_utils import is_safe_repo
-
 
 DEEPSEEK_V3_OVERRIDES = {
     "first_k_dense_replace": 1,
@@ -60,7 +58,7 @@ class TestDeepSeekConversion:
         # Create a minimal config and model using Auto classes to avoid direct imports
         config = AutoConfig.from_pretrained(
             "deepseek-ai/DeepSeek-V3",
-            trust_remote_code=is_safe_repo(hf_path="deepseek-ai/DeepSeek-V3"),
+            trust_remote_code=True,
         )
 
         for key, value in DEEPSEEK_V3_OVERRIDES.items():

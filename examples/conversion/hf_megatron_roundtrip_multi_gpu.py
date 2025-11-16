@@ -47,7 +47,7 @@ from rich.table import Table
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
-from megatron.bridge.utils.common_utils import is_safe_repo
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"

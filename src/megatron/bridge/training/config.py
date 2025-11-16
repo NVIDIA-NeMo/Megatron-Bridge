@@ -231,7 +231,7 @@ class DataloaderConfig:
     persistent_workers: bool = False
     """Whether to keep data loading workers persistent across epochs."""
 
-    trust_remote_code: bool = None
+    trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
 
 

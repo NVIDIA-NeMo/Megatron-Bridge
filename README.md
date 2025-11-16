@@ -51,8 +51,7 @@ Conversion-only quickstart (✅ Core):
 from megatron.bridge import AutoBridge
 
 # 1) Create a bridge from a Hugging Face model (hub or local path)
-# Set trust_remote_code to True only if you trust the repository
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
 
 # 2) Get a Megatron provider and configure parallelism before instantiation
 provider = bridge.to_megatron_provider()

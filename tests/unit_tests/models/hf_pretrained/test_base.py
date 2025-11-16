@@ -25,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "src"
 
 try:
     from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
-    from megatron.bridge.utils.common_utils import is_safe_repo
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure you're running from the Megatron-Bridge directory")
@@ -135,10 +134,7 @@ def test_save_artifacts_with_trust_remote_code_true():
         # Create base with trust_remote_code=True
         base = MockPreTrainedBase(
             model_name_or_path=str(source_dir),
-            trust_remote_code=is_safe_repo(
-                trust_remote_code=True,
-                hf_path=str(source_dir),
-            ),
+            trust_remote_code=True,
         )
 
         # Mock the config to avoid loading issues
@@ -191,7 +187,7 @@ def test_save_artifacts_without_model_name_or_path():
         target_dir = tmp_path / "target"
 
         # Create base without model_name_or_path
-        base = MockPreTrainedBase(trust_remote_code=is_safe_repo(trust_remote_code=True, hf_path=""))
+        base = MockPreTrainedBase(trust_remote_code=True)
 
         # Mock the config to avoid loading issues
         mock_config = Mock()

@@ -36,7 +36,7 @@ from rich.console import Console
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion import weights_verification_table
-from megatron.bridge.utils.common_utils import is_safe_repo
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 console = Console()

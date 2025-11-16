@@ -24,7 +24,7 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-from megatron.bridge.utils.common_utils import is_safe_repo
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 # Overrides for 8B size

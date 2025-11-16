@@ -30,7 +30,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_rdr_dataset,
 )
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
-from megatron.bridge.utils.common_utils import is_safe_repo
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 @dataclass(kw_only=True)
