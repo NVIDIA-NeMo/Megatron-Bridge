@@ -132,10 +132,7 @@ def test_save_artifacts_with_trust_remote_code_true():
         target_dir = tmp_path / "target"
 
         # Create base with trust_remote_code=True
-        base = MockPreTrainedBase(
-            model_name_or_path=str(source_dir),
-            trust_remote_code=True,
-        )
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir), trust_remote_code=True)
 
         # Mock the config to avoid loading issues
         mock_config = Mock()

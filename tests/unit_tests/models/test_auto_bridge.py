@@ -144,10 +144,7 @@ class TestAutoBridge:
             mock_safe_load_config.return_value = llama_config_mock
 
             assert AutoBridge.can_handle("meta-llama/Meta-Llama-3-8B") is True
-            mock_safe_load_config.assert_called_with(
-                "meta-llama/Meta-Llama-3-8B",
-                trust_remote_code=True,
-            )
+            mock_safe_load_config.assert_called_with("meta-llama/Meta-Llama-3-8B", trust_remote_code=True)
 
     def test_can_handle_unsupported_model(self, bert_config):
         """Test can_handle returns False for unsupported models."""
@@ -192,18 +189,12 @@ class TestAutoBridge:
                 with patch.object(AutoBridge, "_validate_config"):
                     # Call from_hf_pretrained
                     model_id = "gpt2"
-                    result = AutoBridge.from_hf_pretrained(
-                        model_id,
-                        trust_remote_code=True,
-                    )
+                    result = AutoBridge.from_hf_pretrained(model_id, trust_remote_code=True)
 
                 # Assertions
                 assert isinstance(result, AutoBridge)
                 assert result.hf_pretrained == mock_model
-                mock_from_pretrained.assert_called_once_with(
-                    model_id,
-                    trust_remote_code=True,
-                )
+                mock_from_pretrained.assert_called_once_with(model_id, trust_remote_code=True)
 
     def test_from_pretrained_with_additional_kwargs(self):
         """Test from_pretrained with various kwargs."""
@@ -451,10 +442,7 @@ class TestAutoBridge:
 
                 bridge.load_hf_weights(mock_megatron_model, "./custom_model")
 
-                mock_from_pretrained.assert_called_once_with(
-                    "./custom_model",
-                    trust_remote_code=True,
-                )
+                mock_from_pretrained.assert_called_once_with("./custom_model", trust_remote_code=True)
                 mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
                     mock_loaded_model,
                     mock_megatron_model,

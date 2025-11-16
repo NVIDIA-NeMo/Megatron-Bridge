@@ -142,15 +142,11 @@ class TestPreTrainedCausalLMConfigProperty:
         """Test config loading with additional kwargs."""
         mock_from_pretrained.return_value = mock_config
 
-        lm = PreTrainedCausalLM(
-            model_name_or_path="gpt2", trust_remote_code=True, revision="main"
-        )
+        lm = PreTrainedCausalLM(model_name_or_path="gpt2", trust_remote_code=True, revision="main")
 
         _ = lm.config
 
-        mock_from_pretrained.assert_called_once_with(
-            "gpt2", trust_remote_code=True, revision="main"
-        )
+        mock_from_pretrained.assert_called_once_with("gpt2", trust_remote_code=True, revision="main")
 
     def test_config_setter(self, mock_config):
         """Test setting config manually."""

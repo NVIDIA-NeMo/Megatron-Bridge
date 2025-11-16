@@ -572,9 +572,7 @@ class TestPreTrainedVLMRepr:
     def test_repr_with_processor(self, mock_processor):
         """Test repr with loaded components."""
         vlm = PreTrainedVLM(
-            model_name_or_path="llava-hf/llava-1.5-7b-hf",
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
+            model_name_or_path="llava-hf/llava-1.5-7b-hf", torch_dtype=torch.float16, trust_remote_code=True
         )
         vlm._processor = mock_processor
 
