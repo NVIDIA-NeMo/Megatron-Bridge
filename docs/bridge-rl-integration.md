@@ -45,8 +45,7 @@ Or, with explicit provider and parallelism settings (similar to [nemo_rl/models/
 ```python
 from megatron.bridge import AutoBridge
 
-# Set trust_remote_code to True only if you trust the repository
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
 provider = bridge.to_megatron_provider(load_weights=True)
 
 # Configure distributed parallelism used during IMPORT
@@ -316,8 +315,7 @@ Two common pathways:
 ```python
 from megatron.bridge import AutoBridge
 
-# Set trust_remote_code to True only if you trust the repository
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
 # Load Megatron model from your training checkpoint
 megatron_model = bridge.load_megatron_model("/path/to/train_ckpt")
 
@@ -347,8 +345,7 @@ import torch
 from collections import defaultdict
 from megatron.bridge import AutoBridge
 
-# Set trust_remote_code to True only if you trust the repository
-bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=trust_remote_code)
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
 
 # 1) Plan: inspect names/shapes/dtypes and estimate memory
 refit_param_info_hf = {}
