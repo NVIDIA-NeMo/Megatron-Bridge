@@ -164,6 +164,7 @@ Tasks:
   - `QKVMapping` for fused QKV if applicable.
   - `GatedMLPMapping` for gate/up if applicable.
 - Use `*` wildcards consistently between Megatron and HF patterns.
+- Add model organization to SAFE_REPOS list at `megatron.bridge.models.hf_pretrained.utils`
 
 References:
 - `src/megatron/bridge/models/conversion/model_bridge.py`
@@ -183,8 +184,7 @@ A minimal bidirectional end-to-end check:
 from megatron.bridge import AutoBridge
 
 # HF → Megatron
-# Set trust_remote_code to True only if you trust the repository
-bridge = AutoBridge.from_hf_pretrained("<org>/<model-id>", trust_remote_code=trust_remote_code)
+bridge = AutoBridge.from_hf_pretrained("<org>/<model-id>", trust_remote_code=True)
 provider = bridge.to_megatron_provider()
 provider.tensor_model_parallel_size = 1
 provider.pipeline_model_parallel_size = 1
