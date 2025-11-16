@@ -39,10 +39,7 @@ class TestDeepSeekProviderMapping:
 
     @pytest.mark.parametrize("hf_model_id,provider_class", list(HF_MODEL_ID_TO_PROVIDER.items()))
     def test_bridge_vs_predefined_provider_config(self, hf_model_id, provider_class):
-        bridge = AutoBridge.from_hf_pretrained(
-            hf_model_id,
-            trust_remote_code=True,
-        )
+        bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
         converted_provider = bridge.to_megatron_provider(load_weights=False)
 
         # Finalize the converted provider to ensure computed fields are set

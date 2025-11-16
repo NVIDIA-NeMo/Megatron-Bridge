@@ -71,10 +71,7 @@ class TestGptOssProviderMapping:
         if not HF_MODEL_ID_TO_PROVIDER:
             pytest.skip("No HF model ids configured for GPT-OSS mapping test")
 
-        bridge = AutoBridge.from_hf_pretrained(
-            hf_model_id,
-            trust_remote_code=True,
-        )
+        bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
         converted_provider = bridge.to_megatron_provider(load_weights=False)
         converted_provider.finalize()
 

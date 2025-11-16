@@ -56,10 +56,7 @@ class TestDeepSeekConversion:
         model_dir = temp_dir / "deepseek_toy"
 
         # Create a minimal config and model using Auto classes to avoid direct imports
-        config = AutoConfig.from_pretrained(
-            "deepseek-ai/DeepSeek-V3",
-            trust_remote_code=True,
-        )
+        config = AutoConfig.from_pretrained("deepseek-ai/DeepSeek-V3", trust_remote_code=True)
 
         for key, value in DEEPSEEK_V3_OVERRIDES.items():
             setattr(config, key, value)
