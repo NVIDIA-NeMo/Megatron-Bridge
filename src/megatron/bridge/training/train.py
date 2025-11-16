@@ -509,9 +509,10 @@ def train(
         )
         if should_exit:
             break
+    # Explicitly delete the training CUDA graph because of
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
-            del FullCudaGraphWrapper.cuda_graph["training"]
+        del FullCudaGraphWrapper.cuda_graph["training"]
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
