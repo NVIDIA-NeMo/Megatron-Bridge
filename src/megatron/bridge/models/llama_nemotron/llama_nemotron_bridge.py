@@ -51,10 +51,9 @@ class LlamaNemotronBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> # DeciLMForCausalLM models will automatically use this bridge
-        >>> # Set trust_remote_code to True only if you trust the repository
         >>> bridge = AutoBridge.from_hf_pretrained(
         ...     "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
-        ...     trust_remote_code=trust_remote_code,
+        ...     trust_remote_code=True
         ... )
         >>> provider = bridge.to_megatron_provider()
     """

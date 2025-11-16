@@ -32,8 +32,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> # Set trust_remote_code to True only if you trust the repository
-        >>> bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3-Base", trust_remote_code=trust_remote_code)
+        >>> bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3-Base", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
 
