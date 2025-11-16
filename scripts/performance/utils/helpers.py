@@ -126,9 +126,12 @@ def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
 
 
 def set_cuda_graph_overrides(
-    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: str = "full"
+    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str | List[str]] = None
 ) -> None:
     """Set the CUDA graph overrides."""
+    if isinstance(cuda_graph_scope, str):
+        cuda_graph_scope = [cuda_graph_scope]
+
     if cuda_graph_impl is not None:
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
@@ -212,6 +215,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     use_tokendrop = kwargs.get("use_tokendrop")
     if use_tokendrop:
         recipe.model = apply_moe_token_drop(recipe.model)
+        recipe.model.moe_router_force_load_balancing = False
     if use_tokendrop is not None and not use_tokendrop:  # explicitly set to False by user
         recipe.model = apply_moe_token_drop(
             recipe.model, moe_expert_capacity_factor=-1.0, moe_pad_expert_input_to_capacity=False

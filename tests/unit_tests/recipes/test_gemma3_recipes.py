@@ -35,32 +35,52 @@ _GEMMA3_RECIPE_FUNCS = [
 
 
 def _safe_overrides_for(name: str) -> dict:
+    # Detect if this is a finetune recipe
+    is_finetune = "finetune" in name.lower()
+
     overrides = {
         "name": f"unit_{name}",
         "dir": ".",
-        "mock": True,
         "train_iters": 10,
         "global_batch_size": 2,
         "micro_batch_size": 1,
         "seq_length": 64,
-        "lr": 1e-4,
         "min_lr": 1e-5,
         "lr_warmup_iters": 2,
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "context_parallel_size": 1,
-        "use_null_tokenizer": True,
     }
 
-    # Large models/variants may set additional flags in recipes; keep harmless defaults
-    lname = name.lower()
-    if "12b" in lname or "27b" in lname:
+    if is_finetune:
+        # Finetuning-specific overrides
         overrides.update(
             {
-                "virtual_pipeline_model_parallel_size": None,
-                "sequence_parallel": True,
+                "finetune_lr": 1e-4,
+                "pretrained_checkpoint": "/fake/checkpoint/path",
             }
         )
+        # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
+        # Note: Finetuning always uses HF tokenizer, never null tokenizer
+    else:
+        # Pretrain-specific overrides
+        overrides.update(
+            {
+                "mock": True,
+                "lr": 1e-4,
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "context_parallel_size": 1,
+                "use_null_tokenizer": True,
+            }
+        )
+
+        # Large models/variants may set additional flags in recipes; keep harmless defaults
+        lname = name.lower()
+        if "12b" in lname or "27b" in lname:
+            overrides.update(
+                {
+                    "virtual_pipeline_model_parallel_size": None,
+                    "sequence_parallel": True,
+                }
+            )
 
     return overrides
 
@@ -79,9 +99,33 @@ class _FakeModelCfg:
         self.seq_length = 64
         self.account_for_embedding_in_pipeline_split = False
         self.account_for_loss_in_pipeline_split = False
+        # Finetuning-specific attributes
+        self.cross_entropy_loss_fusion = True
+        self.vocab_size = 256000  # Gemma3 vocab size
 
     def finalize(self):
         return None
+
+
+class _FakeBridge:
+    """Fake AutoBridge for testing finetune configs."""
+
+    def __init__(self):
+        pass
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfg()
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        return _FakeBridge()
+
+
+class _FakeTokenizer:
+    """Fake HuggingFace tokenizer for testing."""
+
+    def __len__(self):
+        return 256000  # Gemma3 tokenizer vocab size
 
 
 def _assert_basic_config(cfg):
@@ -100,7 +144,15 @@ def _assert_basic_config(cfg):
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.sequence_length >= 1
+
+    # Check sequence length (different attribute names for different dataset types)
+    if hasattr(cfg.dataset, "sequence_length"):
+        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
+    elif hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    else:
+        # Some other dataset type
+        assert cfg.dataset is not None
 
 
 @pytest.mark.parametrize("recipe_func", _GEMMA3_RECIPE_FUNCS)
@@ -120,14 +172,210 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider12B", FakeProvider)
     monkeypatch.setattr(gemma3_provider, "Gemma3ModelProvider27B", FakeProvider)
 
+    # For finetune recipes, also monkeypatch AutoBridge and AutoTokenizer
+    is_finetune = "finetune" in recipe_func.__name__.lower()
+    if is_finetune:
+        module_name = recipe_func.__module__
+        mod = importlib.import_module(module_name)
+        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+        # Mock AutoTokenizer to avoid HF I/O
+        import transformers
+
+        monkeypatch.setattr(
+            transformers,
+            "AutoTokenizer",
+            type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+        )
+
     overrides = _safe_overrides_for(recipe_func.__name__)
 
     cfg = recipe_func(**overrides)
 
     _assert_basic_config(cfg)
 
-    if overrides.get("use_null_tokenizer") and hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
-        assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    # Ensure tokenizer choice matches recipe type
+    if is_finetune:
+        # Finetuning recipes always use HF tokenizer
+        assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert cfg.tokenizer.tokenizer_model is not None
+    else:
+        # Pretrain recipes honor use_null_tokenizer override
+        if overrides.get("use_null_tokenizer"):
+            assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+
+# Gemma3 finetune-specific tests
+_GEMMA3_FINETUNE_FUNCS = [
+    getattr(_gemma_module, name)
+    for name in [
+        "gemma3_1b_finetune_config",
+    ]
+    if callable(getattr(_gemma_module, name, None))
+]
+
+
+@pytest.mark.parametrize("recipe_func", _GEMMA3_FINETUNE_FUNCS)
+@pytest.mark.parametrize("peft", ["lora", "dora", "none"])
+def test_gemma3_finetune_peft_vs_full_sft(recipe_func: Callable, peft: str, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT and full SFT configurations are correctly applied for Gemma3 models."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    # Mock AutoTokenizer to avoid HF I/O
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    overrides["peft"] = peft
+
+    cfg = recipe_func(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check PEFT config presence
+    if peft in ["lora", "dora"]:
+        assert cfg.peft is not None
+    elif peft == "none":
+        assert cfg.peft is None
+
+
+def test_gemma3_1b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 1B LoRA has correct default parallelism and performance optimizations."""
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    # Mock AutoTokenizer to avoid HF I/O
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = gemma3_1b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, 1B should use TP=1, PP=1
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+
+    # Check PEFT config
+    assert cfg.peft is not None
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+
+    # Check PEFT-specific performance settings
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.optimizer.use_distributed_optimizer is False
+
+
+def test_gemma3_1b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 1B DoRA has correct default parallelism and performance optimizations."""
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    # Mock AutoTokenizer to avoid HF I/O
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = gemma3_1b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, 1B should use same parallelism as LoRA
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+
+    # Check PEFT config
+    assert cfg.peft is not None
+    assert cfg.peft.dim == 8
+    assert cfg.peft.alpha == 16
+
+    # Check PEFT-specific performance settings
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.optimizer.use_distributed_optimizer is False
+
+
+def test_gemma3_1b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 1B full SFT has correct default parallelism."""
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    # Mock AutoTokenizer to avoid HF I/O
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["peft"] = "none"
+
+    cfg = gemma3_1b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, 1B should use TP=1, PP=1
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.peft is None
+
+
+@pytest.mark.parametrize("packed", [True, False])
+def test_gemma3_1b_finetune_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
+    """Test that packed sequence configuration works correctly."""
+    from megatron.bridge.recipes.gemma import gemma3_1b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    # Mock AutoTokenizer to avoid HF I/O
+    import transformers
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoTokenizer",
+        type("FakeAutoTokenizer", (), {"from_pretrained": staticmethod(lambda *args, **kwargs: _FakeTokenizer())}),
+    )
+
+    overrides = _safe_overrides_for("gemma3_1b_finetune_config")
+    overrides["packed_sequence"] = packed
+
+    cfg = gemma3_1b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Packed sequence affects default seq_length (4096 vs 2048)
+    # But we override seq_length in tests, so just verify config is valid
+    assert cfg.dataset is not None
