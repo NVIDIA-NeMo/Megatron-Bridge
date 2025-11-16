@@ -50,7 +50,7 @@ class TestLlamaNemotronModelProviderMapping:
     def test_llama_nemotron_has_correct_architecture(self):
         """Test that Llama-Nemotron models are detected as Llama architecture."""
         for model_id in HF_MODEL_ID_TO_BRIDGE_MODEL_PROVIDER.keys():
-            bridge = AutoBridge.from_hf_pretrained(model_id,trust_remote_code=True)
+            bridge = AutoBridge.from_hf_pretrained(model_id, trust_remote_code=True)
 
             # Should be able to create provider without errors
             provider = bridge.to_megatron_provider(load_weights=False)

@@ -73,10 +73,7 @@ class TestNemotronHConversion:
         # Create NemotronH toy model config by starting with 8B and applying overrides
         # This avoids attempting import of NemotronHConfig from Transformers
         model_path = "nvidia/Nemotron-H-8B-Base-8K"
-        config = AutoConfig.from_pretrained(
-            model_path,
-            trust_remote_code=is_safe_repo(hf_path=model_path),
-        )
+        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
         for k, v in HF_NEMOTRONH_TOY_MODEL_OVERRIDES.items():
             setattr(config, k, v)
 
@@ -98,10 +95,7 @@ class TestNemotronHConversion:
         model = model.bfloat16() if hasattr(model, "bfloat16") else model
 
         # Download and save tokenizer from a reference NemotronH model
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=is_safe_repo(hf_path=model_path),
-        )
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         tokenizer.save_pretrained(model_dir)
 
         # Save model, config, and modeling code to directory
@@ -164,21 +158,12 @@ class TestNemotronHConversion:
                 nemotronh_toy_model_path,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=False,  # Ensure full loading
-                trust_remote_code=is_safe_repo(
-                    trust_remote_code=True,
-                    hf_path=nemotronh_toy_model_path,
-                ),
+                trust_remote_code=True,
             )
 
             # Try loading the tokenizer as well
             try:
-                tokenizer = AutoTokenizer.from_pretrained(
-                    nemotronh_toy_model_path,
-                    trust_remote_code=is_safe_repo(
-                        trust_remote_code=True,
-                        hf_path=nemotronh_toy_model_path,
-                    ),
-                )
+                tokenizer = AutoTokenizer.from_pretrained(nemotronh_toy_model_path, trust_remote_code=True)
                 print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
             except Exception as e:
                 print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
