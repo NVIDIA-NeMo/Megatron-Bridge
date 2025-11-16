@@ -40,7 +40,8 @@ from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.utils.common_utils import get_last_rank, is_safe_repo, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 class SingleBatchIterator:
