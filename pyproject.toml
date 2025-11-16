@@ -85,6 +85,7 @@ dependencies = [
     "nvidia-resiliency-ext",
     "causal-conv1d",
     "timm",
+    "open-clip-torch>=3.2.0",
 ]
 
 
