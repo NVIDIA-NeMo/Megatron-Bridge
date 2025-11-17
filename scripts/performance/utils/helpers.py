@@ -262,12 +262,15 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     num_gpus = kwargs.get("num_gpus")
     compute_dtype = kwargs.get("compute_dtype")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype)
+    domain = kwargs.get("domain")
+    task = kwargs.get("task")
+
+    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, domain, task)
     set_common_perf_overrides(recipe)
     set_user_overrides(recipe, kwargs)
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
-    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype)
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, domain, task)
     default_num_gpus = workload_base_config.num_gpus
     user_gbs = kwargs.get("global_batch_size")
     if user_gbs is None:

@@ -30,7 +30,7 @@ BASE_LLAMA3_70B_CONFIG = WorkloadBaseConfig(
     global_batch_size=128,
 )
 
-# Llama3 70B presets ---------------------------------------------------------
+# Llama3 70B pretrain presets ---------------------------------------------------------
 
 LLAMA3_70B_GB300_BF16_BASE_CONFIG = replace(
     BASE_LLAMA3_70B_CONFIG,
@@ -120,7 +120,7 @@ LLAMA3_70B_H100_FP8_CS_BASE_CONFIG = replace(
     virtual_pipeline_model_parallel_size=5,
 )
 
-# Llama3 8B presets ---------------------------------------------------------
+# Llama3 8B pretrain presets ---------------------------------------------------------
 
 
 LLAMA3_8B_GB300_BF16_BASE_CONFIG = replace(
@@ -187,6 +187,22 @@ LLAMA3_8B_H100_FP8_CS_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     use_megatron_fsdp=True,
 )
+
+
+# Llama3 8B finetune presets ---------------------------------------------------------
+
+LLAMA3_8B_GB200_SFT_BASE_CONFIG = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    peft="none",
+    micro_batch_size=1,
+    global_batch_size=8,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+LLAMA3_8B_GB200_SFT_BF16_BASE_CONFIG = LLAMA3_8B_GB200_SFT_BASE_CONFIG
+LLAMA3_8B_GB200_SFT_FP8_CS_BASE_CONFIG = LLAMA3_8B_GB200_SFT_BASE_CONFIG
+LLAMA3_8B_GB200_SFT_FP8_MX_BASE_CONFIG = LLAMA3_8B_GB200_SFT_BASE_CONFIG
 
 
 __all__ = [

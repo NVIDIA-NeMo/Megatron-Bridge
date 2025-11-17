@@ -19,7 +19,11 @@ from utils.helpers import (
     set_workload_base_configs,
 )
 
-from megatron.bridge.recipes.llama import llama3_8b_pretrain_config, llama3_70b_pretrain_config
+from megatron.bridge.recipes.llama import (
+    llama3_8b_finetune_config,
+    llama3_8b_pretrain_config,
+    llama3_70b_pretrain_config,
+)
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
     userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
@@ -47,10 +51,10 @@ def set_llama3_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-# Llama3 70B configs ---------------------------------------------------------
+# Llama3 70B Pretrain configs ---------------------------------------------------------
 
 
-def llama3_70b_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_gb300_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_GB300_BF16_BASE_CONFIG
@@ -82,7 +86,7 @@ def llama3_70b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_gb200_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_GB200_BF16_BASE_CONFIG
@@ -114,7 +118,7 @@ def llama3_70b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_b200_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_b200_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_B200_BF16_BASE_CONFIG
@@ -146,7 +150,7 @@ def llama3_70b_b200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_h100_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_70b_h100_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_70B_H100_BF16_BASE_CONFIG
@@ -166,10 +170,10 @@ def llama3_70b_h100_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-# Llama3 8B configs ---------------------------------------------------------
+# Llama3 8B Pretrain configs ---------------------------------------------------------
 
 
-def llama3_8b_gb300_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_gb300_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_GB300_BF16_BASE_CONFIG
@@ -189,7 +193,7 @@ def llama3_8b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_8b_gb200_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_gb200_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_GB200_BF16_BASE_CONFIG
@@ -209,7 +213,7 @@ def llama3_8b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_8b_b200_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_b200_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_B200_BF16_BASE_CONFIG
@@ -229,7 +233,7 @@ def llama3_8b_b200_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def llama3_8b_h100_config(precision: str = "bf16") -> ConfigContainer:
+def llama3_8b_h100_pretrain_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_H100_BF16_BASE_CONFIG
@@ -248,5 +252,43 @@ def llama3_8b_h100_config(precision: str = "bf16") -> ConfigContainer:
         cfg.ddp.nccl_ub = True
         cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
         cfg.ddp.keep_fp8_transpose_cache = True
+
+    return cfg
+
+
+# Llama3 8B Finetune configs ---------------------------------------------------------
+
+
+def set_llama3_common_peft_configs(cfg: ConfigContainer) -> None:
+    """Set common performance configurations for all Llama3 8B PEFT configs."""
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+
+def llama3_8b_gb200_sft_config(
+    precision: str = "bf16",
+    peft: str = "none",  # `none` is SFT
+) -> ConfigContainer:
+    """GB200, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = llama3_8b_finetune_config(
+        peft=peft,
+        precision_config=precision_config,
+        packed_sequence=True,
+        seq_length=16384,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
 
     return cfg

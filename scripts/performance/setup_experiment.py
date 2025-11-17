@@ -95,6 +95,8 @@ def main(
             gpu=gpu,
             compute_dtype=compute_dtype,
             use_tokendrop=use_tokendrop,
+            domain=domain,
+            task=task,
         )
     )
     if enable_nsys:
