@@ -242,7 +242,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
-    if kwargs.get("megatron_ckpt_dir") is not None:
+    if kwargs.get("megatron_ckpt") is not None:
         recipe.checkpoint.pretrained_checkpoint = "/mnt/megatron_ckpt"
 
     tp = recipe.model.tensor_model_parallel_size

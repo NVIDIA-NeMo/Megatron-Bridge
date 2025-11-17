@@ -22,7 +22,6 @@ from utils.helpers import (
 from megatron.bridge.recipes.llama import llama3_8b_finetune_config, llama3_70b_finetune_config
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
-    userbuffers_fp8_h100_h8192_tp2_mbs1_seqlen4096_lora,
 )
 from megatron.bridge.training.config import ConfigContainer
 
@@ -162,24 +161,6 @@ def llama3_70b_h100_sft_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-def set_lora_tp_comm_overlap(cfg: ConfigContainer, precision: str) -> None:
-    """Set TP comm overlap for LORA config."""
-    tp_size = cfg.model.tensor_model_parallel_size
-    if precision in ["fp8_cs", "fp8_mx"] and tp_size == 2:
-        # Enable TP comm overlap with the given config
-        cfg.comm_overlap = CommOverlapConfig(
-            tp_comm_overlap=True,
-            tp_comm_overlap_cfg=userbuffers_fp8_h100_h8192_tp2_mbs1_seqlen4096_lora,
-        )
-        # Disable this overlap to allow skipping an all-gather which is redundant for LoRA
-        cfg.model.tp_comm_overlap_disable_qkv = True
-
-        # Allow overlapping of dgrad reduce-scatter with dgrad GEMMs
-        # (instead of wgrad GEMMs which are not done when using LoRA)
-        cfg.model.tp_comm_bulk_dgrad = False
-        cfg.model.tp_comm_overlap_rs_dgrad = True
-
-
 def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, LORA config."""
     if precision == "bf16":
@@ -199,8 +180,6 @@ def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-
-    set_lora_tp_comm_overlap(cfg, precision)
 
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
         cfg.comm_overlap.overlap_param_gather = False
@@ -229,7 +208,5 @@ def llama3_70b_h100_lora_config(precision: str = "bf16") -> ConfigContainer:
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-
-    set_lora_tp_comm_overlap(cfg, precision)
 
     return cfg

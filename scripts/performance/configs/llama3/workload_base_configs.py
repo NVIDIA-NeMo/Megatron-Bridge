@@ -196,8 +196,8 @@ LLAMA3_8B_GB200_SFT_BASE_CONFIG = replace(
     peft="none",
     micro_batch_size=1,
     global_batch_size=8,
-    cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
 )
 
 LLAMA3_8B_GB200_SFT_BF16_BASE_CONFIG = LLAMA3_8B_GB200_SFT_BASE_CONFIG
@@ -213,8 +213,11 @@ LLAMA3_8B_H100_SFT_BASE_CONFIG = replace(
 )
 
 LLAMA3_8B_H100_SFT_BF16_BASE_CONFIG = LLAMA3_8B_H100_SFT_BASE_CONFIG
-LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG = LLAMA3_8B_H100_SFT_BASE_CONFIG
-LLAMA3_8B_H100_SFT_FP8_MX_BASE_CONFIG = LLAMA3_8B_H100_SFT_BASE_CONFIG
+LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG = replace(
+    LLAMA3_8B_H100_SFT_BASE_CONFIG,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
+)
 
 
 LLAMA3_70B_GB200_SFT_BASE_CONFIG = replace(
@@ -226,8 +229,8 @@ LLAMA3_70B_GB200_SFT_BASE_CONFIG = replace(
     virtual_pipeline_model_parallel_size=5,
     micro_batch_size=1,
     global_batch_size=32,
-    cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope="mlp",
 )
 
 LLAMA3_70B_GB200_SFT_BF16_BASE_CONFIG = LLAMA3_70B_GB200_SFT_BASE_CONFIG
@@ -264,12 +267,7 @@ LLAMA3_70B_GB200_LORA_BASE_CONFIG = replace(
 
 LLAMA3_70B_GB200_LORA_BF16_BASE_CONFIG = LLAMA3_70B_GB200_LORA_BASE_CONFIG
 LLAMA3_70B_GB200_LORA_FP8_CS_BASE_CONFIG = LLAMA3_70B_GB200_LORA_BASE_CONFIG
-
-
-LLAMA3_70B_GB200_LORA_FP8_MX_BASE_CONFIG = replace(
-    LLAMA3_70B_GB200_LORA_BASE_CONFIG,
-    tensor_model_parallel_size=2,
-)
+LLAMA3_70B_GB200_LORA_FP8_MX_BASE_CONFIG = LLAMA3_70B_GB200_LORA_FP8_CS_BASE_CONFIG
 
 
 LLAMA3_70B_H100_LORA_BASE_CONFIG = replace(
