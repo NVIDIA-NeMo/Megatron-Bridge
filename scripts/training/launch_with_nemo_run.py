@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Launch Training with NeMo-Run
+
+Generic launcher for training scripts (pretrain_gpt.py, finetune_gpt.py, etc.).
+Supports local execution and Slurm clusters.
+
+Prerequisites: Install nemo-run
+
+Usage:
+    # Test locally (single node)
+    python launch_with_nemo_run.py \
+        --local \
+        --script pretrain_gpt.py \
+        --recipe llama32_1b_pretrain_config \
+        --devices 2
+
+    # Launch on Slurm from the cluster (LocalTunnel)
+    python launch_with_nemo_run.py \
+        --script pretrain_gpt.py \
+        --recipe llama32_1b_pretrain_config \
+        --nodes 2 \
+        --partition gpu \
+        --account my_account
+
+    # Launch on Slurm from your local machine (SSHTunnel)
+    python launch_with_nemo_run.py \
+        --script finetune_gpt.py \
+        --recipe llama32_1b_finetune_config \
+        --nodes 1 \
+        --partition gpu \
+        --account my_account \
+        --ssh-tunnel \
+        --host my-cluster.example.com \
+        --user myusername \
+        --remote-job-dir /home/myusername/nemo-runs
+
+    # With YAML config and CLI overrides
+    python launch_with_nemo_run.py \
+        --script pretrain_gpt.py \
+        --recipe gemma3_1b_pretrain_config \
+        --nodes 2 \
+        --partition gpu \
+        --account my_account \
+        --config-file conf/my_config.yaml \
+        train.train_iters=5000 \
+        optimizer.lr=0.0002
+
+    # With containers (uses PatternPackager by default)
+    python launch_with_nemo_run.py \
+        --script pretrain_gpt.py \
+        --recipe qwen3_8b_pretrain_config \
+        --nodes 4 \
+        --partition gpu \
+        --account my_account \
+        --container-image /path/to/container.sqsh \
+        --mount /data:/data
+
+    # With custom packager (git archive)
+    python launch_with_nemo_run.py \
+        --script pretrain_gpt.py \
+        --recipe llama3_8b_pretrain_config \
+        --nodes 2 \
+        --partition gpu \
+        --account my_account \
+        --container-image /path/to/container.sqsh \
+        --packager git
+
+    # With fault-tolerant launcher
+    python launch_with_nemo_run.py \
+        --script pretrain_gpt.py \
+        --recipe llama32_1b_pretrain_config \
+        --launcher ft \
+        --nodes 2 \
+        --partition gpu \
+        --account my_account
+
+    # VLM training (when pretrain_vlm.py exists)
+    python launch_with_nemo_run.py \
+        --script pretrain_vlm.py \
+        --recipe qwen25_vl_pretrain_config \
+        --nodes 4 \
+        --partition gpu \
+        --account my_account
+
+    # Wait for completion and tail logs
+    python launch_with_nemo_run.py \
+        --script pretrain_gpt.py \
+        --recipe llama32_1b_pretrain_config \
+        --nodes 1 \
+        --partition gpu \
+        --account my_account \
+        --no-detach \
+        --tail-logs
+
+Note:
+- Use --local for single-node testing with LocalExecutor
+- Use --ssh-tunnel when launching to Slurm from your local machine
+- Omit --ssh-tunnel when already on the Slurm cluster (uses LocalTunnel)
+- By default, jobs are submitted and detached (use --no-detach --tail-logs to monitor)
+- With containers, scripts are auto-packaged using PatternPackager (or use --packager git)
+- Use --launcher ft for fault-tolerant training
+- Any unknown arguments are forwarded to the training script
+- Adjust cluster-specific settings (account, partition, container paths)
+"""
+
+import argparse
+import logging
+from pathlib import Path
+
+import nemo_run as run
+
+
+logger = logging.getLogger(__name__)
+
+SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+def parse_args() -> tuple[argparse.Namespace, list[str]]:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Launch training with NeMo-Run (local or Slurm)",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+
+    # Execution mode
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Run locally with LocalExecutor (single node). Omit for Slurm execution.",
+    )
+
+    # Script and recipe
+    parser.add_argument(
+        "--script",
+        type=str,
+        required=True,
+        help="Training script to run (e.g., pretrain_gpt.py, finetune_gpt.py, pretrain_vlm.py)",
+    )
+    parser.add_argument(
+        "--recipe",
+        type=str,
+        required=True,
+        help="Recipe name (e.g., llama32_1b_pretrain_config)",
+    )
+
+    # Launcher configuration
+    parser.add_argument(
+        "--launcher",
+        type=str,
+        default="torchrun",
+        choices=["torchrun", "ft", "default"],
+        help="Launcher to use: 'torchrun', 'ft' (fault-tolerant), or 'default' (no launcher)",
+    )
+
+    # Resource configuration
+    parser.add_argument(
+        "--devices",
+        type=int,
+        default=8,
+        help="GPUs per node (for local) or GPUs per node (for Slurm)",
+    )
+    parser.add_argument(
+        "--nodes",
+        type=int,
+        default=1,
+        help="Number of nodes to use (Slurm only, ignored for --local)",
+    )
+
+    # Slurm-specific arguments (required unless --local)
+    parser.add_argument(
+        "--partition",
+        type=str,
+        help="Slurm partition name (required for Slurm execution)",
+    )
+    parser.add_argument(
+        "--account",
+        type=str,
+        help="Slurm account name (required for Slurm execution)",
+    )
+    parser.add_argument(
+        "--time",
+        type=str,
+        default="04:00:00",
+        help="Job time limit",
+    )
+    parser.add_argument(
+        "--ssh-tunnel",
+        action="store_true",
+        help="Use SSH tunnel (for launching from local machine). Requires --host, --user, --remote-job-dir",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        help="SSH host for tunnel (required if --ssh-tunnel is set)",
+    )
+    parser.add_argument(
+        "--user",
+        type=str,
+        help="SSH user for tunnel (required if --ssh-tunnel is set)",
+    )
+    parser.add_argument(
+        "--remote-job-dir",
+        type=str,
+        help="Remote directory to store job files (required if --ssh-tunnel is set)",
+    )
+    parser.add_argument(
+        "--identity",
+        type=str,
+        default=None,
+        help="Path to SSH private key for authentication",
+    )
+
+    # Container and packaging
+    parser.add_argument(
+        "--container-image",
+        type=str,
+        default=None,
+        help="Container image path (Slurm only)",
+    )
+    parser.add_argument(
+        "--mount",
+        type=str,
+        action="append",
+        default=[],
+        help="Container mounts in format host:container (can be specified multiple times)",
+    )
+    parser.add_argument(
+        "--packager",
+        type=str,
+        default="auto",
+        choices=["auto", "pattern", "git", "none"],
+        help="Code packaging method: 'auto' (pattern for containers, none otherwise), 'pattern', 'git', or 'none'",
+    )
+
+    # Experiment configuration
+    parser.add_argument(
+        "--experiment-name",
+        type=str,
+        default="megatron_bridge_training",
+        help="Name for the experiment",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be executed without submitting the job",
+    )
+    parser.add_argument(
+        "--detach",
+        action="store_true",
+        default=True,
+        help="Detach from the experiment after submission",
+    )
+    parser.add_argument(
+        "--tail-logs",
+        action="store_true",
+        help="Tail logs after submission (only works with --no-detach)",
+    )
+
+    args, forwarded_args = parser.parse_known_args()
+    return args, forwarded_args
+
+
+def main() -> None:
+    """Launch training using NeMo-Run."""
+    args, forwarded_args = parse_args()
+
+    # Validate arguments based on execution mode
+    if args.local:
+        # Local execution - SSH tunnel args are not used
+        if args.ssh_tunnel:
+            raise ValueError("--ssh-tunnel cannot be used with --local")
+    else:
+        # Slurm execution - require partition and account
+        if not args.partition or not args.account:
+            raise ValueError("--partition and --account are required for Slurm execution (omit --local)")
+
+        if args.ssh_tunnel:
+            if not all([args.host, args.user, args.remote_job_dir]):
+                raise ValueError("--ssh-tunnel requires --host, --user, and --remote-job-dir to be specified")
+
+    # Resolve script path
+    script_path = SCRIPT_DIR / args.script
+    if not script_path.exists():
+        raise FileNotFoundError(f"Training script not found: {script_path}")
+
+    # Build script arguments
+    script_args = ["--recipe", args.recipe]
+    if forwarded_args:
+        script_args.extend(forwarded_args)
+
+    # Create the training task
+    task = run.Script(
+        path=str(script_path),
+        entrypoint="python",
+        args=script_args,
+    )
+
+    # Determine packager based on settings
+    packager = None
+    if args.packager == "auto":
+        # Auto-select: pattern for containers, none otherwise
+        if args.container_image:
+            packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
+            logger.info("Auto-selected PatternPackager for container execution")
+        else:
+            packager = run.Packager()  # Passthrough
+    elif args.packager == "pattern":
+        packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
+        logger.info("Using PatternPackager")
+    elif args.packager == "git":
+        packager = run.GitArchivePackager()
+        logger.info("Using GitArchivePackager")
+    elif args.packager == "none":
+        packager = run.Packager()  # Passthrough
+        logger.info("Using passthrough Packager")
+
+    # Configure launcher
+    launcher = None
+    if args.launcher == "torchrun":
+        launcher = "torchrun"
+    elif args.launcher == "ft":
+        launcher = "ft"
+        logger.info("Using fault-tolerant launcher")
+    elif args.launcher == "default":
+        launcher = None
+
+    # Create executor based on mode
+    if args.local:
+        logger.info("Using LocalExecutor")
+        executor = run.LocalExecutor(
+            ntasks_per_node=args.devices,
+            launcher=launcher,
+        )
+    else:
+        # Configure tunnel (SSH for remote, Local if already on cluster)
+        tunnel = None
+        if args.ssh_tunnel:
+            tunnel = run.SSHTunnel(
+                host=args.host,
+                user=args.user,
+                job_dir=args.remote_job_dir,
+                identity=args.identity,
+            )
+            logger.info(f"Using SSH tunnel to {args.user}@{args.host}")
+        else:
+            tunnel = run.LocalTunnel()
+            logger.info("Using LocalTunnel (running on cluster)")
+
+        # Create the Slurm executor
+        executor = run.SlurmExecutor(
+            account=args.account,
+            partition=args.partition,
+            nodes=args.nodes,
+            ntasks_per_node=args.devices,
+            gpus_per_node=args.devices,
+            mem="0",
+            exclusive=True,
+            time=args.time,
+            tunnel=tunnel,
+            packager=packager,
+        )
+
+        # Configure container if specified
+        if args.container_image:
+            executor.container_image = args.container_image
+
+        # Configure mounts if specified
+        if args.mount:
+            executor.container_mounts = args.mount
+
+    # Run the experiment
+    with run.Experiment(args.experiment_name) as exp:
+        exp.add(task, executor=executor, name="training")
+
+        if args.dry_run:
+            exp.dryrun()
+        else:
+            exp.run(detach=args.detach, tail_logs=args.tail_logs)
+
+            if args.detach:
+                if args.local:
+                    logger.info("Job started locally!")
+                else:
+                    logger.info("Job submitted to Slurm!")
+                    logger.info("Use 'squeue' to check job status")
+            else:
+                logger.info("Job completed!")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    main()
