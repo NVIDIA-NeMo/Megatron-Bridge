@@ -26,6 +26,7 @@ from typing import Callable
 import pytest
 import torch
 
+
 _gemma3_vl_module = importlib.import_module("megatron.bridge.recipes.gemma3_vl.gemma3_vl")
 _GEMMA3_VL_RECIPE_FUNCS = [
     _gemma3_vl_module.gemma3_vl_4b_finetune_config,
