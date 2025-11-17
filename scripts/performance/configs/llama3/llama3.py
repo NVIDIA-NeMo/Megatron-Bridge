@@ -268,6 +268,8 @@ def set_llama3_common_peft_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    cfg.model.disable_parameter_transpose_cache = True
+
 
 def llama3_8b_gb200_sft_config(
     precision: str = "bf16",
