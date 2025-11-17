@@ -106,10 +106,19 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
-    if backend == "nccl":
-        from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+    # Initialize RNG tracker for model initialization
+    # This is needed even for CPU/gloo backend as some model components
+    # (like MambaMixer) may use get_cuda_rng_tracker().fork() during __init__
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        try:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
 
-        model_parallel_cuda_manual_seed(0)
+            model_parallel_cuda_manual_seed(0)
+        except Exception:
+            # If RNG tracker initialization fails (e.g., in test environments
+            # or when parallel groups aren't fully initialized), continue anyway.
+            # Models that need the RNG tracker will fail later with a clearer error.
+            pass
 
     try:
         yield
@@ -363,6 +372,7 @@ def load_megatron_model(
     model_cfg.expert_tensor_parallel_size = 1
     model_cfg.moe_extended_tp = False
     model_cfg.sequence_parallel = False
+    model_cfg.perform_initialization = False
     model_cfg.virtual_pipeline_model_parallel_size = None
     model_cfg.hierarchical_context_parallel_sizes = None
 

@@ -143,6 +143,7 @@ def run_pretrain_vl_recipe_test(
     tensor_model_parallel_size: Optional[int] = None,
     pipeline_model_parallel_size: Optional[int] = None,
     model_overrides: Optional[dict] = None,
+    forward_step_func: Optional[Callable] = None,
 ):
     """
     VLM variant of run_pretrain_recipe_test that uses the VLM forward step.
@@ -158,8 +159,11 @@ def run_pretrain_vl_recipe_test(
         pipeline_model_parallel_size: Override pipeline parallelism (None = use recipe default)
         model_overrides: Optional mapping of model attribute overrides to apply
     """
-    # Import locally to avoid loading VLM stack for non-VL tests
-    from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+    if forward_step_func is None:
+        # Import locally to avoid loading VLM stack for non-VL tests
+        from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+    else:
+        vlm_forward_step = forward_step_func
 
     initialize_distributed()
     shared_base_dir = broadcast_path(tmp_path)
