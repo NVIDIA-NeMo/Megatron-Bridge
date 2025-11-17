@@ -350,6 +350,12 @@ def llama3_70b_gb200_sft_config(
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+        defer_embedding_wgrad_compute=True,
+        wgrad_deferral_limit=22,
+    )
+
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
         cfg.comm_overlap.overlap_param_gather = False
         cfg.ddp.overlap_param_gather = False
@@ -380,5 +386,11 @@ def llama3_70b_h100_sft_config(
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1),
+        defer_embedding_wgrad_compute=True,
+        wgrad_deferral_limit=22,
+    )
 
     return cfg
