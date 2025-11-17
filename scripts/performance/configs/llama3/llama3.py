@@ -293,7 +293,6 @@ def llama3_8b_gb200_sft_config(
     set_workload_base_configs(cfg, base_cfg)
 
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
         cfg.ddp.overlap_param_gather = False
         cfg.optimizer.overlap_param_gather = False
 

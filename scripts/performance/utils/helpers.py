@@ -251,7 +251,8 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     if dp > 1 and pp > 1 and vp > 1:
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
