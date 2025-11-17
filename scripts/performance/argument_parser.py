@@ -391,7 +391,7 @@ def parse_cli_args():
         help=" ".join(
             [
                 "Megatron checkpoint directory to use for LoRA. Defaults to None.",
-                "Must be in Megatron checkpoint format.",
+                "Must be in Megatron checkpoint format and required for LoRA.",
             ]
         ),
         required=False,
