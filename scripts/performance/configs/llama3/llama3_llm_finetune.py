@@ -182,7 +182,8 @@ def llama3_70b_gb200_lora_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
-        cfg.comm_overlap.overlap_param_gather = False
+        if cfg.comm_overlap is not None and isinstance(cfg.comm_overlap, CommOverlapConfig):
+            cfg.comm_overlap.overlap_param_gather = False
         cfg.ddp.overlap_param_gather = False
         cfg.optimizer.overlap_param_gather = False
 
