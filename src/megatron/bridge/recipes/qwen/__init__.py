@@ -33,7 +33,6 @@ from .qwen2 import (
     qwen25_72b_finetune_config,
     qwen25_72b_pretrain_config,
     qwen25_500m_finetune_config,
-    # Qwen2.5 models
     qwen25_500m_pretrain_config,
 )
 
