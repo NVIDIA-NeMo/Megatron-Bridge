@@ -14,18 +14,15 @@
 # limitations under the License.
 
 """
-Quickstart: Finetune Llama 3.2 1B with Megatron-Bridge
-
-This is the simplest way to start finetuning with Megatron-Bridge.
-By default, this uses LoRA (Low-Rank Adaptation) for efficient finetuning.
+Quickstart: Finetune Llama 3.2 1B with Megatron Bridge
 
 Usage:
     Single GPU with LoRA:
-        torchrun --nproc_per_node=1 00_quickstart_finetune.py \
+        torchrun --nproc_per_node=1 01_quickstart_finetune.py \
             --pretrained-checkpoint /path/to/megatron/checkpoint
 
     Multiple GPUs (automatic data parallelism):
-        torchrun --nproc_per_node=8 00_quickstart_finetune.py \
+        torchrun --nproc_per_node=8 01_quickstart_finetune.py \
             --pretrained-checkpoint /path/to/megatron/checkpoint
 
 Prerequisites:
@@ -40,6 +37,9 @@ The script uses SQuAD dataset by default. See inline comments for:
 - Using your own dataset
 - Adjusting LoRA hyperparameters
 - Switching to full supervised finetuning
+
+For YAML configuration, see 03_finetune_with_yaml.py
+For multi-node training, see launch_with_sbatch.sh or 04_launch_slurm_with_nemo_run.py
 """
 
 import argparse
@@ -75,7 +75,7 @@ def main() -> None:
     # Load from the pretrained checkpoint
     config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
-    # === Quick test run (10 iterations) ===
+    # === Quick test run ===
     config.train.train_iters = 10
     config.scheduler.lr_warmup_iters = 2
 

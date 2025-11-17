@@ -23,7 +23,7 @@ python ../../conversion/convert_checkpoints.py import \
 Then run finetuning:
 
 ```bash
-torchrun --nproc_per_node=1 00_quickstart_finetune.py \
+torchrun --nproc_per_node=1 01_quickstart_finetune.py \
     --pretrained-checkpoint ./checkpoints/llama32_1b
 ```
 
@@ -40,7 +40,7 @@ config.data.data_path = "/path/to/your/dataset"
 For more complex configurations, use YAML files and command-line overrides:
 
 ```bash
-torchrun --nproc_per_node=2 01_pretrain_with_yaml.py \
+torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml
 ```
 
@@ -54,18 +54,18 @@ Example YAML (`conf/llama32_1b_pretrain.yaml`):
 # Each section maps to a ConfigContainer field
 data:                              # GPTDatasetConfig
   data_path: /path/to/training/data
-  seq_length: 4096
+  sequence_length: 4096
 
 train:                             # TrainingConfig
-  train_iters: 10000
+  train_iters: 100
   global_batch_size: 256
 
 checkpoint:                        # CheckpointConfig
   save: ./checkpoints/llama32_1b
-  save_interval: 1000
+  save_interval: 50
 
 model:                             # Model Provider
-  seq_length: 4096                 # Must match data.seq_length
+  seq_length: 4096                 # Must match data.sequence_length
   tensor_model_parallel_size: 1
   
 optimizer:                         # OptimizerConfig
@@ -77,7 +77,7 @@ Override from command line using dot notation:
 Command-line overrides follow the same pattern as YAML structure. The first part before the dot indicates which subconfig of ConfigContainer to override (e.g., `train`, `model`, `optimizer`), and the part after the dot specifies the field within that subconfig.
 
 ```bash
-torchrun --nproc_per_node=2 01_pretrain_with_yaml.py \
+torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml \
     train.train_iters=5000 \
     train.global_batch_size=512 \
@@ -93,38 +93,40 @@ These example scripts are configured to accept overrides in the priority order (
 2. YAML config file (nested structure)
 3. Base recipe defaults (from `llama32_1b_pretrain_config()`)
 
-## Multi-Node Training with NeMo-Run
+## Multi-Node Training
 
-### Prerequisites
+### Direct Slurm with sbatch
+
+For traditional HPC workflows without NeMo-Run:
+
+```bash
+# 1. Configure launch_with_sbatch.sh
+# Edit SBATCH directives and script variables at the top
+
+# 2. Submit job
+sbatch launch_with_sbatch.sh
+```
+
+The `launch_with_sbatch.sh` script shows how to:
+- Configure Slurm job parameters
+- Set up multi-node torchrun
+- Use containers (optional)
+- Pass arguments to training scripts
+
+### NeMo-Run
+
+For better job management and remote launching capabilities:
+
+Prerequisites:
 
 ```bash
 pip install nemo-run
 ```
 
-### Launch Locally
-
-Test your setup before going to a cluster. Works with both pretrain and finetune scripts:
+From the Slurm cluster (LocalTunnel):
 
 ```bash
-# Pretrain
-python 02_launch_pretrain_local.py \
-    --script 00_quickstart_pretrain.py \
-    --devices 2
-
-# Finetune
-python 02_launch_pretrain_local.py \
-    --script 00_quickstart_finetune.py \
-    --devices 1
-```
-
-### Launch on Slurm
-
-For multi-node training on Slurm clusters:
-
-From the cluster (LocalTunnel):
-
-```bash
-python 03_launch_pretrain_slurm.py \
+python 04_launch_slurm_with_nemo_run.py \
     --script 00_quickstart_pretrain.py \
     --nodes 2 \
     --devices 8 \
@@ -135,7 +137,7 @@ python 03_launch_pretrain_slurm.py \
 From your local machine (SSHTunnel):
 
 ```bash
-python 03_launch_pretrain_slurm.py \
+python 04_launch_slurm_with_nemo_run.py \
     --script 00_quickstart_pretrain.py \
     --nodes 2 \
     --devices 8 \
@@ -150,8 +152,8 @@ python 03_launch_pretrain_slurm.py \
 With custom config:
 
 ```bash
-python 03_launch_pretrain_slurm.py \
-    --script 01_finetune_with_yaml.py \
+python 04_launch_slurm_with_nemo_run.py \
+    --script 03_finetune_with_yaml.py \
     --nodes 1 \
     --devices 8 \
     --partition gpu \
@@ -174,7 +176,7 @@ python ../../conversion/convert_checkpoints.py import \
 Run finetuning:
 
 ```bash
-torchrun --nproc_per_node=1 00_quickstart_finetune.py \
+torchrun --nproc_per_node=1 01_quickstart_finetune.py \
     --pretrained-checkpoint ./checkpoints/llama32_1b
 ```
 
@@ -200,7 +202,7 @@ config.peft.alpha = 32  # LoRA alpha scaling
 For more complex finetuning configurations:
 
 ```bash
-torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
     --config-file conf/llama32_1b_finetune.yaml
 ```
 
@@ -213,13 +215,13 @@ data:                              # FinetuningDatasetConfig
   seq_length: 4096
 
 train:                             # TrainingConfig  
-  train_iters: 1000
+  train_iters: 100
   global_batch_size: 128
 
 checkpoint:                        # CheckpointConfig
   pretrained_checkpoint: /path/to/pretrained/checkpoint
   save: ./checkpoints/llama32_1b_finetuned
-  save_interval: 500
+  save_interval: 50
 
 peft:                             # PEFT (LoRA config)
   dim: 8      # LoRA rank
@@ -229,7 +231,7 @@ model:                            # Model Provider
   seq_length: 4096                # Must match data.seq_length
   
 optimizer:                        # OptimizerConfig
-  lr: 0.0001  # Higher LR for LoRA
+  lr: 0.0001
 ```
 
 Override from command line using dot notation:
@@ -237,7 +239,7 @@ Override from command line using dot notation:
 The first part before the dot indicates which ConfigContainer subconfig to override, and the part after specifies the field.
 
 ```bash
-torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
     --config-file conf/llama32_1b_finetune.yaml \
     peft.dim=16 \
     train.train_iters=2000
@@ -248,33 +250,9 @@ Here, `peft.dim=16` overrides `ConfigContainer.peft.dim`.
 Full finetuning (no LoRA):
 
 ```bash
-torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
     --peft none \
     train.train_iters=1000
-```
-
-### Multi-Node Finetuning
-
-Use the same launchers for finetuning.
-
-Local:
-
-```bash
-python 02_launch_pretrain_local.py \
-    --script 00_quickstart_finetune.py \
-    --devices 1 \
-    --script-args "--pretrained-checkpoint ./checkpoints/llama32_1b"
-```
-
-Slurm:
-
-```bash
-python 03_launch_pretrain_slurm.py \
-    --script 01_finetune_with_yaml.py \
-    --nodes 1 \
-    --partition gpu \
-    --account my_account \
-    --config-file conf/llama32_1b_finetune.yaml
 ```
 
 ### Working with Checkpoints
@@ -283,7 +261,7 @@ python 03_launch_pretrain_slurm.py \
 
 You can obtain Megatron checkpoints by:
 
-1. Converting from HuggingFace (recommended for starting from public models)
+1. Converting from HuggingFace
 2. Using Megatron checkpoints from your own pretraining runs
 
 Convert HuggingFace checkpoint to Megatron format:
@@ -298,10 +276,10 @@ Use the checkpoint:
 
 ```bash
 # Command line (quickstart scripts)
-torchrun --nproc_per_node=1 00_quickstart_finetune.py \
+torchrun --nproc_per_node=1 01_quickstart_finetune.py \
     --pretrained-checkpoint ./checkpoints/llama32_1b
 
-# YAML config (01_finetune_with_yaml.py)
+# YAML config (03_finetune_with_yaml.py)
 # In conf/llama32_1b_finetune.yaml:
 # checkpoint:
 #   pretrained_checkpoint: ./checkpoints/llama32_1b

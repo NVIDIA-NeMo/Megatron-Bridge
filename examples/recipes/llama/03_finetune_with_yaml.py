@@ -21,24 +21,24 @@ overrides for finetuning with LoRA or full supervised finetuning (SFT).
 
 Usage:
     With default config file:
-        torchrun --nproc_per_node=1 01_finetune_with_yaml.py
+        torchrun --nproc_per_node=1 03_finetune_with_yaml.py
 
     With custom config file:
-        torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+        torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
             --config-file conf/my_finetune_config.yaml
 
     With command-line overrides:
-        torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+        torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
             train.train_iters=1000 \
             optimizer.lr=5e-5
 
     Full finetuning instead of LoRA:
-        torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+        torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
             --peft none \
             train.train_iters=1000
 
     Combining YAML and CLI (CLI takes precedence):
-        torchrun --nproc_per_node=2 01_finetune_with_yaml.py \
+        torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
             --config-file conf/llama32_1b_finetune.yaml \
             peft.dim=16 \
             train.train_iters=2000
@@ -49,7 +49,7 @@ Configuration Priority (highest to lowest):
     3. Base recipe defaults (lowest)
 
 See conf/ directory for example YAML configurations.
-For a pure Python usage see 00_quickstart_finetune.py.
+For a pure Python usage see 01_quickstart_finetune.py.
 """
 
 import argparse
@@ -95,7 +95,7 @@ def parse_args() -> Tuple[argparse.Namespace, list[str]]:
         type=str,
         default="lora",
         choices=["lora", "dora", "none"],
-        help="PEFT method to use (default: lora). Use 'none' for full finetuning.",
+        help="PEFT method to use. Use 'none' for full finetuning.",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 

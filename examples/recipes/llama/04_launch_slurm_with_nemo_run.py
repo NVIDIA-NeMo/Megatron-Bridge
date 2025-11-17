@@ -24,14 +24,14 @@ Prerequisites: Install nemo-run
 
 Usage:
     # From the Slurm cluster (uses LocalTunnel)
-    python 03_launch_pretrain_slurm.py \
+    python 04_launch_slurm_with_nemo_run.py \
         --script 00_quickstart_pretrain.py \
         --nodes 2 \
         --partition gpu \
         --account my_account
 
     # From your local machine (uses SSHTunnel)
-    python 03_launch_pretrain_slurm.py \
+    python 04_launch_slurm_with_nemo_run.py \
         --script 00_quickstart_pretrain.py \
         --nodes 2 \
         --partition gpu \
@@ -42,7 +42,7 @@ Usage:
         --remote-job-dir /home/myusername/nemo-runs
 
     # With custom SSH key
-    python 03_launch_pretrain_slurm.py \
+    python 04_launch_slurm_with_nemo_run.py \
         --script 00_quickstart_pretrain.py \
         --nodes 2 \
         --partition gpu \
@@ -53,16 +53,25 @@ Usage:
         --remote-job-dir /home/myusername/nemo-runs \
         --identity ~/.ssh/id_rsa
 
-    # Launch with custom config
-    python 03_launch_pretrain_slurm.py \
-        --script 01_finetune_with_yaml.py \
+    # Launch with custom config (pass arguments to training script)
+    python 04_launch_slurm_with_nemo_run.py \
+        --script 03_finetune_with_yaml.py \
         --nodes 1 \
         --partition gpu \
         --account my_account \
         --config-file conf/llama32_1b_finetune.yaml
 
+    # Pass CLI overrides to training script
+    python 04_launch_slurm_with_nemo_run.py \
+        --script 02_pretrain_with_yaml.py \
+        --nodes 2 \
+        --partition gpu \
+        --account my_account \
+        train.train_iters=5000 \
+        optimizer.lr=0.0002
+
     # With container and custom mounts
-    python 03_launch_pretrain_slurm.py \
+    python 04_launch_slurm_with_nemo_run.py \
         --script 00_quickstart_pretrain.py \
         --nodes 2 \
         --partition gpu \
@@ -70,9 +79,21 @@ Usage:
         --container-image /path/to/container.sqsh \
         --mount /data:/data
 
+    # Wait for job completion and tail logs
+    python 04_launch_slurm_with_nemo_run.py \
+        --script 00_quickstart_pretrain.py \
+        --nodes 2 \
+        --partition gpu \
+        --account my_account \
+        --no-detach \
+        --tail-logs
+
 Note:
 - Use --ssh-tunnel when launching from your local machine
 - Omit --ssh-tunnel when already on the Slurm cluster (uses LocalTunnel)
+- By default, jobs are submitted and detached (--detach)
+- Use --no-detach --tail-logs to wait and monitor job output
+- Any unknown arguments are forwarded to the training script
 - Adjust cluster-specific settings (account, partition, container paths)
 """
 
@@ -88,7 +109,7 @@ logger = logging.getLogger(__name__)
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> tuple[argparse.Namespace, list[str]]:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Launch training (pretrain/finetune) on Slurm using NeMo-Run",
@@ -98,19 +119,19 @@ def parse_args() -> argparse.Namespace:
         "--script",
         type=str,
         required=True,
-        help="Training script to run (e.g., 00_quickstart_pretrain.py, 00_quickstart_finetune.py)",
+        help="Training script to run (e.g., 00_quickstart_pretrain.py, 01_quickstart_finetune.py)",
     )
     parser.add_argument(
         "--nodes",
         type=int,
         default=1,
-        help="Number of nodes to use (default: 1)",
+        help="Number of nodes to use",
     )
     parser.add_argument(
         "--devices",
         type=int,
         default=8,
-        help="GPUs per node (default: 8)",
+        help="GPUs per node",
     )
     parser.add_argument(
         "--partition",
@@ -128,7 +149,7 @@ def parse_args() -> argparse.Namespace:
         "--time",
         type=str,
         default="04:00:00",
-        help="Job time limit (default: 04:00:00)",
+        help="Job time limit",
     )
     parser.add_argument(
         "--ssh-tunnel",
@@ -154,25 +175,13 @@ def parse_args() -> argparse.Namespace:
         "--identity",
         type=str,
         default=None,
-        help="Path to SSH private key for authentication (optional)",
-    )
-    parser.add_argument(
-        "--config-file",
-        type=str,
-        default=None,
-        help="YAML config file to pass to the training script (optional)",
-    )
-    parser.add_argument(
-        "--script-args",
-        type=str,
-        default="",
-        help="Additional arguments for the training script (space-separated)",
+        help="Path to SSH private key for authentication",
     )
     parser.add_argument(
         "--container-image",
         type=str,
         default=None,
-        help="Container image path (optional)",
+        help="Container image path",
     )
     parser.add_argument(
         "--mount",
@@ -192,13 +201,26 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print what would be executed without submitting the job",
     )
+    parser.add_argument(
+        "--detach",
+        action="store_true",
+        default=True,
+        help="Detach from the experiment after submission",
+    )
+    parser.add_argument(
+        "--tail-logs",
+        action="store_true",
+        help="Tail logs after submission (only works with --no-detach)",
+    )
 
-    return parser.parse_args()
+    # Use parse_known_args to capture forwarded arguments for the training script
+    args, forwarded_args = parser.parse_known_args()
+    return args, forwarded_args
 
 
 def main() -> None:
     """Launch training (pretrain/finetune) using NeMo-Run SlurmExecutor."""
-    args = parse_args()
+    args, forwarded_args = parse_args()
 
     # Validate SSH tunnel arguments
     if args.ssh_tunnel:
@@ -210,13 +232,8 @@ def main() -> None:
     if not script_path.exists():
         raise FileNotFoundError(f"Training script not found: {script_path}")
 
-    # Build arguments for the training script
-    script_args = []
-    if args.config_file:
-        script_args.extend(["--config-file", args.config_file])
-
-    if args.script_args:
-        script_args.extend(args.script_args.split())
+    # Build arguments for the training script from forwarded args
+    script_args = forwarded_args if forwarded_args else []
 
     # Create the training task
     task = run.Script(
@@ -260,22 +277,20 @@ def main() -> None:
     if args.mount:
         executor.container_mounts = args.mount
 
-    # Set common environment variables
-    executor.env_vars = {
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-        "NCCL_NVLS_ENABLE": "0",
-    }
-
     # Run the experiment
     with run.Experiment(args.experiment_name) as exp:
         exp.add(task, executor=executor, name="training")
-        exp.run(detach=True, dryrun=args.dry_run)
 
-    if args.dry_run:
-        logger.info("Dry run completed - no job was submitted")
-    else:
-        logger.info("Job submitted to Slurm!")
-        logger.info("Use 'squeue' to check job status")
+        if args.dry_run:
+            exp.dryrun()
+        else:
+            exp.run(detach=args.detach, tail_logs=args.tail_logs)
+
+            if args.detach:
+                logger.info("Job submitted to Slurm!")
+                logger.info("Use 'squeue' to check job status")
+            else:
+                logger.info("Job completed!")
 
 
 if __name__ == "__main__":

@@ -21,19 +21,19 @@ overrides for more complex configuration overrides.
 
 Usage:
     With default config file:
-        torchrun --nproc_per_node=8 01_pretrain_with_yaml.py
+        torchrun --nproc_per_node=8 02_pretrain_with_yaml.py
 
     With custom config file:
-        torchrun --nproc_per_node=2 01_pretrain_with_yaml.py \
+        torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
             --config-file conf/my_custom_config.yaml
 
     With command-line overrides:
-        torchrun --nproc_per_node=2 01_pretrain_with_yaml.py \
+        torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
             train.train_iters=5000 \
             train.global_batch_size=256
 
     Combining YAML and CLI (CLI takes precedence):
-        torchrun --nproc_per_node=2 01_pretrain_with_yaml.py \
+        torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
             --config-file conf/llama32_1b_pretrain.yaml \
             train.train_iters=10000
 

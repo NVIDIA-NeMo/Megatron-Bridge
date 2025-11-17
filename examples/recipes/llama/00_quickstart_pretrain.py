@@ -24,8 +24,8 @@ Usage:
         torchrun --nproc_per_node=8 00_quickstart_pretrain.py
 
 The script uses sensible defaults and mock data for quick testing.
-For custom configurations through YAML and Hydra-style overrides, see 01_pretrain_with_yaml.py
-For multi-node training, see 02_launch_pretrain_slurm.py
+For custom configurations through YAML and Hydra-style overrides, see 02_pretrain_with_yaml.py
+For multi-node training, see launch_with_sbatch.sh or 04_launch_slurm_with_nemo_run.py
 """
 
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
@@ -44,7 +44,8 @@ def main() -> None:
     # Uncomment and modify as needed:
 
     # For a quick test run:
-    # config.train.train_iters = 10
+    config.train.train_iters = 10
+    config.scheduler.lr_warmup_iters = 2
 
     # Use your own data:
     # config.data.data_path = "/path/to/your/dataset"
