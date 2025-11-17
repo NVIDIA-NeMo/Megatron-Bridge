@@ -114,7 +114,6 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 ## Pretrain and Finetune Recipes
 
 ### Available Recipes
-- See: [bridge.recipes.glm](../../apidocs/bridge/bridge.recipes.glm.md)
 - Pretrain recipes:
   - `glm45_355b_pretrain_config`: Pre-training for GLM 4.5 355B
   - `glm45_air_106b_pretrain_config`: Pre-training for GLM 4.5 Air 106B
@@ -291,5 +290,4 @@ config = glm45_air_106b_pretrain_config(
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-- MoE training best practices: [Distributed training](../../training/distributed-training.md)
 
