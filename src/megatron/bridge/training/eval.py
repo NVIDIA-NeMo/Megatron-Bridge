@@ -121,7 +121,6 @@ def evaluate(
                     data_iterator=eval_microbatch_iterator,
                 )
 
-            forward_backward_func = get_forward_backward_func()
             # Don't care about timing during evaluation
             config.timers = None
             fault_tolerance.on_eval_step_start(state)

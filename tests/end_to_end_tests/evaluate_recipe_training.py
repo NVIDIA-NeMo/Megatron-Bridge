@@ -274,8 +274,8 @@ def validate_convergence(
 
 
 def validate_performance(
-    current_iter_time_values: np.ndarray,
-    golden_step_timing_values: np.ndarray,
+    current_values: np.ndarray,
+    golden_values: np.ndarray,
     steps: List[str],
     logger: logging.Logger,
     wandb_run: wandb.Run,
@@ -307,8 +307,8 @@ def validate_performance(
 
     # Discard first N% of iterations for stable timing comparison
     skip_first_n_percent = max(1, int(len(steps) * config["skip_first_percent_time"]))
-    current_timing_stable = current_iter_time_values[skip_first_n_percent:]
-    golden_timing_stable = golden_step_timing_values[skip_first_n_percent:]
+    current_timing_stable = current_values[skip_first_n_percent:]
+    golden_timing_stable = golden_values[skip_first_n_percent:]
 
     # Calculate average step timing
     current_avg_timing = np.mean(current_timing_stable)
@@ -452,11 +452,11 @@ def calc_convergence(
     logger.info(f"Current loss values: {current_train_loss_values}")
     logger.info(f"Golden loss values: {golden_train_loss_values}")
     convergence_result = validate_convergence(
-        current_train_loss_values=current_train_loss_values,
-        golden_train_loss_values=golden_train_loss_values,
+        current_values=current_train_loss_values,
+        golden_values=golden_train_loss_values,
         steps=steps,
         logger=logger,
-        convergence_config=convergence_config,
+        config=convergence_config,
         wandb_run=wandb_run,
     )
     if not convergence_result["passed"]:
@@ -471,11 +471,11 @@ def calc_convergence(
     logger.info(f"Current timing values: {current_iter_time_values}")
     logger.info(f"Golden timing values: {golden_iter_time_values}")
     performance_result = validate_performance(
-        current_iter_time_values=current_iter_time_values,
-        golden_iter_time_values=golden_iter_time_values,
+        current_values=current_iter_time_values,
+        golden_values=golden_iter_time_values,
         steps=steps,
         logger=logger,
-        performance_config=performance_config,
+        config=performance_config,
         wandb_run=wandb_run,
     )
     if not performance_result["passed"]:
