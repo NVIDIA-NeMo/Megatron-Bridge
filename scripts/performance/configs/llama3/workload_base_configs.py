@@ -258,7 +258,7 @@ LLAMA3_70B_GB200_LORA_BASE_CONFIG = replace(
     virtual_pipeline_model_parallel_size=20,
     micro_batch_size=1,
     global_batch_size=64,
-    cuda_graph_impl="transformer-engine",
+    cuda_graph_impl="transformer_engine",
     cuda_graph_scope="mlp",
 )
 

@@ -45,6 +45,9 @@ def set_llama3_common_peft_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.disable_parameter_transpose_cache = True
 
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.optimizer.use_distributed_optimizer = True
+
 
 def llama3_8b_gb200_sft_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, SFT config."""
