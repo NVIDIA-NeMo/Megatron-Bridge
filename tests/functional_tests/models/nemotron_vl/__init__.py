@@ -12,13 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.moonlight.moonlight_16b import (
-    moonlight_16b_finetune_config,
-    moonlight_16b_pretrain_config,
-)
-
-
-__all__ = [
-    "moonlight_16b_pretrain_config",
-    "moonlight_16b_finetune_config",
-]
+"""Functional tests for Nemotron VL models."""
