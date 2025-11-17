@@ -54,7 +54,6 @@ from megatron.bridge.training.nvrx_straggler import (
     safe_shutdown_nvrx_straggler_manager,
 )
 from megatron.bridge.training.profiling import (
-    TNvtxContext,
     handle_profiling_step,
     handle_profiling_stop,
     initialize_pytorch_profiler,
@@ -251,8 +250,10 @@ def train(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
 
-    # Run training iterations till done.
     start_iteration = global_state.train_state.step
+    print_rank_0(f"Starting training loop at iteration {start_iteration}")
+
+    # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -471,15 +472,31 @@ def train(
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
-        post_training_step_callbacks(
-            model,
-            num_floating_point_operations_since_last_log_event,
+        maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
+        num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
+            config.logger.log_interval,
+            bool(getattr(config.straggler, "log_straggler", False)),
             straggler_timer,
             global_state.train_state.step,
-            prof,
-            config,
+            num_floating_point_operations_since_last_log_event,
+        )
+        maybe_check_weight_hash_across_dp_replicas(
+            model,
+            config.train.check_weight_hash_across_dp_replicas_interval,
+            global_state.train_state.step,
             should_toggle_forward_pre_hook,
+        )
+        handle_profiling_stop(
+            config.profiling,
+            global_state.train_state.step,
+            torch.distributed.get_rank(),
+            prof,
             nsys_nvtx_context,
+        )
+        maybe_run_manual_gc(
+            config.train.manual_gc,
+            config.train.manual_gc_interval,
+            global_state.train_state.step,
         )
 
         # Checkpoint and decide whether to exit.
@@ -494,6 +511,10 @@ def train(
         )
         if should_exit:
             break
+    # Explicitly delete the training CUDA graph because of
+    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
+    if "training" in FullCudaGraphWrapper.cuda_graph:
+        del FullCudaGraphWrapper.cuda_graph["training"]
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -592,12 +613,21 @@ def train_step(
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.iterator_utils import make_data_iterator_list
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
                 num_microbatches=get_num_microbatches(),
                 default_seq_length=model_config.seq_length,
                 seq_key="tokens",
+            )
+
+            # Forward-backward pass.
+            # Convert to list of iterators for virtual pipeline parallelism
+            # With virtual PP, each model chunk needs independent access to the same microbatch
+            forward_backward_data_iterator = make_data_iterator_list(
+                model=model,
+                data_iterator=forward_backward_data_iterator,
             )
 
         # [ModelOpt]: Pipeline-parallel Distillation stacks student and teacher tensors
@@ -608,7 +638,6 @@ def train_step(
             decoder_seq_length=model_config.seq_length,
         )
 
-        # Forward-backward pass.
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -685,70 +714,91 @@ def train_step(
     return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad
 
 
-def post_training_step_callbacks(
-    model: list[MegatronModule],
-    num_floating_point_operations_since_last_log_event: float,
-    straggler_timer: Any,
-    iteration: int,
-    prof: Optional[torch.profiler.profile],
-    config: ConfigContainer,
-    should_toggle_forward_pre_hook: bool,
-    nsys_nvtx_context: Optional[TNvtxContext] = None,
-) -> None:
-    """Run all post-training-step functions (e.g., FT heartbeats, GC).
+def maybe_synchronize_training_step(train_sync_interval: Optional[int], iteration: int) -> None:
+    """Synchronizes CUDA streams when the configured interval is reached.
 
     Args:
-        model: list of model chunks wrapped in DDP
-        num_floating_point_operations_since_last_log_event: Number of floating point operations since last log
-        straggler_timer: Timer for straggler detection
-        iteration: Current training iteration
-        prof: PyTorch profiler instance
-        config: Configuration container
-        should_toggle_forward_pre_hook: Whether to toggle forward pre-hook
-        nsys_nvtx_context: NVTX context for nsys profiling (if active)
+        train_sync_interval: Number of iterations between synchronizations; ``None`` disables it.
+        iteration: Zero-based training iteration counter.
     """
-    train_config = config.train
 
-    # Bring CPU and GPU back in sync if on right iteration.
-    if train_config.train_sync_interval and iteration % train_config.train_sync_interval == 0:
+    if train_sync_interval and iteration % train_sync_interval == 0:
         torch.cuda.synchronize()
 
-    # Straggler detector.
-    if config.straggler:
-        if iteration % config.logger.log_interval == 0 and config.straggler.log_straggler:
+
+def maybe_report_stragglers(
+    log_interval: int,
+    log_straggler: bool,
+    straggler_timer: Any,
+    iteration: int,
+    num_floating_point_operations_since_last_log_event: float,
+) -> float:
+    """Reports straggler metrics if logging is enabled.
+
+    Args:
+        log_interval: Iteration interval for logging.
+        log_straggler: Whether straggler logging is enabled.
+        straggler_timer: Timer utility used to record straggler metrics.
+        iteration: Zero-based training iteration counter.
+        num_floating_point_operations_since_last_log_event: FLOPs accumulated since the last
+            logging event.
+
+    Returns:
+        float: Updated FLOP counter, reset to ``0.0`` when a report is emitted; otherwise the
+        original value.
+    """
+
+    if log_straggler and log_interval:
+        if iteration % log_interval == 0:
             straggler_timer.report(
                 num_floating_point_operations_since_last_log_event,
-                config.logger.log_interval,
+                log_interval,
             )
-            num_floating_point_operations_since_last_log_event = 0.0
+            return 0.0
+    return num_floating_point_operations_since_last_log_event
 
-    # Check weight hash across DP replicas.
-    if (
-        train_config.check_weight_hash_across_dp_replicas_interval is not None
-        and iteration % train_config.check_weight_hash_across_dp_replicas_interval == 0
-    ):
-        if should_toggle_forward_pre_hook:
-            disable_forward_pre_hook(model)
-        assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
-            "Parameter hashes not matching across DP replicas"
-        )
-        torch.distributed.barrier()
-        print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
-        if should_toggle_forward_pre_hook:
-            enable_forward_pre_hook(model)
 
-    # Profiling.
-    handle_profiling_stop(
-        config.profiling,
-        iteration,
-        torch.distributed.get_rank(),
-        prof,
-        nsys_nvtx_context,
+def maybe_check_weight_hash_across_dp_replicas(
+    model: list[MegatronModule],
+    check_weight_hash_across_dp_replicas_interval: Optional[int],
+    iteration: int,
+    should_toggle_forward_pre_hook: bool,
+) -> None:
+    """Verifies weight hashes across data-parallel replicas when requested.
+
+    Args:
+        model: List of model chunks to validate.
+        check_weight_hash_across_dp_replicas_interval: Interval at which to verify; ``None`` to skip.
+        iteration: Zero-based training iteration counter.
+        should_toggle_forward_pre_hook: Whether the pre-hook must be disabled during the check.
+    """
+
+    interval = check_weight_hash_across_dp_replicas_interval
+    if interval is None or iteration % interval != 0:
+        return
+
+    if should_toggle_forward_pre_hook:
+        disable_forward_pre_hook(model)
+    assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
+        "Parameter hashes not matching across DP replicas"
     )
+    torch.distributed.barrier()
+    print_rank_0(f">>> Weight hashes match after {iteration} iterations...")
+    if should_toggle_forward_pre_hook:
+        enable_forward_pre_hook(model)
 
-    # Manual garbage collection.
-    if train_config.manual_gc:
-        if train_config.manual_gc_interval != 0 and iteration % train_config.manual_gc_interval == 0:
+
+def maybe_run_manual_gc(manual_gc_enabled: bool, manual_gc_interval: int, iteration: int) -> None:
+    """Runs manual garbage collection according to the configured interval.
+
+    Args:
+        manual_gc_enabled: Whether manual garbage collection is enabled.
+        manual_gc_interval: Number of iterations between collections; ``0`` disables periodic runs.
+        iteration: Zero-based training iteration counter.
+    """
+
+    if manual_gc_enabled and manual_gc_interval != 0:
+        if iteration % manual_gc_interval == 0:
             gc.collect()
 
 
@@ -796,6 +846,17 @@ def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
+
+
+def force_param_sync(model: list[DDP]) -> None:
+    """Force parameter synchronization for all model chunks.
+
+    Args:
+        model: list of model chunks wrapped in DDP.
+    """
+    for model_chunk in model:
+        assert isinstance(model_chunk, DDP)
+        model_chunk.start_param_sync(force_sync=True)
 
 
 def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, float]:
@@ -896,9 +957,9 @@ def save_checkpoint_and_time(
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
-    Wraps the `save_checkpoint` function with timers and potentially disables/
-    enables forward pre-hooks if distributed optimizer with overlapped parameter
-    gather is used.
+    Wraps the `save_checkpoint` function with timers and forces parameter
+    synchronization when using distributed optimizer with overlapped parameter
+    gather to ensure checkpoint correctness.
 
     Args:
         state: The global state object.
@@ -925,13 +986,13 @@ def save_checkpoint_and_time(
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
 
-    should_disable_pre_hook = should_disable_forward_pre_hook(
+    should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
         state.cfg.optimizer.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
     )
-    if should_disable_pre_hook:
-        disable_forward_pre_hook(model)
+    if should_force_param_sync:
+        force_param_sync(model)
     save_checkpoint(
         state,
         model,
@@ -947,8 +1008,6 @@ def save_checkpoint_and_time(
         # dequantized bf16 tensors that were temporarily created during fp8
         # model checkpoint saving.
         gc.collect()
-    if should_disable_pre_hook:
-        enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
     timers.log([timer_key])
 

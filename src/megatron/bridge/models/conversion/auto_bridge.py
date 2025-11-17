@@ -314,6 +314,10 @@ class AutoBridge(Generic[MegatronModelT]):
         gathering of distributed tensors and format conversion. It's useful for
         streaming weight export or custom processing. All ranks get full tensors.
 
+        If the model contains LoRA adapters, they will be automatically merged
+        into the base weights before export. This ensures the exported model
+        contains the full fine-tuned weights.
+
         Args:
             model: Megatron model instance or list of instances
             cpu: Whether to move tensors to CPU before yielding
@@ -363,6 +367,10 @@ class AutoBridge(Generic[MegatronModelT]):
         and weights to a directory that can be loaded with HuggingFace's
         from_pretrained methods.
 
+        If the model contains LoRA adapters, they will be automatically merged
+        into the base weights before saving. This ensures the saved model
+        contains the full fine-tuned weights.
+
         If the original model was loaded with trust_remote_code=True, any custom
         modeling files (e.g., modeling_*.py, configuration_*.py) will be preserved
         to ensure the saved model can be loaded properly.
@@ -408,6 +416,10 @@ class AutoBridge(Generic[MegatronModelT]):
         to safetensors files compatible with HuggingFace. It uses streaming save
         to handle large models efficiently without requiring all weights in memory
         at once.
+
+        If the model contains LoRA adapters, they will be automatically merged
+        into the base weights before saving. This ensures the saved weights
+        contain the full fine-tuned parameters.
 
         The weights are gathered from distributed ranks and saved in the standard
         HuggingFace sharded format when the model is large.
@@ -719,7 +731,6 @@ class AutoBridge(Generic[MegatronModelT]):
             GPTModelProvider: The provider class for creating models
             load_weights: Method to load weights into existing models
         """
-
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(self.hf_pretrained)
 
         if load_weights:
@@ -734,7 +745,34 @@ class AutoBridge(Generic[MegatronModelT]):
                 pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
                 provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
+        hf_identifier: str | None = None
+        if hf_path is not None:
+            hf_identifier = str(hf_path)
+        else:
+            hf_name_or_path = getattr(self.hf_pretrained, "model_name_or_path", None)
+            if hf_name_or_path:
+                hf_identifier = str(hf_name_or_path)
+
+        if hf_identifier:
+            setattr(provider, "hf_model_id", hf_identifier)
+
         return provider
+
+    @staticmethod
+    def get_hf_model_id_from_checkpoint(path: str | Path) -> str | None:
+        """Get the HuggingFace model identifier stored in a checkpoint.
+
+        Args:
+            path: Path to a Megatron checkpoint directory, either the root directory
+                containing iteration subdirectories or a specific iteration directory.
+
+        Returns:
+            The HuggingFace model ID or path recorded in the checkpoint metadata if present,
+            otherwise `None`.
+        """
+        from megatron.bridge.training.utils import checkpoint_utils as _checkpoint_utils
+
+        return _checkpoint_utils.get_hf_model_id_from_checkpoint(path)
 
     def get_conversion_tasks(
         self,

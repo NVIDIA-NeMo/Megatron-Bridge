@@ -25,6 +25,9 @@ logger: logging.Logger = logging.getLogger(__name__)
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 
+VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
+VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+
 
 def bool_arg(arg):
     """Convert a string CLI value to a boolean."""
@@ -43,25 +46,22 @@ def list_of_strings(arg):
 
 def is_cuda_graph_impl_valid(arg):
     """Validate and normalize the CUDA graph implementation argument."""
-    choices = ["none", "None", "local", "te", "TE", "transformer_engine"]
-    if arg.lower() in choices:
-        arg = arg.lower()
-        if arg == "te":
-            arg = "transformer_engine"
+    if arg in VALID_CUDA_GRAPH_IMPLS:
         return arg
     else:
-        raise ValueError(f"Invalid value for cuda_graph_impl: {arg}. Valid options are: {choices}")
+        raise ValueError(f"Invalid value for cuda_graph_impl: {arg}. Valid options are: {VALID_CUDA_GRAPH_IMPLS}")
 
 
 def is_cuda_graph_scope_valid(arg):
     """Validate the CUDA graph scope argument."""
-    choices = ["full_iteration", "full", "attn"]
-    if arg.lower() in choices:
-        if arg.lower() == "full_iteration":
-            logger.warning("Make sure cuda_graph_impl is `local`. You can set it using `--cuda_graph_impl local`")
-        return arg
+    args = arg.split(",")
+    if all(a in VALID_CUDA_GRAPH_SCOPES for a in args):
+        return args
     else:
-        raise ValueError(f"Invalid value for cuda_graph_scope: {arg}. Valid options are: {choices}")
+        raise ValueError(
+            f"Invalid value for cuda_graph_scope: {arg}. Valid options are: {VALID_CUDA_GRAPH_SCOPES}. "
+            "Comma separated list of scopes is allowed."
+        )
 
 
 def lower_str(arg):
@@ -134,23 +134,10 @@ def parse_cli_args():
         "-c",
         "--compute_dtype",
         type=str,
-        choices=["bf16", "fp8"],
+        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc"],
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
-    )
-    fp8_recipe_msg = (
-        "FP8 recipe. Options- ds (per-tensor delayed scaling), cs (per-tensor current scaling), "
-        "mxfp8, ss (subchannel scaling). Defaults to ds"
-    )
-    parser.add_argument(
-        "-fr",
-        "--fp8_recipe",
-        type=str,
-        choices=["cs", "mx", "sc"],
-        help=fp8_recipe_msg,
-        required=False,
-        default="cs",
     )
     parser.add_argument(
         "--task",
@@ -283,19 +270,17 @@ def parse_cli_args():
     )
     parser.add_argument(
         "--cuda_graph_impl",
-        help="Cuda graph implementation. Options- 'local', 'te', 'TE', 'transformer_engine'.",
+        help=f"Cuda graph implementation. Options- {', '.join(VALID_CUDA_GRAPH_IMPLS)}.",
         type=is_cuda_graph_impl_valid,
-        choices=["none", "None", "local", "te", "TE", "transformer_engine"],
         required=False,
         default=None,
     )
     parser.add_argument(
         "--cuda_graph_scope",
-        help="Cuda graph scope. Options- 'full_iteration', 'full', 'attn'.",
+        help=f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of scopes is allowed.",
         type=is_cuda_graph_scope_valid,
-        choices=["full_iteration", "full", "attn"],
         required=False,
-        default="full",
+        default=None,
     )
     parser.add_argument(
         "-tp",
