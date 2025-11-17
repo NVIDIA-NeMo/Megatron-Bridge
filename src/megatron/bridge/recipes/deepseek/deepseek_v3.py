@@ -124,9 +124,9 @@ def deepseek_v3_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV3CommonKw
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V3",
-        "tensor_model_parallel_size": 2,
-        "pipeline_model_parallel_size": 8,
-        "expert_model_parallel_size": 32,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 16,
+        "expert_model_parallel_size": 16,
         # Maintain old recipe defaults via wrapper overrides
         "precision_config": MixedPrecisionConfig(
             bf16=True,
