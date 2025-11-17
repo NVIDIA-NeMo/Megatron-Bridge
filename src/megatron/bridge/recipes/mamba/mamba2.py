@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import warnings
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -91,7 +92,16 @@ class Mamba2CommonKwargs(TypedDict, total=False):
 
 
 def mamba2_130m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 130M."""
+    """Return a pre-training config for Mamba2 130M.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_130m_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider130M,
         "tensor_model_parallel_size": 1,
@@ -105,7 +115,16 @@ def mamba2_130m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_370m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 370M."""
+    """Return a pre-training config for Mamba2 370M.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_370m_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider370M,
         "tensor_model_parallel_size": 1,
@@ -119,7 +138,16 @@ def mamba2_370m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_780m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 780M."""
+    """Return a pre-training config for Mamba2 780M.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_780m_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider780M,
         "tensor_model_parallel_size": 1,
@@ -133,7 +161,16 @@ def mamba2_780m_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_1p3b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 1.3B."""
+    """Return a pre-training config for Mamba2 1.3B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_1p3b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider1P3B,
         "tensor_model_parallel_size": 1,
@@ -147,7 +184,16 @@ def mamba2_1p3b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_2p7b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 2.7B."""
+    """Return a pre-training config for Mamba2 2.7B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_2p7b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": MambaModelProvider2P7B,
         "tensor_model_parallel_size": 1,
@@ -161,7 +207,16 @@ def mamba2_2p7b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Co
 
 
 def mamba2_8b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 8B."""
+    """Return a pre-training config for Mamba2 8B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_8b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": NVIDIAMambaModelProvider8B,
         "tensor_model_parallel_size": 8,
@@ -175,7 +230,16 @@ def mamba2_8b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> Conf
 
 
 def mamba2_hybrid_8b_pretrain_config(**user_kwargs: Unpack[Mamba2CommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Mamba2 Hybrid 8B."""
+    """Return a pre-training config for Mamba2 Hybrid 8B.
+
+    Deprecated:
+        This recipe is deprecated and will be removed in a future release.
+    """
+    warnings.warn(
+        "mamba2_hybrid_8b_pretrain_config is deprecated and will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     recommended: Mamba2CommonKwargs = {
         "model_provider": NVIDIAMambaHybridProvider8B,
         "tensor_model_parallel_size": 8,
