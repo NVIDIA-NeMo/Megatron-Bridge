@@ -103,7 +103,7 @@ class GPTOSSFinetuneKwargs(TypedDict, total=False):
     virtual_pipeline_model_parallel_size: Optional[int]
     context_parallel_size: int
     expert_model_parallel_size: Optional[int]
-    : bool
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     # Finetuning specifics
     pretrained_checkpoint: Optional[str]
