@@ -225,11 +225,16 @@ jobs:
           - script: L2_Launch_models_olmoe
           - script: L2_Launch_models_qwen
           - script: L2_Launch_models_qwen_vl
+          - script: L2_Launch_recipes_deepseek
+          - script: L2_Launch_recipes_gemma3
+          - script: L2_Launch_recipes_gemma3_vl
+          - script: L2_Launch_recipes_gpt_oss
           - script: L2_Launch_recipes_llama_1b
           - script: L2_Launch_recipes_llama_3b
           - script: L2_Launch_recipes_llama_distill
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
+          - script: L2_Launch_recipes_qwen_vl
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization
           - script: L2_Launch_quantization_aware_training
