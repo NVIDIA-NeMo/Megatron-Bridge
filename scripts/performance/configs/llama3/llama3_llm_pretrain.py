@@ -19,10 +19,7 @@ from utils.helpers import (
     set_workload_base_configs,
 )
 
-from megatron.bridge.recipes.llama import (
-    llama3_8b_pretrain_config,
-    llama3_70b_pretrain_config,
-)
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config, llama3_70b_pretrain_config
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
     userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
@@ -50,7 +47,7 @@ def set_llama3_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-# Llama3 70B Pretrain configs ---------------------------------------------------------
+# Llama3 70B configs ---------------------------------------------------------
 
 
 def llama3_70b_gb300_config(precision: str = "bf16") -> ConfigContainer:
@@ -169,7 +166,7 @@ def llama3_70b_h100_config(precision: str = "bf16") -> ConfigContainer:
     return cfg
 
 
-# Llama3 8B Pretrain configs ---------------------------------------------------------
+# Llama3 8B configs ---------------------------------------------------------
 
 
 def llama3_8b_gb300_config(precision: str = "bf16") -> ConfigContainer:
