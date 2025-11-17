@@ -20,7 +20,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
-from megatron.bridge.models.deepseek import MoonlightModelProvider16B
+from megatron.bridge.models.olmoe import OlMoEModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
@@ -41,8 +41,8 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 logger = logging.getLogger(__name__)
 
 
-class MoonlightCommonKwargs(TypedDict, total=False):
-    """Typed options accepted by Moonlight family recipe helpers."""
+class OLMoECommonKwargs(TypedDict, total=False):
+    """Typed options accepted by OLMoE family recipe helpers."""
 
     # Core identifiers
     dir: Optional[str]
@@ -68,7 +68,6 @@ class MoonlightCommonKwargs(TypedDict, total=False):
     recompute_modules: Optional[List[str]]
     recompute_method: Optional[str]
     recompute_num_layers: Optional[int]
-    enable_deepep: bool
     apply_rope_fusion: bool
     # Training hyperparameters
     train_iters: int
@@ -86,8 +85,8 @@ class MoonlightCommonKwargs(TypedDict, total=False):
     comm_overlap_config: Optional[CommOverlapConfig]
 
 
-class MoonlightFinetuneKwargs(TypedDict, total=False):
-    """Typed options accepted by Moonlight-16B finetune recipe helpers."""
+class OLMoEFinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by OLMoE finetune recipe helpers."""
 
     # Core identifiers
     tokenizer_path: str
@@ -106,7 +105,6 @@ class MoonlightFinetuneKwargs(TypedDict, total=False):
     recompute_modules: Optional[List[str]]
     recompute_method: Optional[str]
     recompute_num_layers: Optional[int]
-    enable_deepep: bool
     apply_rope_fusion: bool
     # Finetuning specifics
     pretrained_checkpoint: Optional[str]
@@ -132,21 +130,20 @@ class MoonlightFinetuneKwargs(TypedDict, total=False):
     wandb_exp_name: Optional[str]
 
 
-def moonlight_16b_pretrain_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) -> ConfigContainer:
-    """Return a pre-training config for Moonlight-16B.
+def olmoe_7b_pretrain_config(**user_kwargs: Unpack[OLMoECommonKwargs]) -> ConfigContainer:
+    """Return a pre-training config for OLMoE-7B (7B total, ~1B active).
 
-    See `_moonlight_common` for the full list of parameters.
+    See `_olmoe_common` for the full list of parameters.
     """
-    recommended_kwargs: MoonlightCommonKwargs = {
-        "tensor_model_parallel_size": 2,
+    recommended_kwargs: OLMoECommonKwargs = {
+        "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_dtype": torch.bfloat16,
         "virtual_pipeline_model_parallel_size": None,
         "context_parallel_size": 1,
         "expert_model_parallel_size": 8,
-        "sequence_parallel": True,
+        "sequence_parallel": False,
         "recompute_granularity": "selective",
-        "enable_deepep": False,
         "apply_rope_fusion": False,
         "train_iters": 500_000,
         "global_batch_size": 2048,
@@ -159,11 +156,11 @@ def moonlight_16b_pretrain_config(**user_kwargs: Unpack[MoonlightCommonKwargs]) 
         "eval_interval": 2000,
         "save_interval": 2000,
     }
-    combined_kwargs: MoonlightCommonKwargs = {**recommended_kwargs, **user_kwargs}
-    return _moonlight_common(**combined_kwargs)
+    combined_kwargs: OLMoECommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _olmoe_common(**combined_kwargs)
 
 
-def _moonlight_common(
+def _olmoe_common(
     dir: Optional[str] = None,
     name: str = "default",
     # Dataset configuration
@@ -175,19 +172,18 @@ def _moonlight_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_model_parallel_size: int = 2,
-    pipeline_model_parallel_size: int = 2,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
     pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
-    expert_model_parallel_size: int = 4,
-    sequence_parallel: bool = True,
+    expert_model_parallel_size: int = 8,
+    sequence_parallel: bool = False,
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
-    enable_deepep: bool = False,
     apply_rope_fusion: bool = False,
     # Training hyperparameters
     train_iters: int = 500_000,
@@ -205,7 +201,7 @@ def _moonlight_common(
     comm_overlap_config: Optional[CommOverlapConfig] = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for Moonlight-16B model.
+    Create a pre-training configuration for OLMoE-7B model (7B total, ~1B active).
 
     Args:
         dir (Optional[str]): Base directory for saving logs and checkpoints.
@@ -228,7 +224,6 @@ def _moonlight_common(
         recompute_modules (Optional[List[str]]): Modules to recompute.
         recompute_method (Optional[str]): Recomputation method.
         recompute_num_layers (Optional[int]): Number of layers to recompute.
-        enable_deepep (bool): Whether to use DeePEP.
         apply_rope_fusion (bool): Whether to apply RoPE fusion.
         train_iters (int): Total number of training iterations.
         global_batch_size (int): Global batch size for training.
@@ -267,7 +262,6 @@ def _moonlight_common(
         recompute_modules=recompute_modules,
         recompute_method=recompute_method,
         recompute_num_layers=recompute_num_layers,
-        enable_deepep=enable_deepep,
         apply_rope_fusion=apply_rope_fusion,
     )
 
@@ -277,7 +271,7 @@ def _moonlight_common(
             lr_decay_iters=train_iters,
             adam_beta1=0.9,
             adam_beta2=0.95,
-            adam_eps=1e-5,
+            adam_eps=1e-8,
             weight_decay=0.1,
             max_lr=lr,
             min_lr=min_lr,
@@ -289,7 +283,6 @@ def _moonlight_common(
         opt_config.exp_avg_dtype = torch.bfloat16
         opt_config.exp_avg_sq_dtype = torch.bfloat16
     else:
-        # TODO: Add support for muon optimizer once mcore supports it
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")
 
     if precision_config is None:
@@ -358,7 +351,7 @@ def _moonlight_common(
     )
 
     if apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+        cfg.dist.enable_megatron_core_experimental = True  # for rope fusion
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(
@@ -369,23 +362,22 @@ def _moonlight_common(
 
 
 def _model_config(
-    tensor_model_parallel_size: int = 2,
+    tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
     pipeline_dtype: Optional[torch.dtype] = None,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 8,
-    sequence_parallel: bool = True,
+    sequence_parallel: bool = False,
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
-    enable_deepep: bool = False,
     apply_rope_fusion: bool = False,
-) -> MoonlightModelProvider16B:
+) -> OlMoEModelProvider:
     """
-    Configure the Moonlight-16B model.
+    Configure the OLMoE-7B model (7B total, ~1B active).
 
     Args:
         tensor_model_parallel_size: Degree of tensor model parallelism.
@@ -399,13 +391,12 @@ def _model_config(
         recompute_modules: Modules to recompute.
         recompute_method: Recomputation method.
         recompute_num_layers: Number of layers to recompute.
-        enable_deepep: Whether to use DeePEP.
         apply_rope_fusion: Whether to apply RoPE fusion.
 
     Returns:
-        MoonlightModelProvider16B: Configuration for the Moonlight-16B model.
+        OlMoEModelProvider: Configuration for the OLMoE-7B model (7B total, ~1B active).
     """
-    cfg = MoonlightModelProvider16B(
+    cfg = OlMoEModelProvider(
         tensor_model_parallel_size=tensor_model_parallel_size,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_dtype,
@@ -413,7 +404,6 @@ def _model_config(
         context_parallel_size=context_parallel_size,
         expert_model_parallel_size=expert_model_parallel_size,
         sequence_parallel=sequence_parallel,
-        expert_tensor_parallel_size=1,  # Do not use ETP
         # Recomputation
         recompute_granularity=recompute_granularity,
         recompute_modules=recompute_modules,
@@ -421,32 +411,25 @@ def _model_config(
         recompute_num_layers=recompute_num_layers,
     )
 
-    # Pipeline split for asymmetric stages as used in NeMo recipe
-    cfg.account_for_embedding_in_pipeline_split = False
-    cfg.account_for_loss_in_pipeline_split = False
-    cfg.num_layers_in_first_pipeline_stage = None
-    cfg.num_layers_in_last_pipeline_stage = None
-
     # Performance optimization knobs
     cfg.moe_permute_fusion = True
     if apply_rope_fusion:
         cfg.apply_rope_fusion = True
 
     # Pipeline parallelism configs. We infer PP layout from the provided PP and VP size
+    # OLMoE has 16 layers
     map_pp_vp_to_layout = {
         (1, 1): None,
-        (2, 1): [["embedding"] + ["decoder"] * 14, ["decoder"] * 13 + ["loss"]],
-        (4, 1): [["embedding"] + ["decoder"] * 7] + [["decoder"] * 7] * 2 + [["decoder"] * 6 + ["loss"]],
-        (8, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 6 + [["decoder"] * 3 + ["loss"]],
-        (2, 2): [["embedding"] + ["decoder"] * 7] + [["decoder"] * 7] * 2 + [["decoder"] * 6 + ["loss"]],
-        (4, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 6 + [["decoder"] * 3 + ["loss"]],
+        (2, 1): [["embedding"] + ["decoder"] * 8, ["decoder"] * 8 + ["loss"]],
+        (4, 1): [["embedding"] + ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4 + ["loss"]],
+        (2, 2): [["embedding"] + ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4, ["decoder"] * 4 + ["loss"]],
     }
     pp_size = pipeline_model_parallel_size or 1
     vp_size = virtual_pipeline_model_parallel_size or 1
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "
-            f"for Moonlight-16B. Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
+            f"for OLMoE (7B). Known PP and VP combinations: {map_pp_vp_to_layout.keys()}"
         )
 
     layout = map_pp_vp_to_layout[(pp_size, vp_size)]
@@ -455,22 +438,17 @@ def _model_config(
         layout = list([list(x) for x in layout])  # yield all the elements
     cfg.pipeline_model_parallel_layout = layout
 
-    if enable_deepep:
-        cfg.moe_token_dispatcher_type = "flex"
-        cfg.moe_enable_deepep = True
-        cfg.moe_shared_expert_overlap = False
-
     return cfg
 
 
-def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightFinetuneKwargs]) -> ConfigContainer:
-    """Return a finetuning config for Moonlight-16B.
+def olmoe_7b_finetune_config(**user_kwargs: Unpack[OLMoEFinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for OLMoE-7B (7B total, ~1B active).
 
     Default configuration: 1 node, 8 GPUs
-    - LoRA/DoRA: TP=1, PP=1, EP=2, LR=1e-4
-    - Full SFT: TP=2, PP=1, EP=8, lower LR (5e-6)
+    - LoRA/DoRA: TP=1, PP=1, EP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, EP=8, lower LR (5e-6)
 
-    See `_moonlight_finetune_common` for the full list of parameters.
+    See `_olmoe_finetune_common` for the full list of parameters.
     """
     peft_value = user_kwargs.get("peft", "lora")
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
@@ -479,42 +457,40 @@ def moonlight_16b_finetune_config(**user_kwargs: Unpack[MoonlightFinetuneKwargs]
     if isinstance(peft_value, str) and peft_value.lower() == "none":
         peft_value = None
 
-    recommended: MoonlightFinetuneKwargs = {
-        "tensor_model_parallel_size": 2 if is_full_sft else 1,
+    recommended: OLMoEFinetuneKwargs = {
+        "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
         "pipeline_dtype": torch.bfloat16,
         "virtual_pipeline_model_parallel_size": None,
         "context_parallel_size": 1,
-        "expert_model_parallel_size": 8 if is_full_sft else 2,
-        "sequence_parallel": True if is_full_sft else False,
+        "expert_model_parallel_size": 8 if is_full_sft else 1,
+        "sequence_parallel": False,
         "recompute_granularity": "selective",
-        "enable_deepep": False,
         "apply_rope_fusion": False,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
-    kwargs: MoonlightFinetuneKwargs = {**recommended, **user_kwargs}
-    return _moonlight_finetune_common(**kwargs)
+    kwargs: OLMoEFinetuneKwargs = {**recommended, **user_kwargs}
+    return _olmoe_finetune_common(**kwargs)
 
 
-def _moonlight_finetune_common(
+def _olmoe_finetune_common(
     tokenizer_path: str,
     dir: Optional[str] = None,
     name: str = "default",
     # Model configuration
-    tensor_model_parallel_size: int = 2,
+    tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
     pipeline_dtype: Optional[torch.dtype] = torch.bfloat16,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
-    expert_model_parallel_size: int = 8,
-    sequence_parallel: bool = True,
+    expert_model_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     # Recomputation
     recompute_granularity: str = "selective",
     recompute_modules: Optional[List[str]] = None,
     recompute_method: Optional[str] = None,
     recompute_num_layers: Optional[int] = None,
-    enable_deepep: bool = False,
     apply_rope_fusion: bool = False,
     # Finetuning-specific params
     pretrained_checkpoint: Optional[str] = None,
@@ -541,7 +517,7 @@ def _moonlight_finetune_common(
     wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """
-    Create a finetuning configuration for Moonlight-16B model.
+    Create a finetuning configuration for OLMoE-7B model (7B total, ~1B active).
 
     Args:
         tokenizer_path (str): Path to the tokenizer (HuggingFace tokenizer).
@@ -558,7 +534,6 @@ def _moonlight_finetune_common(
         recompute_modules (Optional[List[str]]): Modules to recompute.
         recompute_method (Optional[str]): Recomputation method.
         recompute_num_layers (Optional[int]): Number of layers to recompute.
-        enable_deepep (bool): Whether to use DeePEP.
         apply_rope_fusion (bool): Whether to apply RoPE fusion.
         pretrained_checkpoint (Optional[str]): Path to pretrained checkpoint.
         peft (Optional[Union[str, PEFT]]): PEFT configuration (e.g., "lora", "dora", or None for full SFT).
@@ -601,7 +576,6 @@ def _moonlight_finetune_common(
         recompute_modules=recompute_modules,
         recompute_method=recompute_method,
         recompute_num_layers=recompute_num_layers,
-        enable_deepep=enable_deepep,
         apply_rope_fusion=apply_rope_fusion,
     )
 
@@ -615,8 +589,8 @@ def _moonlight_finetune_common(
         max_lr=finetune_lr,
         min_lr=min_lr,
         adam_beta1=0.9,
-        adam_beta2=0.98,
-        adam_eps=1e-5,
+        adam_beta2=0.95,
+        adam_eps=1e-8,
         weight_decay=0.1,
     )
 
@@ -698,7 +672,7 @@ def _moonlight_finetune_common(
     )
 
     if apply_rope_fusion:
-        cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+        cfg.dist.enable_megatron_core_experimental = True  # for rope fusion
 
     if cfg.comm_overlap is None:
         cfg.comm_overlap = CommOverlapConfig(

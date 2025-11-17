@@ -152,14 +152,11 @@ LLAMA3_8B_GB200_BF16_BASE_CONFIG = replace(
 LLAMA3_8B_GB200_FP8_CS_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
     micro_batch_size=2,
-)
-
-LLAMA3_8B_GB200_FP8_MX_BASE_CONFIG = replace(
-    BASE_LLAMA3_8B_CONFIG,
-    micro_batch_size=2,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
 )
+
+LLAMA3_8B_GB200_FP8_MX_BASE_CONFIG = LLAMA3_8B_GB200_FP8_CS_BASE_CONFIG
 
 
 LLAMA3_8B_B200_BF16_BASE_CONFIG = replace(
