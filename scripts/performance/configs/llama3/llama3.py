@@ -22,6 +22,7 @@ from utils.helpers import (
 from megatron.bridge.recipes.llama import (
     llama3_8b_finetune_config,
     llama3_8b_pretrain_config,
+    llama3_70b_finetune_config,
     llama3_70b_pretrain_config,
 )
 from megatron.bridge.training.comm_overlap import (
@@ -272,7 +273,7 @@ def llama3_8b_gb200_sft_config(
     precision: str = "bf16",
     peft: str = "none",  # `none` is SFT
 ) -> ConfigContainer:
-    """GB200, baseline config."""
+    """GB200, SFT config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA3_8B_GB200_SFT_BF16_BASE_CONFIG
         precision_config = get_precision_config(precision)
@@ -287,6 +288,94 @@ def llama3_8b_gb200_sft_config(
         precision_config=precision_config,
         packed_sequence=True,
         seq_length=16384,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
+    return cfg
+
+
+def llama3_8b_h100_sft_config(
+    precision: str = "bf16",
+    peft: str = "none",  # `none` is SFT
+) -> ConfigContainer:
+    """H100, SFT config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.LLAMA3_8B_H100_SFT_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = llama3_8b_finetune_config(
+        peft=peft,
+        precision_config=precision_config,
+        packed_sequence=True,
+        seq_length=4096,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+
+def llama3_70b_gb200_sft_config(
+    precision: str = "bf16",
+    peft: str = "none",  # `none` is SFT
+) -> ConfigContainer:
+    """GB200, SFT config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.LLAMA3_70B_GB200_SFT_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = llama3_70b_finetune_config(
+        peft=peft,
+        precision_config=precision_config,
+        packed_sequence=True,
+        seq_length=4096,
+    )
+    set_llama3_common_peft_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
+    return cfg
+
+
+def llama3_70b_h100_sft_config(
+    precision: str = "bf16",
+    peft: str = "none",  # `none` is SFT
+) -> ConfigContainer:
+    """H100, SFT config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_FP8_CS_BASE_CONFIG
+        if precision == "fp8_mx":
+            base_cfg = base_cfgs.LLAMA3_70B_H100_SFT_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = llama3_70b_finetune_config(
+        peft=peft,
+        precision_config=precision_config,
+        packed_sequence=True,
+        seq_length=4096,
     )
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
