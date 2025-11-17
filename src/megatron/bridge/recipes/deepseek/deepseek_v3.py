@@ -151,9 +151,9 @@ def deepseek_v3_pretrain_config_32nodes_fp8(**user_kwargs: Unpack[DeepSeekV3Comm
     """
     recommended_kwargs: DeepSeekV3CommonKwargs = {
         "hf_path": "deepseek-ai/DeepSeek-V3",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 8,
-        "expert_parallelism": 32,
+        "tensor_parallelism": 4,
+        "pipeline_parallelism": 16,
+        "expert_parallelism": 16,
         # Maintain old recipe defaults via wrapper overrides
         "precision_config": MixedPrecisionConfig(
             fp8="hybrid",
