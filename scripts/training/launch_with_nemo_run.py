@@ -16,8 +16,7 @@
 """
 Launch Training with NeMo-Run
 
-Generic launcher for training scripts (pretrain_gpt.py, finetune_gpt.py, etc.).
-Supports local execution and Slurm clusters.
+Generic launcher for training scripts. Supports local execution and Slurm clusters.
 
 Prerequisites: Install nemo-run
 
@@ -89,14 +88,6 @@ Usage:
         --partition gpu \
         --account my_account
 
-    # VLM training (when pretrain_vlm.py exists)
-    python launch_with_nemo_run.py \
-        --script pretrain_vlm.py \
-        --recipe qwen25_vl_pretrain_config \
-        --nodes 4 \
-        --partition gpu \
-        --account my_account
-
     # Wait for completion and tail logs
     python launch_with_nemo_run.py \
         --script pretrain_gpt.py \
@@ -113,7 +104,6 @@ Note:
 - Omit --ssh-tunnel when already on the Slurm cluster (uses LocalTunnel)
 - By default, jobs are submitted and detached (use --no-detach --tail-logs to monitor)
 - With containers, scripts are auto-packaged using PatternPackager (or use --packager git)
-- Use --launcher ft for fault-tolerant training
 - Any unknown arguments are forwarded to the training script
 - Adjust cluster-specific settings (account, partition, container paths)
 """
@@ -136,15 +126,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         description="Launch training with NeMo-Run (local or Slurm)",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-
-    # Execution mode
     parser.add_argument(
         "--local",
         action="store_true",
         help="Run locally with LocalExecutor (single node). Omit for Slurm execution.",
     )
-
-    # Script and recipe
     parser.add_argument(
         "--script",
         type=str,
@@ -157,8 +143,6 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         required=True,
         help="Recipe name (e.g., llama32_1b_pretrain_config)",
     )
-
-    # Launcher configuration
     parser.add_argument(
         "--launcher",
         type=str,
@@ -166,8 +150,6 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         choices=["torchrun", "ft", "default"],
         help="Launcher to use: 'torchrun', 'ft' (fault-tolerant), or 'default' (no launcher)",
     )
-
-    # Resource configuration
     parser.add_argument(
         "--devices",
         type=int,
@@ -180,8 +162,6 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=1,
         help="Number of nodes to use (Slurm only, ignored for --local)",
     )
-
-    # Slurm-specific arguments (required unless --local)
     parser.add_argument(
         "--partition",
         type=str,
@@ -224,8 +204,6 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=None,
         help="Path to SSH private key for authentication",
     )
-
-    # Container and packaging
     parser.add_argument(
         "--container-image",
         type=str,
@@ -244,10 +222,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         type=str,
         default="auto",
         choices=["auto", "pattern", "git", "none"],
-        help="Code packaging method: 'auto' (pattern for containers, none otherwise), 'pattern', 'git', or 'none'",
+        help="Code packaging method: 'auto' (smart detection), 'pattern', 'git', or 'none'. "
+        "Auto detects Megatron-Bridge mounts and selects appropriate packager.",
     )
-
-    # Experiment configuration
     parser.add_argument(
         "--experiment-name",
         type=str,
@@ -293,55 +270,56 @@ def main() -> None:
             if not all([args.host, args.user, args.remote_job_dir]):
                 raise ValueError("--ssh-tunnel requires --host, --user, and --remote-job-dir to be specified")
 
-    # Resolve script path
     script_path = SCRIPT_DIR / args.script
     if not script_path.exists():
         raise FileNotFoundError(f"Training script not found: {script_path}")
 
-    # Build script arguments
     script_args = ["--recipe", args.recipe]
     if forwarded_args:
         script_args.extend(forwarded_args)
 
-    # Create the training task
     task = run.Script(
         path=str(script_path),
         entrypoint="python",
         args=script_args,
     )
 
-    # Determine packager based on settings
     packager = None
     if args.packager == "auto":
-        # Auto-select: pattern for containers, none otherwise
-        if args.container_image:
+        # Check if user is mounting the Megatron-Bridge repo
+        is_mounting_repo = any("Megatron-Bridge" in mount for mount in args.mount)
+
+        if is_mounting_repo:
+            # User is mounting their local code - use passthrough packager
+            packager = run.Packager()
+            logger.debug("Detected Megatron-Bridge mount - using passthrough packager for local code")
+        elif args.container_image:
+            # Container without repo mount - package scripts
             packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
-            logger.info("Auto-selected PatternPackager for container execution")
+            logger.debug("Auto-selected PatternPackager for container execution")
         else:
-            packager = run.Packager()  # Passthrough
+            packager = run.Packager()
     elif args.packager == "pattern":
         packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
-        logger.info("Using PatternPackager")
+        logger.debug("Using PatternPackager")
     elif args.packager == "git":
         packager = run.GitArchivePackager()
-        logger.info("Using GitArchivePackager")
+        logger.debug("Using GitArchivePackager")
     elif args.packager == "none":
-        packager = run.Packager()  # Passthrough
-        logger.info("Using passthrough Packager")
+        packager = run.Packager()
+        logger.debug("Using passthrough Packager")
 
-    # Configure launcher
     launcher = None
     if args.launcher == "torchrun":
         launcher = "torchrun"
     elif args.launcher == "ft":
         launcher = "ft"
-        logger.info("Using fault-tolerant launcher")
+        logger.debug("Using fault-tolerant launcher")
     elif args.launcher == "default":
         launcher = None
 
-    # Create executor based on mode
     if args.local:
-        logger.info("Using LocalExecutor")
+        logger.debug("Using LocalExecutor")
         executor = run.LocalExecutor(
             ntasks_per_node=args.devices,
             launcher=launcher,
@@ -356,10 +334,10 @@ def main() -> None:
                 job_dir=args.remote_job_dir,
                 identity=args.identity,
             )
-            logger.info(f"Using SSH tunnel to {args.user}@{args.host}")
+            logger.debug(f"Using SSH tunnel to {args.user}@{args.host}")
         else:
             tunnel = run.LocalTunnel()
-            logger.info("Using LocalTunnel (running on cluster)")
+            logger.debug("Using LocalTunnel (running on cluster)")
 
         # Create the Slurm executor
         executor = run.SlurmExecutor(

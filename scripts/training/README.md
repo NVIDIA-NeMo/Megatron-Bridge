@@ -326,9 +326,10 @@ python launch_with_nemo_run.py \
 - By default, PatternPackager only packages `scripts/training/*.py` files
 - Your local changes in `src/megatron/bridge/` are **NOT packaged**
 - The container uses its installed version at `/opt/Megatron-Bridge`
-- To use your local changes, mount your repo and set PYTHONPATH (see below)
 
-**Mounting local changes:**
+**To use your local changes in a container:**
+
+Mount your local repo over the container's installation path. This shadows the built-in version:
 
 ```bash
 python launch_with_nemo_run.py \
@@ -338,10 +339,14 @@ python launch_with_nemo_run.py \
     --partition gpu \
     --account my_account \
     --container-image /path/to/container.sqsh \
-    --mount /local/path/to/Megatron-Bridge:/workspace/Megatron-Bridge \
-    --packager none \
-    PYTHONPATH=/workspace/Megatron-Bridge:$PYTHONPATH
+    --mount /home/ansubramania/dev/Megatron-Bridge:/opt/Megatron-Bridge \
+    train.train_iters=10
 ```
+
+Notes:
+- Mounting to `/opt/Megatron-Bridge` replaces the container's built-in version
+- The launcher **automatically detects** when you mount `Megatron-Bridge` and switches to passthrough packager
+- No need to manually specify `--packager none`
 
 ### Workflow 3: Finetune with Custom YAML
 
@@ -368,44 +373,3 @@ torchrun --nproc_per_node=2 finetune_gpt.py \
     --recipe gemma3_1b_finetune_config \
     --config-file conf/my_finetune.yaml
 ```
-
-## Testing from Local Workstation
-
-To test Slurm integration from your local machine and ensure your local changes are used:
-
-See [`TEST_LOCAL_TO_SLURM.md`](TEST_LOCAL_TO_SLURM.md) for:
-- Setting up SSH tunnel
-- Testing with dry-run
-- Ensuring local code changes are used in containers
-- Troubleshooting common issues
-- Development workflow recommendations
-
-## Comparison with Model-Specific Examples
-
-| Feature | Generic Scripts (`scripts/training/`) | Model-Specific (`examples/recipes/<family>/`) |
-|---------|--------------------------------------|----------------------------------------------|
-| Works with | Any GPT-based model | Single model family |
-| Recipe loading | Dynamic via `--recipe` | Hardcoded import |
-| Recipe kwargs | Not supported | Can be customized |
-| Use case | Production, automation | Learning, experimentation |
-| Documentation | Assumes familiarity | Step-by-step tutorials |
-
-**When to use generic scripts:**
-- Production training runs
-- Automation and scripting
-- CI/CD pipelines
-- You know which recipe you need
-
-**When to use model-specific examples:**
-- Learning how to use Megatron Bridge
-- Understanding recipe configurations
-- Need recipe constructor arguments
-- Want guided tutorials
-
-## Where to Find More
-
-- **Testing guide:** [`TEST_LOCAL_TO_SLURM.md`](TEST_LOCAL_TO_SLURM.md)
-- **Model-specific tutorials:** `examples/recipes/<family>/`
-- **Recipe source code:** `src/megatron/bridge/recipes/`
-- **Configuration reference:** `src/megatron/bridge/training/config.py`
-- **Template YAML:** `scripts/training/conf/template_overrides.yaml`
