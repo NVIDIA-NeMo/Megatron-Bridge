@@ -303,6 +303,7 @@ class TestLoRAFinetune:
             ckpt_format="torch_dist",
             fully_parallel_save=True,
             async_save=True,
+            dist_ckpt_optim_fully_reshardable=True,
         )
 
     def _create_rng_config(self, seed=1234):

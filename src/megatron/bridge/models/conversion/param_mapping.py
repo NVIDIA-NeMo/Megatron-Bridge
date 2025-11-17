@@ -1361,8 +1361,8 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
 
         # Delegate TP/PP gathering.
@@ -1469,8 +1469,8 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None)
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config)
 
         d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
@@ -1577,8 +1577,8 @@ class MambaConv1dMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None)
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config)
 
         d_inner_local = (config.mamba_num_heads * config.mamba_head_dim) // self.tp_size
@@ -1661,8 +1661,8 @@ class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = self.broadcast_obj_from_pp_rank(None)
         else:
             config = self._get_config(megatron_module)
-            # create shallow copy and remove non-picklable objects with max depth=2
-            config = remove_non_pickleables(config, max_depth=2)
+            # create shallow copy and remove non-picklable objects with max depth=3
+            config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config)
 
         # Delegate TP/PP gathering.
@@ -1905,7 +1905,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     num_query_groups = config.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = config.kv_channels or (config.hidden_size // head_num)
-    if config.attention_output_gate:
+    if getattr(config, "attention_output_gate", False):
         qkv_total_dim = 2 * head_num + 2 * num_query_groups
         total_heads_per_group = 2 * heads_per_group + 2
     else:
@@ -1925,7 +1925,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
     v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
 
-    if config.attention_output_gate:
+    if getattr(config, "attention_output_gate", False):
         z_slice = torch.cat(
             [
                 torch.arange(
