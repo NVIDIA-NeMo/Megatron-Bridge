@@ -52,7 +52,7 @@ Usage:
     python launch_with_nemo_run.py \
         --script pretrain_gpt.py \
         --recipe gemma3_1b_pretrain_config \
-        --nodes 2 \
+        --nodes 1 \
         --partition gpu \
         --account my_account \
         --config-file conf/my_config.yaml \
@@ -63,7 +63,7 @@ Usage:
     python launch_with_nemo_run.py \
         --script pretrain_gpt.py \
         --recipe qwen3_8b_pretrain_config \
-        --nodes 4 \
+        --nodes 1 \
         --partition gpu \
         --account my_account \
         --container-image /path/to/container.sqsh \
@@ -78,6 +78,18 @@ Usage:
         --account my_account \
         --container-image /path/to/container.sqsh \
         --packager git
+
+    # With environment variables (HF token, W&B key, etc.)
+    python launch_with_nemo_run.py \
+        --script /opt/Megatron-Bridge/scripts/training/pretrain_gpt.py \
+        --recipe llama32_1b_pretrain_config \
+        --nodes 1 \
+        --partition gpu \
+        --account my_account \
+        --container-image /path/to/container.sqsh \
+        --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge \
+        --env HF_TOKEN=your_token \
+        --env WANDB_API_KEY=your_key
 
     # With fault-tolerant launcher
     python launch_with_nemo_run.py \
@@ -153,8 +165,8 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--devices",
         type=int,
-        default=8,
-        help="GPUs per node (for local) or GPUs per node (for Slurm)",
+        default=None,
+        help="GPUs per node. Required for --local. For Slurm, omit if cluster auto-allocates whole nodes.",
     )
     parser.add_argument(
         "--nodes",
@@ -177,6 +189,12 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         type=str,
         default="04:00:00",
         help="Job time limit",
+    )
+    parser.add_argument(
+        "--gres",
+        type=str,
+        default=None,
+        help="Slurm GRES (e.g., 'gpu:8').",
     )
     parser.add_argument(
         "--ssh-tunnel",
@@ -220,10 +238,17 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--packager",
         type=str,
-        default="auto",
-        choices=["auto", "pattern", "git", "none"],
-        help="Code packaging method: 'auto' (smart detection), 'pattern', 'git', or 'none'. "
-        "Auto detects Megatron-Bridge mounts and selects appropriate packager.",
+        default="none",
+        choices=["pattern", "git", "none"],
+        help="Code packaging method: 'none' (passthrough, use mounted/accessible code), "
+        "'pattern' (package *.py files), or 'git' (git archive).",
+    )
+    parser.add_argument(
+        "--env",
+        type=str,
+        action="append",
+        default=[],
+        help="Environment variables in format KEY=VALUE (can be specified multiple times)",
     )
     parser.add_argument(
         "--experiment-name",
@@ -238,9 +263,9 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     )
     parser.add_argument(
         "--detach",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Detach from the experiment after submission",
+        help="Detach from the experiment after submission (use --no-detach to wait)",
     )
     parser.add_argument(
         "--tail-logs",
@@ -261,6 +286,8 @@ def main() -> None:
         # Local execution - SSH tunnel args are not used
         if args.ssh_tunnel:
             raise ValueError("--ssh-tunnel cannot be used with --local")
+        if args.devices is None:
+            raise ValueError("--devices is required for --local execution")
     else:
         # Slurm execution - require partition and account
         if not args.partition or not args.account:
@@ -270,44 +297,55 @@ def main() -> None:
             if not all([args.host, args.user, args.remote_job_dir]):
                 raise ValueError("--ssh-tunnel requires --host, --user, and --remote-job-dir to be specified")
 
-    script_path = SCRIPT_DIR / args.script
-    if not script_path.exists():
-        raise FileNotFoundError(f"Training script not found: {script_path}")
+    # Validate script path (skip validation for absolute paths, assuming they're container paths)
+    if Path(args.script).is_absolute():
+        # Absolute path - assume it's a container path or cluster path
+        script_path = Path(args.script)
+        task_script_path = str(script_path)
+        logger.info(f"Using absolute script path (container/cluster): {task_script_path}")
+    else:
+        # Relative path - resolve from SCRIPT_DIR and validate
+        script_path = SCRIPT_DIR / args.script
+        if not script_path.exists():
+            raise FileNotFoundError(f"Training script not found: {script_path}")
 
     script_args = ["--recipe", args.recipe]
     if forwarded_args:
         script_args.extend(forwarded_args)
 
+    # Determine packager
+    if args.packager == "pattern":
+        packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
+        logger.info("Using PatternPackager")
+        # For pattern packager, use relative path
+        if not Path(args.script).is_absolute():
+            task_script_path = args.script
+    elif args.packager == "git":
+        packager = run.GitArchivePackager(subpath="scripts/training")
+        logger.info("Using GitArchivePackager")
+        # For git packager, use relative path
+        if not Path(args.script).is_absolute():
+            task_script_path = args.script
+    else:  # none
+        packager = run.Packager()
+        logger.info("Using passthrough packager (no packaging)")
+
     task = run.Script(
-        path=str(script_path),
+        path=task_script_path,
         entrypoint="python",
         args=script_args,
     )
 
-    packager = None
-    if args.packager == "auto":
-        # Check if user is mounting the Megatron-Bridge repo
-        is_mounting_repo = any("Megatron-Bridge" in mount for mount in args.mount)
+    # Parse environment variables
+    env_vars = {}
+    for env_str in args.env:
+        if "=" not in env_str:
+            raise ValueError(f"Invalid env format: {env_str}. Expected KEY=VALUE")
+        key, value = env_str.split("=", 1)
+        env_vars[key] = value
 
-        if is_mounting_repo:
-            # User is mounting their local code - use passthrough packager
-            packager = run.Packager()
-            logger.debug("Detected Megatron-Bridge mount - using passthrough packager for local code")
-        elif args.container_image:
-            # Container without repo mount - package scripts
-            packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
-            logger.debug("Auto-selected PatternPackager for container execution")
-        else:
-            packager = run.Packager()
-    elif args.packager == "pattern":
-        packager = run.PatternPackager(include_pattern="*.py", relative_path=str(SCRIPT_DIR))
-        logger.debug("Using PatternPackager")
-    elif args.packager == "git":
-        packager = run.GitArchivePackager()
-        logger.debug("Using GitArchivePackager")
-    elif args.packager == "none":
-        packager = run.Packager()
-        logger.debug("Using passthrough Packager")
+    if env_vars:
+        logger.info(f"Setting environment variables: {list(env_vars.keys())}")
 
     launcher = None
     if args.launcher == "torchrun":
@@ -324,6 +362,8 @@ def main() -> None:
             ntasks_per_node=args.devices,
             launcher=launcher,
         )
+        if env_vars:
+            executor.env_vars = env_vars
     else:
         # Configure tunnel (SSH for remote, Local if already on cluster)
         tunnel = None
@@ -340,18 +380,27 @@ def main() -> None:
             logger.debug("Using LocalTunnel (running on cluster)")
 
         # Create the Slurm executor
-        executor = run.SlurmExecutor(
-            account=args.account,
-            partition=args.partition,
-            nodes=args.nodes,
-            ntasks_per_node=args.devices,
-            gpus_per_node=args.devices,
-            mem="0",
-            exclusive=True,
-            time=args.time,
-            tunnel=tunnel,
-            packager=packager,
-        )
+        executor_kwargs = {
+            "account": args.account,
+            "partition": args.partition,
+            "nodes": args.nodes,
+            "mem": "0",
+            "exclusive": True,
+            "time": args.time,
+            "tunnel": tunnel,
+            "packager": packager,
+        }
+
+        # Add devices only if specified
+        if args.devices is not None:
+            executor_kwargs["ntasks_per_node"] = args.devices
+            executor_kwargs["gpus_per_node"] = args.devices
+
+        # Add gres only if explicitly specified
+        if args.gres:
+            executor_kwargs["gres"] = args.gres
+
+        executor = run.SlurmExecutor(**executor_kwargs)
 
         # Configure container if specified
         if args.container_image:
@@ -360,6 +409,10 @@ def main() -> None:
         # Configure mounts if specified
         if args.mount:
             executor.container_mounts = args.mount
+
+        # Set environment variables
+        if env_vars:
+            executor.env_vars = env_vars
 
     # Run the experiment
     with run.Experiment(args.experiment_name) as exp:

@@ -344,9 +344,9 @@ python launch_with_nemo_run.py \
 ```
 
 Notes:
-- Mounting to `/opt/Megatron-Bridge` replaces the container's built-in version
-- The launcher **automatically detects** when you mount `Megatron-Bridge` and switches to passthrough packager
-- No need to manually specify `--packager none`
+- Mounting to `/opt/Megatron-Bridge` replaces the container's built-in source code
+- Scripts are packaged into the container's working directory (PatternPackager)
+- The mounted repo provides your local changes to `src/megatron/bridge/`
 
 ### Workflow 3: Finetune with Custom YAML
 

@@ -79,6 +79,14 @@ CONTAINER_MOUNTS=""
 # ==============================================================================
 
 # Set common environment variables
+export TORCH_NCCL_AVOID_RECORD_STREAMS=1
+export NCCL_NVLS_ENABLE=0
+
+# Authentication tokens (uncomment and set your tokens)
+# export HF_TOKEN="hf_your_token_here"
+# export WANDB_API_KEY="your_wandb_key_here"
+
+# Optional: Uncomment if needed
 # export CUDA_DEVICE_MAX_CONNECTIONS=1
 # export NCCL_DEBUG=INFO
 
@@ -94,6 +102,12 @@ echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $SLURM_GPUS_PER_NODE"
 echo "Script: $TRAINING_SCRIPT"
 echo "Recipe: $RECIPE"
+if [ -n "$HF_TOKEN" ]; then
+    echo "HF_TOKEN: Set"
+fi
+if [ -n "$WANDB_API_KEY" ]; then
+    echo "WANDB_API_KEY: Set"
+fi
 echo "======================================"
 
 # Determine script path
