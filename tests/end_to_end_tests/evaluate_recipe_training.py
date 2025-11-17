@@ -456,7 +456,7 @@ def calc_convergence(
         golden_values=golden_train_loss_values,
         steps=steps,
         logger=logger,
-        convergence_config=convergence_config,
+        config=convergence_config,
         wandb_run=wandb_run,
     )
     if not convergence_result["passed"]:
@@ -475,7 +475,7 @@ def calc_convergence(
         golden_values=golden_iter_time_values,
         steps=steps,
         logger=logger,
-        performance_config=performance_config,
+        config=performance_config,
         wandb_run=wandb_run,
     )
     if not performance_result["passed"]:
