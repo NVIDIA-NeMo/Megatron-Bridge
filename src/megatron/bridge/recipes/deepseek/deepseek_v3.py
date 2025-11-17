@@ -232,28 +232,28 @@ def _deepseek_v3_common(
 
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
     last_layer = ["mtp"] * mtp_layers + ["loss"]
-    # layout_map = {
-    #     (1, 1): None,
-    #     (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
-    #     (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-    #     (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
-    #     (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    #     (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    #     (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
-    # }
-    # pp_size = pipeline_model_parallel_size or 1
-    # vp_size = virtual_pipeline_model_parallel_size or 1
-    # if layout is not None:
-    #     # Allow overriding the automatically selected layout
-    #     model_cfg.pipeline_model_parallel_layout = layout
-    # elif (pp_size, vp_size) in layout_map:
-    #     model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
+    layout_map = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + last_layer],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
+    }
+    pp_size = pipeline_model_parallel_size or 1
+    vp_size = virtual_pipeline_model_parallel_size or 1
+    if layout is not None:
+        # Allow overriding the automatically selected layout
+        model_cfg.pipeline_model_parallel_layout = layout
+    elif (pp_size, vp_size) in layout_map:
+        model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
     # Pipeline split for asymmetric stages are specified with map_pp_vp_to_layout below
-    # model_cfg.account_for_embedding_in_pipeline_split = False
-    # model_cfg.account_for_loss_in_pipeline_split = False
-    # model_cfg.num_layers_in_first_pipeline_stage = None
-    # model_cfg.num_layers_in_last_pipeline_stage = None
+    model_cfg.account_for_embedding_in_pipeline_split = False
+    model_cfg.account_for_loss_in_pipeline_split = False
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
 
     # Performance optimization knobs
     # model_cfg.moe_permute_fusion = True
