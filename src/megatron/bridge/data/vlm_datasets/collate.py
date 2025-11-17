@@ -243,7 +243,7 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
         )
     # Prefer general search-based masking using structured example content (not template-specific)
     loss_masks = [
@@ -382,7 +382,7 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
         )
 
     batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
