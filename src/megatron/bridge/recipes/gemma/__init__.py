@@ -14,6 +14,7 @@
 
 # Gemma3 models
 from .gemma3 import (
+    gemma3_1b_finetune_config,
     gemma3_1b_pretrain_config,
 )
 
@@ -21,4 +22,5 @@ from .gemma3 import (
 __all__ = [
     # Gemma3 models
     "gemma3_1b_pretrain_config",
+    "gemma3_1b_finetune_config",
 ]

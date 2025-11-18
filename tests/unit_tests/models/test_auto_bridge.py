@@ -297,6 +297,46 @@ class TestAutoBridge:
             # Check that a pre-wrap hook was registered for loading weights
             mock_provider.register_pre_wrap_hook.assert_called_once()
 
+    def test_to_megatron_provider_sets_hf_model_id_from_path(self):
+        """to_megatron_provider tags providers with the provided HF path."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_provider.hf_model_id = None
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            provider = bridge.to_megatron_provider(load_weights=False, hf_path="local/hf/path")
+
+        assert provider.hf_model_id == "local/hf/path"
+
+    def test_to_megatron_provider_sets_hf_model_id_from_pretrained(self):
+        """to_megatron_provider falls back to HF model name_or_path."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        type(mock_hf_model).model_name_or_path = PropertyMock(return_value="hf/model-id")
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_provider.hf_model_id = None
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        assert provider.hf_model_id == "hf/model-id"
+
+    def test_get_hf_model_id_from_checkpoint_delegates(self):
+        """AutoBridge helper delegates to checkpoint utilities."""
+        with patch(
+            "megatron.bridge.training.utils.checkpoint_utils.get_hf_model_id_from_checkpoint",
+            return_value="delegated/model",
+        ) as mock_infer:
+            result = AutoBridge.get_hf_model_id_from_checkpoint("/tmp/checkpoint")
+
+        assert result == "delegated/model"
+        mock_infer.assert_called_once_with("/tmp/checkpoint")
+
     def test_to_megatron_provider_error_handling(self):
         """Test to_megatron_provider error handling."""
         # Setup mock to raise an exception
@@ -481,7 +521,7 @@ class TestAutoBridge:
 
             # Check artifacts were saved on rank 0
             mock_hf_model.save_artifacts.assert_called_once_with("./output_dir", original_source_path=None)
-            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True)
+            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True, True)
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
@@ -502,7 +542,7 @@ class TestAutoBridge:
 
             # Artifacts should NOT be saved on non-zero rank
             mock_hf_model.save_artifacts.assert_not_called()
-            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True)
+            mock_save_hf_weights.assert_called_once_with(mock_megatron_model, "./output_dir", True, True)
 
     def test_export_hf_weights(self):
         """Test exporting weights from Megatron to HF format."""
@@ -741,7 +781,7 @@ class TestAutoBridge:
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(
-                    mock_megatron_model, "./hf_export", show_progress=True, source_path=None
+                    mock_megatron_model, "./hf_export", show_progress=True, source_path=None, strict=False
                 )
 
     def test_export_ckpt_with_kwargs(self):
@@ -767,7 +807,7 @@ class TestAutoBridge:
                 # Assertions
                 mock_load_megatron_model.assert_called_once_with("./megatron_checkpoint", wrap_with_ddp=False)
                 mock_save_hf_pretrained.assert_called_once_with(
-                    mock_megatron_model, "./hf_export", show_progress=False, source_path=None
+                    mock_megatron_model, "./hf_export", show_progress=False, source_path=None, strict=False
                 )
 
     def test_save_megatron_model_basic(self):

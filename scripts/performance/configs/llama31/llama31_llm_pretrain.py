@@ -65,8 +65,14 @@ def llama31_405b_gb300_config(precision: str = "bf16") -> ConfigContainer:
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -93,6 +99,11 @@ def llama31_405b_gb200_config(precision: str = "bf16") -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
@@ -114,6 +125,11 @@ def llama31_405b_b200_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 

@@ -19,6 +19,7 @@ from typing import List, Literal, Optional
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
+from megatron.core.utils import unwrap_model
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TELinearAdapter, patch_linear_module
@@ -154,10 +155,77 @@ class LoRA(PEFT, ModuleMatcher):
         return module
 
 
+@dataclass
+class VLMLoRA(LoRA):
+    """
+    Implements the LoRA for Vision-Language Models.
+    VLMLoRA additionally allows the user to specify whether the language or vision
+    models should be frozen.
+    For example, a common finetuning workload for multimodal models is to apply adapters to language model and fully
+    finetune the vision model.
+
+    """
+
+    freeze_vision_model: bool = True
+    freeze_vision_projection: bool = True
+    freeze_language_model: bool = True
+
+    def freeze_model(self, model: nn.Module, training: bool = True) -> None:
+        modules_to_freeze = []
+
+        model = unwrap_model(model)[0]
+        if hasattr(model, "llava_model"):
+            model = model.llava_model
+
+        if self.freeze_vision_model and model.vision_model is not None:
+            modules_to_freeze.append(model.vision_model)
+        if self.freeze_vision_projection and model.vision_projection is not None:
+            modules_to_freeze.append(model.vision_projection)
+        if self.freeze_language_model and model.language_model is not None:
+            modules_to_freeze.append(model.language_model)
+
+        for module in modules_to_freeze:
+            for param in module.parameters():
+                param.requires_grad = False
+
+        if training:
+            if isinstance(model, list):
+                for model_chunk in model:
+                    model_chunk.train(mode=True)
+            elif isinstance(model, torch.nn.parallel.DistributedDataParallel):
+                model.module.train(mode=True)
+            else:
+                model.train(mode=True)
+
+
 class LoRAMerge(PEFT):
     """
     Implements the LoRA weight merge for parameter-efficient fine-tuning.
     """
+
+    def merge(
+        self,
+        base_weight: torch.Tensor,
+        linear_out: torch.Tensor,
+        linear_in: torch.Tensor,
+        alpha: int,
+        dim: int,
+    ) -> torch.Tensor:
+        """
+        Merges the LoRA adapter weights with the base model weights.
+
+        Args:
+            base_weight (torch.Tensor): The base model weights.
+            linear_out (torch.Tensor): LoRA's B matrix.
+            linear_in (torch.Tensor): LoRA's A matrix.
+            alpha (int): Weighting factor for the low-rank projection.
+            dim (int): Dimension of the low-rank projection space.
+
+        Returns:
+            torch.Tensor: The merged weights.
+        """
+        lora_weight = alpha / dim * (linear_out @ linear_in)
+        return base_weight + lora_weight
 
     @torch.no_grad()
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
@@ -176,13 +244,13 @@ class LoRAMerge(PEFT):
         if not isinstance(module, LoRALinear):
             return module
         logging.info(f"merging {(prefix if prefix else '') + '.' + (name if name else '')}")
-        base_weight = module.to_wrap.weight
-        lora_weight = (
-            module.adapter.alpha
-            / module.adapter.dim
-            * module.adapter.linear_out.weight.to(base_weight.device)
-            @ module.adapter.linear_in.weight.to(base_weight.device)
+        base_device = module.to_wrap.weight.device
+        merged_weight = self.merge(
+            module.to_wrap.weight,
+            module.adapter.linear_out.weight.to(base_device),
+            module.adapter.linear_in.weight.to(base_device),
+            module.adapter.alpha,
+            module.adapter.dim,
         )
-        merged_weight = base_weight + lora_weight
         module.to_wrap.weight.data = merged_weight
         return module

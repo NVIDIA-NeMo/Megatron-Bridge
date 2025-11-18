@@ -84,6 +84,9 @@ dependencies = [
     "mamba-ssm",
     "nvidia-resiliency-ext",
     "causal-conv1d",
+    "flash-linear-attention",
+    "timm",
+    "open-clip-torch>=3.2.0",
 ]
 
 
@@ -122,6 +125,9 @@ causal-conv1d = { git = "https://github.com/Dao-AILab/causal-conv1d.git", rev = 
 [project.optional-dependencies]
 recipes = [
     "nemo-run>=0.5.0a0,<0.6.0",
+]
+tensor-inspect = [
+    "nvdlfw-inspect==0.2.1",
 ]
 
 [dependency-groups]
