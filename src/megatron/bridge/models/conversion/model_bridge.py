@@ -482,6 +482,15 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
 
                 # Check shape compatibility before copying
                 if converted_weights.shape != task.param_weight.shape:
+                    if (
+                        task.mapping.megatron_param == "output_layer.weight"
+                        and task.param_weight.shape[0] == 1
+                        and converted_weights.shape[0] == int(hf_pretrained.config.vocab_size)
+                    ):
+                        # Special case: this is a converted value model, allow
+                        # shape mismatch for value head
+                        print_rank_0(f"INFO: Skipping value head weight {task.mapping.megatron_param}, ")
+                        continue
                     raise ValueError(
                         f"Shape mismatch for megatron param {task.mapping.megatron_param}:\n"
                         f"  Expected shape: {task.param_weight.shape}\n"
