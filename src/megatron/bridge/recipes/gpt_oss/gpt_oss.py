@@ -15,6 +15,7 @@
 import os
 from typing import List, Optional, Union
 
+from megatron.bridge.training.deepep import apply_deepep
 import torch
 from typing_extensions import TypedDict, Unpack
 
@@ -85,6 +86,7 @@ class GPTOSSCommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
+    enable_deepep: bool
     # Checkpointing
     pretrained_checkpoint: Optional[str]
 
@@ -138,6 +140,7 @@ def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> Co
         "expert_model_parallel_size": 4,
         "sequence_parallel": True,
         "use_null_tokenizer": True,
+        "enable_deepep": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
     return _gpt_oss_common(**kwargs)
@@ -152,6 +155,7 @@ def gpt_oss_120b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> C
         "expert_model_parallel_size": 16,
         "sequence_parallel": True,
         "use_null_tokenizer": True,
+        "enable_deepep": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
     return _gpt_oss_common(**kwargs)
@@ -199,6 +203,7 @@ def _gpt_oss_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    enable_deepep: bool = True,
     # Checkpointing
     pretrained_checkpoint: Optional[str] = None,
 ) -> ConfigContainer:
@@ -225,6 +230,9 @@ def _gpt_oss_common(
     model_cfg.expert_tensor_parallel_size = 1
     model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
+
+    if enable_deepep:
+        apply_deepep(model_cfg)
 
     if account_for_embedding_in_pipeline_split:
         model_cfg.account_for_embedding_in_pipeline_split = True
