@@ -44,6 +44,7 @@ from megatron.core.dist_checkpointing.strategies.fully_parallel import (
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import MegatronOptimizer
+from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import unwrap_model
@@ -530,6 +531,14 @@ def save_checkpoint(
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
     maybe_save_dataloader_state(train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None))
+
+    # Save LayerWiseDistributedOptimizer
+    if isinstance(optimizer, LayerWiseDistributedOptimizer): # replacement of getattr(args, "optimizer", "adam").startswith("dist_")
+        dp_rank = mpu.get_data_parallel_rank()
+        optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
+        ensure_directory_exists(optim_checkpoint_name)
+        if not optimizer.is_stub_optimizer:
+            optimizer.save_state_dict_to_file(optim_checkpoint_name)
 
     async_save_request = None
     if ckpt_cfg.async_save:
@@ -1540,7 +1549,12 @@ def _load_checkpoint_from_path(
     # Load optimizer and scheduler
     if not release and not cfg.checkpoint.finetune and cfg.checkpoint.load_optim:
         try:
-            if (
+            if isinstance(optimizer, LayerWiseDistributedOptimizer) and cfg.checkpoint.ckpt_format == "torch":
+                # LayerWiseDistributedOptimizer load optimizer state from file on different ranks
+                dp_rank = mpu.get_data_parallel_rank()
+                optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
+                optimizer.load_state_dict_from_file(optim_checkpoint_name)
+            elif (
                 not skip_load_to_model_and_opt
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
