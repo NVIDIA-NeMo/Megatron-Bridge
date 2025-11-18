@@ -112,6 +112,57 @@ logger = getLogger(__name__)
 _NON_PERSISTENT_CKPT_SUBDIR = "non_persistent"
 
 
+def get_torch_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = False,
+                               basename: str = "model_optim_rng.pt") -> str:
+    """Get the per-rank checkpoint file path for torch format, matching Megatron-LM approach.
+
+    This creates file paths like:
+    - checkpoints_path/iter_0000001/mp_rank_00/model_optim_rng.pt (no pipeline parallelism)
+    - checkpoints_path/iter_0000001/mp_rank_00_000/model_optim_rng.pt (with pipeline parallelism)
+
+    Args:
+        checkpoints_path: Base directory where checkpoints are stored.
+        iteration: The training iteration number.
+        release: If True, uses 'release' as the directory name instead of iteration.
+        basename: The checkpoint filename (default: model_optim_rng.pt).
+
+    Returns:
+        The full path to this rank's checkpoint file.
+    """
+    if release:
+        directory = "release"
+    else:
+        directory = "iter_{:07d}".format(iteration)
+
+    # Get current rank information
+    if torch.distributed.is_initialized():
+        tensor_rank = mpu.get_tensor_model_parallel_rank()
+        pipeline_rank = mpu.get_pipeline_model_parallel_rank()
+        expert_rank = mpu.get_expert_model_parallel_rank()
+
+        pipeline_parallel = (mpu.get_pipeline_model_parallel_world_size() > 1)
+        expert_parallel = (mpu.get_expert_model_parallel_world_size() > 1)
+    else:
+        tensor_rank = 0
+        pipeline_rank = 0
+        expert_rank = 0
+        pipeline_parallel = False
+        expert_parallel = False
+
+    # Create per-rank subdirectory following Megatron-LM convention
+    if not pipeline_parallel:
+        rank_subdir = f"mp_rank_{tensor_rank:02d}"
+    else:
+        rank_subdir = f"mp_rank_{tensor_rank:02d}_{pipeline_rank:03d}"
+
+    if expert_parallel:
+        rank_subdir = rank_subdir + f"_{expert_rank:03d}"
+
+    # Full path: checkpoints_path/iter_XXXXXXX/mp_rank_XX[_XXX]/model_optim_rng.pt
+    common_path = os.path.join(checkpoints_path, directory, rank_subdir)
+    return os.path.join(common_path, basename)
+
+
 # ============================================================================
 # Checkpoint version and utilities
 # ============================================================================
@@ -203,14 +254,41 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
         # Assume fsdp_dtensor for PyTorch DCP format
         return "fsdp_dtensor"
 
-    # Check for torch format (single .pt file)
+    # Check for torch format (per-rank .pt files in subdirectories)
+    # Look for patterns like mp_rank_00/model_optim_rng.pt or mp_rank_00_000/model_optim_rng.pt
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
+        # Try to find any per-rank torch checkpoint file
+        if msc.os.path.isdir(checkpoint_path):
+            for item in msc.os.listdir(checkpoint_path):
+                if item.startswith("mp_rank_"):
+                    rank_dir = msc.os.path.join(checkpoint_path, item)
+                    if msc.os.path.isdir(rank_dir):
+                        torch_file = msc.os.path.join(rank_dir, "model_optim_rng.pt")
+                        if msc.os.path.isfile(torch_file):
+                            return "torch"
+        # Fallback: Check if checkpoint_path itself is a .pt file (backward compatibility)
         if msc.os.path.isfile(checkpoint_path):
             return "torch"
     else:
+        # Try to find any per-rank torch checkpoint file
+        if os.path.isdir(checkpoint_path):
+            try:
+                for item in os.listdir(checkpoint_path):
+                    if item.startswith("mp_rank_"):
+                        rank_dir = os.path.join(checkpoint_path, item)
+                        if os.path.isdir(rank_dir):
+                            torch_file = os.path.join(rank_dir, "model_optim_rng.pt")
+                            if os.path.isfile(torch_file):
+                                return "torch"
+            except (OSError, PermissionError):
+                pass  # Directory might not be accessible
+        # Fallback: Check if checkpoint_path itself is a .pt file (backward compatibility)
         if os.path.isfile(checkpoint_path):
             return "torch"
+
+    # Default assumption for backward compatibility
+    return "torch"
 
 
 def find_checkpoint_rank_0(checkpoints_path: str, iteration: int, release: bool = False) -> Optional[str]:
@@ -586,26 +664,35 @@ def save_checkpoint(
                 storage_writer=fs_storage_writer,
             )
         elif ckpt_cfg.ckpt_format == "torch":
-            # Non-distributed torch format using standard torch.save
+            # Per-rank torch format saving, matching Megatron-LM approach
+            # Each rank saves its own shard to its own file - no gathering needed
+
+            # Get per-rank checkpoint file path
+            iteration = state.train_state.step
+            torch_checkpoint_file = get_torch_checkpoint_name(ckpt_cfg.save, iteration, release=False)
+
+            # Ensure parent directories exist for this rank's file
+            ensure_directory_exists(torch_checkpoint_file, check_parent=True)
+
+            # Each rank saves its own state_dict (containing only its TP shard)
+            # The state_dict_for_save_checkpoint() method should return the appropriate shard for this rank
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                msc.torch.save(state_dict, torch_checkpoint_file)
+            else:
+                torch.save(state_dict, torch_checkpoint_file)
+
             if torch.distributed.is_initialized():
                 rank = torch.distributed.get_rank()
+                tp_rank = mpu.get_tensor_model_parallel_rank()
+                pp_rank = mpu.get_pipeline_model_parallel_rank()
+                print_rank_0(f"Saved torch format checkpoint: rank {rank} (TP:{tp_rank}, PP:{pp_rank}) -> {torch_checkpoint_file}")
             else:
-                rank = 0
+                print_rank_0(f"Saved torch format checkpoint to {torch_checkpoint_file}")
 
-            # Only rank 0 saves the checkpoint in non-distributed format
-            if rank == 0:
-                # For torch format, checkpoint_name is a directory path, but we need a file path
-                # Append the standard filename used by Megatron-LM for torch format
-                torch_checkpoint_file = os.path.join(checkpoint_name, "model_optim_rng.pt")
-
-                # Ensure parent directories exist for torch format
-                ensure_directory_exists(torch_checkpoint_file, check_parent=True)
-
-                if MultiStorageClientFeature.is_enabled():
-                    msc = MultiStorageClientFeature.import_package()
-                    msc.torch.save(state_dict, torch_checkpoint_file)
-                else:
-                    torch.save(state_dict, torch_checkpoint_file)
+            # Synchronize to ensure all ranks complete saving
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
         else:
             # torch_dist and other formats using MCore distributed checkpointing
             if checkpointing_context is not None and "save_strategy" in checkpointing_context:
@@ -2094,39 +2181,38 @@ def _load_torch_base_checkpoint(
     release: bool,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
     """Load the base state_dict from a torch format checkpoint."""
-    checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+    # Get this rank's specific checkpoint file path
+    torch_checkpoint_file = get_torch_checkpoint_name(load_dir, iteration, release)
 
-    # For torch format, checkpoint_name is a directory path, but we need the file path
-    torch_checkpoint_file = os.path.join(checkpoint_name, "model_optim_rng.pt")
+    # Each rank loads its own checkpoint file directly - no broadcasting needed
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        state_dict = msc.torch.load(torch_checkpoint_file, map_location='cpu')
+    else:
+        state_dict = torch.load(torch_checkpoint_file, map_location='cpu')
 
-    # Only rank 0 loads the checkpoint in torch format
     if torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
+        tp_rank = mpu.get_tensor_model_parallel_rank()
+        pp_rank = mpu.get_pipeline_model_parallel_rank()
+        print_rank_0(f"Loaded torch format checkpoint: rank {rank} (TP:{tp_rank}, PP:{pp_rank}) <- {torch_checkpoint_file}")
     else:
-        rank = 0
+        print_rank_0(f"Loaded torch format checkpoint from {torch_checkpoint_file}")
 
-    if rank == 0:
-        if MultiStorageClientFeature.is_enabled():
-            msc = MultiStorageClientFeature.import_package()
-            state_dict = msc.torch.load(torch_checkpoint_file, map_location='cpu')
-        else:
-            state_dict = torch.load(torch_checkpoint_file, map_location='cpu')
+    # Get checkpoint directory name for consistency with other formats
+    checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
 
-        if rank0:
-            # For rank0 calls, return the full state_dict without model/optimizer keys
-            common_state_dict = {}
+    if rank0:
+        # For rank0 calls, return metadata without model/optimizer keys
+        common_state_dict = {}
+        if state_dict:
             for key, value in state_dict.items():
                 if not key.startswith(('model', 'optimizer')):
                     common_state_dict[key] = value
-            return common_state_dict, checkpoint_name, release, CheckpointType.GLOBAL
-        else:
-            return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
+        return common_state_dict, checkpoint_name, release, CheckpointType.GLOBAL
     else:
-        # Non-rank-0 processes return empty state dict for torch format
-        if rank0:
-            return {}, checkpoint_name, release, CheckpointType.GLOBAL
-        else:
-            return {}, checkpoint_name, release, CheckpointType.GLOBAL
+        # For normal loading, return this rank's state_dict (containing its TP shard)
+        return state_dict or {}, checkpoint_name, release, CheckpointType.GLOBAL
 
 
 def _load_fsdp_dtensor_base_checkpoint(
