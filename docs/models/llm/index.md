@@ -5,6 +5,7 @@ This section documents Large Language Models supported by Megatron Bridge, with 
 ```{toctree}
 :hidden:
 
+gpt-oss.md
 llama3.md
 olmoe.md
 qwen.md
