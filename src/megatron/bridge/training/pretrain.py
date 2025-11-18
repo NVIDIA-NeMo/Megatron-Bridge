@@ -106,6 +106,10 @@ def _pretrain(
         store: Optional distributed Store used by in-process restart for coordination
         inprocess_call_wrapper: Optional wrapper injected by nvrx to expose restart iteration
     """
+    # Determine whether the training loop will initialize the process group
+    # If the trainer creates the process group, the trainer should destroy it before returning control back to the user
+    should_destroy_process_group = not dist.is_initialized()
+
     # Handle in-process restart store prefix
     if inprocess_call_wrapper is not None:
         restart_attempt = inprocess_call_wrapper.iteration
@@ -122,10 +126,10 @@ def _pretrain(
     valid_data_iterator = setup_output.valid_data_iterator
     test_data_iterator = setup_output.test_data_iterator
     ckpt_context = setup_output.checkpointing_context
+    pg_collection = setup_output.pg_collection
 
     # TRAINING
     if not config.train.skip_train:
-        print_rank_0("Training ...")
         if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,
@@ -136,6 +140,7 @@ def _pretrain(
                 valid_data_iterator,
                 state,
                 ckpt_context,
+                pg_collection,
             )
 
         barrier_and_log("after training is done")
@@ -183,3 +188,15 @@ def _pretrain(
         )
 
     _finish_train(state)
+    _maybe_destroy_process_group(should_destroy_process_group)
+
+
+def _maybe_destroy_process_group(should_destroy: bool) -> None:
+    """Destroy the process group if it was created by this training session.
+
+    Args:
+        should_destroy: Whether the process group should be destroyed
+    """
+    if should_destroy and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()

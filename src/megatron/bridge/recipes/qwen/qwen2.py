@@ -20,7 +20,9 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -33,7 +35,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
 
 class Qwen2CommonKwargs(TypedDict, total=False):
@@ -52,12 +54,12 @@ class Qwen2CommonKwargs(TypedDict, total=False):
     per_split_data_args_path: Optional[str]
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     check_for_nan_in_grad: bool
     # Training hyperparameters
@@ -84,8 +86,8 @@ def qwen2_500m_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-0.5B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -99,8 +101,8 @@ def qwen2_1p5b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-1.5B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
     }
     # Combine defaults with user kwargs; user values take precedence.
     combined_kwargs: Qwen2CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -114,8 +116,8 @@ def qwen2_7b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Config
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-7B",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
         "use_megatron_fsdp": False,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -130,9 +132,9 @@ def qwen2_72b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Confi
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2-72B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
         "use_megatron_fsdp": False,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -147,8 +149,8 @@ def qwen25_500m_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Con
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-0.5B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -163,8 +165,8 @@ def qwen25_1p5b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Con
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-1.5B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -179,8 +181,8 @@ def qwen25_7b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Confi
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-7B",
-        "tensor_parallelism": 2,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 2,
+        "pipeline_model_parallel_size": 1,
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -195,8 +197,8 @@ def qwen25_14b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-14B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 1,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 1,
         "check_for_nan_in_grad": True,
         "use_megatron_fsdp": False,
     }
@@ -212,9 +214,9 @@ def qwen25_32b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-32B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -229,9 +231,9 @@ def qwen25_72b_pretrain_config(**user_kwargs: Unpack[Qwen2CommonKwargs]) -> Conf
     """
     recommended_kwargs: Qwen2CommonKwargs = {
         "hf_path": "Qwen/Qwen2.5-72B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
         "check_for_nan_in_grad": True,
     }
     # Combine defaults with user kwargs; user values take precedence.
@@ -252,12 +254,12 @@ def _qwen2_common(
     per_split_data_args_path: Optional[str] = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     check_for_nan_in_grad: bool = False,
     # Training hyperparameters
@@ -290,12 +292,12 @@ def _qwen2_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism to be passed to model_config.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism to be passed to model_config.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         check_for_nan_in_grad (bool): Whether to check for NaN in gradients.
         train_iters (int): Total number of training iterations.
@@ -323,12 +325,12 @@ def _qwen2_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
@@ -396,3 +398,324 @@ def _qwen2_common(
     )
 
     return cfg
+
+
+class Qwen2FinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by Qwen2/2.5 finetuning recipe helper functions."""
+
+    # Core identifiers
+    hf_path: str
+    dir: Optional[str]
+    name: str
+
+    # Finetuning-specific
+    pretrained_checkpoint: Optional[str]
+    peft: Union[str, PEFT, None]
+    packed_sequence: bool
+
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: Optional[int]
+    micro_batch_size: int
+    seq_length: Optional[int]
+    eval_interval: int
+    save_interval: int
+
+    # Optimizer
+    finetune_lr: Optional[float]
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: Optional[int]
+
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
+
+    # Precision
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+
+
+# Qwen2 Finetuning Configs
+def qwen2_500m_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2 500M.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+    """
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2-0.5B", **user_kwargs)
+
+
+def qwen2_1p5b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2 1.5B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+    """
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2-1.5B", **user_kwargs)
+
+
+def qwen2_7b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2 7B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=2, PP=1, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    if "tensor_model_parallel_size" not in user_kwargs:
+        user_kwargs["tensor_model_parallel_size"] = 2 if is_full_sft else 1
+
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2-7B", **user_kwargs)
+
+
+def qwen2_72b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2 72B.
+
+    Default configuration: 4 nodes (SFT) or 1 node (LoRA), 8 GPUs per node
+    - LoRA/DoRA: TP=8, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=4, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    if "tensor_model_parallel_size" not in user_kwargs:
+        user_kwargs["tensor_model_parallel_size"] = 8
+    if "pipeline_model_parallel_size" not in user_kwargs:
+        user_kwargs["pipeline_model_parallel_size"] = 4 if is_full_sft else 1
+
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2-72B", **user_kwargs)
+
+
+# Qwen2.5 Finetuning Configs
+def qwen25_500m_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2.5 500M.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+    """
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2.5-0.5B", **user_kwargs)
+
+
+def qwen25_1p5b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2.5 1.5B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+    """
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2.5-1.5B", **user_kwargs)
+
+
+def qwen25_7b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2.5 7B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=2, PP=1, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    if "tensor_model_parallel_size" not in user_kwargs:
+        user_kwargs["tensor_model_parallel_size"] = 2 if is_full_sft else 1
+
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2.5-7B", **user_kwargs)
+
+
+def qwen25_14b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2.5 14B.
+
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=4, PP=1, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    if "tensor_model_parallel_size" not in user_kwargs:
+        user_kwargs["tensor_model_parallel_size"] = 4 if is_full_sft else 1
+
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2.5-14B", **user_kwargs)
+
+
+def qwen25_32b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2.5 32B.
+
+    Default configuration: 2 nodes (SFT) or 1 node (LoRA), 8 GPUs per node
+    - LoRA/DoRA: TP=8, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=2, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    if "tensor_model_parallel_size" not in user_kwargs:
+        user_kwargs["tensor_model_parallel_size"] = 8
+    if "pipeline_model_parallel_size" not in user_kwargs:
+        user_kwargs["pipeline_model_parallel_size"] = 2 if is_full_sft else 1
+
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2.5-32B", **user_kwargs)
+
+
+def qwen25_72b_finetune_config(**user_kwargs: Unpack[Qwen2FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Qwen2.5 72B.
+
+    Default configuration: 4 nodes (SFT) or 1 node (LoRA), 8 GPUs per node
+    - LoRA/DoRA: TP=8, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=4, LR=5e-6
+    """
+    peft_value = user_kwargs.get("peft", "lora")
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
+    if "tensor_model_parallel_size" not in user_kwargs:
+        user_kwargs["tensor_model_parallel_size"] = 8
+    if "pipeline_model_parallel_size" not in user_kwargs:
+        user_kwargs["pipeline_model_parallel_size"] = 4 if is_full_sft else 1
+
+    return _qwen2_finetune_common(hf_path="Qwen/Qwen2.5-72B", **user_kwargs)
+
+
+def _qwen2_finetune_common(
+    hf_path: str,
+    dir: Optional[str] = None,
+    name: str = "default",
+    # Core model configuration
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
+    # Finetuning-specific params
+    pretrained_checkpoint: Optional[str] = None,
+    peft: Union[str, PEFT, None] = "lora",
+    packed_sequence: bool = False,
+    # Training params
+    train_iters: int = 100,
+    global_batch_size: Optional[int] = None,
+    micro_batch_size: int = 1,
+    seq_length: Optional[int] = None,
+    eval_interval: int = 50,
+    save_interval: int = 100,
+    # Optimizer
+    finetune_lr: Optional[float] = None,
+    min_lr: float = 0.0,
+    lr_warmup_iters: int = 10,
+    lr_decay_iters: Optional[int] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
+    # Precision
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
+) -> ConfigContainer:
+    """Common finetuning configuration for all Qwen2/2.5 models."""
+
+    # Setup directories
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Auto-select sequence length
+    if seq_length is None:
+        seq_length = 2048 if packed_sequence else 4096
+
+    # Auto-select global_batch_size
+    if global_batch_size is None:
+        global_batch_size = 128
+
+    # Auto-select learning rate
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+
+    # Create model config
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
+    model_cfg.seq_length = seq_length
+
+    # Precision configuration
+    if precision_config is None:
+        precision_config = bf16_mixed()
+    elif isinstance(precision_config, str):
+        precision_config = get_mixed_precision_config(precision_config)
+
+    # Optimizer and scheduler
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
+        max_lr=finetune_lr,
+        min_lr=min_lr,
+    )
+
+    # PEFT config
+    peft_config = default_peft_config(peft) if not is_full_sft else None
+
+    # Dataset config
+    dataset_config = default_squad_config(seq_length, packed_sequence)
+
+    # Logger
+    logger_cfg = LoggerConfig(
+        log_interval=1,
+        tensorboard_dir=tensorboard_dir,
+        log_timers_to_tensorboard=True,
+        wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
+        wandb_exp_name=wandb_exp_name,
+    )
+
+    # Tokenizer
+    tokenizer_cfg = TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model=hf_path,
+    )
+
+    # DDP config
+    ddp_cfg = DistributedDataParallelConfig(
+        check_for_nan_in_grad=True,
+        grad_reduce_in_fp32=False if is_full_sft else True,
+        overlap_grad_reduce=True if is_full_sft else False,
+        overlap_param_gather=True if is_full_sft else False,
+        average_in_collective=True if is_full_sft else False,
+        use_distributed_optimizer=True if is_full_sft else False,
+    )
+
+    return ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=eval_interval,
+            eval_iters=10,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+        ),
+        optimizer=opt_cfg,
+        scheduler=scheduler_cfg,
+        ddp=ddp_cfg,
+        dataset=dataset_config,
+        logger=logger_cfg,
+        tokenizer=tokenizer_cfg,
+        checkpoint=CheckpointConfig(
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=pretrained_checkpoint,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=5678),
+        peft=peft_config,
+        mixed_precision=precision_config,
+    )

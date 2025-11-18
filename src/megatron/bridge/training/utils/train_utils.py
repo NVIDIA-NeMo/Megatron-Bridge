@@ -186,14 +186,16 @@ def calc_params_l2_norm(
             False,  # no per-parameter norm.
         )
         sharded_norm_2 = sharded_norm * sharded_norm
-        # Sum over all DP groups, including CP since distributed optimizer state is
-        # sharded jointly over DP+CP.
-        torch.distributed.all_reduce(
-            sharded_norm_2,
-            op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_data_parallel_group(with_context_parallel=True),
-        )
-        norm_2 += sharded_norm_2
+    else:
+        sharded_norm_2 = torch.zeros((1,), dtype=torch.float32, device="cuda")
+    # Sum over all DP groups, including CP since distributed optimizer state is
+    # sharded jointly over DP+CP.
+    torch.distributed.all_reduce(
+        sharded_norm_2,
+        op=torch.distributed.ReduceOp.SUM,
+        group=parallel_state.get_data_parallel_group(with_context_parallel=True),
+    )
+    norm_2 += sharded_norm_2
 
     # Add norm contribution from expert layers in MoEs.
     if len(moe_params_data) > 0:
@@ -539,8 +541,14 @@ def training_log(
     if config.model.num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
-        if config.model.moe_router_load_balancing_type in ("aux_loss", "seq_aux_loss"):
+
+        moe_router_load_balancing_type = config.model.moe_router_load_balancing_type
+        if "aux_loss" in moe_router_load_balancing_type:
             track_names.append("load_balancing_loss")
+        if "seq_aux_loss" in moe_router_load_balancing_type:
+            track_names.append("seq_load_balancing_loss")
+        if "global_aux_loss" in moe_router_load_balancing_type:
+            track_names.append("global_load_balancing_loss")
         if config.model.moe_z_loss_coeff is not None:
             track_names.append("z_loss")
         track_moe_metrics(
@@ -567,7 +575,9 @@ def training_log(
         # Calculate GPU utilization
         num_flops = num_floating_point_operations(config, batch_size)
         per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
-        print_rank_0(f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}TFLOP/s/GPU")
+        print_rank_0(
+            f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
+        )
 
         if logger_config.log_throughput_to_tensorboard:
             if writer:
@@ -866,6 +876,16 @@ def report_throughput(
         elapsed_samples = int(history_samples[-1]) - int(history_samples[0])
         elapsed_tokens = int(history_tokens[-1]) - int(history_tokens[0])
         elapsed_wct = history_wct[-1] - history_wct[0]
+
+        # Skip throughput calculation if elapsed_wct is zero or negative
+        # This can happen during checkpoint resumption when history_wct is reinitialized
+        # and the first few iterations are very fast or have identical timestamps
+        if elapsed_wct <= 0:
+            print_rank_0(
+                f"Warning: elapsed_wct is {elapsed_wct}, skipping throughput calculation at iteration {iteration}"
+            )
+            return {}
+
         batches_per_sec = elapsed_batches / elapsed_wct
         samples_per_sec = elapsed_samples / elapsed_wct
         dev_batches_per_sec = batches_per_sec / world_size

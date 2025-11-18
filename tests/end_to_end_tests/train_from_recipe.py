@@ -171,10 +171,14 @@ def apply_args_to_config(config, args):
         config.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     if args.save_dir:
         config.checkpoint.save = args.save_dir
+    if args.load_dir:
+        config.checkpoint.load = args.load_dir
     if args.save_interval:
         config.checkpoint.save_interval = args.save_interval
     if args.async_save:
         config.checkpoint.async_save = args.async_save
+    if args.most_recent_k:
+        config.checkpoint.most_recent_k = args.most_recent_k
 
     # Dataset configuration
     logging.info(f"Configuring dataset: type={args.data}")
@@ -239,7 +243,7 @@ def apply_args_to_config(config, args):
         config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
 
     # Logging configuration
-    config.logger.log_timers_to_tensorboard = True
+    config.logger.log_timers_to_tensorboard = args.tensorboard is True
 
     # WandB configuration
     if args.wandb_project:
@@ -258,10 +262,10 @@ def apply_args_to_config(config, args):
         # Checkpoint configuration for convergence
         if args.max_steps <= 100:
             # Short convergence runs - save at the end
-            config.checkpoint.save_interval = args.max_steps
+            config.checkpoint.save_interval = args.save_interval or args.max_steps
         else:
-            # Long convergence runs - save every 1000 steps
-            config.checkpoint.save_interval = 1000
+            # Long convergence runs - save every save_interval steps
+            config.checkpoint.save_interval = args.save_interval or 1000
 
         # Validation configuration for convergence
         if args.max_steps <= 100:
@@ -334,8 +338,10 @@ def setup_argument_parser():
     # Checkpointing
     parser.add_argument("--pretrained-checkpoint", type=str, help="Path to pretrained checkpoint")
     parser.add_argument("--save-dir", type=str, help="Directory to save checkpoints")
+    parser.add_argument("--load-dir", type=str, help="Directory to load checkpoints")
     parser.add_argument("--save-interval", type=int, help="Number of iterations between checkpoint saves")
     parser.add_argument("--async-save", action="store_true", help="Enable async checkpoint saving", default=False)
+    parser.add_argument("--most-recent-k", type=int, help="Number of latest checkpoints to keep")
 
     # Data
     parser.add_argument(
@@ -369,6 +375,12 @@ def setup_argument_parser():
     parser.add_argument("--convergence", action="store_true", help="Enable convergence run", default=False)
     parser.add_argument("--nsys", action="store_true", help="Enable nsys profiling", default=False)
     parser.add_argument("--mem", action="store_true", help="Enable torch memory profiling", default=False)
+    parser.add_argument(
+        "--tensorboard", action="store_true", dest="tensorboard", help="Enable tensorboard logging", default=True
+    )
+    parser.add_argument(
+        "--no-tensorboard", action="store_false", dest="tensorboard", help="Disable tensorboard logging"
+    )
 
     # WandB configuration
     parser.add_argument("--wandb-project", type=str, help="WandB project name")

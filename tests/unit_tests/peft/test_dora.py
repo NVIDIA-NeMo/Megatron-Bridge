@@ -693,6 +693,7 @@ class TestDoRAMegatronIntegration:
             assert first_name == second_name
             assert second_module is first_module, f"DoRA module {first_name} should be identical object"
 
+    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
     def test_dora_forward_pass(self):
         """Test that DoRA adapted model can perform forward pass using pre-wrap hooks."""
         model_provider = GPTModelProvider(

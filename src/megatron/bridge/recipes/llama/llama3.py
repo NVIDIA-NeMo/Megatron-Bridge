@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Union
 
 import torch
 from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config, default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
@@ -37,7 +38,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
 
 class Llama3CommonKwargs(TypedDict, total=False):
@@ -45,23 +46,23 @@ class Llama3CommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: Optional[str]
+    dir: str | None
     name: str
     # Dataset configuration
-    data_paths: Optional[List[str]]
-    data_args_path: Optional[str]
-    train_data_path: Optional[List[str]]
-    valid_data_path: Optional[List[str]]
-    test_data_path: Optional[List[str]]
-    per_split_data_args_path: Optional[str]
+    data_paths: list[str] | None
+    data_args_path: str | None
+    train_data_path: list[str] | None
+    valid_data_path: list[str] | None
+    test_data_path: list[str] | None
+    per_split_data_args_path: str | None
     mock: bool
     # Model configuration
-    tensor_parallelism: int
-    pipeline_parallelism: int
-    pipeline_parallelism_dtype: Optional[torch.dtype]
-    virtual_pipeline_parallelism: Optional[int]
-    context_parallelism: int
-    sequence_parallelism: bool
+    tensor_model_parallel_size: int
+    pipeline_model_parallel_size: int
+    pipeline_dtype: torch.dtype | None
+    virtual_pipeline_model_parallel_size: int | None
+    context_parallel_size: int
+    sequence_parallel: bool
     use_megatron_fsdp: bool
     account_for_embedding_in_pipeline_split: bool
     account_for_loss_in_pipeline_split: bool
@@ -72,14 +73,58 @@ class Llama3CommonKwargs(TypedDict, total=False):
     seq_length: int
     lr: float
     min_lr: float
+    adam_eps: float
     lr_warmup_iters: int
-    lr_decay_iters: Optional[int]
+    lr_decay_iters: int | None
     eval_interval: int
     save_interval: int
     use_null_tokenizer: bool
+    # W&B logging
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
     # Precision / overlap configs
-    precision_config: Optional[Union[MixedPrecisionConfig, str]]
-    comm_overlap_config: Optional[CommOverlapConfig]
+    precision_config: MixedPrecisionConfig | str | None
+    comm_overlap_config: CommOverlapConfig | None
+
+
+class Llama3FinetuneKwargs(TypedDict, total=False):
+    """Typed options accepted by Llama3 finetuning recipe helper functions.
+
+    This is separate from Llama3CommonKwargs to avoid confusion - finetuning
+    uses SQuAD dataset by default, not the data path fields.
+    """
+
+    # Core identifiers
+    dir: str | None
+    name: str
+
+    # Finetuning-specific
+    pretrained_checkpoint: str | None
+    peft: str | PEFT | None
+    packed_sequence: bool
+
+    # Training hyperparameters
+    train_iters: int
+    global_batch_size: int | None
+    micro_batch_size: int
+    seq_length: int | None
+    eval_interval: int
+    save_interval: int
+
+    # Optimizer
+    finetune_lr: float | None
+    min_lr: float
+    lr_warmup_iters: int
+    lr_decay_iters: int | None
+
+    # W&B logging
+    wandb_project: str | None
+    wandb_entity: str | None
+    wandb_exp_name: str | None
+
+    # Precision
+    precision_config: MixedPrecisionConfig | str | None
 
 
 # Sequence length constants
@@ -96,10 +141,10 @@ def llama32_1b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Llama-3.2-1B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -112,10 +157,10 @@ def llama32_3b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Llama-3.2-3B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 1,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 1,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -129,10 +174,10 @@ def llama3_8b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Conf
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 2,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -145,11 +190,11 @@ def llama3_8b_16k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> 
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_16K,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -163,11 +208,11 @@ def llama3_8b_64k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> 
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 4,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 4,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_64K,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
@@ -181,12 +226,52 @@ def llama3_8b_128k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-8B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "context_parallelism": 8,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "context_parallel_size": 8,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_128K,
+    }
+    combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
+    return _llama3_common(**combined_kwargs)
+
+
+def llama3_8b_low_precision_pretrain_config(
+    mixed_precision_recipe: str, **user_kwargs: Unpack[Llama3CommonKwargs]
+) -> ConfigContainer:
+    """Return a low precision (FP8 Current Scaling/MXFP8/NVFP4) pre-training config for Llama 3 8B.
+
+    Args:
+        mixed_precision_recipe (str): The mixed precision recipe to use. Valid options are:
+            - "bf16_with_mxfp8_mixed"
+            - "bf16_with_fp8_current_scaling_mixed"
+            - "bf16_with_nvfp4_mixed"
+        user_kwargs (Unpack[Llama3CommonKwargs]): Additional user-specified configuration options.
+
+    Returns:
+        ConfigContainer: The pre-training configuration for Llama 3 8B.
+
+    See `_llama3_common` for the full list of parameters.
+    """
+    assert mixed_precision_recipe in [
+        "bf16_with_mxfp8_mixed",
+        "bf16_with_fp8_current_scaling_mixed",
+        "bf16_with_nvfp4_mixed",
+    ], f"Invalid low precision recipe: {mixed_precision_recipe}. This recipe has not been tested yet."
+    precision_config = get_mixed_precision_config(mixed_precision_recipe)
+    recommended_kwargs: Llama3CommonKwargs = {
+        "hf_path": "meta-llama/Meta-Llama-3-8B",
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
+        "precision_config": precision_config,
+        "lr": 6e-4,
+        "min_lr": 6e-6,
+        "adam_eps": 1e-8,
+        "micro_batch_size": 1,
+        "global_batch_size": 768,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -200,12 +285,12 @@ def llama3_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-70B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": 5,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": 5,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
             tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
@@ -223,12 +308,12 @@ def llama3_70b_16k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-70B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 2,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": None,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 2,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": None,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_16K,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
@@ -247,12 +332,12 @@ def llama3_70b_64k_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) ->
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3-70B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": None,
-        "context_parallelism": 8,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": None,
+        "context_parallel_size": 8,
+        "sequence_parallel": True,
         "seq_length": SEQUENCE_LENGTH_64K,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
@@ -272,10 +357,10 @@ def llama31_8b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Con
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3.1-8B",
-        "tensor_parallelism": 1,
-        "pipeline_parallelism": 1,
-        "context_parallelism": 2,
-        "sequence_parallelism": False,
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2,
+        "sequence_parallel": False,
     }
     combined_kwargs: Llama3CommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _llama3_common(**combined_kwargs)
@@ -288,12 +373,12 @@ def llama31_70b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> Co
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3.1-70B",
-        "tensor_parallelism": 4,
-        "pipeline_parallelism": 4,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": 5,
-        "context_parallelism": 2,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 4,
+        "pipeline_model_parallel_size": 4,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": 5,
+        "context_parallel_size": 2,
+        "sequence_parallel": True,
         "comm_overlap_config": CommOverlapConfig(
             tp_comm_overlap=True,
             tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
@@ -312,12 +397,12 @@ def llama31_405b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> C
     """
     recommended_kwargs: Llama3CommonKwargs = {
         "hf_path": "meta-llama/Meta-Llama-3.1-405B",
-        "tensor_parallelism": 8,
-        "pipeline_parallelism": 8,
-        "pipeline_parallelism_dtype": torch.bfloat16,
-        "virtual_pipeline_parallelism": 2,
-        "context_parallelism": 4,
-        "sequence_parallelism": True,
+        "tensor_model_parallel_size": 8,
+        "pipeline_model_parallel_size": 8,
+        "pipeline_dtype": torch.bfloat16,
+        "virtual_pipeline_model_parallel_size": 2,
+        "context_parallel_size": 4,
+        "sequence_parallel": True,
         "account_for_embedding_in_pipeline_split": True,
         "account_for_loss_in_pipeline_split": True,
         "comm_overlap_config": CommOverlapConfig(
@@ -334,23 +419,23 @@ def llama31_405b_pretrain_config(**user_kwargs: Unpack[Llama3CommonKwargs]) -> C
 
 def _llama3_common(
     hf_path: str,
-    dir: Optional[str] = None,
+    dir: str | None = None,
     name: str = "default",
     # Dataset configuration
-    data_paths: Optional[List[str]] = None,
-    data_args_path: Optional[str] = None,
-    train_data_path: Optional[List[str]] = None,
-    valid_data_path: Optional[List[str]] = None,
-    test_data_path: Optional[List[str]] = None,
-    per_split_data_args_path: Optional[str] = None,
+    data_paths: list[str] | None = None,
+    data_args_path: str | None = None,
+    train_data_path: list[str] | None = None,
+    valid_data_path: list[str] | None = None,
+    test_data_path: list[str] | None = None,
+    per_split_data_args_path: str | None = None,
     mock: bool = False,
     # Model configuration
-    tensor_parallelism: int = 1,
-    pipeline_parallelism: int = 1,
-    pipeline_parallelism_dtype: Optional[torch.dtype] = None,
-    virtual_pipeline_parallelism: Optional[int] = None,
-    context_parallelism: int = 1,
-    sequence_parallelism: bool = False,
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    pipeline_dtype: torch.dtype | None = None,
+    virtual_pipeline_model_parallel_size: int | None = None,
+    context_parallel_size: int = 1,
+    sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
     account_for_embedding_in_pipeline_split: bool = False,
     account_for_loss_in_pipeline_split: bool = False,
@@ -361,14 +446,15 @@ def _llama3_common(
     seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
+    adam_eps: float = 1e-5,
     lr_warmup_iters: int = 2000,
-    lr_decay_iters: Optional[int] = None,
+    lr_decay_iters: int | None = None,
     eval_interval: int = 2000,
     save_interval: int = 500,
     use_null_tokenizer: bool = True,
     # Precision recipe
-    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
-    comm_overlap_config: Optional[CommOverlapConfig] = None,
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+    comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Llama3 family models using a given HuggingFace path.
@@ -384,12 +470,12 @@ def _llama3_common(
         test_data_path (Optional[List[str]]): List of test data paths.
         per_split_data_args_path (Optional[str]): Path to JSON file with per-split data configuration.
         mock (bool): Whether to use mock data. If True, ignores data_paths.
-        tensor_parallelism (int): Degree of tensor model parallelism.
-        pipeline_parallelism (int): Degree of pipeline model parallelism.
-        pipeline_parallelism_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
-        virtual_pipeline_parallelism (Optional[int]): Size of virtual pipeline parallelism.
-        context_parallelism (int): Degree of context parallelism.
-        sequence_parallelism (bool): Whether to use sequence parallelism.
+        tensor_model_parallel_size (int): Degree of tensor model parallelism.
+        pipeline_model_parallel_size (int): Degree of pipeline model parallelism.
+        pipeline_dtype (Optional[torch.dtype]): Data type for pipeline parallelism.
+        virtual_pipeline_model_parallel_size (Optional[int]): Size of virtual pipeline parallelism.
+        context_parallel_size (int): Degree of context parallelism.
+        sequence_parallel (bool): Whether to use sequence parallelism.
         use_megatron_fsdp (bool): Whether to use Megatron FSDP.
         account_for_embedding_in_pipeline_split (bool): Whether to account for embedding in pipeline split.
         account_for_loss_in_pipeline_split (bool): Whether to account for loss in pipeline split.
@@ -399,6 +485,7 @@ def _llama3_common(
         seq_length (int): Sequence length for training data.
         lr (float): Learning rate.
         min_lr (float): Minimum learning rate for cosine decay.
+        adam_eps (float): AdamW epsilon.
         lr_warmup_iters (int): Number of warmup iterations for the learning rate.
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
@@ -418,13 +505,14 @@ def _llama3_common(
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
     model_cfg = bridge.to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = tensor_parallelism
-    model_cfg.pipeline_model_parallel_size = pipeline_parallelism
-    model_cfg.pipeline_dtype = pipeline_parallelism_dtype
-    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_parallelism
-    model_cfg.context_parallel_size = context_parallelism
-    model_cfg.sequence_parallel = sequence_parallelism
+    model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
+    model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
+    model_cfg.pipeline_dtype = pipeline_dtype
+    model_cfg.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+    model_cfg.context_parallel_size = context_parallel_size
+    model_cfg.sequence_parallel = sequence_parallel
     model_cfg.seq_length = seq_length
+    model_cfg.cross_entropy_fusion_impl = "te"
 
     # Large model specific pipeline split configurations
     if account_for_embedding_in_pipeline_split:
@@ -437,6 +525,7 @@ def _llama3_common(
         lr_decay_iters=lr_decay_iters,
         max_lr=lr,
         min_lr=min_lr,
+        adam_eps=adam_eps,
     )
 
     # Config Container
@@ -501,3 +590,427 @@ def _llama3_common(
     )
 
     return cfg
+
+
+# ============================================================================
+# Finetuning Configurations
+# ============================================================================
+
+
+def llama32_1b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3.2 1B.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - DoRA: TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - Full SFT (peft=None): TP=1, PP=1, LR=5e-6
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _llama3_finetune_common(hf_path="meta-llama/Llama-3.2-1B", **user_kwargs)
+
+    # Model-specific parallelism settings
+    config.model.tensor_model_parallel_size = 1
+    config.model.pipeline_model_parallel_size = 1
+    config.model.context_parallel_size = 1
+    config.model.sequence_parallel = False
+
+    # PEFT or Full SFT specific settings
+    if is_full_sft:
+        config.peft = None
+    else:
+        # PEFT (LoRA, DoRA, or custom)
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+        else:
+            config.peft = peft
+        config.model.cross_entropy_loss_fusion = False
+        config.optimizer.use_distributed_optimizer = False
+
+    return config
+
+
+def llama32_3b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3.2 3B.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - DoRA: TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - Full SFT (peft=None): TP=1, PP=1, LR=5e-6
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _llama3_finetune_common(hf_path="meta-llama/Llama-3.2-3B", **user_kwargs)
+
+    # Model-specific parallelism settings (match NeMo pattern)
+    config.model.tensor_model_parallel_size = 1
+    config.model.pipeline_model_parallel_size = 1
+    config.model.context_parallel_size = 1
+    config.model.sequence_parallel = False
+
+    # PEFT or Full SFT specific settings
+    if is_full_sft:
+        config.peft = None
+    else:
+        # PEFT (LoRA, DoRA, or custom)
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+        else:
+            config.peft = peft
+        config.model.cross_entropy_loss_fusion = False
+        config.optimizer.use_distributed_optimizer = False
+
+    return config
+
+
+def llama3_8b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3 8B.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - DoRA: TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - Full SFT (peft=None): TP=2, PP=1, LR=5e-6
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    if "finetune_lr" not in user_kwargs:
+        user_kwargs["finetune_lr"] = 5e-6 if is_full_sft else 1e-4
+
+    config = _llama3_finetune_common(hf_path="meta-llama/Meta-Llama-3-8B", **user_kwargs)
+
+    # Parallelism settings
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 2
+        config.model.pipeline_model_parallel_size = 1
+        config.peft = None
+    else:
+        config.model.tensor_model_parallel_size = 1
+        config.model.pipeline_model_parallel_size = 1
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 8
+            config.peft.alpha = 16
+        else:
+            config.peft = peft
+        config.optimizer.use_distributed_optimizer = False
+        config.model.cross_entropy_loss_fusion = False
+
+    return config
+
+
+def llama31_8b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3.1 8B.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - DoRA: TP=1, PP=1, LR=1e-4, dim=8, alpha=16
+    - Full SFT (peft=None): TP=2, PP=1, LR=5e-6
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _llama3_finetune_common(hf_path="meta-llama/Meta-Llama-3.1-8B", **user_kwargs)
+
+    # Parallelism settings
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 2
+        config.model.pipeline_model_parallel_size = 1
+        config.peft = None
+    else:
+        config.model.tensor_model_parallel_size = 1
+        config.model.pipeline_model_parallel_size = 1
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 8
+            config.peft.alpha = 16
+        else:
+            config.peft = peft
+        config.optimizer.use_distributed_optimizer = False
+        config.model.cross_entropy_loss_fusion = False
+
+    return config
+
+
+def llama3_70b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3 70B.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=8, PP=1, LR=1e-4, dim=16, alpha=32
+    - Full SFT (peft=None): TP=8, PP=4, VPP=5, LR=5e-6 (requires 4 nodes)
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _llama3_finetune_common(hf_path="meta-llama/Meta-Llama-3-70B", **user_kwargs)
+
+    # PEFT or Full SFT specific settings
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 8
+        config.model.pipeline_model_parallel_size = 4
+        config.peft = None
+    else:
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 16
+            config.peft.alpha = 32
+        else:
+            config.peft = peft
+        config.model.cross_entropy_loss_fusion = False
+        config.optimizer.use_distributed_optimizer = False
+        config.model.tensor_model_parallel_size = 8
+
+    return config
+
+
+def llama31_70b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3.1 70B.
+
+    Default configuration: 1 node, 8 GPUs, LoRA
+    - LoRA (default): TP=8, PP=1, LR=1e-4, dim=16, alpha=32
+    - DoRA: TP=8, PP=1, LR=1e-4, dim=16, alpha=32
+    - Full SFT (peft=None): TP=8, PP=4, VPP=5, LR=5e-6 (requires 4 nodes)
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    # Auto-select LR if not specified
+    finetune_lr = user_kwargs.get("finetune_lr")
+    if finetune_lr is None:
+        finetune_lr = 5e-6 if is_full_sft else 1e-4
+        user_kwargs["finetune_lr"] = finetune_lr
+
+    # Build base config
+    config = _llama3_finetune_common(hf_path="meta-llama/Meta-Llama-3.1-70B", **user_kwargs)
+
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 8
+        config.model.pipeline_model_parallel_size = 4
+        config.peft = None
+    else:
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 16
+            config.peft.alpha = 32
+        else:
+            config.peft = peft
+        config.model.cross_entropy_loss_fusion = False
+        config.optimizer.use_distributed_optimizer = False
+        config.model.tensor_model_parallel_size = 8
+
+    return config
+
+
+def llama31_405b_finetune_config(**user_kwargs: Unpack[Llama3FinetuneKwargs]) -> ConfigContainer:
+    """Return a finetuning config for Llama 3.1 405B.
+
+    Default configuration: 4 nodes (LoRA) or 16 nodes (Full SFT), 8 GPUs per node
+    - LoRA (default): TP=4, PP=8, VPP=8, CP=1, LR=1e-4, dim=16, alpha=32, GBS=32, SP=True
+      Total: 32 GPUs (4 nodes)
+      Note: 128 effective layers ÷ 8 = 16 layers/rank, VPP=8 splits into 2 layers/virtual stage
+    - DoRA: TP=4, PP=8, VPP=8, CP=1, LR=1e-4, dim=16, alpha=32, GBS=32, SP=True
+      Total: 32 GPUs (4 nodes)
+    - Full SFT (peft=None): TP=8, PP=16, VPP=None, CP=1, LR=5e-6, GBS=6, SP=True
+      Total: 128 GPUs (16 nodes)
+      Note: 128 effective layers ÷ 16 = 8 layers/rank
+    """
+    peft = user_kwargs.pop("peft", "lora")
+    is_full_sft = peft is None or (isinstance(peft, str) and peft.lower() == "none")
+
+    if "finetune_lr" not in user_kwargs:
+        user_kwargs["finetune_lr"] = 5e-6 if is_full_sft else 1e-4
+
+    if "global_batch_size" not in user_kwargs:
+        user_kwargs["global_batch_size"] = 16 if is_full_sft else 32
+
+    if "seq_length" not in user_kwargs:
+        user_kwargs["seq_length"] = 2048
+
+    config = _llama3_finetune_common(hf_path="meta-llama/Meta-Llama-3.1-405B", **user_kwargs)
+
+    # Parallelism settings
+    if is_full_sft:
+        config.model.tensor_model_parallel_size = 8
+        config.model.pipeline_model_parallel_size = 16
+        config.model.virtual_pipeline_model_parallel_size = None
+        config.model.sequence_parallel = True
+        config.peft = None
+        config.ddp = DistributedDataParallelConfig(
+            check_for_nan_in_grad=True,
+            grad_reduce_in_fp32=False,
+            overlap_grad_reduce=True,
+            overlap_param_gather=True,
+            average_in_collective=True,
+        )
+        config.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=True, defer_embedding_wgrad_compute=True, wgrad_deferral_limit=22
+        )
+    else:
+        if isinstance(peft, str) and peft.lower() in ["lora", "dora"]:
+            config.peft = default_peft_config(peft)
+            config.peft.dim = 16
+            config.peft.alpha = 32
+            config.peft.target_modules = ["linear_qkv"]
+        else:
+            config.peft = peft
+
+        config.optimizer.use_distributed_optimizer = False
+        config.model.cross_entropy_loss_fusion = False
+        config.model.tensor_model_parallel_size = 4
+        config.model.pipeline_model_parallel_size = 8
+        config.model.virtual_pipeline_model_parallel_size = 8
+        config.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    config.mixed_precision = get_mixed_precision_config(config.mixed_precision)
+    config.mixed_precision.grad_reduce_in_fp32 = False
+    config.ddp.grad_reduce_in_fp32 = False
+    config.model.sequence_parallel = True
+
+    config.train.manual_gc = True
+    config.train.manual_gc_interval = 100
+    config.train.manual_gc_eval = 100
+
+    config.optimizer.use_precision_aware_optimizer = False
+
+    config.model.account_for_embedding_in_pipeline_split = True
+    config.model.account_for_loss_in_pipeline_split = True
+
+    return config
+
+
+def _llama3_finetune_common(
+    hf_path: str,
+    dir: str | None = None,
+    name: str = "default",
+    # Finetuning-specific params
+    pretrained_checkpoint: str | None = None,
+    packed_sequence: bool = False,
+    # Training params
+    train_iters: int = 1000,
+    global_batch_size: int | None = None,
+    micro_batch_size: int = 1,
+    seq_length: int | None = None,
+    eval_interval: int = 30,
+    save_interval: int = 50,
+    # Optimizer
+    finetune_lr: float = 1e-4,
+    min_lr: float = 0.0,
+    lr_warmup_iters: int = 50,
+    lr_decay_iters: int | None = None,
+    # W&B logging
+    wandb_project: str | None = None,
+    wandb_entity: str | None = None,
+    wandb_exp_name: str | None = None,
+    # Precision
+    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
+) -> ConfigContainer:
+    """Minimal common finetuning configuration.
+
+    This function provides only the basic setup. Individual model configs handle parallelism settings
+    depending on PEFT or full SFT.
+    """
+
+    # Setup directories
+    base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, name)
+    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
+    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+
+    # Auto-select seq_length based on packed_sequence
+    # For unpacked sequence, most samples in SQuAD dataset are shorter than 2K
+    if seq_length is None:
+        seq_length = 4096 if packed_sequence else 2048
+
+    # Auto-select global_batch_size based on packed_sequence
+    if global_batch_size is None:
+        global_batch_size = 8 if packed_sequence else 128
+
+    # Create basic model config from HF
+    bridge = AutoBridge.from_hf_pretrained(hf_path)
+    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg.seq_length = seq_length
+
+    # Basic optimizer configuration
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=lr_warmup_iters,
+        lr_decay_iters=lr_decay_iters,
+        max_lr=finetune_lr,
+        min_lr=min_lr,
+        adam_beta2=0.98,
+    )
+
+    # Logger
+    logger_cfg = LoggerConfig(
+        log_interval=1,
+        tensorboard_dir=tensorboard_dir,
+        log_timers_to_tensorboard=True,
+        wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
+        wandb_exp_name=wandb_exp_name,
+    )
+    tokenizer_cfg = TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model=hf_path,
+    )
+    ddp_cfg = DistributedDataParallelConfig(check_for_nan_in_grad=True)
+    return ConfigContainer(
+        model=model_cfg,
+        train=TrainingConfig(
+            train_iters=train_iters,
+            eval_interval=eval_interval,
+            eval_iters=32,
+            global_batch_size=global_batch_size,
+            micro_batch_size=micro_batch_size,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
+        ),
+        optimizer=opt_cfg,
+        scheduler=scheduler_cfg,
+        ddp=ddp_cfg,
+        dataset=default_squad_config(seq_length, packed_sequence),
+        logger=logger_cfg,
+        tokenizer=tokenizer_cfg,
+        checkpoint=CheckpointConfig(
+            save_interval=save_interval,
+            save=checkpoint_dir,
+            load=checkpoint_dir,
+            pretrained_checkpoint=pretrained_checkpoint,
+            ckpt_format="torch_dist",
+            fully_parallel_save=True,
+        ),
+        rng=RNGConfig(seed=5678),
+        peft=None,
+        comm_overlap=None,
+        mixed_precision=precision_config,
+    )

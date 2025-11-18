@@ -6,11 +6,17 @@ from dataclasses import dataclass
 from typing import Dict, List, Union
 
 import numpy as np
-from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer as MegatronTokenizer
 
 # Mark tokens that will be ignored in the loss function with this value.
 # Same ignore_index in https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
 from megatron.core.models.multimodal.llava_model import IGNORE_INDEX, IMAGE_TOKEN
+
+
+try:
+    from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer as MegatronTokenizer
+except ImportError:
+    # Fallback to old path
+    from megatron.core.datasets.megatron_tokenizer import MegatronTokenizer as MegatronTokenizer
 
 
 IMAGE_TAGS = {

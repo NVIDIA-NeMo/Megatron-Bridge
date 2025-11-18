@@ -20,9 +20,11 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal, Optional, Tuple, Union
 
+import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -183,6 +185,12 @@ class DistributedInitConfig:
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
+    distributed_timeout_seconds_after_init: int | None = None
+    """Timeout in seconds for process groups after initialization. This timeout is applied to all process groups after initialization and the first iteration completes."""
+
+    disable_jit_fuser: bool = False
+    """Disable the JIT fuser."""
+
 
 @dataclass
 class RerunStateMachineConfig:
@@ -210,8 +218,9 @@ class RerunStateMachineConfig:
 class DataloaderConfig:
     """Base configuration for data loading."""
 
-    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = None
-    """Single pass vs multiple pass data loader"""
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
+    """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
+    'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
 
     num_workers: int = 8
     """Dataloader number of workers."""
@@ -337,7 +346,14 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 
 @dataclass(kw_only=True)
 class FinetuningDatasetConfig(DataloaderConfig):
-    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig."""
+    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig.
+
+    Note: For fine-tuning, dataloader_type defaults to 'batch' which ensures sequences
+    within each global batch are padded to the same length.
+    """
+
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
+    """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
 
     dataset_root: Optional[Union[str, Path]] = None
     seq_length: int
@@ -405,6 +421,12 @@ class SchedulerConfig:
 
     weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
     """Weight decay increment function."""
+
+    no_weight_decay_cond_type: Optional[Literal["qwen3_next"]] = None
+    """Type of no weight decay condition. Choices:
+    None (default): param no weight decay if and only if it is 1D; or it is bias;
+    or it is embedding and embedding_init_method_std is not None.
+    "qwen3_next": In addition to the default rules, apply weight decay to qk layernorm as a special case."""
 
     lr_warmup_steps: Optional[int] = field(init=False, default=None)
     lr_decay_steps: Optional[int] = field(init=False, default=None)
@@ -525,6 +547,9 @@ class TrainingConfig:
     """When using manual garbage collection,
     disable garbage collection at the start and the end of each evaluation run.
     """
+
+    iterations_to_skip: list[int] = field(default_factory=list)
+    """List of iterations to skip during training, empty by default."""
 
     # ---------------- Validation config. ----------------
 
@@ -668,6 +693,19 @@ class CheckpointConfig:
     """Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning.
     NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model."""
 
+    dist_ckpt_save_pre_mcore_014: bool = False
+    """Revert checkpointing simplifications introduced in Megatron-Core v0.14.
+    This option affects only checkpoint saving format and will be removed soon
+    (checkpoint load format is determined based on checkpoint metadata)."""
+
+    dist_ckpt_optim_fully_reshardable: bool = False
+    """Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability."""
+
+    distrib_optim_fully_reshardable_mem_efficient: bool = False
+    """During distributed optimizer checkpoint save and load tries to use as little memory as possible
+    by using Gloo (instead of NCCL) and only one rank for saving. Turn on only if experiencing host or device memory
+    issues. Has affect only with `dist_ckpt_optim_fully_reshardable` flag."""
+
     save_tokenizer_assets: bool = True
     """Save tokenizer files to checkpoint directory. When enabled, saves all tokenizer artifacts
     (vocab files, special tokens, tokenizer config) to make checkpoints self-contained and portable.
@@ -692,6 +730,19 @@ class CheckpointConfig:
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
+
+        # Validate ckpt_step if specified
+        if self.ckpt_step is not None:
+            if self.load is None:
+                raise ValueError(
+                    f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
+                    f"Please set checkpoint.load to the base checkpoint directory."
+                )
+
+        if self.dist_ckpt_optim_fully_reshardable:
+            assert not self.distrib_optim_fully_reshardable_mem_efficient, (
+                "distrib_optim_fully_reshardable_mem_efficient requires use_gloo_process_groups"
+            )
 
 
 @dataclass(kw_only=True)
@@ -801,6 +852,9 @@ class LoggerConfig:
     log_energy: bool = False
     """If set, log energy consumption (in Joules)."""
 
+    save_config_filepath: Optional[str] = None
+    """If set, save the task configuration (ConfigContainer) to this file."""
+
 
 @dataclass(kw_only=True)
 class ProfilingConfig:
@@ -850,6 +904,45 @@ class ProfilingConfig:
         assert self.profile_step_end >= self.profile_step_start, (
             f"profile_step_end ({self.profile_step_end}) must be >= profile_step_start ({self.profile_step_start})"
         )
+
+
+@dataclass(kw_only=True)
+class TensorInspectConfig:
+    """Configuration for Nvidia-DL-Framework-Inspect integration."""
+
+    enabled: bool = False
+    """Enable tensor inspection and statistics collection."""
+
+    features: dict[str, Any] | str | Path | None = None
+    """Feature configuration as a Python dict or a YAML file path."""
+
+    feature_dirs: list[str] | None = None
+    """Directories containing feature implementations (searched recursively)."""
+
+    log_dir: str | None = None
+    """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
+
+    init_training_step: int = 0
+    """Initial training step for the inspector (used when resuming)."""
+
+    def finalize(self) -> None:
+        """Populate sensible defaults when inspection is enabled.
+
+        - If feature_dirs is unset, default to the installed TransformerEngine
+          debug features package path (transformer_engine.debug.features), when available.
+        """
+        if not self.enabled:
+            return
+        if not self.feature_dirs:
+            try:
+                import importlib
+
+                te_features_mod = importlib.import_module("transformer_engine.debug.features")
+                te_features_dir = Path(te_features_mod.__file__).parent
+                if te_features_dir.exists():
+                    self.feature_dirs = [str(te_features_dir)]
+            except Exception:
+                pass
 
 
 @dataclass
@@ -1032,10 +1125,11 @@ class ConfigContainer(Container):
     ft: Optional[FaultToleranceConfig] = None
     straggler: Optional[StragglerDetectionConfig] = None
     nvrx_straggler: Optional[NVRxStragglerDetectionConfig] = None
-    profiling: Optional[ProfilingConfig] = None
+    profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
     peft: Optional[PEFT] = None
     comm_overlap: Optional[CommOverlapConfig] = None
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
+    tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
@@ -1065,32 +1159,31 @@ class ConfigContainer(Container):
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
-    def _sync_and_validate_external_cuda_graph(self) -> None:
-        """Sync necessary configs for external CUDA Graphs and and validates it."""
+    def _validate_and_apply_deterministic_mode(self) -> None:
+        """Apply and validate deterministic mode requirements.
 
-        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
-        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
-            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
+        This enforces restrictions and settings that must hold when
+        the model is configured to run in deterministic mode.
+        """
+        if not getattr(self.model, "deterministic_mode", False):
+            return
 
-        # Validate external_cg
-        if self.model.enable_cuda_graph or self.model.external_cuda_graph:
-            assert not self.model.enable_cuda_graph or not self.model.external_cuda_graph, (
-                "enable_cuda_graph and external_cuda_graph cannot be enabled at the same time."
-            )
-            if self.model.transformer_impl == "transformer_engine" and not (
-                self.rng.te_rng_tracker or self.model.use_te_rng_tracker
-            ):
-                self.rng.te_rng_tracker = self.model.use_te_rng_tracker = True
-                warn_rank_0("te_rng_tracker is not enabled, enabling it for CUDA graphs.")
+        # Disallow flash attention when running deterministically
+        if getattr(self.model, "attention_backend", None) == AttnBackend.flash:
+            raise AssertionError("Flash attention can not be used in deterministic mode.")
 
-        if self.model.external_cuda_graph:
-            assert "expandable_segments:True" not in os.getenv("PYTORCH_CUDA_ALLOC_CONF", ""), (
-                "expandable_segments:True may not be safe when using CUDA Graphs with some specific parallel settings. "
-                "The training may crash with illegal memory access."
-            )
-            assert self.model.recompute_granularity != "full", (
-                "recompute_granularity must not be full when CUDA Graphs are enabled."
-            )
+        # Disallow cross-entropy loss fusion as it is not deterministic
+        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
+            "Cross Entropy Fusion is currently not deterministic."
+        )
+
+        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
+        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
+            f"NCCL_ALGO must be one of {all_reduce_choices}."
+        )
+
+        # Enable deterministic algorithms in torch
+        torch.use_deterministic_algorithms(True)
 
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
@@ -1115,6 +1208,12 @@ class ConfigContainer(Container):
             self.profiling.finalize()
         if self.nvrx_straggler is not None:
             self.nvrx_straggler.finalize()
+        if self.tensor_inspect is not None:
+            self.tensor_inspect.finalize()
+
+        # Sync config. If TE RNG tracker is set in either ways, set them in both places.
+        if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
+            self.model.use_te_rng_tracker = self.rng.te_rng_tracker = True
 
         # Re-run post-inits of sub-configs
         for f in fields(self):
@@ -1129,6 +1228,9 @@ class ConfigContainer(Container):
             # Set data_parallel_size on comm_overlap config if present
             if self.comm_overlap is not None:
                 self.comm_overlap.data_parallel_size = self.data_parallel_size
+
+        # Deterministic mode validations and settings
+        self._validate_and_apply_deterministic_mode()
 
         # Run validations
         _validate_and_sync_distributed_optimizer_settings(self)
@@ -1157,6 +1259,13 @@ class ConfigContainer(Container):
             if self.optimizer.use_precision_aware_optimizer:
                 self.ddp.preserve_fp32_weights = False
 
+        # ModelOpt/Quantization checks
+        if getattr(self.model, "restore_modelopt_state", False):
+            assert not self.model.gradient_accumulation_fusion, (
+                "Gradient accumulation fusion is not supported with ModelOpt/Quantized models. "
+                "Please set model.gradient_accumulation_fusion=False"
+            )
+
         # Checkpoint
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             # only check if saving or loading
@@ -1170,6 +1279,13 @@ class ConfigContainer(Container):
             assert self.checkpoint.ckpt_format == "torch_dist", (
                 "async_save is only supported with ckpt_format='torch_dist'"
             )
+
+        # Set defaults for tensor inspect callback
+        if self.tensor_inspect is not None and self.tensor_inspect.enabled:
+            if self.tensor_inspect.log_dir is None:
+                self.tensor_inspect.log_dir = self.checkpoint.save or "."
+            if self.tensor_inspect.init_training_step == 0 and self.checkpoint.ckpt_step is not None:
+                self.tensor_inspect.init_training_step = int(self.checkpoint.ckpt_step)
 
         self.model.use_cpu_initialization = self.model.use_cpu_initialization or self.dist.lazy_init
 
@@ -1227,22 +1343,23 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            data_seq_length = (
-                self.dataset.seq_length
-                if isinstance(self.dataset, FinetuningDatasetConfig)
-                else self.dataset.sequence_length
-            )
+            # Only validate sequence length for GPTDatasetConfig or FinetuningDatasetConfig
+            # DatasetProvider instances may not have sequence_length attributes
+            if isinstance(self.dataset, (GPTDatasetConfig, FinetuningDatasetConfig)):
+                data_seq_length = (
+                    self.dataset.seq_length
+                    if isinstance(self.dataset, FinetuningDatasetConfig)
+                    else self.dataset.sequence_length
+                )
 
-            assert self.model.seq_length == data_seq_length, (
-                f"Please ensure sequence length configuration in model config and "
-                f"dataset config match.\nSequence length in model config: {self.model.seq_length}, "
-                f"Sequence length in dataset config: {data_seq_length}"
-            )
+                assert self.model.seq_length == data_seq_length, (
+                    f"Please ensure sequence length configuration in model config and "
+                    f"dataset config match.\nSequence length in model config: {self.model.seq_length}, "
+                    f"Sequence length in dataset config: {data_seq_length}"
+                )
 
         # Validate DeepEP is supported for the current GPU architecture
         validate_deepep(self.model)
-
-        self._sync_and_validate_external_cuda_graph()
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""

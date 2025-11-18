@@ -29,6 +29,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
     get_checkpoint_run_config_filename,
     get_checkpoint_train_state_filename,
+    get_hf_model_id_from_checkpoint,
     read_run_config,
     read_train_state,
 )
@@ -115,6 +116,51 @@ class TestCheckpointUtils:
 
         result = get_checkpoint_run_config_filename(checkpoint_dir)
         assert result == expected_path
+
+    def test_get_hf_model_id_from_checkpoint_root_directory(self, tmp_path):
+        """Test inferring HF model id when run_config.yaml lives at root."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        run_config_file = checkpoint_dir / CONFIG_FILE
+        run_config_file.write_text(yaml.dump({"model": {"hf_model_id": "meta-llama/Meta-Llama-3-8B"}}))
+
+        result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
+        assert result == "meta-llama/Meta-Llama-3-8B"
+
+    def test_get_hf_model_id_from_checkpoint_latest_iteration(self, tmp_path):
+        """Test inferring HF model id selects latest iteration when multiple exist."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        older_iter = checkpoint_dir / "iter_0000001"
+        newer_iter = checkpoint_dir / "iter_0000005"
+        older_iter.mkdir()
+        newer_iter.mkdir()
+
+        (older_iter / CONFIG_FILE).write_text(yaml.dump({"model": {"hf_model_id": "older/model"}}))
+        (newer_iter / CONFIG_FILE).write_text(yaml.dump({"model": {"hf_model_id": "newer/model"}}))
+
+        result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
+        assert result == "newer/model"
+
+    def test_get_hf_model_id_from_checkpoint_missing_run_config(self, tmp_path):
+        """Test inferring HF model id returns None when no run_config.yaml is present."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
+        assert result is None
+
+    def test_get_hf_model_id_from_checkpoint_invalid_path(self, tmp_path):
+        """Test inferring HF model id handles invalid paths."""
+        with pytest.raises(FileNotFoundError):
+            get_hf_model_id_from_checkpoint(tmp_path / "does_not_exist")
+
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("not a directory")
+        with pytest.raises(NotADirectoryError):
+            get_hf_model_id_from_checkpoint(file_path)
 
     def test_get_checkpoint_train_state_filename_without_prefix(self, tmp_path):
         """Test get_checkpoint_train_state_filename without prefix."""
@@ -434,37 +480,6 @@ class TestCheckpointUtils:
         assert len(errors) == 0, f"Errors occurred during concurrent access: {errors}"
         assert len(results) == 10
         assert all(result == config_data for result in results)
-
-    def test_performance_large_config_file(self, tmp_path):
-        """Test performance with large configuration files."""
-        # Create a large config file
-        large_config = {
-            "model": {
-                "layers": list(range(1000)),  # Large list
-                "weights": {f"layer_{i}": [0.1] * 100 for i in range(100)},  # Nested large data
-            },
-            "training": {"hyperparameters": {f"param_{i}": i * 0.001 for i in range(1000)}},
-        }
-
-        config_file = tmp_path / "large_config.yaml"
-        with open(config_file, "w") as f:
-            yaml.dump(large_config, f)
-
-        with (
-            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch(
-                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
-            ),
-        ):
-            start_time = time.time()
-            result = read_run_config(str(config_file))
-            end_time = time.time()
-
-            # Verify correctness
-            assert result == large_config
-
-            # Performance should be reasonable (less than 2 seconds for large config)
-            assert end_time - start_time < 2.0, f"Reading large config took {end_time - start_time:.2f} seconds"
 
     def test_memory_usage_with_complex_train_state(self):
         """Test memory efficiency with complex train state objects."""

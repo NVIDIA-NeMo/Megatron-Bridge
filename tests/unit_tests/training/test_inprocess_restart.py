@@ -698,6 +698,7 @@ class TestPretrainInProcessRestartCompatibility:
 
         with (
             patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
             patch("megatron.bridge.training.pretrain.runtime_config_update"),
             patch("megatron.bridge.training.pretrain.GlobalState"),
         ):

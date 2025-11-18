@@ -63,6 +63,7 @@ def main(
     etp: int = 1,
     megatron_save_path: str | None = None,
     megatron_load_path: str | None = None,
+    strict: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -96,6 +97,7 @@ def main(
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -107,6 +109,7 @@ def main(
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
+        model_provider.expert_tensor_parallel_size = etp
 
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
@@ -149,7 +152,7 @@ def main(
         console.print(table)
         console.print(f"Saving HF-ckpt in {save_path}...")
 
-    bridge.save_hf_pretrained(megatron_model, save_path)
+    bridge.save_hf_pretrained(megatron_model, save_path, strict=strict)
 
     # Save in Megatron format if path is provided
     if megatron_save_path:
@@ -186,6 +189,7 @@ if __name__ == "__main__":
         default=None,
         help="Path to load the model in Megatron checkpoint format. If provided, model will not start from HF checkpoint.",
     )
+    parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
     args = parser.parse_args()
     main(
         args.hf_model_id,

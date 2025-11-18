@@ -101,12 +101,15 @@ def hf_train_valid_test_datasets_provider(
         f"> building train, validation, and test datasets for Huggingface dataset {dataset_config.dataset_name} ..."
     )
 
+    # Get field names from DataloaderConfig to exclude
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
     train_ds, valid_ds, test_ds = HFDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
             for field in fields(dataset_config)
-            if field not in fields(DataloaderConfig)
+            if field.name not in dataloader_field_names
         },
     ).build()
 
@@ -135,12 +138,15 @@ def finetuning_train_valid_test_datasets_provider(
         f">building train, validation, and test datasets for Finetuning dataset from {dataset_config.dataset_root} ..."
     )
 
+    # Get field names from DataloaderConfig to exclude
+    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+
     train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
             for field in fields(dataset_config)
-            if field not in fields(DataloaderConfig)
+            if field.name not in dataloader_field_names
         },
     ).build()
 

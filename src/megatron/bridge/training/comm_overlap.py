@@ -380,7 +380,7 @@ class CommOverlapConfig:
 
     tp_comm_overlap: bool
     tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
-    tp_comm_bootstrap_backend: Optional[str] = None
+    tp_comm_bootstrap_backend: Optional[str] = "nccl"
     overlap_p2p_comm: Optional[bool] = None
     batch_p2p_comm: Optional[bool] = None
     overlap_grad_reduce: Optional[bool] = None
@@ -415,8 +415,6 @@ class CommOverlapConfig:
             overlap_moe_expert_parallel_comm=self.overlap_moe_expert_parallel_comm,
             delay_wgrad_compute=self.delay_wgrad_compute,
         )
-        self.tp_comm_overlap_cfg = None
-        self.tp_comm_bootstrap_backend = None
 
     def _get_model_comm_overlap_cfgs(
         self,
@@ -432,7 +430,6 @@ class CommOverlapConfig:
         # Optimizations disabled by default, can be overriden by user
         comm_overlap_cfg.tp_comm_overlap = False
         comm_overlap_cfg.tp_comm_overlap_cfg = None
-        comm_overlap_cfg.tp_comm_bootstrap_backend = None
         comm_overlap_cfg.defer_embedding_wgrad_compute = False
         comm_overlap_cfg.wgrad_deferral_limit = -1
         comm_overlap_cfg.overlap_moe_expert_parallel_comm = False
@@ -567,47 +564,6 @@ class CommOverlapConfig:
 
         return comm_overlap_cfg
 
-    def _set_num_cuda_device_max_connections(self, model_cfg: GPTModelProvider | T5ModelProvider):
-        import os
-
-        import torch
-
-        tp_size = model_cfg.tensor_model_parallel_size
-        cp_size = model_cfg.context_parallel_size
-        dp_size = self.data_parallel_size
-        pp_size = model_cfg.pipeline_model_parallel_size
-        major, _ = torch.cuda.get_device_capability()
-        if major > 9:
-            if (tp_size > 1 or cp_size > 1) and (dp_size > 1 or pp_size > 1):
-                """
-                We need extra connections to avoid serialization of streams,
-                so we use the max connections of 32 instead of the default
-                device connection of 8.
-                """
-                os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
-                logging.info("Set CUDA_DEVICE_MAX_CONNECTIONS to 32")
-            else:
-                if "CUDA_DEVICE_MAX_CONNECTIONS" in os.environ:
-                    os.environ.pop("CUDA_DEVICE_MAX_CONNECTIONS")
-                logging.info("Unset CUDA_DEVICE_MAX_CONNECTIONS")
-        else:
-            # Hopper or earlier generation GPUs
-            if (tp_size > 1 or cp_size > 1) and not model_cfg.overlap_moe_expert_parallel_comm:
-                """
-                Set the device connection to 1 to enforce the kernel queuing
-                order from the host to the execution order on GPU. This is
-                needed to schedule a communication kernel before the
-                overlapping persistent GEMM kernel. Otherwise, the
-                communication kernel will be pushed to the end of the GEMM
-                kernel so failing to overlap the kernels.
-                """
-                os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
-                logging.info("Set CUDA_DEVICE_MAX_CONNECTIONS to 1")
-            else:
-                if "CUDA_DEVICE_MAX_CONNECTIONS" in os.environ:
-                    os.environ.pop("CUDA_DEVICE_MAX_CONNECTIONS")
-                logging.info("Unset CUDA_DEVICE_MAX_CONNECTIONS")
-
     def setup(
         self,
         model_config: GPTModelProvider | T5ModelProvider,
@@ -648,6 +604,3 @@ class CommOverlapConfig:
             comm_overlap_cfg = self._get_optimizer_overlap_cfgs(model_config)
             self._apply_cfgs(comm_overlap_cfg, optimizer_config)
             self._apply_cfgs(comm_overlap_cfg, ddp_config)
-
-        # setup cuda device max connections
-        self._set_num_cuda_device_max_connections(model_config)
