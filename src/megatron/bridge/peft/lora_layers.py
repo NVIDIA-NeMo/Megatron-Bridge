@@ -18,7 +18,6 @@ from typing import Any, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import transformer_engine.pytorch as te
-from megatron.core import parallel_state
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.utils.import_utils import safe_import
