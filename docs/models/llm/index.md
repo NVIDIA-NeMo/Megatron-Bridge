@@ -5,7 +5,10 @@ This section documents Large Language Models supported by Megatron Bridge, with 
 ```{toctree}
 :hidden:
 
+gemma3.md
+glm45.md
 llama3.md
+moonlight.md
 olmoe.md
 qwen.md
 ```
