@@ -128,13 +128,3 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     cross_entropy_loss_fusion: bool = True
     cross_entropy_fusion_impl: str = "te"
     moe_permute_fusion: bool = is_te_min_version("2.1.0") if HAVE_TE else False
-
-@dataclass
-class KimiK2ProxyProvider(KimiK2Provider):
-    """
-    Smaller Kimi-K2 model that fits in NV72 GB200.
-    """
-    num_layers: int = 31
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] + [1] * 30
-    )  # first layers are dense
