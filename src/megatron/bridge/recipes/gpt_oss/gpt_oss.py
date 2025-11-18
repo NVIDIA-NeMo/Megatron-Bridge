@@ -136,7 +136,7 @@ def gpt_oss_20b_pretrain_config(**user_kwargs: Unpack[GPTOSSCommonKwargs]) -> Co
         "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 4,
         "expert_model_parallel_size": 4,
-        "sequence_parallel": False,
+        "sequence_parallel": True,
         "use_null_tokenizer": True,
     }
     kwargs: GPTOSSCommonKwargs = {**recommended, **user_kwargs}
