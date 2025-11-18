@@ -72,6 +72,13 @@ def get_common_configs(hf_pretrained: PreTrainedCausalLM) -> dict:
     configs["init_method_std"] = hf_config.initializer_range
     configs["layernorm_epsilon"] = hf_config.rms_norm_eps
 
+    # Indexer configs for DeepSeek-V3.2
+    if "DeepseekV32ForCausalLM" in hf_config.architectures:
+        configs["experimental_attention_variant"] = "dsa"
+        configs["dsa_indexer_head_dim"] = hf_config.index_head_dim
+        configs["dsa_indexer_n_heads"] = hf_config.index_n_heads
+        configs["dsa_indexer_topk"] = hf_config.index_topk
+
     return configs
 
 
@@ -93,13 +100,20 @@ def get_common_mapping_list() -> list:
         "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
         "decoder.layers.*.self_attention.linear_kv_down_proj.weight": "model.layers.*.self_attn.kv_a_proj_with_mqa.weight",
         "decoder.layers.*.self_attention.linear_kv_up_proj.weight": "model.layers.*.self_attn.kv_b_proj.weight",
-        "decoder.layers.*.self_attention.linear_kv_up_proj.layer_norm_weight": "model.layers.*.self_attn.kv_a_layernorm.weight",
-        # Mcore local spec
+        "decoder.layers.*.self_attention.linear_kv_up_proj.layer_norm_weight": "model.layers.*.self_attn.kv_a_layernorm.weight",  # For Dense MLA
+        # Sparse attention indexer
+        "decoder.layers.*.self_attention.core_attention.indexer.linear_wq_b.weight": "model.layers.*.self_attn.indexer.wq_b.weight",
+        "decoder.layers.*.self_attention.core_attention.indexer.linear_wk.weight": "model.layers.*.self_attn.indexer.wk.weight",
+        "decoder.layers.*.self_attention.core_attention.indexer.k_norm.weight": "model.layers.*.self_attn.indexer.k_norm.weight",
+        "decoder.layers.*.self_attention.core_attention.indexer.k_norm.bias": "model.layers.*.self_attn.indexer.k_norm.bias",
+        "decoder.layers.*.self_attention.core_attention.indexer.linear_weights_proj.weight": "model.layers.*.self_attn.indexer.weights_proj.weight",
+        # Mcore local spec or DSA
         "decoder.layers.*.self_attention.kv_layernorm.weight": "model.layers.*.self_attn.kv_a_layernorm.weight",
         # Dense MLP
         "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         # MoE
         "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
+        "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
         "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
         "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
         # LM Head
@@ -108,8 +122,8 @@ def get_common_mapping_list() -> list:
         # MLA
         "decoder.layers.*.self_attention.linear_q_down_proj.weight": "model.layers.*.self_attn.q_a_proj.weight",
         "decoder.layers.*.self_attention.linear_q_up_proj.weight": "model.layers.*.self_attn.q_b_proj.weight",
-        "decoder.layers.*.self_attention.linear_q_up_proj.layer_norm_weight": "model.layers.*.self_attn.q_a_layernorm.weight",
-        # Mcore local spec
+        "decoder.layers.*.self_attention.linear_q_up_proj.layer_norm_weight": "model.layers.*.self_attn.q_a_layernorm.weight",  # For Dense MLA
+        # Mcore local spec or DSA
         "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_a_layernorm.weight",
         # For models without MLA
         "decoder.layers.*.self_attention.linear_q_proj.weight": "model.layers.*.self_attn.q_proj.weight",
