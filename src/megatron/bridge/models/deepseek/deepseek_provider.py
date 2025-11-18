@@ -229,6 +229,20 @@ class MoonlightModelProvider16B(DeepSeekModelProvider):
     vocab_size: int = 163840
 
 
+@dataclass
+class DeepSeekV32ModelProvider(DeepSeekV3ModelProvider):
+    """
+    DeepSeek-V3-2 Model: https://github.com/deepseek-ai/DeepSeek-V3.2-Exp
+    HuggingFace: https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp
+    """
+
+    moe_aux_loss_coeff: float = 0.001
+    sparse_attention_type: str = "dsa"
+    index_head_dim: int = 128
+    index_n_heads: int = 64
+    index_topk: int = 2048
+
+
 # -----------------------------------------------------------------------------
 # Deprecated aliases (to be removed in a future release)
 # -----------------------------------------------------------------------------
