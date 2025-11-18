@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.core.transformer.transformer_config import MLATransformerConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -93,6 +93,7 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     moe_router_dtype: Optional[str] = "fp32"
 
     # MLA
+    multi_latent_attention: bool = True
     q_lora_rank: int = 1536
     kv_lora_rank: int = 512
     qk_head_dim: int = 128
