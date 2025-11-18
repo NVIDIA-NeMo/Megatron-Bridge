@@ -884,7 +884,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         """
         unwrapped_model = unwrap_model(megatron_model)[0]
         # hack for vlm to work properly
-        if hasattr(unwrapped_model, "language_model"):
+        if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
 

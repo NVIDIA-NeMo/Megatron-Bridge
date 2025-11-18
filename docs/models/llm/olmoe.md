@@ -46,9 +46,8 @@ provider.pipeline_model_parallel_size = 1
 provider.expert_model_parallel_size = 8
 provider.sequence_parallel = False
 
-model = provider.provide_distributed_model(wrap_with_ddp=False)
-
 provider.finalize()
+model = provider.provide_distributed_model(wrap_with_ddp=False)
 # You can also use older versions:
 # bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0924")
 ```
