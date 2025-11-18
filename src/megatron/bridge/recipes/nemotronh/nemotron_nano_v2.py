@@ -17,9 +17,10 @@ import os
 import torch
 from typing_extensions import TypedDict, Unpack
 
+from megatron.bridge.models import NemotronNanoModelProvider9Bv2
 from megatron.bridge.models.nemotronh import (
-    NemotronNano9Bv2Provider,
-    NemotronNano12Bv2Provider,
+    NemotronNanoModelProvider9Bv2,
+    NemotronNanoModelProvider12Bv2,
 )
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -44,7 +45,7 @@ class NemotronNanoV2CommonKwargs(TypedDict, total=False):
     """Typed options accepted by Nemotron Nano v2 recipe helper functions."""
 
     # Core identifiers
-    model_provider: NemotronNano9Bv2Provider | NemotronNano12Bv2Provider
+    model_provider: NemotronNanoModelProvider9Bv2 | NemotronNanoModelProvider12Bv2
     tokenizer_model: str | None
     dir: str | None
     name: str
@@ -106,7 +107,7 @@ def nemotron_nano_9b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2Comm
     See `_nemotron_nano_v2_common` for the full list of parameters.
     """
     recommended_kwargs: NemotronNanoV2CommonKwargs = {
-        "model_provider": NemotronNano9Bv2Provider,
+        "model_provider": NemotronNanoModelProvider9Bv2,
         "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 1,
         "sequence_parallel": True,
@@ -128,7 +129,7 @@ def nemotron_nano_12b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2Com
     See `_nemotron_nano_v2_common` for the full list of parameters.
     """
     recommended_kwargs: NemotronNanoV2CommonKwargs = {
-        "model_provider": NemotronNano12Bv2Provider,
+        "model_provider": NemotronNanoModelProvider12Bv2,
         "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 1,
         "sequence_parallel": True,
@@ -140,7 +141,7 @@ def nemotron_nano_12b_v2_pretrain_config(**user_kwargs: Unpack[NemotronNanoV2Com
 
 
 def _nemotron_nano_v2_common(
-    model_provider: type[NemotronNano9Bv2Provider] | type[NemotronNano12Bv2Provider],
+    model_provider: type[NemotronNanoModelProvider9Bv2] | type[NemotronNanoModelProvider12Bv2],
     tokenizer_model: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -163,7 +164,7 @@ def _nemotron_nano_v2_common(
     train_iters: int = 1_168_251,
     global_batch_size: int = 768,
     micro_batch_size: int = 1,
-    seq_length: int = 8192,
+    seq_length: int = 4096,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
@@ -317,7 +318,7 @@ def nemotron_nano_9b_v2_finetune_config(**user_kwargs: Unpack[NemotronNanoV2Fine
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: NemotronNanoV2FinetuneKwargs = {
-        "model_provider": NemotronNano9Bv2Provider,
+        "model_provider": NemotronNanoModelProvider9Bv2,
         "tensor_parallelism": 2 if is_full_sft else 1,
         "pipeline_parallelism": 1,
         "sequence_parallelism": is_full_sft,
@@ -325,7 +326,6 @@ def nemotron_nano_9b_v2_finetune_config(**user_kwargs: Unpack[NemotronNanoV2Fine
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
         "min_lr": 1e-6 if is_full_sft else 1e-5,
         "precision_config": "bf16_mixed",
-        "enable_default_comm_overlap": True,
     }
     combined_kwargs: NemotronNanoV2FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotron_nano_v2_finetune_common(
@@ -346,14 +346,13 @@ def nemotron_nano_12b_v2_finetune_config(**user_kwargs: Unpack[NemotronNanoV2Fin
     is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
 
     recommended_kwargs: NemotronNanoV2FinetuneKwargs = {
-        "model_provider": NemotronNano12Bv2Provider,
+        "model_provider": NemotronNanoModelProvider12Bv2,
         "tensor_parallelism": 4 if is_full_sft else 1,
         "pipeline_parallelism": 1,
         "sequence_parallelism": is_full_sft,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,
-        "precision_config": "nanov2_bf16_with_fp8_current_scaling_mixed",
-        "enable_default_comm_overlap": False,  # Disabled for FP8  # TODO check nemo recipe for this?
+        "precision_config": "bf16_mixed",
     }
     combined_kwargs: NemotronNanoV2FinetuneKwargs = {**recommended_kwargs, **user_kwargs}
     return _nemotron_nano_v2_finetune_common(
@@ -362,7 +361,7 @@ def nemotron_nano_12b_v2_finetune_config(**user_kwargs: Unpack[NemotronNanoV2Fin
 
 
 def _nemotron_nano_v2_finetune_common(
-    model_provider: type[NemotronNano9Bv2Provider] | type[NemotronNano12Bv2Provider],
+    model_provider: type[NemotronNanoModelProvider9Bv2] | type[NemotronNanoModelProvider12Bv2],
     tokenizer_model: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -396,8 +395,6 @@ def _nemotron_nano_v2_finetune_common(
     # Precision
     precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
     comm_overlap_config: CommOverlapConfig | None = None,
-    # CommOverlap setting
-    enable_default_comm_overlap: bool = True,
 ) -> ConfigContainer:
     """Common finetuning configuration for Nemotron Nano v2 models.
 
@@ -465,10 +462,6 @@ def _nemotron_nano_v2_finetune_common(
         lr_decay_iters=lr_decay_iters,
         max_lr=finetune_lr,
         min_lr=min_lr,
-        adam_beta1=0.9,
-        adam_beta2=0.95,
-        adam_eps=1e-5,
-        weight_decay=0.1,
     )
 
     # PEFT config
