@@ -164,8 +164,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
     @property
     def is_expert(self) -> bool:
-        """Check if this mapping is for an expert parameter."""
-        return ".mlp.experts.linear_fc" in self.megatron_param
+        """Check if this mapping is for an expert parameter.
+
+        Matches both TEGroupedMLP (.mlp.experts.linear_fc) and
+        SequentialMLP (.mlp.experts.local_experts.*.linear_fc) patterns.
+        """
+        return ".mlp.experts.linear_fc" in self.megatron_param or ".mlp.experts.local_experts." in self.megatron_param
 
     def _resolve_names(self, captures: Tuple[str, ...]) -> Tuple[str, Union[str, Dict[str, str]]]:
         """Resolve wildcard patterns with captured values.
