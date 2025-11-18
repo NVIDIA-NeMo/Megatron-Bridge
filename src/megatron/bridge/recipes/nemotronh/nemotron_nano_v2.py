@@ -482,6 +482,7 @@ def _nemotron_nano_v2_finetune_common(
     tokenizer_cfg = TokenizerConfig(
         tokenizer_type="HuggingFaceTokenizer",
         tokenizer_model=tokenizer_model,
+        hf_tokenizer_kwargs={"eos_token": "<SPECIAL_12>"},  # correct eos token for nemotron nano v2
     )
 
     cfg = ConfigContainer(
