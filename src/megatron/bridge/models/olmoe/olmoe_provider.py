@@ -134,7 +134,7 @@ class OLMoESelfAttention(MCoreSelfAttention):
             eps=self.config.layernorm_epsilon,
         )
 
-    def get_query_key_value_tensors(self, hidden_states, key_value_states=None):
+    def get_query_key_value_tensors(self, hidden_states, key_value_states=None, **kwargs):
         """
         Derives `query`, `key` and `value` tensors from `hidden_states`.
         """
