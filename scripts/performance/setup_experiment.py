@@ -35,6 +35,7 @@ except (ImportError, ModuleNotFoundError):
 import logging
 
 
+logging.basicConfig(level=logging.DEBUG)
 logger: logging.Logger = logging.getLogger(__name__)
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
@@ -48,9 +49,7 @@ def main(
     domain: str,
     task: str,
     compute_dtype: str,
-    fp8_recipe: str,
     gpu: str,
-    num_gpus: int,
     hf_token: str,
     custom_mounts: List[str],
     detach: bool,
@@ -87,7 +86,6 @@ def main(
     plugins.append(
         PerfEnvPlugin(
             enable_vboost=enable_vboost,
-            num_gpus=num_gpus,
             moe_a2a_overlap=moe_a2a_overlap,
             tp_size=tp_size,
             pp_size=pp_size,
@@ -96,7 +94,6 @@ def main(
             model_size=model_size,
             gpu=gpu,
             compute_dtype=compute_dtype,
-            fp8_recipe=fp8_recipe,
             use_tokendrop=use_tokendrop,
         )
     )
@@ -113,7 +110,15 @@ def main(
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
-        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}_{fp8_recipe}"
+        "_bf16" if compute_dtype == "bf16" else f"_{compute_dtype}"
+    )
+    logger.debug(
+        run.Script(
+            path=str(RUN_SCRIPT_PATH),
+            entrypoint="python",
+            env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
+            args=list(sys.argv[1:]),
+        )
     )
     run.run(
         run.Script(
@@ -132,7 +137,7 @@ def main(
     exp_name_result, job_dict = list(run.Experiment.from_title(exp_name).status(return_dict=True).items()).pop()
     job_status = str(job_dict["status"])
 
-    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING"]:
+    if job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]:
         raise Exception(f"Megatron-Bridge experiment failed for {exp_name_result} with status: {job_status}.")
 
 
@@ -148,9 +153,7 @@ if __name__ == "__main__":
         domain=args.domain,
         task=args.task,
         compute_dtype=args.compute_dtype,
-        fp8_recipe=args.fp8_recipe,
         gpu=args.gpu,
-        num_gpus=args.num_gpus,
         hf_token=args.hf_token,
         custom_mounts=args.custom_mounts,
         detach=args.detach,

@@ -34,10 +34,10 @@ def set_nemotronh_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def nemotronh_56b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def nemotronh_56b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG
-    precision_config = get_precision_config(precision, fp8_recipe)
+    precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
         mock=True,
@@ -49,10 +49,10 @@ def nemotronh_56b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") 
     return cfg
 
 
-def nemotronh_56b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def nemotronh_56b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     base_cfg = base_cfgs.NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG
-    precision_config = get_precision_config(precision, fp8_recipe)
+    precision_config = get_precision_config(precision)
 
     cfg = nemotronh_56b_pretrain_config(
         mock=True,
@@ -64,9 +64,9 @@ def nemotronh_56b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") 
     return cfg
 
 
-def nemotronh_56b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def nemotronh_56b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
-    precision_config = get_precision_config(precision, fp8_recipe)
+    precision_config = get_precision_config(precision)
 
     base_cfg = base_cfgs.NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG
     cfg = nemotronh_56b_pretrain_config(

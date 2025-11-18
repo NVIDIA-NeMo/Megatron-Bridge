@@ -16,6 +16,7 @@ import os
 import re
 import types
 import warnings
+from pathlib import Path
 
 import torch
 import torch.distributed
@@ -264,3 +265,9 @@ def extract_expert_number_from_param(param_name: str) -> int:
             f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
         )
     return int(match.group(1))
+
+
+def resolve_path(path: str) -> Path:
+    """Resolve a path to an absolute path."""
+
+    return Path(path).expanduser().absolute().resolve()

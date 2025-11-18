@@ -33,29 +33,56 @@ _MOONLIGHT_RECIPE_FUNCS = [
     if callable(getattr(_moonlight_module, name, None))
 ]
 
+# Moonlight finetune-specific tests
+_MOONLIGHT_FINETUNE_FUNCS = [
+    getattr(_moonlight_module, name)
+    for name in ["moonlight_16b_finetune_config"]
+    if callable(getattr(_moonlight_module, name, None))
+]
+
 
 def _safe_overrides_for(name: str) -> dict:
+    # Detect if this is a finetune recipe
+    is_finetune = "finetune" in name.lower()
+
     overrides = {
         "name": f"unit_{name}",
         "dir": ".",
-        "mock": True,
         "train_iters": 10,
-        "global_batch_size": 2,
         "micro_batch_size": 1,
         "seq_length": 64,
-        "lr": 1e-4,
         "min_lr": 1e-5,
         "lr_warmup_iters": 2,
-        "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 1,
-        "context_parallel_size": 1,
-        "expert_model_parallel_size": 1,
-        "sequence_parallel": False,
-        "recompute_granularity": "selective",
-        "enable_deepep": False,
-        "apply_rope_fusion": False,
-        "optimizer_type": "adam",
     }
+
+    if is_finetune:
+        # Finetuning-specific overrides
+        overrides.update(
+            {
+                "tokenizer_path": "moonshotai/Moonlight-16B-A3B",
+                "finetune_lr": 1e-4,
+                "global_batch_size": 2,
+                # Note: Finetuning recipes set parallelism internally based on PEFT vs full SFT
+            }
+        )
+    else:
+        # Pretrain-specific overrides
+        overrides.update(
+            {
+                "mock": True,
+                "global_batch_size": 2,
+                "lr": 1e-4,
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "context_parallel_size": 1,
+                "expert_model_parallel_size": 1,
+                "sequence_parallel": False,
+                "recompute_granularity": "selective",
+                "enable_deepep": False,
+                "apply_rope_fusion": False,
+                "optimizer_type": "adam",
+            }
+        )
 
     return overrides
 
@@ -111,7 +138,15 @@ def _assert_basic_config(cfg):
 
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
-    assert cfg.dataset.sequence_length >= 1
+
+    # Check sequence length (different attribute names for different dataset types)
+    if hasattr(cfg.dataset, "sequence_length"):
+        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
+    elif hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+    else:
+        # Some other dataset type
+        assert cfg.dataset is not None
 
 
 @pytest.mark.parametrize("recipe_func", _MOONLIGHT_RECIPE_FUNCS)
@@ -128,11 +163,176 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
 
     _assert_basic_config(cfg)
 
-    # Moonlight uses NullTokenizer
-    if hasattr(cfg, "tokenizer") and hasattr(cfg.tokenizer, "tokenizer_type"):
+    # Ensure tokenizer choice matches recipe type
+    is_finetune = "finetune" in recipe_func.__name__.lower()
+    if is_finetune:
+        # Finetuning recipes always use HF tokenizer
+        assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert cfg.tokenizer.tokenizer_model is not None
+    else:
+        # Pretrain recipes use NullTokenizer
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
     # Check parallelism settings
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
+
+
+@pytest.mark.parametrize("recipe_func", _MOONLIGHT_FINETUNE_FUNCS)
+def test_moonlight_finetune_config_builds(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that each Moonlight finetune recipe builds a valid config."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    cfg = recipe_func(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Finetuning always uses HF tokenizer
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model is not None
+
+    # Check parallelism
+    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+    assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
+
+
+@pytest.mark.parametrize("recipe_func", _MOONLIGHT_FINETUNE_FUNCS)
+@pytest.mark.parametrize("peft", ["lora", "dora", None])
+def test_moonlight_finetune_peft_vs_full_sft(recipe_func: Callable, peft, monkeypatch: pytest.MonkeyPatch):
+    """Test that PEFT and full SFT configurations are correctly applied."""
+    module_name = recipe_func.__module__
+    mod = importlib.import_module(module_name)
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for(recipe_func.__name__)
+    overrides["peft"] = peft
+
+    cfg = recipe_func(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check PEFT config presence
+    if peft in ["lora", "dora"]:
+        assert cfg.peft is not None
+    elif peft is None:
+        assert cfg.peft is None
+
+
+def test_moonlight_16b_finetune_lora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B LoRA has correct default parallelism."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
+    overrides["peft"] = "lora"
+
+    cfg = moonlight_16b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For LoRA, Moonlight-16B should use TP=1, PP=1, EP=2
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 2
+    assert cfg.model.sequence_parallel is False
+
+    # Check manual GC is enabled
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 5
+
+
+def test_moonlight_16b_finetune_dora_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B DoRA has correct default parallelism."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
+    overrides["peft"] = "dora"
+
+    cfg = moonlight_16b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For DoRA, Moonlight-16B should use TP=1, PP=1, EP=2 (same as LoRA)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 2
+    assert cfg.model.sequence_parallel is False
+
+    # Check manual GC is enabled
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 5
+
+
+def test_moonlight_16b_finetune_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B full SFT has correct default parallelism."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
+    overrides["peft"] = None
+
+    cfg = moonlight_16b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For full SFT, Moonlight-16B should use TP=2, PP=1, EP=8
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.sequence_parallel is True
+
+    # Check manual GC is enabled
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 5
+
+
+def test_moonlight_16b_finetune_precision_aware_optimizer(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B finetune uses precision-aware optimizer settings."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
+    cfg = moonlight_16b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check precision-aware optimizer settings
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    import torch
+
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+
+
+def test_moonlight_16b_finetune_tokenizer_with_trust_remote_code(monkeypatch: pytest.MonkeyPatch):
+    """Test that Moonlight-16B finetune uses HF tokenizer with trust_remote_code."""
+    from megatron.bridge.recipes.moonlight import moonlight_16b_finetune_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
+    monkeypatch.setattr(mod, "MoonlightModelProvider16B", _FakeMoonlightModelProvider16B)
+
+    overrides = _safe_overrides_for("moonlight_16b_finetune_config")
+    cfg = moonlight_16b_finetune_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # Check tokenizer settings
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model == "moonshotai/Moonlight-16B-A3B"
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {"trust_remote_code": True}
