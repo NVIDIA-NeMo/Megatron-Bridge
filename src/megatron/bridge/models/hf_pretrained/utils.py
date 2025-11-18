@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 SAFE_REPOS = [
     "nvidia",
     "Qwen",
@@ -39,6 +44,11 @@ def is_safe_repo(trust_remote_code: bool | None = None, hf_path: str = None) -> 
         True if remote code execution is allowed; False otherwise.
     """
     if trust_remote_code is not None:
+        if trust_remote_code is False:
+            logger.warning(
+                "`trust_remote_code=False`. Remote code may not be executed. "
+                "Set `trust_remote_code=True` only if you fully trust the Hugging Face repository."
+            )
         return trust_remote_code
 
     hf_repo = hf_path.split("/")[0]
