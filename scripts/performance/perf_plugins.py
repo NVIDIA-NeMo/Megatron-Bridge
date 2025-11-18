@@ -200,6 +200,8 @@ class PerfEnvPlugin(Plugin):
     gpu: str
     compute_dtype: str
     use_tokendrop: str
+    domain: str
+    task: str
 
     def _set_num_cuda_device_max_connections(
         self,
@@ -349,7 +351,9 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
-        workload_base_config = get_workload_base_config(self.model_name, self.model_size, self.gpu, self.compute_dtype)
+        workload_base_config = get_workload_base_config(
+            self.model_name, self.model_size, self.gpu, self.compute_dtype, self.domain, self.task
+        )
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size

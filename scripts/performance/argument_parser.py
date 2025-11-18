@@ -386,6 +386,18 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--megatron_ckpt",
+        type=str,
+        help=" ".join(
+            [
+                "Megatron checkpoint directory to use for LoRA. Defaults to None.",
+                "Must be in Megatron checkpoint format and required for LoRA.",
+            ]
+        ),
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--detach",
         help="Detach the experiment from the terminal. Disabled by default",
         action="store_true",
