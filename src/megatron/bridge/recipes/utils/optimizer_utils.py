@@ -32,6 +32,28 @@ def distributed_muon_with_cosine_annealing(
     min_lr: Optional[float] = None,
     clip_grad: float = 1.0,
 ) -> tuple[OptimizerConfig, SchedulerConfig]:
+    """
+    Creates a distributed Muon optimizer configuration paired with a cosine annealing learning rate scheduler.
+
+    Args:
+        precision (str): Type of mixed precision to use ("bf16-mixed", "16-mixed", etc.).
+        muon_momentum (float): Momentum value for the Muon optimizer.
+        muon_use_nesterov (bool): Whether to use Nesterov momentum in Muon optimizer.
+        muon_scale_mode (str): Mode to use for scaling within the Muon optimizer ("spectral", etc.).
+        muon_fp32_matmul_prec (str): Matmul precision for Muon optimizer ("medium", etc.).
+        muon_num_ns_steps (int): Number of no-step steps for Muon optimizer.
+        muon_tp_mode (str): Tensor parallel mode for Muon optimizer ("blockwise", etc.).
+        lr_warmup_iters (int): Number of warmup iterations for the learning rate scheduler.
+        lr_decay_iters (int): Number of decay iterations for the learning rate scheduler.
+        weight_decay (float): Amount of weight decay to apply.
+        max_lr (float): Maximum learning rate.
+        min_lr (Optional[float]): Minimum learning rate; if None, determined automatically.
+        clip_grad (float): Gradient clipping threshold.
+
+    Returns:
+        tuple[OptimizerConfig, SchedulerConfig]: Configuration objects for the optimizer and scheduler.
+    """
+
     scheduler = SchedulerConfig(
         start_weight_decay=0.033,
         end_weight_decay=0.033,
