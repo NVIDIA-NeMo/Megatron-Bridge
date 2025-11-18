@@ -368,7 +368,7 @@ class TestTEFusedLoRALinear:
             )
 
         assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
-        
+
         from megatron.bridge.training.initialize import _set_random_seed
 
         _set_random_seed(
