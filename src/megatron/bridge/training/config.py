@@ -637,8 +637,8 @@ class CheckpointConfig:
     exit_on_missing_checkpoint: bool = False
     """If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization."""
 
-    ckpt_format: Literal["torch_dist", "zarr", "fsdp_dtensor"] = "torch_dist"
-    """Checkpoint format to use."""
+    ckpt_format: Literal["torch", "torch_dist", "zarr", "fsdp_dtensor"] = "torch_dist"
+    """Checkpoint format to use. torch is the format used by torch.save/load (non-distributed)."""
 
     ckpt_convert_format: Optional[Literal["torch", "torch_dist", "zarr"]] = None
     """Checkpoint format for conversion."""

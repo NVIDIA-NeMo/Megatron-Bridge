@@ -202,8 +202,15 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
     if is_torch_dcp:
         # Assume fsdp_dtensor for PyTorch DCP format
         return "fsdp_dtensor"
+
+    # Check for torch format (single .pt file)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        if msc.os.path.isfile(checkpoint_path):
+            return "torch"
     else:
-        raise NotImplementedError(f"Unknown checkpoint format in {checkpoint_path}")
+        if os.path.isfile(checkpoint_path):
+            return "torch"
 
 
 def find_checkpoint_rank_0(checkpoints_path: str, iteration: int, release: bool = False) -> Optional[str]:
@@ -533,7 +540,8 @@ def save_checkpoint(
 
     async_save_request = None
     if ckpt_cfg.async_save:
-        if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format != "torch_dist":
+        ## TODO: is async compatible with torch format?
+        if ckpt_type == CheckpointType.GLOBAL and ckpt_cfg.ckpt_format not in ["torch_dist", "torch"]:
             raise NotImplementedError(
                 f"Async checkpoint save not implemented for {ckpt_cfg.ckpt_format} distributed checkpoint format"
             )
@@ -577,6 +585,27 @@ def save_checkpoint(
                 state_dict=state_dict,
                 storage_writer=fs_storage_writer,
             )
+        elif ckpt_cfg.ckpt_format == "torch":
+            # Non-distributed torch format using standard torch.save
+            if torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            else:
+                rank = 0
+
+            # Only rank 0 saves the checkpoint in non-distributed format
+            if rank == 0:
+                # For torch format, checkpoint_name is a directory path, but we need a file path
+                # Append the standard filename used by Megatron-LM for torch format
+                torch_checkpoint_file = os.path.join(checkpoint_name, "model_optim_rng.pt")
+
+                # Ensure parent directories exist for torch format
+                ensure_directory_exists(torch_checkpoint_file, check_parent=True)
+
+                if MultiStorageClientFeature.is_enabled():
+                    msc = MultiStorageClientFeature.import_package()
+                    msc.torch.save(state_dict, torch_checkpoint_file)
+                else:
+                    torch.save(state_dict, torch_checkpoint_file)
         else:
             # torch_dist and other formats using MCore distributed checkpointing
             if checkpointing_context is not None and "save_strategy" in checkpointing_context:
@@ -1014,13 +1043,13 @@ def _generate_model_state_dict(
     if len(model) == 1:
         if ckpt_format == "torch_dist":
             state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
-        else:  # fsdp_dtensor and other formats
+        else:  # torch, fsdp_dtensor and other formats
             state_dict["model"] = model[0].state_dict_for_save_checkpoint()
     else:
         for i in range(len(model)):
             if ckpt_format == "torch_dist":
                 state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
-            else:  # fsdp_dtensor and other formats
+            else:  # torch, fsdp_dtensor and other formats
                 state_dict["model%d" % i] = model[i].state_dict_for_save_checkpoint()
 
     return state_dict
@@ -2045,8 +2074,59 @@ def _load_base_checkpoint(
             release,
             checkpointing_context=checkpointing_context,
         )
+    elif ckpt_format == "torch":
+        return _load_torch_base_checkpoint(
+            load_dir,
+            ckpt_cfg,
+            rank0,
+            iteration,
+            release,
+        )
     else:
         raise NotImplementedError(f"Checkpoint format {ckpt_format} not supported")
+
+
+def _load_torch_base_checkpoint(
+    load_dir: str,
+    ckpt_cfg: CheckpointConfig,
+    rank0: bool,
+    iteration: int,
+    release: bool,
+) -> tuple[dict[str, Any], str, bool, CheckpointType]:
+    """Load the base state_dict from a torch format checkpoint."""
+    checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+
+    # For torch format, checkpoint_name is a directory path, but we need the file path
+    torch_checkpoint_file = os.path.join(checkpoint_name, "model_optim_rng.pt")
+
+    # Only rank 0 loads the checkpoint in torch format
+    if torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    else:
+        rank = 0
+
+    if rank == 0:
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            state_dict = msc.torch.load(torch_checkpoint_file, map_location='cpu')
+        else:
+            state_dict = torch.load(torch_checkpoint_file, map_location='cpu')
+
+        if rank0:
+            # For rank0 calls, return the full state_dict without model/optimizer keys
+            common_state_dict = {}
+            for key, value in state_dict.items():
+                if not key.startswith(('model', 'optimizer')):
+                    common_state_dict[key] = value
+            return common_state_dict, checkpoint_name, release, CheckpointType.GLOBAL
+        else:
+            return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
+    else:
+        # Non-rank-0 processes return empty state dict for torch format
+        if rank0:
+            return {}, checkpoint_name, release, CheckpointType.GLOBAL
+        else:
+            return {}, checkpoint_name, release, CheckpointType.GLOBAL
 
 
 def _load_fsdp_dtensor_base_checkpoint(
