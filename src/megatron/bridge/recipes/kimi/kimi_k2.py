@@ -21,7 +21,10 @@ from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.kimi import KimiK2Provider
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
+from megatron.bridge.recipes.utils.optimizer_utils import (
+    distributed_fused_adam_with_cosine_annealing,
+    distributed_muon_with_cosine_annealing,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -33,7 +36,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +81,7 @@ def model_config(
         context_parallel_size=context_parallelism,
         expert_model_parallel_size=expert_parallelism,
         sequence_parallel=sequence_parallelism,
-        expert_tensor_parallel_size=1, # Do not use ETP
+        expert_tensor_parallel_size=1,  # Do not use ETP
         # Recomputation
         recompute_granularity=recompute_granularity,
         recompute_modules=recompute_modules,
@@ -225,7 +228,6 @@ def pretrain_config(
     else:
         raise ValueError(f"Invalid optimizer type: {optimizer_type}")
 
-
     if precision_config is None:
         precision_config = MixedPrecisionConfig(
             bf16=True,
@@ -253,9 +255,9 @@ def pretrain_config(
             check_for_nan_in_grad=True,
             grad_reduce_in_fp32=True,
             overlap_grad_reduce=True,
-            overlap_param_gather=False, # Muon needs this to be False
+            overlap_param_gather=False,  # Muon needs this to be False
             average_in_collective=True,
-            use_distributed_optimizer=False, # Muon needs this to be False
+            use_distributed_optimizer=False,  # Muon needs this to be False
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,

@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 try:
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 if HAVE_TE:
     from megatron.core.utils import is_te_min_version
 
+
 @dataclass
 class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
     """
@@ -46,16 +47,14 @@ class KimiK2Provider(MLATransformerConfig, GPTModelProvider):
         get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE
     )
 
-     # Model
+    # Model
     num_layers: int = 61
     hidden_size: int = 7168
     ffn_hidden_size: int = 18432
     num_moe_experts: int = 384
     moe_ffn_hidden_size: int = 2048
     moe_shared_expert_intermediate_size: int = 2048  # 2048 * 1 shared expert
-    moe_layer_freq: Union[int, List[int]] = field(
-        default_factory=lambda: [0] + [1] * 60
-    )  # first layer are dense
+    moe_layer_freq: Union[int, List[int]] = field(default_factory=lambda: [0] + [1] * 60)  # first layer are dense
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True  # swiglu

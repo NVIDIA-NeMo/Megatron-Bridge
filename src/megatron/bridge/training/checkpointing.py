@@ -533,7 +533,9 @@ def save_checkpoint(
     maybe_save_dataloader_state(train_data_iterator, train_state.step, getattr(cfg.dataset, "dataloader_save", None))
 
     # Save LayerWiseDistributedOptimizer
-    if isinstance(optimizer, LayerWiseDistributedOptimizer): # replacement of getattr(args, "optimizer", "adam").startswith("dist_")
+    if isinstance(
+        optimizer, LayerWiseDistributedOptimizer
+    ):  # replacement of getattr(args, "optimizer", "adam").startswith("dist_")
         dp_rank = mpu.get_data_parallel_rank()
         optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
         ensure_directory_exists(optim_checkpoint_name)
@@ -1552,7 +1554,9 @@ def _load_checkpoint_from_path(
             if isinstance(optimizer, LayerWiseDistributedOptimizer) and cfg.checkpoint.ckpt_format == "torch":
                 # LayerWiseDistributedOptimizer load optimizer state from file on different ranks
                 dp_rank = mpu.get_data_parallel_rank()
-                optim_checkpoint_name = os.path.join(os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt")
+                optim_checkpoint_name = os.path.join(
+                    os.path.dirname(checkpoint_name), f"layer_wise_optimizer_{dp_rank}.pt"
+                )
                 optimizer.load_state_dict_from_file(optim_checkpoint_name)
             elif (
                 not skip_load_to_model_and_opt

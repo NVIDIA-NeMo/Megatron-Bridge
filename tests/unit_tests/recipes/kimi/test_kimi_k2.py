@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+
 import pytest
 import torch
 
@@ -229,4 +230,3 @@ class TestKimiK2PretrainConfig:
         cfg_deepep = pretrain_config(name="test", mock=True, enable_deepep=True)
         assert cfg_deepep.model.moe_token_dispatcher_type == "flex"
         assert cfg_deepep.model.moe_enable_deepep is True
-

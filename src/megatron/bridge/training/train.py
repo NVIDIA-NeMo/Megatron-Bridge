@@ -32,6 +32,7 @@ from megatron.core.num_microbatches_calculator import (
 )
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+from megatron.core.optimizer.qk_clip import clip_qk
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
@@ -67,7 +68,6 @@ from megatron.bridge.training.utils.train_utils import (
     training_log,
 )
 from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0
-from megatron.core.optimizer.qk_clip import clip_qk
 
 
 def train(
@@ -291,9 +291,16 @@ def train(
 
         # Run training step.
         fault_tolerance.on_training_step_start(global_state)
-        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad, log_max_attention_logit = train_step(
-            wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state
-        )
+        (
+            loss_dict,
+            skipped_iter,
+            should_checkpoint,
+            should_exit,
+            exit_code,
+            grad_norm,
+            num_zeros_in_grad,
+            log_max_attention_logit,
+        ) = train_step(wrapped_forward_step_func, train_data_iterator, model, optimizer, scheduler, global_state)
         fault_tolerance.on_training_step_end(global_state)
         if config.logger.log_throughput_to_tensorboard:
             history_wct.append(time.time() - global_state.start_time)
@@ -617,7 +624,16 @@ def train_step(
             num_zeros_in_grad,
             log_max_attention_logit,
         )
-    return {}, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad, log_max_attention_logit
+    return (
+        {},
+        skipped_iter,
+        should_checkpoint,
+        should_exit,
+        exit_code,
+        grad_norm,
+        num_zeros_in_grad,
+        log_max_attention_logit,
+    )
 
 
 def post_training_step_callbacks(

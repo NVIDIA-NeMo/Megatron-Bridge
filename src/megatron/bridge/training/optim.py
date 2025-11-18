@@ -19,7 +19,9 @@ from megatron.core.optimizer import MegatronOptimizer, OptimizerConfig, get_mega
 from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.module import MegatronModule
+
 from megatron.bridge.training.config import SchedulerConfig
+
 
 def setup_optimizer(
     optimizer_config: OptimizerConfig,
@@ -44,7 +46,7 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
-    if 'muon' not in optimizer_config.optimizer and 'soap' not in optimizer_config.optimizer:
+    if "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
         optimizer = get_megatron_optimizer(
             optimizer_config,
             model,
@@ -61,7 +63,7 @@ def setup_optimizer(
             scale_lr_cond,
             lr_mult,
             use_gloo_process_groups=use_gloo_process_groups,
-            layer_wise_distributed_optimizer='dist' in optimizer_config.optimizer,
+            layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
         )
 
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)

@@ -25,7 +25,6 @@ def distributed_muon_with_cosine_annealing(
     muon_fp32_matmul_prec: str = "medium",
     muon_num_ns_steps: int = 5,
     muon_tp_mode: str = "blockwise",
-
     lr_warmup_iters: int = 2000,
     lr_decay_iters: int = 2000,
     weight_decay: float = 0.1,
@@ -59,7 +58,6 @@ def distributed_muon_with_cosine_annealing(
         clip_grad=clip_grad,
     )
     return optimizer, scheduler
-
 
 
 def distributed_fused_adam_with_cosine_annealing(

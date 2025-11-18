@@ -528,7 +528,11 @@ def training_log(
                 wandb_writer.log({"params-norm": params_norm}, iteration)
         if log_max_attention_logit is not None:
             writer.add_scalar("max-attention-logit", log_max_attention_logit, iteration)
-            writer.add_scalar("max-attention-logit vs samples", log_max_attention_logit, global_state.train_state.consumed_train_samples)
+            writer.add_scalar(
+                "max-attention-logit vs samples",
+                log_max_attention_logit,
+                global_state.train_state.consumed_train_samples,
+            )
             if wandb_writer:
                 wandb_writer.log({"max-attention-logit": log_max_attention_logit}, iteration)
 

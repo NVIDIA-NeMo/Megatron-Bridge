@@ -47,7 +47,7 @@ class TestKimiK2Provider:
         assert provider.moe_router_topk == 8
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_token_dispatcher_type == "alltoall"
-        
+
         # Check moe_layer_freq format
         assert isinstance(provider.moe_layer_freq, list)
         assert len(provider.moe_layer_freq) == 61
@@ -94,15 +94,14 @@ class TestKimiK2Provider:
         from megatron.bridge.models.transformer_config import MLATransformerConfig
 
         provider = KimiK2Provider()
-        
+
         # Check it's a dataclass
         assert hasattr(provider, "__dataclass_fields__")
-        
+
         # Check inheritance
         assert isinstance(provider, GPTModelProvider)
         assert isinstance(provider, MLATransformerConfig)
-        
+
         # Check it has the provide method
         assert hasattr(provider, "provide")
         assert callable(getattr(provider, "provide"))
-
