@@ -16,7 +16,7 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 import wandb
@@ -88,11 +88,12 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     return metrics[metric]
 
 
-def validate_loss_curve_convergence(
+def validate_convergence(
     current_values: np.ndarray,
     golden_values: np.ndarray,
     steps: List[str],
     logger: logging.Logger,
+    wandb_run: wandb.Run,
     config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
@@ -260,7 +261,109 @@ def validate_loss_curve_convergence(
 
         results["details"] = "\n".join(details)
 
+    wandb_run.summary["convergence_passed"] = results["passed"]
+    wandb_run.summary["convergence_failed_metrics"] = ",".join(results["failed_metrics"])
+
+    for key, value in results["metrics"].items():
+        if isinstance(value, float):
+            logger.info(f"  {key}: {value:.6f}")
+        else:
+            logger.info(f"  {key}: {value}")
+
     return results
+
+
+def validate_performance(
+    current_values: np.ndarray,
+    golden_values: np.ndarray,
+    steps: List[str],
+    logger: logging.Logger,
+    wandb_run: wandb.Run,
+    config: Dict[str, Any] = None,
+) -> Dict[str, Any]:
+    """
+    Validate performance metrics.
+    """
+
+    default_config = {
+        # Statistical significance threshold
+        "correlation_threshold": 0.95,
+        # Point-wise tolerances (adaptive based on loss magnitude)
+        "high_loss_tolerance": 0.10,  # 10% for loss > 2.0
+        "medium_loss_tolerance": 0.05,  # 5% for loss 0.5-2.0
+        "low_loss_tolerance": 0.02,  # 2% for loss < 0.5
+        # Curve shape metrics
+        "final_loss_tolerance": 0.03,  # 3% for final loss
+        # Outlier handling
+        "max_outlier_ratio": 0.1,  # Max 10% of points can be outliers
+        "outlier_threshold": 3.0,  # 3-sigma outlier detection
+        # Loss curve analysis
+        "skip_first_percent_loss": 0.0,  # Percentage of loss points to skip from beginning
+    }
+
+    if config:
+        default_config.update(config)
+    config = default_config
+
+    # Discard first N% of iterations for stable timing comparison
+    skip_first_n_percent = max(1, int(len(steps) * config["skip_first_percent_time"]))
+    current_timing_stable = current_values[skip_first_n_percent:]
+    golden_timing_stable = golden_values[skip_first_n_percent:]
+
+    # Calculate average step timing
+    current_avg_timing = np.mean(current_timing_stable)
+    golden_avg_timing = np.mean(golden_timing_stable)
+
+    # Calculate timing difference
+    timing_diff = abs(current_avg_timing - golden_avg_timing) / golden_avg_timing
+
+    logger.info(
+        f"Step timing comparison (excluding first {config['skip_first_percent_time'] * 100:.1f}% of iterations):"
+    )
+    logger.info(f"  Current average timing: {current_avg_timing:.4f}s")
+    logger.info(f"  Golden average timing: {golden_avg_timing:.4f}s")
+    logger.info(f"  Timing difference: {timing_diff:.4f} ({timing_diff * 100:.2f}%)")
+    logger.info(f"  Threshold: {config['timing_threshold'] * 100:.1f}%")
+
+    performance_result = {}
+    if timing_diff > config["timing_threshold"]:
+        logger.warning(
+            f"Step timing validation FAILED: {timing_diff * 100:.2f}% > {config['timing_threshold'] * 100:.1f}%"
+        )
+        # Add timing failure to convergence result
+        performance_result["passed"] = False
+        performance_result["failed_metrics"].append("step_timing")
+        performance_result["summary"] = f"Failed {len(performance_result['failed_metrics'])} out of 1 tests"
+    else:
+        performance_result["passed"] = True
+        logger.info(
+            f"✓ Step timing validation passed: {timing_diff * 100:.2f}% <= {config['timing_threshold'] * 100:.1f}%"
+        )
+
+    wandb_run.summary["current_avg_timing"] = current_avg_timing
+    wandb_run.summary["golden_avg_timing"] = golden_avg_timing
+    wandb_run.summary["timing_diff"] = timing_diff
+    wandb_run.summary["timing_threshold"] = config["timing_threshold"]
+    wandb_run.summary["performance_passed"] = timing_diff > config["timing_threshold"]
+
+    return performance_result
+
+
+def write_golden_values_to_disk(current_values: Dict[str, Any], golden_values_path: str, wandb_run: wandb.Run):
+    """
+    Write golden values to a file.
+    """
+    os.makedirs(os.path.dirname(golden_values_path), exist_ok=True)
+    with open(golden_values_path, "w") as f:
+        json.dump(current_values, f)
+
+    artifact = wandb.Artifact("golden_values", type="dataset")
+    with artifact.new_file("golden_values.json", "w") as f:
+        json.dump({datetime.now().strftime("%m.%d.%y"): current_values}, f)
+
+    wandb_run.log_artifact(artifact)
+
+    logger.info(f"Golden values were saved for {golden_values_path}: {current_values}")
 
 
 def calc_convergence(
@@ -274,10 +377,9 @@ def calc_convergence(
     loss_metric: str,
     timing_metric: str,
     golden_values_path: str,
-    timing_threshold: float,
-    skip_first_percent_time: float,
+    wandb_run: wandb.Run,
     convergence_config: Dict[str, Any] = None,
-    wandb_run: Optional[wandb.Run] = None,
+    performance_config: Dict[str, Any] = None,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -301,135 +403,96 @@ def calc_convergence(
     logger.info(f"Starting convergence check for {model_type}_{model_size} on cluster {cluster}")
 
     current_train_loss = get_metrics_from_logfiles(log_paths, loss_metric)
-    current_step_timing = get_metrics_from_logfiles(log_paths, timing_metric)
+    current_iter_time = get_metrics_from_logfiles(log_paths, timing_metric)
 
     golden_values_file_name = f"{model_type}_{model_size}_{num_nodes}node_{max_steps}steps_{cluster}.json"
+    next_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
     expected_golden_values_path = os.path.join(golden_values_path, golden_values_file_name)
-    current_golden_values_path = os.path.join(assets_dir, "golden_values", golden_values_file_name)
-    today_date = datetime.now().strftime("%m.%d.%y")
     logger.info(f"Golden values path: {expected_golden_values_path}")
 
     # Always write actuals into experiment directory
-    os.makedirs(os.path.dirname(current_golden_values_path), exist_ok=True)
-    with open(current_golden_values_path, "w") as f:
-        current_golden_values = {
-            str(step): {loss_metric: current_train_loss[str(step)], timing_metric: current_step_timing[str(step)]}
-            for step in range(len(current_train_loss))
-        }
-        json.dump(current_golden_values, f)
-    logger.info(f"Golden values were saved for {model_type}_{model_size}: {current_golden_values}")
+    write_golden_values_to_disk(
+        current_values={**current_train_loss, **current_iter_time},
+        golden_values_path=next_golden_values_path,
+        wandb_run=wandb_run,
+    )
+
+    error_msg = ""
 
     # check if golden values are exist for this model
-    error_msg = None
-    if os.path.exists(expected_golden_values_path):
-        logger.info("Found existing golden values file, performing convergence check")
-        # read train loss from current test
-        with open(expected_golden_values_path, "r") as f:
-            expected_golden_values = json.load(f)
-
-        steps = []
-        golden_train_loss = {}
-        golden_iter_time = {}
-        for key, value in expected_golden_values.items():
-            steps.append(key)
-            golden_train_loss[key] = value[loss_metric]
-            golden_iter_time[key] = value[timing_metric]
-
-        # Extract golden_lm_loss and golden_iter_time lists
-        steps = sorted(golden_train_loss.keys(), key=int)
-        golden_lm_loss = [golden_train_loss[str(step)] for step in steps]
-        golden_iter_time = [golden_iter_time[str(step)] for step in steps]
-
-        # check for convergence
-        current_train_loss_values = np.array([current_train_loss[s] for s in steps])
-        golden_train_loss_values = np.array(golden_lm_loss)
-        golden_step_timing_values = np.array(golden_iter_time)
-
-        logger.info(f"Comparing {len(steps)} training steps for convergence")
-        logger.info(f"Current loss values: {current_train_loss_values}")
-        logger.info(f"Golden loss values: {golden_train_loss_values}")
-        logger.info(f"Extracted golden_lm_loss: {golden_lm_loss}")
-        logger.info(f"Extracted golden_iter_time: {golden_iter_time}")
-
-        # Multi-metric convergence validation strategy
-        convergence_result = validate_loss_curve_convergence(
-            current_train_loss_values, golden_train_loss_values, steps, logger, convergence_config
-        )
-        # Step Timing Validation
-        # Get current step timing values for the same steps
-        current_step_timing_values = np.array([current_step_timing[s] for s in steps])
-
-        # Discard first N% of iterations for stable timing comparison
-        skip_first_n_percent = max(1, int(len(steps) * skip_first_percent_time))
-        current_timing_stable = current_step_timing_values[skip_first_n_percent:]
-        golden_timing_stable = golden_step_timing_values[skip_first_n_percent:]
-
-        # Calculate average step timing
-        current_avg_timing = np.mean(current_timing_stable)
-        golden_avg_timing = np.mean(golden_timing_stable)
-
-        # Calculate timing difference
-        timing_diff = abs(current_avg_timing - golden_avg_timing) / golden_avg_timing
-
-        logger.info(f"Step timing comparison (excluding first {skip_first_percent_time * 100:.1f}% of iterations):")
-        logger.info(f"  Current average timing: {current_avg_timing:.4f}s")
-        logger.info(f"  Golden average timing: {golden_avg_timing:.4f}s")
-        logger.info(f"  Timing difference: {timing_diff:.4f} ({timing_diff * 100:.2f}%)")
-        logger.info(f"  Threshold: {timing_threshold * 100:.1f}%")
-
-        if wandb_run:
-            wandb_run.summary["current_avg_timing"] = current_avg_timing
-            wandb_run.summary["golden_avg_timing"] = golden_avg_timing
-            wandb_run.summary["timing_diff"] = timing_diff
-            wandb_run.summary["timing_threshold"] = timing_threshold
-            wandb_run.define_metric("compare/*", step_metric="compare/step")
-            for i in range(len(steps)):
-                wandb_run.log(
-                    {
-                        "compare/step": i + 1,
-                        "compare/current_lm_loss": current_train_loss_values[i],
-                        "compare/current_iter_time": current_step_timing_values[i],
-                        "compare/golden_lm_loss": golden_lm_loss[i],
-                        "compare/golden_iter_time": golden_iter_time[i],
-                    }
-                )
-
-            artifact = wandb.Artifact("golden_values", type="dataset")
-            with artifact.new_file("golden_values.json", "w") as f:
-                json.dump({today_date: current_golden_values}, f)
-
-            wandb_run.log_artifact(artifact)
-
-        # Check if timing is within threshold
-        if timing_diff > timing_threshold:
-            logger.warning(f"Step timing validation FAILED: {timing_diff * 100:.2f}% > {timing_threshold * 100:.1f}%")
-            # Add timing failure to convergence result
-            convergence_result["passed"] = False
-            convergence_result["failed_metrics"].append("step_timing")
-            convergence_result["summary"] = f"Failed {len(convergence_result['failed_metrics'])} out of 6 tests"
-        else:
-            logger.info(f"✓ Step timing validation passed: {timing_diff * 100:.2f}% <= {timing_threshold * 100:.1f}%")
-
-        if not convergence_result["passed"]:
-            error_msg = f"Convergence check failed. {convergence_result['summary']}\n"
-            error_msg += f"Failed metrics: {', '.join(convergence_result['failed_metrics'])}\n"
-            if convergence_result.get("details"):
-                error_msg += "Details:\n" + convergence_result["details"]
-
-        for key, value in convergence_result["metrics"].items():
-            if isinstance(value, float):
-                logger.info(f"  {key}: {value:.6f}")
-            else:
-                logger.info(f"  {key}: {value}")
-
-        logger.info(f"Convergence check is passed. Train loss history file was updated for {model_type}_{model_size}.")
-    else:
+    if not os.path.exists(expected_golden_values_path):
         error_msg = "Convergence check failed due to missing golden values.\n"
         error_msg += "This is expected if it is the first time running this model.\n"
         error_msg += (
             f"You will need to add the golden values ({expected_golden_values_path}) "
             "into the repository before the next run."
         )
+        logger.error(error_msg)
+        return False, error_msg
+
+    logger.info("Found existing golden values file, performing convergence check")
+    with open(expected_golden_values_path, "r") as f:
+        expected_golden_values = json.load(f)
+
+    steps = []
+    golden_train_loss = {}
+    golden_iter_time = {}
+    for key, value in expected_golden_values.items():
+        steps.append(key)
+        golden_train_loss[key] = value[loss_metric]
+        golden_iter_time[key] = value[timing_metric]
+
+    # Extract golden_lm_loss and golden_iter_time lists
+    logger.info(f"Comparing {len(steps)} training steps for convergence")
+    steps = sorted(golden_train_loss.keys(), key=int)
+
+    # check for convergence
+    golden_train_loss_values = np.array([golden_train_loss[str(step)] for step in steps])
+    current_train_loss_values = np.array([current_train_loss[s] for s in steps])
+    logger.info(f"Current loss values: {current_train_loss_values}")
+    logger.info(f"Golden loss values: {golden_train_loss_values}")
+    convergence_result = validate_convergence(
+        current_values=current_train_loss_values,
+        golden_values=golden_train_loss_values,
+        steps=steps,
+        logger=logger,
+        config=convergence_config,
+        wandb_run=wandb_run,
+    )
+    if not convergence_result["passed"]:
+        error_msg += f"Convergence check failed. {convergence_result['summary']}\n"
+        error_msg += f"Failed metrics: {', '.join(convergence_result['failed_metrics'])}\n"
+        if convergence_result.get("details"):
+            error_msg += "Details:\n" + convergence_result["details"]
+
+    # check for performance
+    golden_iter_time_values = np.array([golden_iter_time[str(step)] for step in steps])
+    current_iter_time_values = np.array([current_iter_time[s] for s in steps])
+    logger.info(f"Current timing values: {current_iter_time_values}")
+    logger.info(f"Golden timing values: {golden_iter_time_values}")
+    performance_result = validate_performance(
+        current_values=current_iter_time_values,
+        golden_values=golden_iter_time_values,
+        steps=steps,
+        logger=logger,
+        config=performance_config,
+        wandb_run=wandb_run,
+    )
+    if not performance_result["passed"]:
+        error_msg += f"Performance check failed. {performance_result['summary']}\n"
+        error_msg += f"Timing difference is greater than threshold: {performance_result['timing_diff'] * 100:.2f}% > {performance_config['timing_threshold'] * 100:.1f}%\n"
+
+    wandb_run.define_metric("compare/*", step_metric="compare/step")
+    for i in range(len(steps)):
+        wandb_run.log(
+            {
+                "compare/step": i + 1,
+                "compare/current_lm_loss": current_train_loss_values[i],
+                "compare/current_iter_time": current_iter_time_values[i],
+                "compare/golden_lm_loss": golden_train_loss_values[i],
+                "compare/golden_iter_time": golden_iter_time_values[i],
+            }
+        )
 
     logger.info(f"Convergence check completed successfully for {model_type}_{model_size}")
-    return error_msg is None, error_msg
+    return len(error_msg) == 0, error_msg

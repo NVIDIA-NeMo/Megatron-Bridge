@@ -225,8 +225,9 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                     m, dim=self.dim, alpha=self.alpha, dropout=self.dropout, lora_A_init_method=self.lora_A_init_method
                 )
 
+            is_expert = is_expert_linear(full_name)
             input_is_parallel, in_features, out_features, disable_sp_comm, base_linear_is_parallel = (
-                get_adapter_attributes_from_linear(m)
+                get_adapter_attributes_from_linear(m, is_expert=is_expert)
             )
 
             adapter_kwargs = dict(
@@ -242,7 +243,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 dropout_position=self.dropout_position,
                 model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
-                is_expert=is_expert_linear(full_name),
+                is_expert=is_expert,
                 disable_sequence_parallel_comm=disable_sp_comm,
                 base_linear_is_parallel=base_linear_is_parallel,
             )
