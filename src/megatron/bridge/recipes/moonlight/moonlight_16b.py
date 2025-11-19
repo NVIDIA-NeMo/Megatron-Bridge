@@ -457,7 +457,7 @@ def _model_config(
 
     if enable_deepep:
         cfg.moe_token_dispatcher_type = "flex"
-        cfg.moe_enable_deepep = True
+        cfg.moe_flex_dispatcher_backend = "deepep"
         cfg.moe_shared_expert_overlap = False
 
     return cfg

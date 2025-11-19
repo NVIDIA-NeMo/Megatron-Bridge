@@ -210,11 +210,11 @@ class PerfEnvPlugin(Plugin):
         tp_size: int,
         cp_size: int,
         moe_a2a_overlap: bool,
-        enable_deepep: bool,
+        moe_flex_dispatcher_backend: str,
         gpu_sm100_or_newer: bool,
     ):
         cuda_device_max_connections = 8
-        if enable_deepep:
+        if moe_flex_dispatcher_backend in ["deepep", "hybridep"]:
             cuda_device_max_connections = 32
         if gpu_sm100_or_newer:
             """
@@ -283,6 +283,16 @@ class PerfEnvPlugin(Plugin):
         if enable_layernorm_sm_margin:
             executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
             executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
+
+    def _set_nvl_domain_size(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        moe_flex_dispatcher_backend: str,
+        gpu: str,
+    ):
+        if moe_flex_dispatcher_backend == "hybridep" and gpu in ["gb200", "gb300"]:
+            executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
 
     def _set_nccl_pp_comm_chunksize(
         self,
@@ -359,23 +369,30 @@ class PerfEnvPlugin(Plugin):
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
 
         # Force program order kernel launch for TP, CP overlap
-        enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
-        moe_a2a_overlap = enable_deepep or (False if self.moe_a2a_overlap is None else self.moe_a2a_overlap)
+        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
+        moe_a2a_overlap = (
+            self.moe_a2a_overlap
+            if self.moe_a2a_overlap is not None
+            else getattr(workload_base_config, "moe_a2a_overlap", False)
+        )
         self._set_num_cuda_device_max_connections(
             task,
             executor,
             tp_size,
             cp_size,
             moe_a2a_overlap=moe_a2a_overlap,
-            enable_deepep=enable_deepep,
+            moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
             gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
-        layernorm_sm_margin = 20 if enable_deepep else 16
+        layernorm_sm_margin = 20 if moe_flex_dispatcher_backend in ["deepep", "hybridep"] else 16
         self._set_layernorm_sm_margin(
             task, executor, self.enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
         )
+
+        # Set NVL domain size when using HybridEP
+        self._set_nvl_domain_size(task, executor, moe_flex_dispatcher_backend, self.gpu)
 
         # Set the chunk size of P2P communications
         nccl_pp_comm_chunksize = 2097152 if self.model_size in ["70b", "405b"] else None

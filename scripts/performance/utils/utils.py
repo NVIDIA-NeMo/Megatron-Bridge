@@ -51,6 +51,9 @@ class WorkloadBaseConfig:
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
 
+    # MoE configuration
+    moe_flex_dispatcher_backend: Optional[str] = None
+    moe_a2a_overlap: Optional[bool] = False
     peft: Optional[str] = None
 
     @property

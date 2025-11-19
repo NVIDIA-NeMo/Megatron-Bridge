@@ -101,6 +101,11 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
     recipe.model.apply_rope_fusion = True
     recipe.model.cross_entropy_fusion_impl = "te"
 
+    # TODO: This needs to be adjusted when overlapping HybridEP with computation or
+    # the number of SMs for HybridEP is reduced.
+    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+        recipe.model.moe_hybridep_num_sms = 32
+
 
 def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
     """Set the Megatron FSDP overrides."""

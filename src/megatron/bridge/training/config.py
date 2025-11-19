@@ -31,7 +31,7 @@ from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.deepep import validate_deepep
+from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -1354,8 +1354,8 @@ class ConfigContainer(Container):
                     f"Sequence length in dataset config: {data_seq_length}"
                 )
 
-        # Validate DeepEP is supported for the current GPU architecture
-        validate_deepep(self.model)
+        # Validate DeepEP or HybridEP is supported for the current GPU architecture
+        validate_flex_dispatcher_backend(self.model)
 
     def _validate_training_scheduler_compatibility(self) -> None:
         """Cross-validation between training and scheduler configs."""
