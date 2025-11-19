@@ -10,9 +10,31 @@
 There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
 - You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
 
-## Example
+## Setup Instructions
+### Step 1. Virtual Environment
 
-The following line shows an example of how you can launch a pre-training experiment-
+- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
+  ```
+  pip install git+https://github.com/NVIDIA-NeMo/Run.git
+  ```
+
+- The YAML config files are resolved on compute node inside the container.
+
+### Step 2. Clone the Repo and Pick the corresponding release branch to the container
+
+  ```
+  git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+  git switch <branch> 
+  Example: If using 25.11 Container ```git switch r0.2.0
+  ```
+  
+  To find out which branch is used to build the container, refer https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html
+
+  Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
+
+## Step 3. Run instructions
+
+The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_name <model name> --model_size <model_size> -ng <num gpus>`
 
@@ -58,11 +80,4 @@ The following line shows an example of how you can launch a pre-training experim
   - `--detach`: Keep the submission flow detached from the terminal (default behaviour).
   - `--no-detach`: Keep the submission attached to the terminal session.
 
-## Virtual Environment
 
-- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
-  ```
-  pip install git+https://github.com/NVIDIA-NeMo/Run.git
-  ```
-
-- The YAML config files are resolved on compute node inside the container.
