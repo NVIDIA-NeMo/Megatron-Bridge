@@ -10,21 +10,50 @@
 There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
 - You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
 
-## Example
+## Setup Instructions
+### Step 1. Virtual Environment
 
-The following line shows an example of how you can launch a pre-training experiment-
+- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
+  ```
+  pip install git+https://github.com/NVIDIA-NeMo/Run.git
+  ```
+
+- The YAML config files are resolved on compute node inside the container.
+
+### Step 2. Clone the Repo and Pick the corresponding release branch to the container
+
+  ```
+  git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+  git switch <branch> 
+  Example: If using 25.11 Container ```git switch r0.2.0
+  ```
+  
+  To find out which branch is used to build the container, refer https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html
+
+  Why? This is required because when running a job the version of Megatron-Bridge in the setup and the one built into the container should match.
+
+## Step 3. Run instructions
+
+The following line shows an example of how you can launch a pre-training benchmark/experiment-
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_name <model name> --model_size <model_size> -ng <num gpus>`
 
-## Configuration Options
+### Configuration Options
 
-- Mandatory arguments: `-a/--account`, `-p/--partition`, `-g/--gpu` (choose `h100`, `b200`, `gb200`, or `gb300`), `-m/--model_name`, `-s/--model_size`, and `-ng/--num_gpus`.
-- Optional arguments:
+#### Container Image
+  - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY
+  For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of ngc container refer https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags
+  
+
+#### Mandatory arguments
+- `-a/--account`, `-p/--partition`, `-g/--gpu` (choose `h100`, `b200`, `gb200`, or `gb300`), `-m/--model_name`, `-s/--model_size`, and `-ng/--num_gpus`.
+
+
+#### Optional arguments:
   - `-l/--log_dir`: Location to store experiment artifacts and logs. Defaults to `NEMORUN_HOME`.
     - Make sure the environment variable `NEMORUN_HOME=<log_dir>` is accessible and set correctly in your virtual environment.
     - You can run `export NEMORUN_HOME=<log_dir>` in your terminal. You can add it your bashrc file (or equivalent for your OS/Linux distro) for setting it permanently.
   - `-t/--time_limit`: Maximum time limit before the Slurm job is cancelled. Format `HH:MM:SS`. Default `00:30:00`.
-  - `-i/--container_image`: NeMo container image to launch. Default `nvcr.io/nvidia/nemo:dev`.
   - `-c/--compute_dtype`: Training precision, either `bf16` or `fp8`. Default `bf16`.
   - `-fr/--fp8_recipe`: FP8 scaling recipe (`ds`, `cs`, `mx`, `sc`). Default `cs`.
   - `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
@@ -58,11 +87,4 @@ The following line shows an example of how you can launch a pre-training experim
   - `--detach`: Keep the submission flow detached from the terminal (default behaviour).
   - `--no-detach`: Keep the submission attached to the terminal session.
 
-## Virtual Environment
 
-- Create a virtual env at your preferred location on login node on a Slurm cluster and install the NeMo-Run package-
-  ```
-  pip install git+https://github.com/NVIDIA-NeMo/Run.git
-  ```
-
-- The YAML config files are resolved on compute node inside the container.
