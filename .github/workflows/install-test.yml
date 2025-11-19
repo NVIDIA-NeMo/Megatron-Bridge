@@ -21,7 +21,6 @@ on:
   push:
     branches:
       - main
-      - "pull-request/[0-9]+"
       - "deploy-release/*"
   pull_request_target:
     types: [opened, synchronize, reopened]
