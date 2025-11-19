@@ -15,7 +15,6 @@
 import os
 from typing import List, Optional, Union
 
-from megatron.bridge.training.deepep import apply_deepep
 import torch
 from typing_extensions import TypedDict, Unpack
 
@@ -38,6 +37,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.bridge.training.deepep import apply_deepep
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
