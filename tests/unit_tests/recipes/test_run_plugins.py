@@ -750,8 +750,8 @@ class TestPerfEnvPlugin:
         assert "train.manual_gc=true" not in task.args
 
     def test_cuda_max_connections_with_deepep_enabled(self):
-        """Test that deepep_enabled sets CUDA_DEVICE_MAX_CONNECTIONS to 32."""
-        plugin = PerfEnvPlugin(deepep_enabled=True, tp_size=1, cp_size=1, pp_size=1, num_gpus=8)
+        """Test that DeepEP sets CUDA_DEVICE_MAX_CONNECTIONS to 32."""
+        plugin = PerfEnvPlugin(moe_flex_dispatcher_backend="deepep", tp_size=1, cp_size=1, pp_size=1, num_gpus=8)
 
         # Create mock task and executor
         task = MagicMock(spec=run.Script)
@@ -802,7 +802,7 @@ class TestPerfEnvPlugin:
     def test_cuda_max_connections_sm100_with_multiple_parallelisms(self):
         """Test CUDA_DEVICE_MAX_CONNECTIONS on SM100+ with both TP/CP and DP/PP."""
         plugin = PerfEnvPlugin(
-            gpu_sm100_or_newer=True, tp_size=2, cp_size=2, pp_size=2, num_gpus=16, deepep_enabled=False
+            gpu_sm100_or_newer=True, tp_size=2, cp_size=2, pp_size=2, num_gpus=16, moe_flex_dispatcher_backend=None
         )
 
         # Create mock task and executor
@@ -837,7 +837,7 @@ class TestPerfEnvPlugin:
         """Test CUDA_DEVICE_MAX_CONNECTIONS defaults to 8 when no special conditions apply."""
         plugin = PerfEnvPlugin(
             gpu_sm100_or_newer=False,
-            deepep_enabled=False,
+            moe_flex_dispatcher_backend=None,
             tp_size=1,
             cp_size=1,
             pp_size=1,
