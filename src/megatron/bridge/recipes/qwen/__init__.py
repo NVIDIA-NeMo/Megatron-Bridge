@@ -14,16 +14,25 @@
 
 # Qwen2 models
 from .qwen2 import (
+    qwen2_1p5b_finetune_config,
     qwen2_1p5b_pretrain_config,
+    qwen2_7b_finetune_config,
     qwen2_7b_pretrain_config,
+    qwen2_72b_finetune_config,
     qwen2_72b_pretrain_config,
+    qwen2_500m_finetune_config,
     qwen2_500m_pretrain_config,
-    # Qwen2.5 models
+    qwen25_1p5b_finetune_config,
     qwen25_1p5b_pretrain_config,
+    qwen25_7b_finetune_config,
     qwen25_7b_pretrain_config,
+    qwen25_14b_finetune_config,
     qwen25_14b_pretrain_config,
+    qwen25_32b_finetune_config,
     qwen25_32b_pretrain_config,
+    qwen25_72b_finetune_config,
     qwen25_72b_pretrain_config,
+    qwen25_500m_finetune_config,
     qwen25_500m_pretrain_config,
 )
 
@@ -64,6 +73,10 @@ __all__ = [
     "qwen2_1p5b_pretrain_config",
     "qwen2_7b_pretrain_config",
     "qwen2_72b_pretrain_config",
+    "qwen2_500m_finetune_config",
+    "qwen2_1p5b_finetune_config",
+    "qwen2_7b_finetune_config",
+    "qwen2_72b_finetune_config",
     # Qwen2.5 models
     "qwen25_500m_pretrain_config",
     "qwen25_1p5b_pretrain_config",
@@ -71,6 +84,12 @@ __all__ = [
     "qwen25_14b_pretrain_config",
     "qwen25_32b_pretrain_config",
     "qwen25_72b_pretrain_config",
+    "qwen25_500m_finetune_config",
+    "qwen25_1p5b_finetune_config",
+    "qwen25_7b_finetune_config",
+    "qwen25_14b_finetune_config",
+    "qwen25_32b_finetune_config",
+    "qwen25_72b_finetune_config",
     # Qwen3 models
     "qwen3_600m_pretrain_config",
     "qwen3_1p7b_pretrain_config",

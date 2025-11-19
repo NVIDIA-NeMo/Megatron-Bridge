@@ -234,6 +234,7 @@ jobs:
           - script: L2_Launch_data
           - script: L2_Launch_post_training_quantization
           - script: L2_Launch_quantization_aware_training
+          - script: L2_Launch_quantization_export
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |

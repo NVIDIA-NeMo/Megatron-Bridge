@@ -940,8 +940,8 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
+            moe_flex_dispatcher_backend="deepep" if moe_enable_deepep else None,
             moe_token_dispatcher_type="flex" if moe_enable_deepep else "alltoall",
-            moe_enable_deepep=moe_enable_deepep,
             moe_shared_expert_overlap=not moe_enable_deepep,  # DeepEP requires this to be False
         )
 
@@ -968,7 +968,8 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config(
             tensor_model_parallel_size=1,
             pipeline_model_parallel_size=1,
-            moe_enable_deepep=False,  # DeepEP disabled
+            moe_flex_dispatcher_backend=None,  # DeepEP disabled
+            moe_token_dispatcher_type="alltoall",  # Disable flex dispatcher
         )
 
         container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)

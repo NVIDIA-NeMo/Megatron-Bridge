@@ -64,6 +64,7 @@ def main(
     wandb_key: str,
     wandb_prj_name: str,
     wandb_exp_name: str,
+    megatron_ckpt_dir: Optional[str],
     executor: run.Executor,
 ):
     """Sets up the experiment and runs it."""
@@ -95,6 +96,8 @@ def main(
             gpu=gpu,
             compute_dtype=compute_dtype,
             use_tokendrop=use_tokendrop,
+            domain=domain,
+            task=task,
         )
     )
     if enable_nsys:
@@ -107,6 +110,8 @@ def main(
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
         ]
     )
+    if megatron_ckpt_dir is not None:
+        executor.container_mounts.extend([f"{megatron_ckpt_dir}:/mnt/megatron_ckpt"])
     logger.info(f"Custom mounts: {executor.container_mounts}")
 
     exp_name = f"{model_name}_{model_size}_{domain}_{task}" + (
@@ -168,6 +173,7 @@ if __name__ == "__main__":
         wandb_key=args.wandb_key,
         wandb_prj_name=args.wandb_prj_name,
         wandb_exp_name=args.wandb_exp_name,
+        megatron_ckpt_dir=args.megatron_ckpt,
         executor=slurm_executor(
             args.gpu,
             args.account,
