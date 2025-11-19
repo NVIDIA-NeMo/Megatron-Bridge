@@ -89,6 +89,11 @@ def _safe_overrides_for(name: str) -> dict:
                     "mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed",
                 }
             )
+            # Also pop LR and GBS/MBS since low_precision recipe defines its own
+            overrides.pop("lr", None)
+            overrides.pop("min_lr", None)
+            overrides.pop("micro_batch_size", None)
+            overrides.pop("global_batch_size", None)
 
         # Large models/variants may set additional flags in pretrain recipes
         if "70b" in lname or "405b" in lname:
@@ -495,6 +500,6 @@ def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch)
     _assert_basic_config(cfg)
 
     # For NVFP4, 8B should use BF16 for the last 4 layers
-    assert cfg.model.precision_config.first_last_layers_bf16 is True
-    assert cfg.model.precision_config.num_layers_at_start_in_bf16 == 0
-    assert cfg.model.precision_config.num_layers_at_end_in_bf16 == 4
+    assert cfg.mixed_precision.first_last_layers_bf16 is True
+    assert cfg.mixed_precision.num_layers_at_start_in_bf16 == 0
+    assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 4
