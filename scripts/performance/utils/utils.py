@@ -51,6 +51,8 @@ class WorkloadBaseConfig:
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
 
+    peft: Optional[str] = None
+
     @property
     def sequence_parallel(self) -> bool:
         """Get the sequence parallel flag."""
@@ -67,16 +69,20 @@ def get_model_recipe(
     model_size: str,
     gpu: str,
     compute_dtype: str,
+    domain: str,
+    task: str,
 ):
     """Get the model recipe factory by its name."""
-    recipe_name = f"{model_name}_{model_size}_{gpu}_config"
-    module_name = f"configs.{model_name}.{model_name}_llm_pretrain"
+    module_task = "finetune" if task in ["sft", "lora"] else "pretrain"
+    module_name = f"configs.{model_name}.{model_name}_llm_{module_task}"
     try:
         module = importlib.import_module(module_name)
-        logger.debug("Imported configuration module '%s' to load recipe '%s'.", module_name, recipe_name)
+        logger.debug("Imported configuration module '%s'.", module_name)
     except ModuleNotFoundError as exc:
         raise ValueError(f"Failed to import configuration module '{module_name}'") from exc
 
+    recipe_name = f"{model_name}_{model_size}_{gpu}"
+    recipe_name += "_config" if task == "pretrain" else f"_{task}_config"
     try:
         recipe_builder = getattr(module, recipe_name)
     except AttributeError as err:
@@ -90,9 +96,14 @@ def get_workload_base_config(
     model_size: str,
     gpu: str,
     compute_dtype: str,
+    domain: str,
+    task: str,
 ) -> Dict[str, int]:
     """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
-    workload_base_config_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
+    if task in ["sft", "lora"]:
+        workload_base_config_name = f"{model_name}_{model_size}_{gpu}_{task}_{compute_dtype}"
+    else:
+        workload_base_config_name = f"{model_name}_{model_size}_{gpu}_{compute_dtype}"
     workload_base_config_name = workload_base_config_name.upper() + "_BASE_CONFIG"
 
     module_name = f"configs.{model_name}.workload_base_configs"

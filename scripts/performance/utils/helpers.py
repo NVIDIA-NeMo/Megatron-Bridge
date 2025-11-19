@@ -242,6 +242,9 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
+    if kwargs.get("megatron_ckpt") is not None:
+        recipe.checkpoint.pretrained_checkpoint = "/mnt/megatron_ckpt"
+
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size
     cp = recipe.model.context_parallel_size
@@ -251,7 +254,8 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     if dp > 1 and pp > 1 and vp > 1:
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
@@ -262,12 +266,15 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     num_gpus = kwargs.get("num_gpus")
     compute_dtype = kwargs.get("compute_dtype")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype)
+    domain = kwargs.get("domain")
+    task = kwargs.get("task")
+
+    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, domain, task)
     set_common_perf_overrides(recipe)
     set_user_overrides(recipe, kwargs)
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
-    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype)
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, domain, task)
     default_num_gpus = workload_base_config.num_gpus
     user_gbs = kwargs.get("global_batch_size")
     if user_gbs is None:
