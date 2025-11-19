@@ -142,10 +142,14 @@ if __name__ == "__main__":
             executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
     del_cudnn_ln = False
     if args.gpu.lower() in ["h100"]:
-        if args.model_name == "llama31" and args.model_size == "405b":
+        if args.model_name in ["llama3","llama31"]:
             del_cudnn_ln = True
-        elif args.model_name == "llama3" and args.model_size == "70b" and args.compute_dtype == "bf16":
-            del_cudnn_ln = True
+            executor.env_vars["TORCH_NCCL_HIGH_PRIORITY"] = "1"
+        if args.model_name == "llama3" and args.model_size == "8b":
+            if args.compute_dtype == "fp8" and args.fp8_recipe == "cs":
+                executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                executor.env_vars["NCCL_CTA_POLICY"] = "1"
+                del_cudnn_ln = False
     if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["b200"]:
         del_cudnn_ln = True
     if args.model_name in ["qwen3"] and args.model_size in ["30b_a3b"] and args.gpu.lower() in ["gb200"]:
