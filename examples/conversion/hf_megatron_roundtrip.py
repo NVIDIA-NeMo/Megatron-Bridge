@@ -43,7 +43,7 @@ console = Console()
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
 
-def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_code: bool | None = False) -> None:
+def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_code: bool | None = None) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models."""
     model_name = hf_model_id.split("/")[-1]
     if output_dir:
