@@ -32,7 +32,7 @@ SAFE_REPOS: list[str] = [
 ]
 
 
-def is_safe_repo(trust_remote_code: bool | None = None, hf_path: str = None) -> bool:
+def is_safe_repo(hf_path: str, trust_remote_code: bool | None) -> bool:
     """
     Determine whether remote code execution should be trusted for a given
     Hugging Face repository path.
