@@ -21,6 +21,7 @@ on:
   push:
     branches:
       - main
+      - "pull-request/[0-9]+"
       - "deploy-release/*"
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -31,6 +32,10 @@ concurrency:
 
 jobs:
   pre-flight:
+    # Skip pull_request_target if branch already matches push pattern
+    if: |
+      github.event_name == 'push' || 
+      !startsWith(github.head_ref, 'pull-request/')
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.64.2
 
   # pip-test-pytorch:
