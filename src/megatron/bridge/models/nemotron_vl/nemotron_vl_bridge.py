@@ -16,7 +16,7 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping, ColumnParallelMapping, RowParallelMapping, MambaInProjMapping, MambaConv1dMapping
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
@@ -84,15 +84,7 @@ class NemotronVLBridge(MegatronModelBridge):
             "llava_model.language_model.decoder.final_norm.weight": "language_model.backbone.norm_f.weight",
             "llava_model.language_model.output_layer.weight": "language_model.lm_head.weight",
             # language decoder: mamba
-            "llava_model.language_model.decoder.layers.*.mixer.dt_bias": "language_model.backbone.layers.*.mixer.dt_bias",
-            "llava_model.language_model.decoder.layers.*.mixer.A_log": "language_model.backbone.layers.*.mixer.A_log",
-            "llava_model.language_model.decoder.layers.*.mixer.D": "language_model.backbone.layers.*.mixer.D",
             "llava_model.language_model.decoder.layers.*.mixer.in_proj.layer_norm_weight": "language_model.backbone.layers.*.norm.weight",
-            "llava_model.language_model.decoder.layers.*.mixer.in_proj.weight": "language_model.backbone.layers.*.mixer.in_proj.weight",
-            "llava_model.language_model.decoder.layers.*.mixer.conv1d.weight": "language_model.backbone.layers.*.mixer.conv1d.weight",
-            "llava_model.language_model.decoder.layers.*.mixer.conv1d.bias": "language_model.backbone.layers.*.mixer.conv1d.bias",
-            "llava_model.language_model.decoder.layers.*.mixer.norm.weight": "language_model.backbone.layers.*.mixer.norm.weight",
-            "llava_model.language_model.decoder.layers.*.mixer.out_proj.weight": "language_model.backbone.layers.*.mixer.out_proj.weight",
             # language decoder: mlp
             "llava_model.language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "language_model.backbone.layers.*.norm.weight",
             "llava_model.language_model.decoder.layers.*.mlp.linear_fc1.weight": "language_model.backbone.layers.*.mixer.up_proj.weight",
@@ -106,6 +98,43 @@ class NemotronVLBridge(MegatronModelBridge):
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
         for megatron_param, hf_param in param_mappings.items():
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+
+        # Handling Mamba Mixer submodules separately for more clarity
+        # Special Handling for InProj and Conv1d due to specific TP logic
+        for mixer_sub_module in ["A_log", "D", "dt_bias", "norm.weight"]:
+            mapping_list.extend(
+                [
+                    ColumnParallelMapping(
+                        megatron_param=rf"llava_model.language_model.decoder.layers.*.mixer.{mixer_sub_module}",
+                        hf_param=rf"language_model.backbone.layers.*.mixer.{mixer_sub_module}",
+                    ),
+                ]
+            )
+        mapping_list.extend(
+            [
+                RowParallelMapping(
+                    megatron_param="llava_model.language_model.decoder.layers.*.mixer.out_proj.weight",
+                    hf_param="language_model.backbone.layers.*.mixer.out_proj.weight",
+                ),
+            ]
+        )
+        mapping_list.extend(
+            [
+                MambaInProjMapping(
+                    megatron_param="llava_model.language_model.decoder.layers.*.mixer.in_proj.weight",
+                    hf_param="language_model.backbone.layers.*.mixer.in_proj.weight",
+                ),
+            ]
+        )
+        for conv1d_sub_module in ["weight", "bias"]:
+            mapping_list.extend(
+                [
+                    MambaConv1dMapping(
+                        megatron_param=rf"llava_model.language_model.decoder.layers.*.mixer.conv1d.{conv1d_sub_module}",
+                        hf_param=rf"language_model.backbone.layers.*.mixer.conv1d.{conv1d_sub_module}",
+                    ),
+                ]
+            )
 
         # Add special mappings that require parameter concatenation/transformation
         mapping_list.extend(
