@@ -238,6 +238,11 @@ def main(args) -> None:
     for m in model:
         m.eval()
 
+    # Set grad_scale_func to None on the model's config for inference
+    for m in model:
+        if hasattr(m, "config"):
+            m.config.grad_scale_func = None
+
     # Initialize tokenizer and processor
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
     processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
