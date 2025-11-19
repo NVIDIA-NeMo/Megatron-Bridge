@@ -112,6 +112,29 @@ logger = getLogger(__name__)
 _NON_PERSISTENT_CKPT_SUBDIR = "non_persistent"
 
 
+def _is_layer_wise_distributed_optimizer(optimizer) -> bool:
+    """Check if optimizer is a layer-wise distributed optimizer.
+    
+    Layer-wise distributed optimizers have special file-based save/load methods
+    and need different checkpoint handling for torch format.
+    """
+    if optimizer is None:
+        return False
+    
+    # Check by class name first (most reliable)
+    optimizer_class_name = type(optimizer).__name__
+    if 'LayerWiseDistributedOptimizer' in optimizer_class_name:
+        return True
+    
+    # Fallback: Check if optimizer has the layer-wise distributed optimizer methods
+    has_file_methods = (hasattr(optimizer, 'save_state_dict_to_file') and 
+                       hasattr(optimizer, 'load_state_dict_from_file') and
+                       callable(getattr(optimizer, 'save_state_dict_to_file', None)) and
+                       callable(getattr(optimizer, 'load_state_dict_from_file', None)))
+    
+    return has_file_methods
+
+
 def get_torch_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = False,
                                basename: str = "model_optim_rng.pt") -> str:
     """Get the per-rank checkpoint file path for torch format, matching Megatron-LM approach.
@@ -238,23 +261,7 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
     Returns:
         The checkpoint format string.
     """
-    # Check for Megatron Core distributed checkpoint first
-    if dist_checkpointing.check_is_distributed_checkpoint(checkpoint_path):
-        return "torch_dist"
-
-    # Check for PyTorch DCP format (.metadata file exists)
-    if MultiStorageClientFeature.is_enabled():
-        msc = MultiStorageClientFeature.import_package()
-        checkpoint_dir = msc.Path(checkpoint_path)
-        is_torch_dcp = checkpoint_dir.joinpath(".metadata").exists()
-    else:
-        is_torch_dcp = os.path.exists(os.path.join(checkpoint_path, ".metadata"))
-
-    if is_torch_dcp:
-        # Assume fsdp_dtensor for PyTorch DCP format
-        return "fsdp_dtensor"
-
-    # Check for torch format (per-rank .pt files in subdirectories)
+    # Check for torch format first (per-rank .pt files in subdirectories)
     # Look for patterns like mp_rank_00/model_optim_rng.pt or mp_rank_00_000/model_optim_rng.pt
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
@@ -286,6 +293,22 @@ def _get_checkpoint_format(checkpoint_path: str) -> str:
         # Fallback: Check if checkpoint_path itself is a .pt file (backward compatibility)
         if os.path.isfile(checkpoint_path):
             return "torch"
+
+    # Check for Megatron Core distributed checkpoint
+    if dist_checkpointing.check_is_distributed_checkpoint(checkpoint_path):
+        return "torch_dist"
+
+    # Check for PyTorch DCP format (.metadata file exists)
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        checkpoint_dir = msc.Path(checkpoint_path)
+        is_torch_dcp = checkpoint_dir.joinpath(".metadata").exists()
+    else:
+        is_torch_dcp = os.path.exists(os.path.join(checkpoint_path, ".metadata"))
+
+    if is_torch_dcp:
+        # Assume fsdp_dtensor for PyTorch DCP format
+        return "fsdp_dtensor"
 
     # Default assumption for backward compatibility
     return "torch"
@@ -681,6 +704,16 @@ def save_checkpoint(
                 msc.torch.save(state_dict, torch_checkpoint_file)
             else:
                 torch.save(state_dict, torch_checkpoint_file)
+
+            # Handle layer-wise distributed optimizer separately
+            if optimizer is not None and _is_layer_wise_distributed_optimizer(optimizer):
+                dp_rank = mpu.get_data_parallel_rank()
+                optim_checkpoint_file = os.path.join(
+                    os.path.dirname(torch_checkpoint_file), f"layer_wise_optimizer_{dp_rank}.pt"
+                )
+                ensure_directory_exists(optim_checkpoint_file, check_parent=True)
+                optimizer.save_state_dict_to_file(optim_checkpoint_file)
+                print_rank_0(f"Saved layer-wise optimizer state: DP rank {dp_rank} -> {optim_checkpoint_file}")
 
             if torch.distributed.is_initialized():
                 rank = torch.distributed.get_rank()
@@ -1180,7 +1213,14 @@ def generate_state_dict(
     # Optimizer stuff.
     if ckpt_cfg.save_optim:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
-            if ckpt_cfg.ckpt_format == "torch_dist":
+            # Skip optimizer state dict for layer-wise distributed optimizers
+            # They don't support sharded_state_dict() and use file-based saving/loading
+            if _is_layer_wise_distributed_optimizer(optimizer):
+                # Layer-wise distributed optimizer - skip including in state_dict for all formats
+                # For torch format: saves separately using file-based method
+                # For distributed formats: doesn't support sharded_state_dict()
+                pass
+            elif ckpt_cfg.ckpt_format == "torch_dist":
                 state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))
             elif ckpt_cfg.ckpt_format == "fsdp_dtensor":
                 if optim_sd_kwargs is None:
@@ -1673,7 +1713,19 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                optimizer.load_state_dict(state_dict["optimizer"])
+                # Handle different optimizer loading methods
+                if "layer_wise_optimizer" in state_dict:
+                    # Layer-wise distributed optimizer loaded from torch format
+                    if _is_layer_wise_distributed_optimizer(optimizer):
+                        optimizer.load_state_dict(state_dict["layer_wise_optimizer"])
+                        print_rank_0(f"Loaded layer-wise optimizer state from torch format checkpoint")
+                    else:
+                        print_rank_0("Warning: Found layer-wise optimizer state but current optimizer is not layer-wise")
+                elif "optimizer" in state_dict:
+                    # Regular optimizer loading
+                    optimizer.load_state_dict(state_dict["optimizer"])
+                else:
+                    print_rank_0(f"Warning: No optimizer state found in checkpoint")
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:
@@ -2201,6 +2253,36 @@ def _load_torch_base_checkpoint(
 
     # Get checkpoint directory name for consistency with other formats
     checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
+
+    # Check for layer-wise distributed optimizer files and load them
+    if not rank0:
+        dp_rank = mpu.get_data_parallel_rank() if torch.distributed.is_initialized() else 0
+        optim_checkpoint_file = os.path.join(
+            os.path.dirname(torch_checkpoint_file), f"layer_wise_optimizer_{dp_rank}.pt"
+        )
+        
+        # Check if layer-wise optimizer file exists
+        file_exists = False
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            file_exists = msc.os.path.isfile(optim_checkpoint_file)
+        else:
+            file_exists = os.path.isfile(optim_checkpoint_file)
+        
+        if file_exists:
+            # Load layer-wise optimizer state and include it in the returned state_dict
+            print_rank_0(f"Found layer-wise optimizer file: {optim_checkpoint_file}")
+            if MultiStorageClientFeature.is_enabled():
+                msc = MultiStorageClientFeature.import_package()
+                layer_wise_optim_state = msc.torch.load(optim_checkpoint_file, map_location='cpu')
+            else:
+                layer_wise_optim_state = torch.load(optim_checkpoint_file, map_location='cpu')
+            
+            # Include the layer-wise optimizer state in the returned state_dict
+            if state_dict is None:
+                state_dict = {}
+            state_dict["layer_wise_optimizer"] = layer_wise_optim_state
+            print_rank_0(f"Loaded layer-wise optimizer state: DP rank {dp_rank} <- {optim_checkpoint_file}")
 
     if rank0:
         # For rank0 calls, return metadata without model/optimizer keys
