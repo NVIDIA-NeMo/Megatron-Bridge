@@ -222,6 +222,7 @@ jobs:
           - script: L2_Launch_models_mistral
           - script: L2_Launch_models_nemotron
           - script: L2_Launch_models_nemotronh
+          - script: L2_Launch_models_nemotron_vl
           - script: L2_Launch_models_olmoe
           - script: L2_Launch_models_qwen
           - script: L2_Launch_models_qwen_vl
@@ -231,7 +232,9 @@ jobs:
           - script: L2_Launch_recipes_mamba
           - script: L2_Launch_recipes_qwen
           - script: L2_Launch_data
-          - script: L2_Launch_quantization
+          - script: L2_Launch_post_training_quantization
+          - script: L2_Launch_quantization_aware_training
+          - script: L2_Launch_quantization_export
     needs: [cicd-unit-tests]
     runs-on: self-hosted-nemo
     if: |

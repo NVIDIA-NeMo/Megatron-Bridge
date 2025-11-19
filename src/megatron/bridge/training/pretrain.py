@@ -130,7 +130,6 @@ def _pretrain(
 
     # TRAINING
     if not config.train.skip_train:
-        print_rank_0("Training ...")
         if state.train_state.do_train and config.train.train_iters > 0:
             train(
                 forward_step_func,

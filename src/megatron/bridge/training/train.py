@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional, Union
 
 import torch
 import torch.profiler
+from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
@@ -35,10 +36,6 @@ from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.parallel_state import update_pg_timeout
 from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.core.pipeline_parallel.utils import (
-    is_pp_first_stage,
-    is_pp_last_stage,
-)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator, get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
@@ -253,8 +250,10 @@ def train(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
 
-    # Run training iterations till done.
     start_iteration = global_state.train_state.step
+    print_rank_0(f"Starting training loop at iteration {start_iteration}")
+
+    # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -512,6 +511,10 @@ def train(
         )
         if should_exit:
             break
+    # Explicitly delete the training CUDA graph because of
+    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
+    if "training" in FullCudaGraphWrapper.cuda_graph:
+        del FullCudaGraphWrapper.cuda_graph["training"]
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -635,8 +638,6 @@ def train_step(
             decoder_seq_length=model_config.seq_length,
         )
 
-        # Forward pass.
-        forward_backward_func = get_forward_backward_func()
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -663,12 +664,12 @@ def train_step(
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
-    update_successful = logical_and_across_model_parallel_group(update_successful, mp_group=pg_collection.mp)
+    update_successful = logical_and_across_model_parallel_group(update_successful)
     # grad_norm and num_zeros_in_grad will be None on ranks without trainable params,
     # so we must gather across mp ranks
-    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm, mp_group=pg_collection.mp)
+    grad_norm = reduce_max_stat_across_model_parallel_group(grad_norm)
     if optim_config.log_num_zeros_in_grad:
-        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad, mp_group=pg_collection.mp)
+        num_zeros_in_grad = reduce_max_stat_across_model_parallel_group(num_zeros_in_grad)
 
     # Update learning rate.
     if update_successful:
@@ -682,7 +683,7 @@ def train_step(
     if train_config.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
-    if pg_collection.pp.rank() == pg_collection.pp.size() - 1:
+    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
         # Average loss across microbatches.
         loss_reduced = {}
 
@@ -847,6 +848,17 @@ def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
+def force_param_sync(model: list[DDP]) -> None:
+    """Force parameter synchronization for all model chunks.
+
+    Args:
+        model: list of model chunks wrapped in DDP.
+    """
+    for model_chunk in model:
+        assert isinstance(model_chunk, DDP)
+        model_chunk.start_param_sync(force_sync=True)
+
+
 def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, float]:
     """
     Gets start time of earliest job with same world size. Also returns the number
@@ -945,9 +957,9 @@ def save_checkpoint_and_time(
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
-    Wraps the `save_checkpoint` function with timers and potentially disables/
-    enables forward pre-hooks if distributed optimizer with overlapped parameter
-    gather is used.
+    Wraps the `save_checkpoint` function with timers and forces parameter
+    synchronization when using distributed optimizer with overlapped parameter
+    gather to ensure checkpoint correctness.
 
     Args:
         state: The global state object.
@@ -974,13 +986,13 @@ def save_checkpoint_and_time(
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
 
-    should_disable_pre_hook = should_disable_forward_pre_hook(
+    should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
         state.cfg.optimizer.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
     )
-    if should_disable_pre_hook:
-        disable_forward_pre_hook(model)
+    if should_force_param_sync:
+        force_param_sync(model)
     save_checkpoint(
         state,
         model,
@@ -996,8 +1008,6 @@ def save_checkpoint_and_time(
         # dequantized bf16 tensors that were temporarily created during fp8
         # model checkpoint saving.
         gc.collect()
-    if should_disable_pre_hook:
-        enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
     timers.log([timer_key])
 
@@ -1185,7 +1195,7 @@ def _should_skip_and_handle_iteration(
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
-    _dummy_train_step(global_state, train_data_iterator, pg_collection)
+    _dummy_train_step(global_state, train_data_iterator)
 
     # Update step and sample counters
     global_state.train_state.step += 1
@@ -1198,9 +1208,7 @@ def _should_skip_and_handle_iteration(
 
 
 def _dummy_train_step(
-    global_state: GlobalState,
-    train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
-    pg_collection: ProcessGroupCollection,
+    global_state: GlobalState, train_data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]]
 ) -> None:
     """Single dummy training step to fast forward train_data_iterator.
 
@@ -1218,8 +1226,7 @@ def _dummy_train_step(
     rerun_state_machine = get_rerun_state_machine()
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
-        pp_group = pg_collection.pp
-        if is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
+        if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
             if train_data_iterator is not None:
                 if cfg.dataset.dataloader_type == "batch":
                     # Finetuning: Consume global batch once
