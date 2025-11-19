@@ -96,6 +96,8 @@ def llama31_405b_gb200_config(precision: str = "bf16") -> ConfigContainer:
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
+        cfg.ddp.num_distributed_optimizer_instances = 2
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 

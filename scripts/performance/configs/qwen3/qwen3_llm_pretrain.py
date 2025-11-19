@@ -110,6 +110,11 @@ def qwen3_235b_a22b_b200_config(precision: str = "bf16") -> ConfigContainer:
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 

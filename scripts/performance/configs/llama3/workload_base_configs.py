@@ -185,7 +185,8 @@ LLAMA3_8B_H100_BF16_BASE_CONFIG = replace(
 
 LLAMA3_8B_H100_FP8_CS_BASE_CONFIG = replace(
     BASE_LLAMA3_8B_CONFIG,
-    use_megatron_fsdp=True,
+    context_parallel_size=1,
+    recompute_num_layers=5,
 )
 
 
@@ -282,7 +283,10 @@ LLAMA3_70B_H100_LORA_BASE_CONFIG = replace(
 )
 
 LLAMA3_70B_H100_LORA_BF16_BASE_CONFIG = LLAMA3_70B_H100_LORA_BASE_CONFIG
-LLAMA3_70B_H100_LORA_FP8_CS_BASE_CONFIG = LLAMA3_70B_H100_LORA_BASE_CONFIG
+LLAMA3_70B_H100_LORA_FP8_CS_BASE_CONFIG = replace(
+    LLAMA3_70B_H100_LORA_BF16_BASE_CONFIG,
+    recompute_num_layers=1,
+)
 
 
 __all__ = [
