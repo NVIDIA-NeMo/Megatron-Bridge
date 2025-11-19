@@ -64,7 +64,7 @@ def main(
     etp: int = 1,
     megatron_save_path: str | None = None,
     megatron_load_path: str | None = None,
-    trust_remote_code: bool | None = False,
+    trust_remote_code: bool | None = None,
     strict: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
