@@ -2354,7 +2354,7 @@ dev = [
     { name = "nvidia-resiliency-ext" },
     { name = "nvtx" },
     { name = "onnxscript", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "onnxscript", version = "0.5.7.dev20251113", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "onnxscript", version = "0.5.7.dev20251119", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "opentelemetry-api" },
     { name = "setuptools" },
     { name = "tensorstore", version = "0.1.74", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or python_full_version >= '3.13'" },
@@ -3361,7 +3361,7 @@ wheels = [
 
 [[package]]
 name = "onnxscript"
-version = "0.5.7.dev20251113"
+version = "0.5.7.dev20251119"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform == 'linux'",
@@ -3379,9 +3379,9 @@ dependencies = [
     { name = "packaging", marker = "python_full_version < '3.13'" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/77/7ae00ecdcbf735588e43d3f10a8b4cc038f3d5488cc36166a1e8f297818a/onnxscript-0.5.7.dev20251113.tar.gz", hash = "sha256:43e6c44bd373dda4812ad6a8780f1b7c7684a3b39ae48da8782a25a656d3b34c", size = 595005, upload-time = "2025-11-13T08:23:15.982Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/c4/cb455114f60c03f2d10b4a7b90fa599d64c6ad04511a2a009fbdcb40923e/onnxscript-0.5.7.dev20251119.tar.gz", hash = "sha256:42305c068dde4d65b51835c3f0db22417244ca21d39a0ac669d9ab322ec9fc0a", size = 595882, upload-time = "2025-11-19T08:20:51.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/85/cc4d5ae5152b9dd3e14dc9ba3a65a3c796a679a5c8ce93d92f2c28e87a7c/onnxscript-0.5.7.dev20251113-py3-none-any.whl", hash = "sha256:2c98ba189383ae8f53eff5a976932ef00c1895a354a9dcf9383282aa73ac9164", size = 691735, upload-time = "2025-11-13T08:23:18.307Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/3c/9a574f736ebbdcc1b508a69ba867efca43e0c933567da3ada63e54338969/onnxscript-0.5.7.dev20251119-py3-none-any.whl", hash = "sha256:e0caea0fbc8e2fd04143285f9e9ae6ef19afb4faeae650ba8f35e25f53336c36", size = 692703, upload-time = "2025-11-19T08:20:53.94Z" },
 ]
 
 [[package]]
@@ -5754,7 +5754,7 @@ dependencies = [
     { name = "onnx", version = "1.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "onnx", version = "1.20.0rc1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "onnxscript", version = "0.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "onnxscript", version = "0.5.7.dev20251113", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
+    { name = "onnxscript", version = "0.5.7.dev20251119", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "packaging" },
     { name = "pydantic" },
     { name = "torch", marker = "sys_platform == 'never'" },
