@@ -38,15 +38,18 @@ The following line shows an example of how you can launch a pre-training benchma
 
 `python scripts/performance/setup_experiment.py --account <your_slurm_account> --partition <your_slurm_partition> --gpu gb200 --model_name <model name> --model_size <model_size> -ng <num gpus>`
 
-## Configuration Options
+### Configuration Options
 
-### Container Image
+#### Container Image
   - `-i/--container_image`: NeMo container image to launch. For release container XX.YY use nvcr.io/nvidia/nemo:XX.YY
   For 25.09, use nvcr.io/nvidia/nemo:25.09. For the complete list of ngc container refer https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo/tags
   
 
-- Mandatory arguments: `-a/--account`, `-p/--partition`, `-g/--gpu` (choose `h100`, `b200`, `gb200`, or `gb300`), `-m/--model_name`, `-s/--model_size`, and `-ng/--num_gpus`.
-- Optional arguments:
+#### Mandatory arguments
+- `-a/--account`, `-p/--partition`, `-g/--gpu` (choose `h100`, `b200`, `gb200`, or `gb300`), `-m/--model_name`, `-s/--model_size`, and `-ng/--num_gpus`.
+
+
+#### Optional arguments:
   - `-l/--log_dir`: Location to store experiment artifacts and logs. Defaults to `NEMORUN_HOME`.
     - Make sure the environment variable `NEMORUN_HOME=<log_dir>` is accessible and set correctly in your virtual environment.
     - You can run `export NEMORUN_HOME=<log_dir>` in your terminal. You can add it your bashrc file (or equivalent for your OS/Linux distro) for setting it permanently.
