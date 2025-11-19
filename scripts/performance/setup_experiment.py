@@ -18,10 +18,10 @@ from typing import List, Optional
 
 
 try:
-    from argument_parser import parse_cli_args
+    from argument_parser import parse_additional_slurm_params, parse_cli_args
     from utils.executors import slurm_executor
 except (ImportError, ModuleNotFoundError):
-    from .argument_parser import parse_cli_args
+    from .argument_parser import parse_additional_slurm_params, parse_cli_args
     from .utils.executors import slurm_executor
 
 import nemo_run as run
@@ -151,6 +151,11 @@ logger: logging.Logger = logging.getLogger(__name__)
 if __name__ == "__main__":
     args, _ = parse_cli_args()
 
+    # Parse additional SLURM parameters if provided
+    additional_slurm_params = None
+    if hasattr(args, 'additional_slurm_params') and args.additional_slurm_params:
+        additional_slurm_params = parse_additional_slurm_params(args.additional_slurm_params)
+
     main(
         script_name=SCRIPT_NAME,
         model_name=args.model_name,
@@ -188,5 +193,6 @@ if __name__ == "__main__":
             hf_token=args.hf_token,
             nemo_home=args.nemo_home,
             wandb_key=args.wandb_key,
+            additional_slurm_params=additional_slurm_params,
         ),
     )
