@@ -18,17 +18,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-SAFE_REPOS = [
-    "nvidia",
-    "Qwen",
+SAFE_REPOS: list[str] = [
     "deepseek-ai",
-    "meta-llama",
+    "gpt2",
     "google",
-    "openai",
+    "llava-hf",
+    "meta-llama",
     "mistralai",
     "moonshotai",
-    "llava-hf",
-    "gpt2",
+    "nvidia",
+    "openai",
+    "Qwen",
 ]
 
 
