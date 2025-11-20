@@ -240,7 +240,7 @@ def apply_args_to_config(config, args):
     if args.expert_parallel_size:
         config.model.expert_model_parallel_size = args.expert_parallel_size
     if args.expert_tensor_parallel_size:
-        config.model.expert_tensor_parallel_size = args.expert_tensor_paralel_size
+        config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
     # Default behavior: use tokenizer vocab size (set model vocab_size to None)
     # Only preserve model vocab_size if explicitly requested
     if not args.use_vocab_size_from_model:
