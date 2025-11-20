@@ -148,7 +148,7 @@ QWEN3_30B_A3B_GB300_BF16_BASE_CONFIG = replace(
     micro_batch_size=8,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
 
 
@@ -158,7 +158,7 @@ QWEN3_30B_A3B_GB300_FP8_CS_BASE_CONFIG = replace(
     micro_batch_size=8,
     moe_flex_dispatcher_backend="hybridep",
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
 
 

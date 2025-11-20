@@ -231,8 +231,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     if kwargs.get("tensor_model_parallel_size") is not None:
         recipe.model.tensor_model_parallel_size = kwargs.get("tensor_model_parallel_size")
-        if recipe.model.tensor_model_parallel_size > 1:
-            recipe.model.sequence_parallel = True
+        recipe.model.sequence_parallel = bool(kwargs.get("tensor_model_parallel_size") > 1)
     if kwargs.get("pipeline_model_parallel_size") is not None:
         recipe.model.pipeline_model_parallel_size = kwargs.get("pipeline_model_parallel_size")
     if kwargs.get("context_parallel_size") is not None:
