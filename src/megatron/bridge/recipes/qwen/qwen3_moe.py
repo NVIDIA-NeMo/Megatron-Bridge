@@ -35,6 +35,7 @@ from megatron.bridge.training.config import (
     TokenizerConfig,
     TrainingConfig,
 )
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, bf16_mixed, get_mixed_precision_config
 
 
@@ -81,6 +82,7 @@ class Qwen3MoeCommonKwargs(TypedDict, total=False):
     # Precision / overlap configs
     precision_config: Optional[Union[MixedPrecisionConfig, str]]
     comm_overlap_config: Optional[CommOverlapConfig]
+    moe_flex_dispatcher_backend: str | None
 
 
 class Qwen3MoeFinetuneKwargs(TypedDict, total=False):
@@ -203,6 +205,7 @@ def _qwen3_moe_common(
     # Precision recipe
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
     comm_overlap_config: Optional[CommOverlapConfig] = None,
+    moe_flex_dispatcher_backend: Optional[str] = None,
 ) -> ConfigContainer:
     """
     Create a pre-training configuration for Qwen3 MoE models using a given HuggingFace path.
@@ -240,7 +243,7 @@ def _qwen3_moe_common(
         lr_decay_iters (Optional[int]): Number of iterations over which to decay the LR.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
-
+        moe_flex_dispatcher_backend (str | None): Token dispatcher type [deepep, hybridep].
     Returns:
         ConfigContainer: Configuration for pre-training.
     """
@@ -263,6 +266,8 @@ def _qwen3_moe_common(
     model_cfg.expert_model_parallel_size = expert_model_parallel_size
     model_cfg.expert_tensor_parallel_size = expert_tensor_parallel_size
     model_cfg.sequence_parallel = sequence_parallel
+
+    apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
 
     if precision_config is None:
         precision_config = bf16_mixed()
@@ -486,6 +491,7 @@ def _qwen3_moe_finetune_common(
     wandb_exp_name: Optional[str] = None,
     # Precision
     precision_config: Optional[Union[MixedPrecisionConfig, str]] = None,
+    moe_flex_dispatcher_backend: Optional[str] = None,
 ) -> ConfigContainer:
     """
     Create a finetuning configuration for Qwen3 MoE models using a given HuggingFace path.
@@ -510,7 +516,7 @@ def _qwen3_moe_finetune_common(
         wandb_entity (Optional[str]): Weights & Biases entity name.
         wandb_exp_name (Optional[str]): Weights & Biases experiment name.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
-
+        moe_flex_dispatcher_backend (str | None): Token dispatcher type [deepep, hybridep].
     Returns:
         ConfigContainer: Configuration for finetuning.
     """
@@ -539,6 +545,8 @@ def _qwen3_moe_finetune_common(
     # Sequence length
     model_cfg.seq_length = seq_length
     model_cfg.cross_entropy_fusion_impl = "te"
+
+    apply_flex_dispatcher_backend(model_cfg, moe_flex_dispatcher_backend)
 
     # Optimizer and scheduler
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
