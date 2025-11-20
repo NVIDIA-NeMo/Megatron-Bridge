@@ -302,6 +302,7 @@ class DatasetProvider(DataloaderConfig, ABC):
         pass
 
 
+@dataclass
 class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     """Megatron Core GPTDatasetConfig with deferred post-init.
 
@@ -361,6 +362,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         assert self.eod_mask_loss is not None, "eod_mask_loss must be defined."
 
 
+@dataclass
 class MockGPTDatasetConfig(GPTDatasetConfig):
     """Modifies GPTDatasetConfig to enforce necessary options for creating a mock dataset."""
 
