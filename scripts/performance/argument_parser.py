@@ -220,6 +220,14 @@ def parse_cli_args():
         default=[],
     )
     parser.add_argument(
+        "-cs",
+        "--custom_srun_args",
+        type=list_of_strings,
+        help="Comma separated string of srun arguments",
+        required=False,
+        default=[],
+    )
+    parser.add_argument(
         "-vb",
         "--enable_vboost",
         help="Enable VBoost which steers more power towards tensor cores. Disabled by default",
