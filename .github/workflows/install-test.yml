@@ -24,7 +24,7 @@ on:
       - "pull-request/[0-9]+"
       - "deploy-release/*"
   
-  # POC: Allow MCore to trigger this workflow remotely
+  # Allow MCore to trigger this workflow remotely for compatibility testing
   workflow_dispatch:
     inputs:
       mcore_commit:
