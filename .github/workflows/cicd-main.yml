@@ -20,6 +20,32 @@ on:
       - main
       - "pull-request/[0-9]+"
       - "deploy-release/*"
+  
+  # POC: Allow MCore to trigger this workflow remotely
+  workflow_dispatch:
+    inputs:
+      mcore_commit:
+        description: 'MCore commit SHA to test against'
+        required: false
+        type: string
+      mcore_branch:
+        description: 'MCore branch name (for reference)'
+        required: false
+        type: string
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        type: choice
+        options:
+          - 'all'
+          - 'unit-only'
+          - 'functional-only'
+        default: 'all'
+      triggered_by:
+        description: 'Trigger source (for tracking)'
+        required: false
+        type: string
+        default: 'manual'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name || 'main' }}-${{ github.event_name }}
@@ -54,6 +80,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
+      
+      - name: Update MCore submodule (if triggered from MCore)
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          echo "🔄 Updating MCore submodule to commit: ${{ github.event.inputs.mcore_commit }}"
+          echo "📌 MCore branch: ${{ github.event.inputs.mcore_branch || 'unknown' }}"
+          echo "🎯 Triggered by: ${{ github.event.inputs.triggered_by }}"
+          
+          cd 3rdparty/Megatron-LM
+          git fetch origin ${{ github.event.inputs.mcore_commit }}
+          git checkout ${{ github.event.inputs.mcore_commit }}
+          cd ../..
+          
+          echo "✅ MCore submodule updated successfully"
+          git -C 3rdparty/Megatron-LM log -1 --oneline
 
       - name: Check lint
         run: |
@@ -181,6 +222,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only')
     needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
     runs-on: self-hosted-nemo
     name: Launch_Unit_Tests
@@ -245,6 +287,7 @@ jobs:
         || needs.pre-flight.outputs.force_run_all == 'true'
       )
       && !cancelled()
+      && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only')
     name: ${{ matrix.script }}
     environment: nemo-ci
     env:
