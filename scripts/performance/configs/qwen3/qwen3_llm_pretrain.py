@@ -132,7 +132,7 @@ def qwen3_235b_a22b_h100_config(precision: str = "bf16") -> ConfigContainer:
     cfg = qwen3_235b_a22b_pretrain_config(
         mock=True,
         precision_config=precision_config,
-        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=False),
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
