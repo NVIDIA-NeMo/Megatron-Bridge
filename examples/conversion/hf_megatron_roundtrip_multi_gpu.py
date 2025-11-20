@@ -84,6 +84,7 @@ def main(
         trust_remote_code=is_safe_repo(
             trust_remote_code=trust_remote_code,
             hf_path=hf_model_id,
+            torch_dtype=torch.bfloat16,
         ),
     )
 
@@ -92,6 +93,7 @@ def main(
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.params_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
 
@@ -106,6 +108,7 @@ def main(
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
                 "pipeline_dtype": torch.bfloat16,
+                "params_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -116,6 +119,7 @@ def main(
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.params_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
 

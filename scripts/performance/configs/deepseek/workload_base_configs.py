@@ -24,76 +24,40 @@ BASE_DEEPSEEK_V3_CONFIG = WorkloadBaseConfig(
 )
 
 
-DEEPSEEK_V3_GB300_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB300_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
+    global_batch_size=2048,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    global_batch_size=2048,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
     cuda_graph_impl="transformer_engine",
-    cuda_graph_scope="attn",
-    recompute_modules=["mlp", "moe_act"],
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
+DEEPSEEK_V3_GB300_BF16_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
+DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
+DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
 
 
-DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG = replace(
+DEEPSEEK_V3_GB200_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
+    global_batch_size=2048,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
-    global_batch_size=2048,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope="attn",
-    recompute_modules=["mlp", "moe_act"],
-)
-
-
-DEEPSEEK_V3_GB300_FP8_MX_BASE_CONFIG = replace(
-    BASE_DEEPSEEK_V3_CONFIG,
-    num_gpus=256,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
-    global_batch_size=2048,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
     recompute_modules=["mla_up_proj"],
 )
+DEEPSEEK_V3_GB200_BF16_BASE_CONFIG = BASE_DEEPSEEK_V3_CONFIG
+DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG = BASE_DEEPSEEK_V3_CONFIG
+DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG = BASE_DEEPSEEK_V3_CONFIG
 
 
-DEEPSEEK_V3_GB200_BF16_BASE_CONFIG = replace(
-    BASE_DEEPSEEK_V3_CONFIG,
-    num_gpus=256,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
-    global_batch_size=2048,
-    recompute_modules=["mla_up_proj"],
-)
-
-
-DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG = replace(
-    BASE_DEEPSEEK_V3_CONFIG,
-    num_gpus=256,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
-    global_batch_size=2048,
-    recompute_modules=["mla_up_proj"],
-)
-
-
-DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG = replace(
-    BASE_DEEPSEEK_V3_CONFIG,
-    num_gpus=256,
-    pipeline_model_parallel_size=4,
-    virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
-    global_batch_size=2048,
-    recompute_modules=["mla_up_proj", "mlp"],
-)
-
-DEEPSEEK_V3_B200_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_B200_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
     pipeline_model_parallel_size=16,
@@ -101,22 +65,12 @@ DEEPSEEK_V3_B200_BF16_BASE_CONFIG = replace(
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
 )
-
-
-DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG = replace(
-    BASE_DEEPSEEK_V3_CONFIG,
-    num_gpus=256,
-    pipeline_model_parallel_size=16,
-    expert_model_parallel_size=8,
-    global_batch_size=2048,
-    recompute_modules=["mla_up_proj"],
-)
-
-
+DEEPSEEK_V3_B200_BF16_BASE_CONFIG = DEEPSEEK_V3_B200_BASE_CONFIG
+DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_B200_BASE_CONFIG
 DEEPSEEK_V3_B200_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG
 
 
-DEEPSEEK_V3_H100_BF16_BASE_CONFIG = replace(
+DEEPSEEK_V3_H100_BASE_CONFIG = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=1024,
     tensor_model_parallel_size=2,
@@ -125,21 +79,11 @@ DEEPSEEK_V3_H100_BF16_BASE_CONFIG = replace(
     expert_model_parallel_size=64,
     global_batch_size=8192,
     recompute_modules=["mla_up_proj", "mlp"],
+    moe_flex_dispatcher_backend="deepep",
+    moe_a2a_overlap=True,
 )
-
-
-DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG = replace(
-    BASE_DEEPSEEK_V3_CONFIG,
-    num_gpus=1024,
-    tensor_model_parallel_size=2,
-    pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=4,
-    expert_model_parallel_size=64,
-    global_batch_size=8192,
-    recompute_modules=["mla_up_proj", "mlp"],
-)
-
-
+DEEPSEEK_V3_H100_BF16_BASE_CONFIG = DEEPSEEK_V3_H100_BASE_CONFIG
+DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_H100_BASE_CONFIG
 DEEPSEEK_V3_H100_FP8_SC_BASE_CONFIG = DEEPSEEK_V3_H100_FP8_CS_BASE_CONFIG
 
 
