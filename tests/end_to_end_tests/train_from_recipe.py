@@ -242,6 +242,8 @@ def apply_args_to_config(config, args):
     if args.expert_tensor_parallel_size:
         config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
 
+    config.model.vocab_size = None
+
     # Logging configuration
     config.logger.log_timers_to_tensorboard = args.tensorboard is True
     if args.save_config_filepath:
