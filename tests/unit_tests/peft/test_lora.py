@@ -311,6 +311,7 @@ class TestLoRA:
             # Verify that te_linear was transformed to our mock adapter
             assert isinstance(result.te_linear, MockTELinearAdapter)
 
+    @pytest.mark.timeout(10)
     def test_lora_list_model_support(self):
         """Test LoRA support for list of model chunks (pipeline parallelism)."""
         # Create list of model chunks

@@ -77,13 +77,14 @@ def main(
     else:
         save_path = model_name
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model_id, trust_remote_code=True, torch_dtype=torch.bfloat16)
 
     if megatron_load_path:
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.params_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
 
@@ -98,6 +99,7 @@ def main(
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
                 "pipeline_dtype": torch.bfloat16,
+                "params_dtype": torch.bfloat16,
             },
             wrap_with_ddp=False,
         )
@@ -108,6 +110,7 @@ def main(
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.params_dtype = torch.bfloat16
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
 
