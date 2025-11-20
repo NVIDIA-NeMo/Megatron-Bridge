@@ -302,62 +302,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         return model
 
 
-@dataclass
-class GPTDistillationProvider(GPTModelProvider):
-    """Provider for Megatron Core GPT models in distillation mode."""
-
-    teacher: Optional["GPTModelProvider"] = None
-    kd_config: Optional["ModelOptDistillConfig"] = None
-
-    def __post_init__(self):
-        assert self.teacher is not None, "Teacher model must be provided."
-        shared_attrs = [
-            "tensor_model_parallel_size",
-            "pipeline_model_parallel_size",
-            "context_parallel_size",
-            "seq_length",
-            "pipeline_dtype",
-        ]
-        for attr in shared_attrs:
-            if getattr(self, attr) != getattr(self.teacher, attr):
-                raise ValueError(f"Student and teacher providers must have the same {attr}.")
-
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
-
-        Args:
-            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
-            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
-            vp_stage: Virtual pipeline stage
-
-        Returns:
-            MCoreGPTModel: Configured ModelOpt DistillationModel instance
-        """
-        if vp_stage is not None:
-            raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
-
-        student_model = super().provide(pre_process, post_process, vp_stage)
-        # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
-        teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
-
-        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
-        modelopt_cfg = {
-            "teacher_model": teacher_model,
-            "criterion": kd_cfg.criterion,
-            "loss_balancer": kd_cfg.loss_balancer,
-        }
-        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
-        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
-
-        return kd_model
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        # Mirror to teacher if it has that attribute
-        if hasattr(self.teacher, name):
-            setattr(self.teacher, name, value)
-
-
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
     """Pass in the MTP block spec if model has MTP layers.
 
@@ -384,6 +328,88 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
+
+
+@dataclass
+class GPTDistillationProvider(GPTModelProvider):
+    """Provider for Megatron Core GPT models in distillation mode.
+
+    NOTE: If your model uses an existing provider class that extends `GPTModelProvider`, please
+        use `convert_to_distillation_provider` to convert it instead of using this class directly.
+    """
+
+    teacher: Optional["GPTModelProvider"] = None
+    kd_config: Optional["ModelOptDistillConfig"] = None
+
+    def __post_init__(self):
+        assert getattr(self, "teacher", None) is not None, "Teacher model must be provided."
+        shared_attrs = [
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+            "seq_length",
+            "pipeline_dtype",
+        ]
+        for attr in shared_attrs:
+            if getattr(self, attr) != getattr(self.teacher, attr):
+                raise ValueError(f"Student and teacher providers must have the same {attr}.")
+        # Hack to dynamically subclass other providers and use their provide() method
+        self._super_provide = super().provide
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+        """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
+
+        Args:
+            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
+            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
+            vp_stage: Virtual pipeline stage
+
+        Returns:
+            MCoreGPTModel: Configured ModelOpt DistillationModel instance
+        """
+        if vp_stage is not None:
+            raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
+
+        student_model = self._super_provide(pre_process, post_process, vp_stage)
+        # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
+        teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
+
+        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
+        modelopt_cfg = {
+            "teacher_model": teacher_model,
+            "criterion": kd_cfg.criterion,
+            "loss_balancer": kd_cfg.loss_balancer,
+        }
+        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
+        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
+
+        return kd_model
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        # Mirror to teacher if it has that attribute
+        if hasattr(self.teacher, name):
+            setattr(self.teacher, name, value)
+
+
+def convert_to_distillation_provider(
+    student_provider: "GPTModelProvider",
+    teacher_provider: "GPTModelProvider",
+    kd_config: Optional["ModelOptDistillConfig"] = None,
+) -> "GPTDistillationProvider":
+    """Convert any subclass of GPTModelProvider to a GPTDistillationProvider."""
+    assert isinstance(student_provider, GPTModelProvider), "Student provider must be a subclass of GPTModelProvider."
+    assert isinstance(teacher_provider, GPTModelProvider), "Teacher provider must be a subclass of GPTModelProvider."
+
+    student_provider._super_provide = student_provider.provide
+    student_provider.__bases__ = (type(student_provider),)
+    student_provider.__class__ = GPTDistillationProvider
+
+    student_provider.teacher = teacher_provider
+    student_provider.kd_config = kd_config
+    student_provider.__post_init__()
+
+    return student_provider
 
 
 @dataclass
