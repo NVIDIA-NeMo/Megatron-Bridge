@@ -69,6 +69,8 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
             cuda_graph_impl=settings.cuda_graph_impl,
             cuda_graph_scope=settings.cuda_graph_scope,
         )
+    if settings.moe_a2a_overlap:
+        set_moe_a2a_overlap_overrides(cfg)
     set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,

@@ -64,6 +64,7 @@ DEEPSEEK_V3_B200_BASE_CONFIG = replace(
     expert_model_parallel_size=8,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
+    moe_a2a_overlap=True,
 )
 DEEPSEEK_V3_B200_BF16_BASE_CONFIG = DEEPSEEK_V3_B200_BASE_CONFIG
 DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_B200_BASE_CONFIG
