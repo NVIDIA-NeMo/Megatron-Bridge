@@ -32,6 +32,7 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     """Set common performance configurations for all GPT-OSS configs."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.model.moe_router_fusion = True
 
     cfg.model.moe_router_force_load_balancing = True
 
