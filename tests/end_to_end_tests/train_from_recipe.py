@@ -240,9 +240,11 @@ def apply_args_to_config(config, args):
     if args.expert_parallel_size:
         config.model.expert_model_parallel_size = args.expert_parallel_size
     if args.expert_tensor_parallel_size:
-        config.model.expert_tensor_parallel_size = args.expert_tensor_parallel_size
-
-    config.model.vocab_size = None
+        config.model.expert_tensor_parallel_size = args.expert_tensor_paralel_size
+    # Default behavior: use tokenizer vocab size (set model vocab_size to None)
+    # Only preserve model vocab_size if explicitly requested
+    if not args.use_vocab_size_from_model:
+        config.model.vocab_size = None
 
     # Logging configuration
     config.logger.log_timers_to_tensorboard = args.tensorboard is True
@@ -375,6 +377,12 @@ def setup_argument_parser():
         "--tokenizer-model", type=str, help="Path to tokenizer model (automatically provided by launcher)"
     )
     parser.add_argument("--vocab-size", type=int, default=32000, help="Vocabulary size for NullTokenizer")
+    parser.add_argument(
+        "--use-vocab-size-from-model",
+        action="store_true",
+        default=False,
+        help="Use vocab size from model config instead of tokenizer (default: use tokenizer vocab size)",
+    )
 
     # Debugging and profiling
     parser.add_argument("--convergence", action="store_true", help="Enable convergence run", default=False)
