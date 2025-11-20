@@ -23,10 +23,8 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
     num_gpus=64,
     expert_model_parallel_size=8,
     expert_tensor_parallel_size=1,
-    micro_batch_size=8,
     global_batch_size=512,
-    cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    micro_batch_size=1,
 )
 
 
@@ -34,51 +32,41 @@ BASE_GPT_OSS_120B_CONFIG = WorkloadBaseConfig(
 
 GPT_OSS_120B_GB300_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
-)
-
-
-GPT_OSS_120B_GB300_FP8_MX_BASE_CONFIG = replace(
-    BASE_GPT_OSS_120B_CONFIG,
+    expert_model_parallel_size=64,
+    micro_batch_size=4,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
 )
 
 
 GPT_OSS_120B_GB200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
-)
-
-
-GPT_OSS_120B_GB200_FP8_MX_BASE_CONFIG = replace(
-    BASE_GPT_OSS_120B_CONFIG,
+    expert_model_parallel_size=64,
+    micro_batch_size=4,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    recompute_modules=["layernorm", "moe_act"],
 )
 
 
 GPT_OSS_120B_B200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
-)
-
-
-GPT_OSS_120B_B200_FP8_MX_BASE_CONFIG = replace(
-    BASE_GPT_OSS_120B_CONFIG,
+    expert_model_parallel_size=64,
+    micro_batch_size=4,
+    recompute_modules=["layernorm", "moe_act"],
 )
 
 
 GPT_OSS_120B_H100_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
-)
-
-
-GPT_OSS_120B_H100_FP8_CS_BASE_CONFIG = replace(
-    BASE_GPT_OSS_120B_CONFIG,
+    pipeline_model_parallel_size=4,
+    recompute_modules=["layernorm", "moe_act"],
 )
 
 
 __all__ = [
     "GPT_OSS_120B_GB300_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_GB300_FP8_MX_BASE_CONFIG",
     "GPT_OSS_120B_GB200_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_GB200_FP8_MX_BASE_CONFIG",
     "GPT_OSS_120B_B200_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_B200_FP8_MX_BASE_CONFIG",
     "GPT_OSS_120B_H100_BF16_BASE_CONFIG",
-    "GPT_OSS_120B_H100_FP8_CS_BASE_CONFIG",
 ]

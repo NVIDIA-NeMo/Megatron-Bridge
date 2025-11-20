@@ -46,7 +46,7 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
-def llama31_405b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_GB300_BF16_BASE_CONFIG
@@ -54,9 +54,9 @@ def llama31_405b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -
         comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA31_405B_GB300_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA31_405B_GB300_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
@@ -65,13 +65,19 @@ def llama31_405b_gb300_config(precision: str = "bf16", fp8_recipe: str = "cs") -
 
     if cfg.ddp.use_megatron_fsdp:
         cfg.ddp.fsdp_double_buffer = True
+        cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
 
-def llama31_405b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_gb200_config(precision: str = "bf16") -> ConfigContainer:
     """GB200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_GB200_BF16_BASE_CONFIG
@@ -79,9 +85,9 @@ def llama31_405b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -
         comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA31_405B_GB200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA31_405B_GB200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
@@ -93,10 +99,15 @@ def llama31_405b_gb200_config(precision: str = "bf16", fp8_recipe: str = "cs") -
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
-def llama31_405b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_b200_config(precision: str = "bf16") -> ConfigContainer:
     """B200, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_B200_BF16_BASE_CONFIG
@@ -104,9 +115,9 @@ def llama31_405b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") ->
         comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA31_405B_B200_FP8_CS_BASE_CONFIG
-        if fp8_recipe == "mx":
+        if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA31_405B_B200_FP8_MX_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)
@@ -115,10 +126,15 @@ def llama31_405b_b200_config(precision: str = "bf16", fp8_recipe: str = "cs") ->
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
 
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
+
     return cfg
 
 
-def llama31_405b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") -> ConfigContainer:
+def llama31_405b_h100_config(precision: str = "bf16") -> ConfigContainer:
     """H100, baseline config."""
     if precision == "bf16":
         base_cfg = base_cfgs.LLAMA31_405B_H100_BF16_BASE_CONFIG
@@ -126,7 +142,7 @@ def llama31_405b_h100_config(precision: str = "bf16", fp8_recipe: str = "cs") ->
         comm_overlap_cfg = userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
     else:
         base_cfg = base_cfgs.LLAMA31_405B_H100_FP8_CS_BASE_CONFIG
-        precision_config = get_precision_config(precision, fp8_recipe)
+        precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
     cfg = llama31_405b_pretrain_config(mock=True, precision_config=precision_config)

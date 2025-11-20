@@ -194,39 +194,34 @@ class PerfEnvPlugin(Plugin):
     cp_size: int = 1
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
-    num_gpus: int = 8
     moe_a2a_overlap: bool = False
     model_name: str
     model_size: str
     gpu: str
     compute_dtype: str
-    fp8_recipe: str
     use_tokendrop: str
+    domain: str
+    task: str
 
     def _set_num_cuda_device_max_connections(
         self,
         task: Union["run.Partial", "run.Script"],
         executor: "run.Executor",
-        num_gpus: int,
         tp_size: int,
         cp_size: int,
-        pp_size: int,
         moe_a2a_overlap: bool,
-        enable_deepep: bool,
+        moe_flex_dispatcher_backend: str,
         gpu_sm100_or_newer: bool,
     ):
-        dp_size = num_gpus // (tp_size * cp_size * pp_size)
-
         cuda_device_max_connections = 8
-        if enable_deepep:
+        if moe_flex_dispatcher_backend in ["deepep", "hybridep"]:
             cuda_device_max_connections = 32
         if gpu_sm100_or_newer:
-            if (tp_size > 1 or cp_size > 1) and (dp_size > 1 or pp_size > 1):
-                """
-                We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
-                of the default device connection of 8.
-                """
-                cuda_device_max_connections = 32
+            """
+            We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
+            of the default device connection of 8.
+            """
+            cuda_device_max_connections = 32
         else:
             # Hopper or earlier generation GPUs
             if (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
@@ -249,12 +244,11 @@ class PerfEnvPlugin(Plugin):
         model_size: str,
         gpu: str,
         compute_dtype: str,
-        fp8_recipe: str,
         use_tokendrop: bool,
     ):
         """Set model-specific environment variables"""
         if model_name in ["llama31"] and model_size in ["405b"] and gpu in ["gb200"]:
-            if compute_dtype == "fp8" and fp8_recipe in ["cs", "mx"]:
+            if compute_dtype in ["fp8_cs", "fp8_mx"]:
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         if model_name in ["deepseek"] and model_size in ["v3"] and gpu in ["gb200"]:
             if compute_dtype == "bf16" and (not use_tokendrop):
@@ -262,16 +256,16 @@ class PerfEnvPlugin(Plugin):
         del_cudnn_ln = True
         if gpu in ["h100"]:
             if model_name == "llama3" and model_size == "8b":
-                if compute_dtype == "fp8" and fp8_recipe == "cs":
-                    executor.env_vars["NCCL_NVLS_ENABLE"] = "1"
+                if compute_dtype == "fp8_cs":
+                    # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
         if gpu in ["gb200", "gb300"]:
             if model_name == "llama3" and model_size == "70b":
-                if compute_dtype == "bf16" or (compute_dtype == "fp8" and fp8_recipe == "cs"):
+                if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
-            if model_name == ["llama31"] and model_size == "405b":
-                if compute_dtype == "fp8" and fp8_recipe == "cs":
+            if model_name == "llama31" and model_size == "405b":
+                if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
         if del_cudnn_ln:
             if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
@@ -289,6 +283,16 @@ class PerfEnvPlugin(Plugin):
         if enable_layernorm_sm_margin:
             executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
             executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
+
+    def _set_nvl_domain_size(
+        self,
+        task: Union["run.Partial", "run.Script"],
+        executor: "run.Executor",
+        moe_flex_dispatcher_backend: str,
+        gpu: str,
+    ):
+        if moe_flex_dispatcher_backend == "hybridep" and gpu in ["gb200", "gb300"]:
+            executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
 
     def _set_nccl_pp_comm_chunksize(
         self,
@@ -358,32 +362,37 @@ class PerfEnvPlugin(Plugin):
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
-            self.model_name, self.model_size, self.gpu, self.compute_dtype, self.fp8_recipe
+            self.model_name, self.model_size, self.gpu, self.compute_dtype, self.domain, self.task
         )
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
 
         # Force program order kernel launch for TP, CP overlap
-        enable_deepep = self.gpu in ["h100"] and self.model_name == "deepseek" and self.model_size == "v3"
-        moe_a2a_overlap = enable_deepep or (False if self.moe_a2a_overlap is None else self.moe_a2a_overlap)
+        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
+        moe_a2a_overlap = (
+            self.moe_a2a_overlap
+            if self.moe_a2a_overlap is not None
+            else getattr(workload_base_config, "moe_a2a_overlap", False)
+        )
         self._set_num_cuda_device_max_connections(
             task,
             executor,
-            self.num_gpus,
             tp_size,
             cp_size,
-            pp_size,
             moe_a2a_overlap=moe_a2a_overlap,
-            enable_deepep=enable_deepep,
+            moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
             gpu_sm100_or_newer=self.gpu in ["b200", "gb200", "gb300"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
-        layernorm_sm_margin = 20 if enable_deepep else 16
+        layernorm_sm_margin = 20 if moe_flex_dispatcher_backend in ["deepep", "hybridep"] else 16
         self._set_layernorm_sm_margin(
             task, executor, self.enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
         )
+
+        # Set NVL domain size when using HybridEP
+        self._set_nvl_domain_size(task, executor, moe_flex_dispatcher_backend, self.gpu)
 
         # Set the chunk size of P2P communications
         nccl_pp_comm_chunksize = 2097152 if self.model_size in ["70b", "405b"] else None
@@ -403,6 +412,5 @@ class PerfEnvPlugin(Plugin):
             self.model_size,
             self.gpu,
             self.compute_dtype,
-            self.fp8_recipe,
             self.use_tokendrop,
         )

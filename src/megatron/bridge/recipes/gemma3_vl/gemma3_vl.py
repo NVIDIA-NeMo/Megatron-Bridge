@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from typing import List, Optional, Union
 
 import torch
 from typing_extensions import TypedDict, Unpack
@@ -21,6 +22,8 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -42,20 +45,20 @@ class Gemma3VLCommonKwargs(TypedDict, total=False):
 
     # Core identifiers
     hf_path: str
-    dir: str | None
+    dir: Optional[str]
     name: str
     # Dataset configuration
-    train_data_path: list[str] | None
-    valid_data_path: list[str] | None
-    test_data_path: list[str] | None
-    dataset_type: str | None
-    image_folder: str | None
-    tokenizer_model: str | None
+    train_data_path: Optional[List[str]]
+    valid_data_path: Optional[List[str]]
+    test_data_path: Optional[List[str]]
+    dataset_type: Optional[str]
+    image_folder: Optional[str]
+    tokenizer_model: Optional[str]
     # Model configuration
     tensor_model_parallel_size: int
     pipeline_model_parallel_size: int
-    pipeline_dtype: torch.dtype | None
-    virtual_pipeline_model_parallel_size: int | None
+    pipeline_dtype: Optional[torch.dtype]
+    virtual_pipeline_model_parallel_size: Optional[int]
     context_parallel_size: int
     sequence_parallel: bool
     use_megatron_fsdp: bool
@@ -67,27 +70,46 @@ class Gemma3VLCommonKwargs(TypedDict, total=False):
     lr: float
     min_lr: float
     lr_warmup_iters: int
-    lr_decay_iters: int | None
+    lr_decay_iters: Optional[int]
     eval_interval: int
     save_interval: int
     # Precision / overlap configs
-    precision_config: MixedPrecisionConfig | str | None
-    comm_overlap_config: CommOverlapConfig | None
+    precision_config: Optional[Union[MixedPrecisionConfig, str]]
+    comm_overlap_config: Optional[CommOverlapConfig]
     # Freeze options
     freeze_language_model: bool
     freeze_vision_model: bool
     freeze_vision_projection: bool
+    # Checkpoint options
+    pretrained_checkpoint: Optional[str]
+    # PEFT options
+    peft: Optional[Union[str, PEFT]]
+    finetune_lr: float
+    # W&B logging
+    wandb_project: Optional[str]
+    wandb_entity: Optional[str]
+    wandb_exp_name: Optional[str]
 
 
 def gemma3_vl_4b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Gemma3-VL 4B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=1, PP=1, LR=5e-6
+
     See `_gemma3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Gemma3VLCommonKwargs = {
         "hf_path": "google/gemma-3-4b-it",
         "tensor_model_parallel_size": 1,
         "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Gemma3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _gemma3_vl_common(**combined_kwargs)
@@ -96,12 +118,22 @@ def gemma3_vl_4b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) ->
 def gemma3_vl_12b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Gemma3-VL 12B Instruct.
 
+    Default configuration: 1 node, 8 GPUs
+    - LoRA/DoRA: TP=1, PP=1, LR=1e-4
+    - Full SFT: TP=4, PP=1, LR=5e-6
+
     See `_gemma3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Gemma3VLCommonKwargs = {
         "hf_path": "google/gemma-3-12b-it",
-        "tensor_model_parallel_size": 4,
+        "tensor_model_parallel_size": 4 if is_full_sft else 1,
         "pipeline_model_parallel_size": 1,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Gemma3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _gemma3_vl_common(**combined_kwargs)
@@ -110,13 +142,23 @@ def gemma3_vl_12b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -
 def gemma3_vl_27b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -> ConfigContainer:
     """Return a fine-tuning config for Gemma3-VL 27B Instruct.
 
+    Default configuration: 2 nodes, 16 GPUs total
+    - LoRA/DoRA: TP=4, PP=1, LR=1e-4
+    - Full SFT: TP=8, PP=2, LR=5e-6
+
     See `_gemma3_vl_common` for the full list of parameters.
     """
+    # Check if user is doing full SFT or PEFT
+    peft_value = user_kwargs.get("peft", None)
+    is_full_sft = peft_value is None or (isinstance(peft_value, str) and peft_value.lower() == "none")
+
     recommended_kwargs: Gemma3VLCommonKwargs = {
         "hf_path": "google/gemma-3-27b-it",
-        "tensor_model_parallel_size": 8,
-        "pipeline_model_parallel_size": 2,
-        "pipeline_dtype": torch.bfloat16,
+        "tensor_model_parallel_size": 8 if is_full_sft else 4,
+        "pipeline_model_parallel_size": 2 if is_full_sft else 1,
+        "pipeline_dtype": torch.bfloat16 if is_full_sft else None,
+        "peft": peft_value,
+        "finetune_lr": 5e-6 if is_full_sft else 1e-4,
     }
     combined_kwargs: Gemma3VLCommonKwargs = {**recommended_kwargs, **user_kwargs}
     return _gemma3_vl_common(**combined_kwargs)
@@ -124,20 +166,21 @@ def gemma3_vl_27b_finetune_config(**user_kwargs: Unpack[Gemma3VLCommonKwargs]) -
 
 def _gemma3_vl_common(
     hf_path: str,
-    dir: str | None = None,
+    dir: Optional[str] = None,
     name: str = "gemma3_vl_finetune",
+    pretrained_checkpoint: Optional[str] = None,
     # Dataset configuration
-    train_data_path: list[str] | None = None,
-    valid_data_path: list[str] | None = None,
-    test_data_path: list[str] | None = None,
-    dataset_type: str | None = None,
-    image_folder: str | None = None,
-    tokenizer_model: str | None = None,
+    train_data_path: Optional[List[str]] = None,
+    valid_data_path: Optional[List[str]] = None,
+    test_data_path: Optional[List[str]] = None,
+    dataset_type: Optional[str] = None,
+    image_folder: Optional[str] = None,
+    tokenizer_model: Optional[str] = None,
     # Model configuration
     tensor_model_parallel_size: int = 2,
     pipeline_model_parallel_size: int = 1,
-    pipeline_dtype: torch.dtype | None = None,
-    virtual_pipeline_model_parallel_size: int | None = None,
+    pipeline_dtype: Optional[torch.dtype] = None,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
     context_parallel_size: int = 1,
     sequence_parallel: bool = False,
     use_megatron_fsdp: bool = False,
@@ -149,16 +192,23 @@ def _gemma3_vl_common(
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 500,
-    lr_decay_iters: int | None = None,
+    lr_decay_iters: Optional[int] = None,
     eval_interval: int = 500,
     save_interval: int = 500,
     # Precision and comm overlap
-    precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
-    comm_overlap_config: CommOverlapConfig | None = None,
+    precision_config: Optional[Union[MixedPrecisionConfig, str]] = "bf16_mixed",
+    comm_overlap_config: Optional[CommOverlapConfig] = None,
     # Freeze options
     freeze_language_model: bool = False,
     freeze_vision_model: bool = False,
     freeze_vision_projection: bool = False,
+    # PEFT options
+    peft: Optional[Union[str, PEFT]] = None,
+    finetune_lr: Optional[float] = None,
+    # W&B logging
+    wandb_project: Optional[str] = None,
+    wandb_entity: Optional[str] = None,
+    wandb_exp_name: Optional[str] = None,
 ) -> ConfigContainer:
     """
     Create a fine-tuning configuration for Gemma3-VL models using a given HuggingFace path.
@@ -185,13 +235,17 @@ def _gemma3_vl_common(
     model_cfg.freeze_vision_projection = freeze_vision_projection
     model_cfg.seq_length = seq_length
 
-    # Optimizer and scheduler
+    # Optimizer and scheduler - use finetune_lr if provided, otherwise use lr
+    effective_lr = finetune_lr if finetune_lr is not None else lr
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
         lr_decay_iters=lr_decay_iters if lr_decay_iters is not None else train_iters,
-        max_lr=lr,
+        max_lr=effective_lr,
         min_lr=min_lr,
     )
+
+    # PEFT config
+    peft_config = default_peft_config(peft)
 
     # Determine dataset selection strategy.
     _dataset_choice = dataset_type or "mock"
@@ -268,9 +322,13 @@ def _gemma3_vl_common(
             log_interval=10,
             tensorboard_dir=tensorboard_dir,
             log_timers_to_tensorboard=True,
+            wandb_project=wandb_project,
+            wandb_entity=wandb_entity,
+            wandb_exp_name=wandb_exp_name,
         ),
         tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
         checkpoint=CheckpointConfig(
+            pretrained_checkpoint=pretrained_checkpoint,
             save_interval=save_interval,
             save=checkpoint_dir,
             load=checkpoint_dir,
@@ -278,6 +336,7 @@ def _gemma3_vl_common(
             fully_parallel_save=True,
         ),
         rng=RNGConfig(seed=1234),
+        peft=peft_config,
         comm_overlap=comm_overlap_config,
         mixed_precision=precision_config,
     )

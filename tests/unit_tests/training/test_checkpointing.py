@@ -2074,9 +2074,8 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for fsdp_dtensor format."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        result = _build_sharded_state_dict_metadata(
-            use_distributed_optimizer=True, ckpt_fully_parallel_save=False, ckpt_format="fsdp_dtensor"
-        )
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="fsdp_dtensor")
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "fsdp_dtensor"
         assert result["chained_optim_avoid_prefix"] is True
@@ -2086,9 +2085,19 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for torch_dist with fully parallel save."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        result = _build_sharded_state_dict_metadata(
-            use_distributed_optimizer=True, ckpt_fully_parallel_save=True, ckpt_format="torch_dist"
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=True, ckpt_format="torch_dist")
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
+
+        assert result["distrib_optim_sharding_type"] == "dp_reshardable"
+
+    def test_build_sharded_state_dict_metadata_torch_dist_fully_parallel_legacy(self):
+        """Test _build_sharded_state_dict_metadata for torch_dist with fully parallel save."""
+        from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
+
+        ckpt_cfg = CheckpointConfig(
+            fully_parallel_save=True, ckpt_format="torch_dist", dist_ckpt_save_pre_mcore_014=True
         )
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "fully_sharded_model_space"
 
@@ -2096,9 +2105,19 @@ class TestFSDPDTensorFunctionality:
         """Test _build_sharded_state_dict_metadata for torch_dist with dp_zero_gather_scatter."""
         from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
 
-        result = _build_sharded_state_dict_metadata(
-            use_distributed_optimizer=True, ckpt_fully_parallel_save=False, ckpt_format="torch_dist"
+        ckpt_cfg = CheckpointConfig(fully_parallel_save=False, ckpt_format="torch_dist")
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
+
+        assert result["distrib_optim_sharding_type"] == "dp_reshardable"
+
+    def test_build_sharded_state_dict_metadata_torch_dist_dp_zero_legacy(self):
+        """Test _build_sharded_state_dict_metadata for torch_dist with dp_zero_gather_scatter."""
+        from megatron.bridge.training.checkpointing import _build_sharded_state_dict_metadata
+
+        ckpt_cfg = CheckpointConfig(
+            fully_parallel_save=False, ckpt_format="torch_dist", dist_ckpt_save_pre_mcore_014=True
         )
+        result = _build_sharded_state_dict_metadata(use_distributed_optimizer=True, cfg=ckpt_cfg)
 
         assert result["distrib_optim_sharding_type"] == "dp_zero_gather_scatter"
 

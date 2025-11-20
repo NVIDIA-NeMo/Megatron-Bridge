@@ -31,20 +31,17 @@ from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 logger = logging.getLogger(__name__)
 
 
-def get_precision_config(compute_dtype: str, fp8_recipe: Optional[str] = None):
+def get_precision_config(compute_dtype: str):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
-    if compute_dtype == "fp8":
-        if fp8_recipe == "cs":
-            current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
-            # Disable BF16 Transformer layers in the performance config
-            current_scaling_cfg.first_last_layers_bf16 = False
-            return current_scaling_cfg
-        elif fp8_recipe == "mx":
-            return bf16_with_mxfp8_mixed()
-        elif fp8_recipe == "sc":
-            return bf16_with_fp8_subchannel_scaling_mixed()
-        else:
-            raise ValueError(f"Invalid FP8 recipe: {fp8_recipe}")
+    if compute_dtype == "fp8_cs":
+        current_scaling_cfg = bf16_with_fp8_current_scaling_mixed()
+        # Disable BF16 Transformer layers in the performance config
+        current_scaling_cfg.first_last_layers_bf16 = False
+        return current_scaling_cfg
+    elif compute_dtype == "fp8_mx":
+        return bf16_with_mxfp8_mixed()
+    elif compute_dtype == "fp8_sc":
+        return bf16_with_fp8_subchannel_scaling_mixed()
     elif compute_dtype == "bf16":
         return bf16_mixed()
     else:
@@ -104,6 +101,11 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
     recipe.model.apply_rope_fusion = True
     recipe.model.cross_entropy_fusion_impl = "te"
 
+    # TODO: This needs to be adjusted when overlapping HybridEP with computation or
+    # the number of SMs for HybridEP is reduced.
+    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+        recipe.model.moe_hybridep_num_sms = 32
+
 
 def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
     """Set the Megatron FSDP overrides."""
@@ -129,9 +131,12 @@ def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
 
 
 def set_cuda_graph_overrides(
-    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: str = "full"
+    recipe: Any, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str | List[str]] = None
 ) -> None:
     """Set the CUDA graph overrides."""
+    if isinstance(cuda_graph_scope, str):
+        cuda_graph_scope = [cuda_graph_scope]
+
     if cuda_graph_impl is not None:
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
@@ -215,6 +220,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     use_tokendrop = kwargs.get("use_tokendrop")
     if use_tokendrop:
         recipe.model = apply_moe_token_drop(recipe.model)
+        recipe.model.moe_router_force_load_balancing = False
     if use_tokendrop is not None and not use_tokendrop:  # explicitly set to False by user
         recipe.model = apply_moe_token_drop(
             recipe.model, moe_expert_capacity_factor=-1.0, moe_pad_expert_input_to_capacity=False
@@ -241,6 +247,9 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
+    if kwargs.get("megatron_ckpt") is not None:
+        recipe.checkpoint.pretrained_checkpoint = "/mnt/megatron_ckpt"
+
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size
     cp = recipe.model.context_parallel_size
@@ -250,7 +259,8 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     if dp > 1 and pp > 1 and vp > 1:
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
@@ -260,14 +270,16 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     gpu = kwargs.get("gpu")
     num_gpus = kwargs.get("num_gpus")
     compute_dtype = kwargs.get("compute_dtype")
-    fp8_recipe = kwargs.get("fp8_recipe")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    domain = kwargs.get("domain")
+    task = kwargs.get("task")
+
+    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, domain, task)
     set_common_perf_overrides(recipe)
     set_user_overrides(recipe, kwargs)
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
-    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, fp8_recipe)
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, domain, task)
     default_num_gpus = workload_base_config.num_gpus
     user_gbs = kwargs.get("global_batch_size")
     if user_gbs is None:
