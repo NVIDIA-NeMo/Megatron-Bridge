@@ -61,6 +61,7 @@ def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -83,6 +84,7 @@ def qwen3_235b_a22b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -105,6 +107,7 @@ def qwen3_235b_a22b_b200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -130,6 +133,7 @@ def qwen3_235b_a22b_h100_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -152,6 +156,7 @@ def qwen3_30b_a3b_gb300_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -174,6 +179,7 @@ def qwen3_30b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -196,6 +202,7 @@ def qwen3_30b_a3b_b200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -216,6 +223,7 @@ def qwen3_30b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
