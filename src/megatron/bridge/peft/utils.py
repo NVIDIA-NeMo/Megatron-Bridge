@@ -14,15 +14,14 @@
 
 import math
 import re
-from dataclasses import replace
 from importlib.metadata import version
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import packaging
 import torch
 import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
-from megatron.core.dist_checkpointing.mapping import ReplicaId, ShardedStateDict, ShardedTensor, ShardedTensorFactory
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
@@ -67,7 +66,7 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) -> Tuple[bool, int, int, bool, bool]:
+def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool, bool]:
     """Returns attributes from the base layer.
 
     input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
@@ -91,14 +90,11 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
     """
     disable_sequence_parallel_comm = not m.config.sequence_parallel
     base_linear_is_parallel = True
-    if is_expert:
-        tp_size = parallel_state.get_expert_tensor_parallel_world_size()
-    else:
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
     if HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
         input_is_parallel = False
         # m.in_features and m.out_features are divided by tp_size already,
         # but in_features and out_features passed to ParallelLinearAdapter are not.
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
         in_features = m.in_features
         out_features = m.out_features * tp_size
 
@@ -125,6 +121,7 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
                     disable_sequence_parallel_comm = True
     elif HAVE_TE and any(isinstance(m, te_row_parallel) for te_row_parallel in TERL):
         input_is_parallel = True
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
         in_features = m.in_features * tp_size
         out_features = m.out_features
     elif HAVE_TE and isinstance(m, TELinear):  # parallel_mode="duplicated"
@@ -345,77 +342,6 @@ def all2all_hp2sp(input_: torch.Tensor) -> torch.Tensor:
     return _All2AllHp2Sp.apply(input_)
 
 
-def _split_tensor_factory(
-    orig_sh_ten: ShardedTensor, split_sections: List[int], split_names: List[str], split_dim: int
-) -> ShardedTensorFactory:
-    """Builds a factory that splits a given ShardedTensor into several independent chunks.
-
-    This function is used for distributed checkpointing of tensors that contain multiple
-    logical components concatenated together (e.g., Mamba's in_proj layer).
-
-    Args:
-        orig_sh_ten: Original ShardedTensor to split.
-        split_sections: List of sizes for each split section.
-        split_names: List of names for each split section.
-        split_dim: Dimension along which to split.
-
-    Returns:
-        ShardedTensorFactory that can split the tensor during checkpointing.
-    """
-    assert isinstance(orig_sh_ten, ShardedTensor), type(orig_sh_ten)
-    orig_sh_ten_no_data = orig_sh_ten.without_data()  # remove `data` reference
-
-    if sum(split_sections) != orig_sh_ten_no_data.local_shape[split_dim]:
-        raise ValueError(
-            f"Split sections must cover the whole dimension size, "
-            f"got {split_sections=} vs dimensions size "
-            f"{orig_sh_ten_no_data.local_shape[split_dim]}"
-        )
-
-    assert not isinstance(split_sections, int), (
-        "Splitting into predefined section sizes is supported (`split_sections` must be a list)"
-    )
-    assert len(split_sections) == len(split_names), (len(split_sections), len(split_names))
-
-    @torch.no_grad()
-    def sh_ten_build_fn(key: str, t: torch.Tensor, replica_id: ReplicaId, flattened_range: Optional[slice]):
-        factory_sh_ten = replace(
-            orig_sh_ten_no_data,
-            key=key,
-            data=t,
-            dtype=t.dtype,
-            replica_id=replica_id,
-            flattened_range=flattened_range,
-        )
-
-        chunk_sh_tens = []
-        split_start = 0
-        for split_size, split_name in zip(split_sections, split_names):
-            split_chunks = factory_sh_ten.narrow(split_dim, split_start, split_size)
-            for sh_ten in split_chunks:
-                sh_ten.key = f"{sh_ten.key}.{split_name}"
-            chunk_sh_tens.extend(split_chunks)
-            split_start += split_size
-
-        assert split_start == orig_sh_ten_no_data.local_shape[split_dim], (
-            split_start,
-            orig_sh_ten_no_data.local_shape[split_dim],
-        )
-        assert sum(sh_ten.data.numel() for sh_ten in chunk_sh_tens) == t.numel(), (
-            chunk_sh_tens,
-            t.shape,
-        )
-        return chunk_sh_tens
-
-    @torch.no_grad()
-    def sh_ten_merge_fn(sub_state_dict):
-        return torch.cat(sub_state_dict)
-
-    return ShardedTensorFactory(
-        orig_sh_ten.key, orig_sh_ten.data, sh_ten_build_fn, sh_ten_merge_fn, orig_sh_ten.replica_id
-    )
-
-
 class ParallelLinearAdapter(nn.Module):
     """Parallel Linear Adapter for Parameter-Efficient Fine-Tuning (PEFT) in distributed settings.
 
@@ -443,11 +369,6 @@ class ParallelLinearAdapter(nn.Module):
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
         base_linear_is_parallel: Whether the base linear layer uses parallelization (default: True).
-        **kwargs: Additional keyword arguments. For Mamba in_proj layers, the following are used:
-            - mamba_d_inner_local_tp: Local inner dimension per TP rank.
-            - mamba_ngroups_local_tp: Number of groups per TP rank.
-            - mamba_d_state: State dimension.
-            - mamba_nheads_local_tp: Number of heads per TP rank.
     """
 
     def __init__(
@@ -489,11 +410,7 @@ class ParallelLinearAdapter(nn.Module):
             is_expert: Whether for expert layers in MoE.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
             dropout_recompute: Use recomputation for dropout.
-            **kwargs: Additional keyword arguments. For Mamba in_proj layers:
-                - mamba_d_inner_local_tp: Local inner dimension per TP rank.
-                - mamba_ngroups_local_tp: Number of groups per TP rank.
-                - mamba_d_state: State dimension.
-                - mamba_nheads_local_tp: Number of heads per TP rank.
+            **kwargs: Additional keyword arguments.
         """
         super().__init__()
         self.base_linear_name = base_linear_name
@@ -504,13 +421,6 @@ class ParallelLinearAdapter(nn.Module):
         self.dropout_position = dropout_position
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
-
-        # Store Mamba-specific parameters for distributed checkpointing (optional)
-        # These are needed for splitting in_proj layers in Mamba models
-        self.mamba_d_inner_local_tp = kwargs.get("mamba_d_inner_local_tp", None)
-        self.mamba_ngroups_local_tp = kwargs.get("mamba_ngroups_local_tp", None)
-        self.mamba_d_state = kwargs.get("mamba_d_state", None)
-        self.mamba_nheads_local_tp = kwargs.get("mamba_nheads_local_tp", None)
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
         # in case this arg is not provided, use the dummy default config.
@@ -535,7 +445,6 @@ class ParallelLinearAdapter(nn.Module):
                 skip_bias_add=True,
                 bias=False,
                 init_method=self._get_init_fn(column_init_method),
-                is_expert=is_expert,
             )
         else:
             self.linear_in = ColumnParallelLinear(
@@ -546,7 +455,6 @@ class ParallelLinearAdapter(nn.Module):
                 gather_output=True,
                 init_method=self._get_init_fn(column_init_method),
                 disable_grad_reduce=_sequence_parallel,
-                is_expert=is_expert,
             )
 
         # (@adithyare) we use this option to mirror the behavior
@@ -567,7 +475,6 @@ class ParallelLinearAdapter(nn.Module):
             bias=False,
             gather_output=lin_out_gather_output,
             init_method=self._get_init_fn(row_init_method),
-            is_expert=is_expert,
         )
 
         if dropout > 0.0:
@@ -654,7 +561,7 @@ class ParallelLinearAdapter(nn.Module):
 
         pad_len = 0
         if self.is_expert:
-            x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
+            x, pad_len = pad_seq_to_mult(x, self.config.tensor_model_parallel_size)
 
         if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
             # for attention_qkv and linear_fc1
@@ -701,9 +608,8 @@ class ParallelLinearAdapter(nn.Module):
     ) -> ShardedStateDict:
         """Create sharded state dictionary for distributed checkpointing.
 
-        Special treatment is given to:
-        - linear_fc1 adapter: tensor parallelism is sharded separately for gate and up in SwiGLU.
-        - in_proj adapter: tensor is split into 5 logical components (z, x, B, C, dt) in Mamba.
+        Special treatment is given to the linear_fc1 adapter since tensor parallelism is
+        sharded separately for the two logical matrices (gate and up) in SwiGLU.
 
         Args:
             prefix: Prefix for parameter names.
@@ -721,42 +627,6 @@ class ParallelLinearAdapter(nn.Module):
             for k, v in linear_out_sd.items():
                 if k in (f"{prefix}linear_out.weight", f"{prefix}linear_out.bias"):
                     linear_out_sd[k] = apply_swiglu_sharded_factory(v, sharded_offsets)
-
-        # Special handling for Mamba in_proj layer which needs to be split into 5 tensors
-        if "in_proj" in self.base_linear_name:
-            # Check if all required Mamba parameters are available
-            if all(
-                [
-                    self.mamba_d_inner_local_tp is not None,
-                    self.mamba_ngroups_local_tp is not None,
-                    self.mamba_d_state is not None,
-                    self.mamba_nheads_local_tp is not None,
-                ]
-            ):
-                # Split linear_out.weight into 5 parts: z, x, B, C, dt
-                # The in_proj output dimension is: d_inner * 2 + 2 * ngroups * d_state + nheads
-                # After TP sharding: d_inner_local_tp * 2 + 2 * ngroups_local_tp * d_state + nheads_local_tp
-                for k, v in linear_out_sd.items():
-                    if k == f"{prefix}linear_out.weight" and isinstance(v, ShardedTensor):
-                        in_proj_dim_local = (
-                            self.mamba_d_inner_local_tp * 2
-                            + 2 * self.mamba_ngroups_local_tp * self.mamba_d_state
-                            + self.mamba_nheads_local_tp
-                        )
-                        # Verify the dimension matches
-                        if v.data.size(0) == in_proj_dim_local:
-                            linear_out_sd[k] = _split_tensor_factory(
-                                v,
-                                [
-                                    self.mamba_d_inner_local_tp,  # z
-                                    self.mamba_d_inner_local_tp,  # x
-                                    self.mamba_ngroups_local_tp * self.mamba_d_state,  # B
-                                    self.mamba_ngroups_local_tp * self.mamba_d_state,  # C
-                                    self.mamba_nheads_local_tp,  # dt
-                                ],
-                                ["z", "x", "B", "C", "dt"],
-                                0,  # split along dimension 0
-                            )
 
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)
