@@ -17,8 +17,8 @@ from functools import partial
 from typing import Any, Iterable
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer
@@ -32,7 +32,6 @@ from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_attn_to_len,
     pad_or_truncate_pos_to_len,
 )
-from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
@@ -42,9 +41,6 @@ def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
     skip_getting_attention_mask_from_dataset: bool = True,
-    *,
-    is_first_pp_stage: bool,
-    is_last_pp_stage: bool,
 ) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
@@ -73,7 +69,7 @@ def get_batch_from_iterator(
         required_host_keys.add("max_seqlen")
 
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
-    if is_last_pp_stage:
+    if parallel_state.is_pipeline_last_stage():
         required_device_keys.update(("labels", "loss_mask"))
 
     _batch_required_keys = {}
@@ -98,7 +94,7 @@ def get_batch_from_iterator(
 
 
 def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -121,17 +117,13 @@ def get_batch(
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
         cu_seqlens, cu_seqlens_argmin, max_seqlen, visual_inputs (container of optional modalities)
     """
-    is_first = is_pp_first_stage(pg_collection.pp)
-    is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
+    if (not parallel_state.is_pipeline_first_stage()) and (not parallel_state.is_pipeline_last_stage()):
         return None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
-        is_first_pp_stage=is_first,
-        is_last_pp_stage=is_last,
     )
 
     # Slice only text tensors for context parallelism
@@ -238,7 +230,7 @@ def forward_step(
             cu_seqlens_argmin,
             max_seqlen,
             visual_inputs,
-        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=get_pg_collection(model))
+        ) = get_batch(data_iterator, state.cfg, use_mtp)
     timers("batch-generator").stop()
 
     forward_args = {

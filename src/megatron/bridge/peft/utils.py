@@ -66,7 +66,7 @@ TECL = (TEColumnParallelLinear, TELayerNormColumnParallelLinear, TEColumnParalle
 TERL = (TERowParallelLinear, TERowParallelGroupedLinear)
 
 
-def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bool, bool]:
+def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) -> Tuple[bool, int, int, bool, bool]:
     """Returns attributes from the base layer.
 
     input_is_parallel, in_features, out_features, disable_sequence_parallel_comm, base_linear_is_parallel
@@ -90,11 +90,14 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
     """
     disable_sequence_parallel_comm = not m.config.sequence_parallel
     base_linear_is_parallel = True
+    if is_expert:
+        tp_size = parallel_state.get_expert_tensor_parallel_world_size()
+    else:
+        tp_size = parallel_state.get_tensor_model_parallel_world_size()
     if HAVE_TE and any(isinstance(m, te_column_parallel) for te_column_parallel in TECL):
         input_is_parallel = False
         # m.in_features and m.out_features are divided by tp_size already,
         # but in_features and out_features passed to ParallelLinearAdapter are not.
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
         in_features = m.in_features
         out_features = m.out_features * tp_size
 
@@ -121,7 +124,6 @@ def get_adapter_attributes_from_linear(m: nn.Module) -> Tuple[bool, int, int, bo
                     disable_sequence_parallel_comm = True
     elif HAVE_TE and any(isinstance(m, te_row_parallel) for te_row_parallel in TERL):
         input_is_parallel = True
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
         in_features = m.in_features * tp_size
         out_features = m.out_features
     elif HAVE_TE and isinstance(m, TELinear):  # parallel_mode="duplicated"
@@ -445,6 +447,7 @@ class ParallelLinearAdapter(nn.Module):
                 skip_bias_add=True,
                 bias=False,
                 init_method=self._get_init_fn(column_init_method),
+                is_expert=is_expert,
             )
         else:
             self.linear_in = ColumnParallelLinear(
@@ -455,6 +458,7 @@ class ParallelLinearAdapter(nn.Module):
                 gather_output=True,
                 init_method=self._get_init_fn(column_init_method),
                 disable_grad_reduce=_sequence_parallel,
+                is_expert=is_expert,
             )
 
         # (@adithyare) we use this option to mirror the behavior
@@ -475,6 +479,7 @@ class ParallelLinearAdapter(nn.Module):
             bias=False,
             gather_output=lin_out_gather_output,
             init_method=self._get_init_fn(row_init_method),
+            is_expert=is_expert,
         )
 
         if dropout > 0.0:
@@ -561,7 +566,7 @@ class ParallelLinearAdapter(nn.Module):
 
         pad_len = 0
         if self.is_expert:
-            x, pad_len = pad_seq_to_mult(x, self.config.tensor_model_parallel_size)
+            x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
 
         if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
             # for attention_qkv and linear_fc1
