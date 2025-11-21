@@ -242,45 +242,45 @@ QWEN3_30B_A3B_H100_FP8_CS_BASE_CONFIG = replace(
 # Qwen3 Next Presets --------------------------------------
 
 QWEN3_NEXT_80B_A3B_GB200_FP8_MX_BASE_CONFIG = replace(
-        BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-        num_gpus=64,
-        micro_batch_size=1,
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=1,
 )
 
 QWEN3_NEXT_80B_A3B_GB200_BF16_BASE_CONFIG = replace(
-        BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-        num_gpus=64,
-        micro_batch_size=1,
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=1,
 )
 
 QWEN3_NEXT_80B_A3B_GB300_FP8_MX_BASE_CONFIG = replace(
-        BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-        num_gpus=64,
-        micro_batch_size=2,
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=2,
 )
 
 QWEN3_NEXT_80B_A3B_GB300_BF16_BASE_CONFIG = replace(
-        BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-        num_gpus=64,
-        micro_batch_size=1,
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=64,
+    micro_batch_size=1,
 )
 
 QWEN3_NEXT_80B_A3B_H100_FP8_CS_BASE_CONFIG = replace(
-        BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-        num_gpus=128,
-        pipeline_model_parallel_size=4,
-        virtual_pipeline_model_parallel_size=12,
-        expert_model_parallel_size=8,
-        micro_batch_size=1,
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=128,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=12,
+    expert_model_parallel_size=8,
+    micro_batch_size=1,
 )
 
 QWEN3_NEXT_80B_A3B_H100_BF16_BASE_CONFIG = replace(
-        BASE_QWEN3_NEXT_80B_A3B_CONFIG,
-        num_gpus=128,
-        pipeline_model_parallel_size=4,
-        virtual_pipeline_model_parallel_size=12,
-        expert_model_parallel_size=8,
-        micro_batch_size=1,
+    BASE_QWEN3_NEXT_80B_A3B_CONFIG,
+    num_gpus=128,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=12,
+    expert_model_parallel_size=8,
+    micro_batch_size=1,
 )
 
 
