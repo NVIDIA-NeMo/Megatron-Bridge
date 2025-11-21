@@ -159,6 +159,10 @@ if __name__ == "__main__":
     if args.model_name in ["deepseek"] and args.model_size == "v3" and args.gpu.lower() in ["gb200"] and args.num_gpus == 128:
         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+    # Ensure all environment variables (including those added above) are propagated to the container
+    current_container_env = set(executor.container_env) if executor.container_env else set()
+    executor.container_env = list(current_container_env | set(executor.env_vars))
+
     target_script_args = [
         "--config_file",
         str(config_filepath),
