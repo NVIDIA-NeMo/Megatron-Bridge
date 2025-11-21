@@ -20,6 +20,7 @@ from utils.helpers import (
 )
 
 from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config, qwen3_235b_a22b_pretrain_config
+from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
@@ -46,6 +47,21 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model = apply_moe_token_drop(cfg.model)
 
+def set_qwen3_next_common_configs(cfg: ConfigContainer) -> None:
+    """Set common performance configurations for all Qwen3 next configs."""
+    cfg.model.bias_activation_fusion = True
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+
+    cfg.model.seq_length = 8192
+    cfg.dataset.sequence_length = 8192
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.moe_router_force_load_balancing = True
 
 def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
@@ -217,3 +233,61 @@ def qwen3_30b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     return cfg
+
+def qwen3_next_80b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
+    """GB200, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB200_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB200_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = qwen3_next_80b_a3b_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_next_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+def qwen3_next_80b_a3b_gb300_config(precision: str = "bf16") -> ConfigContainer:
+    """GB300, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB300_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_GB300_FP8_MX_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = qwen3_next_80b_a3b_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_next_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
+def qwen3_next_80b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
+    """H100, baseline config."""
+    if precision == "bf16":
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_H100_BF16_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+    else:
+        base_cfg = base_cfgs.QWEN3_NEXT_80B_A3B_H100_FP8_CS_BASE_CONFIG
+        precision_config = get_precision_config(precision)
+
+    cfg = qwen3_next_80b_a3b_pretrain_config(
+        mock=True,
+        precision_config=precision_config,
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+    )
+    set_qwen3_next_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+
+    return cfg
+
