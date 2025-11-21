@@ -418,6 +418,10 @@ def _gemma2_finetune_common(
     # PEFT config
     peft_config = default_peft_config(peft) if not is_full_sft else None
 
+    # For PEFT, disable distributed optimizer in optimizer config
+    if not is_full_sft:
+        opt_cfg.use_distributed_optimizer = False
+
     # Dataset config
     dataset_config = default_squad_config(seq_length, packed_sequence)
 
