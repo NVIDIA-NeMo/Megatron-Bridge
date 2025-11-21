@@ -9,6 +9,7 @@ gemma3.md
 glm45.md
 llama3.md
 moonlight.md
+nemotronh.md
 olmoe.md
 qwen.md
 ```
