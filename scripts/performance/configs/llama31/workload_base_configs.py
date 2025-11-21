@@ -54,6 +54,18 @@ LLAMA31_405B_GB300_FP8_MX_BASE_CONFIG = replace(
     global_batch_size=64,
 )
 
+LLAMA31_405B_GB300_NVFP4_BASE_CONFIG = replace(
+    BASE_LLAMA31_405B_CONFIG,
+    num_gpus=128,
+    tensor_model_parallel_size=4,
+    pipeline_model_parallel_size=8,
+    context_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    global_batch_size=64,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
 
 LLAMA31_405B_GB200_BF16_BASE_CONFIG = replace(
     BASE_LLAMA31_405B_CONFIG,
@@ -86,6 +98,18 @@ LLAMA31_405B_GB200_FP8_MX_BASE_CONFIG = replace(
     global_batch_size=64,
 )
 
+LLAMA31_405B_GB200_NVFP4_BASE_CONFIG = replace(
+    BASE_LLAMA31_405B_CONFIG,
+    num_gpus=128,
+    tensor_model_parallel_size=4,
+    pipeline_model_parallel_size=8,
+    context_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    global_batch_size=64,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
 
 LLAMA31_405B_B200_BF16_BASE_CONFIG = replace(
     BASE_LLAMA31_405B_CONFIG,
@@ -110,6 +134,16 @@ LLAMA31_405B_B200_FP8_CS_BASE_CONFIG = replace(
 
 
 LLAMA31_405B_B200_FP8_MX_BASE_CONFIG = LLAMA31_405B_B200_FP8_CS_BASE_CONFIG
+
+LLAMA31_405B_B200_NVFP4_BASE_CONFIG = replace(
+    BASE_LLAMA31_405B_CONFIG,
+    num_gpus=128,
+    tensor_model_parallel_size=4,
+    pipeline_model_parallel_size=8,
+    context_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    global_batch_size=64,
+)
 
 LLAMA31_405B_H100_BF16_BASE_CONFIG = replace(
     BASE_LLAMA31_405B_CONFIG,
@@ -137,12 +171,15 @@ __all__ = [
     "LLAMA31_405B_GB300_BF16_BASE_CONFIG",
     "LLAMA31_405B_GB300_FP8_CS_BASE_CONFIG",
     "LLAMA31_405B_GB300_FP8_MX_BASE_CONFIG",
+    "LLAMA31_405B_GB300_NVFP4_BASE_CONFIG",
     "LLAMA31_405B_GB200_BF16_BASE_CONFIG",
     "LLAMA31_405B_GB200_FP8_CS_BASE_CONFIG",
     "LLAMA31_405B_GB200_FP8_MX_BASE_CONFIG",
+    "LLAMA31_405B_GB200_NVFP4_BASE_CONFIG",
     "LLAMA31_405B_B200_BF16_BASE_CONFIG",
     "LLAMA31_405B_B200_FP8_CS_BASE_CONFIG",
     "LLAMA31_405B_B200_FP8_MX_BASE_CONFIG",
+    "LLAMA31_405B_B200_NVFP4_BASE_CONFIG",
     "LLAMA31_405B_H100_BF16_BASE_CONFIG",
     "LLAMA31_405B_H100_FP8_CS_BASE_CONFIG",
 ]

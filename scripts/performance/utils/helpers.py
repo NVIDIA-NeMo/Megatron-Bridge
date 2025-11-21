@@ -24,6 +24,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_current_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
+    bf16_with_nvfp4_mixed,
 )
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
@@ -44,6 +45,9 @@ def get_precision_config(compute_dtype: str):
         return bf16_with_fp8_subchannel_scaling_mixed()
     elif compute_dtype == "bf16":
         return bf16_mixed()
+    elif compute_dtype == "nvfp4":
+        fp4_precision_cfg = bf16_with_nvfp4_mixed()
+        return fp4_precision_cfg
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
