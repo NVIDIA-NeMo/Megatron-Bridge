@@ -107,7 +107,7 @@ class FinetuningDatasetBuilder:
                     dataset_kwargs=self.dataset_kwargs,
                 )
 
-            if not self.validation_path_packed.is_file():
+            if self.do_validation and not self.validation_path_packed.is_file():
                 print_rank_0(f"Preparing packed validation data at {self.validation_path_packed}")
                 prepare_packed_sequence_data(
                     input_path=self.validation_path,

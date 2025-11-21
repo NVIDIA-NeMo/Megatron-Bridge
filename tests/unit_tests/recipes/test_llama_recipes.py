@@ -89,6 +89,11 @@ def _safe_overrides_for(name: str) -> dict:
                     "mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed",
                 }
             )
+            # Also pop LR and GBS/MBS since low_precision recipe defines its own
+            overrides.pop("lr", None)
+            overrides.pop("min_lr", None)
+            overrides.pop("micro_batch_size", None)
+            overrides.pop("global_batch_size", None)
 
         # Large models/variants may set additional flags in pretrain recipes
         if "70b" in lname or "405b" in lname:
@@ -456,3 +461,45 @@ def test_llama31_405b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.virtual_pipeline_model_parallel_size == 8
     assert cfg.train.global_batch_size == 32
+
+
+def test_llama3_8b_low_precision_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 8B low precision configs have correct defaults."""
+    from megatron.bridge.recipes.llama import llama3_8b_low_precision_pretrain_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_8b_low_precision_pretrain_config")
+
+    cfg = llama3_8b_low_precision_pretrain_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For low precision, 8B should use correct defaults
+    assert cfg.optimizer.lr == 6e-4
+    assert cfg.optimizer.min_lr == 6e-6
+    assert cfg.optimizer.adam_eps == 1e-8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 768
+
+
+def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 8B low precision NVFP4 has correct default BF16 layer configuration."""
+    from megatron.bridge.recipes.llama import llama3_8b_low_precision_pretrain_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    overrides = _safe_overrides_for("llama3_8b_low_precision_pretrain_config")
+    # change the mixed precision recipe to NVFP4
+    overrides["mixed_precision_recipe"] = "bf16_with_nvfp4_mixed"
+
+    cfg = llama3_8b_low_precision_pretrain_config(**overrides)
+
+    _assert_basic_config(cfg)
+
+    # For NVFP4, 8B should use BF16 for the last 4 layers
+    assert cfg.mixed_precision.first_last_layers_bf16 is True
+    assert cfg.mixed_precision.num_layers_at_start_in_bf16 == 0
+    assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 4

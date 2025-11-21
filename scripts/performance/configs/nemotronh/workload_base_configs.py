@@ -22,8 +22,7 @@ from utils.utils import WorkloadBaseConfig
 BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
     num_gpus=64,
     global_batch_size=192,
-    cuda_graph_impl="local",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_impl="transformer_engine",
 )
 
 
@@ -32,18 +31,21 @@ BASE_NEMOTRONH_56B_CONFIG = WorkloadBaseConfig(
 NEMOTRONH_56B_GB300_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
+    cuda_graph_scope=["mamba", "attn"],
 )
 
 
 NEMOTRONH_56B_GB200_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=2,
+    cuda_graph_scope=["mamba", "attn"],
 )
 
 
 NEMOTRONH_56B_H100_FP8_CS_BASE_CONFIG = replace(
     BASE_NEMOTRONH_56B_CONFIG,
     tensor_model_parallel_size=8,
+    cuda_graph_scope=["mamba"],
 )
 
 __all__ = [

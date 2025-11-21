@@ -24,6 +24,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_current_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
+    bf16_with_nvfp4_mixed,
 )
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
@@ -44,6 +45,9 @@ def get_precision_config(compute_dtype: str):
         return bf16_with_fp8_subchannel_scaling_mixed()
     elif compute_dtype == "bf16":
         return bf16_mixed()
+    elif compute_dtype == "nvfp4":
+        fp4_precision_cfg = bf16_with_nvfp4_mixed()
+        return fp4_precision_cfg
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
@@ -69,6 +73,8 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
             cuda_graph_impl=settings.cuda_graph_impl,
             cuda_graph_scope=settings.cuda_graph_scope,
         )
+    if settings.moe_a2a_overlap:
+        set_moe_a2a_overlap_overrides(cfg)
     set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,
@@ -229,6 +235,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     if kwargs.get("tensor_model_parallel_size") is not None:
         recipe.model.tensor_model_parallel_size = kwargs.get("tensor_model_parallel_size")
+        recipe.model.sequence_parallel = bool(kwargs.get("tensor_model_parallel_size") > 1)
     if kwargs.get("pipeline_model_parallel_size") is not None:
         recipe.model.pipeline_model_parallel_size = kwargs.get("pipeline_model_parallel_size")
     if kwargs.get("context_parallel_size") is not None:
