@@ -53,13 +53,16 @@ def decompress_data(path_to_save: str, source_dir: str, num_workers: int = 1) ->
     start_time = time.time()
     print("Decompressing files...")
 
+    path_to_save_escaped = shlex.quote(path_to_save)
+    source_dir_escaped = shlex.quote(source_dir)
+
     os.makedirs(path_to_save, exist_ok=True)
     cmd = (
-        f"mkdir -p {shlex.quote(path_to_save)} && "
-        f"cd {shlex.quote(source_dir)} && "
+        f"mkdir -p {path_to_save_escaped} && "
+        f"cd {source_dir_escaped} && "
         f'find . -name "*.zst" | '
         f"parallel -j{num_workers} "
-        '"zstd -d {} -o ' + shlex.quote(path_to_save) + '/{.}"'
+        f'"zstd -d {{}} -o {path_to_save_escaped}/{{.}}"'
     )
     subprocess.run(cmd, shell=True, check=True)
 

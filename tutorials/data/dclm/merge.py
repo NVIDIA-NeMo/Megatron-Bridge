@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import shlex
 import subprocess
 import time
 
@@ -54,7 +55,11 @@ def merge_data(
     start_time = time.time()
     print("Merging files...")
 
-    cmd = f"cd {source_dir} && awk '1' *.jsonl > {path_to_save}"
+    # Properly escape all user inputs to prevent shell injection
+    source_dir_escaped = shlex.quote(source_dir)
+    path_to_save_escaped = shlex.quote(path_to_save)
+
+    cmd = f"cd {source_dir_escaped} && awk '1' *.jsonl > {path_to_save_escaped}"
     if remove_small_files:
         cmd += " && rm shard_*"
     subprocess.run(cmd, shell=True, check=True)

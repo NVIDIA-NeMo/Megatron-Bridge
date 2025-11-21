@@ -14,6 +14,7 @@
 
 import argparse
 import os
+import shlex
 import subprocess
 import time
 
@@ -74,13 +75,23 @@ def shuffle_data(
     os.makedirs(chunks_dir, exist_ok=True)
     shuffle_chunks_dir = os.path.join(source_dir, "shuffled_chunks")
     os.makedirs(shuffle_chunks_dir, exist_ok=True)
+
+    # Properly escape all user inputs to prevent shell injection
+    source_file_escaped = shlex.quote(source_file)
+    path_to_save_escaped = shlex.quote(path_to_save)
+    chunks_dir_escaped = shlex.quote(chunks_dir)
+    shuffle_chunks_dir_escaped = shlex.quote(shuffle_chunks_dir)
+    # Validate numeric inputs to ensure they're actually integers
+    lines_per_split = int(lines_per_split)
+    num_workers = int(num_workers)
+
     cmd = (
-        f"split -l {lines_per_split} {source_file} {chunks_dir}/chunk_ && "
-        f"ls {chunks_dir}/chunk_* | parallel -j{num_workers} "
-        f"'shuf {{}} -o {shuffle_chunks_dir}/$(basename {{}})_shuf' && "
-        f"rm -rf {chunks_dir} && "
-        f"awk '1' {shuffle_chunks_dir}/chunk_* > {path_to_save} && "
-        f"rm -rf {shuffle_chunks_dir}"
+        f"split -l {lines_per_split} {source_file_escaped} {chunks_dir_escaped}/chunk_ && "
+        f"ls {chunks_dir_escaped}/chunk_* | parallel -j{num_workers} "
+        f"'shuf {{}} -o {shuffle_chunks_dir_escaped}/$(basename {{}})_shuf' && "
+        f"rm -rf {chunks_dir_escaped} && "
+        f"awk '1' {shuffle_chunks_dir_escaped}/chunk_* > {path_to_save_escaped} && "
+        f"rm -rf {shuffle_chunks_dir_escaped}"
     )
     subprocess.run(cmd, shell=True, check=True)
 
