@@ -278,7 +278,7 @@ class TestGPTModelProvider:
 
         assert provider.generation_config == generation_config
 
-    @patch("megatron.bridge.models.gpt_provider.parallel_state")
+    @patch("megatron.core.parallel_state")
     @patch("megatron.bridge.models.gpt_provider.get_gpt_modelopt_spec")
     def test_quantization_layer_spec(self, mock_get_gpt_modelopt_spec, mock_parallel_state):
         """Test quantization_layer_spec function."""
