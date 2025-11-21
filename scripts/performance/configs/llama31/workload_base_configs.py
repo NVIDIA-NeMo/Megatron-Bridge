@@ -72,7 +72,7 @@ LLAMA31_405B_GB200_FP8_CS_BASE_CONFIG = replace(
     tensor_model_parallel_size=2,
     global_batch_size=64,
     use_megatron_fsdp=True,
-    cpu_offloading_num_layers=95,
+    cpu_offloading_num_layers=92,
 )
 
 
