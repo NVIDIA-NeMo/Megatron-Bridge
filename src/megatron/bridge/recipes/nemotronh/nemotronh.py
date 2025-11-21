@@ -422,7 +422,7 @@ def nemotronh_47b_finetune_config(**user_kwargs: Unpack[NemotronHFinetuneKwargs]
     recommended_kwargs: NemotronHFinetuneKwargs = {
         "model_provider": NemotronHModelProvider47B,
         "tensor_parallelism": 8 if is_full_sft else 4,
-        "pipeline_parallelism": 1,
+        "pipeline_parallelism": 2 if is_full_sft else 1,
         "sequence_parallelism": is_full_sft,
         "peft": peft_value,
         "finetune_lr": 5e-6 if is_full_sft else 1e-4,

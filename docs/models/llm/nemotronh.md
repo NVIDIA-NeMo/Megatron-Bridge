@@ -1,6 +1,6 @@
 # Nemotron H and Nemotron Nano v2
 
-[Nemotron H](https://huggingface.co/collections/nvidia/nemotron-h-678d58ab26ef835da69ae95f) and [Nemotron Nano v2](https://huggingface.co/collections/nvidia/nemotron-nano-v2-6817b8cf6fbea4ac77ec0fc3) are families of **hybrid SSM-Attention models** from **NVIDIA** that combine Mamba (State Space Model) layers with traditional attention layers. These models achieve strong performance while maintaining computational efficiency through their hybrid architecture.
+[Nemotron H](https://huggingface.co/collections/nvidia/nemotron-h) and [Nemotron Nano v2](https://huggingface.co/collections/nvidia/nvidia-nemotron-v2) are families of **hybrid SSM-Attention models** from **NVIDIA** that combine Mamba (State Space Model) layers with traditional attention layers. These models achieve strong performance while maintaining computational efficiency through their hybrid architecture.
 
 The Nemotron H family includes models from 4B to 56B parameters with 8K context length, while Nemotron Nano v2 models (9B and 12B) are optimized for edge deployment with extended 128K context support.
 
@@ -433,10 +433,6 @@ Nemotron H models support several PP configurations with pre-defined layouts:
 ### Research Papers
 - **Nemotron Technical Report**: [arXiv:2508.14444](https://arxiv.org/abs/2508.14444)
 - **Mamba-2**: [Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality](https://arxiv.org/abs/2405.21060)
-
-### Blog Posts and Documentation
-- **NVIDIA Technical Blog**: [Nemotron H Models](https://developer.nvidia.com/blog/nemotron-h/)
-- **Mamba-2 Architecture**: [State Space Models Explained](https://srush.github.io/annotated-s4/)
 
 ## Related Documentation
 

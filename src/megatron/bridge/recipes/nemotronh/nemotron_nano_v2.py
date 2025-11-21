@@ -164,7 +164,7 @@ def _nemotron_nano_v2_common(
     train_iters: int = 1_168_251,
     global_batch_size: int = 768,
     micro_batch_size: int = 1,
-    seq_length: int = 4096,
+    seq_length: int = 8192,
     lr: float = 3e-4,
     min_lr: float = 3e-5,
     lr_warmup_iters: int = 2000,
