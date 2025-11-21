@@ -22,7 +22,6 @@ from utils.helpers import (
 from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config, qwen3_235b_a22b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
 from . import workload_base_configs as base_cfgs
 
@@ -44,7 +43,7 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.model = apply_moe_token_drop(cfg.model)
+    cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
 
 def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
@@ -62,6 +61,7 @@ def qwen3_235b_a22b_gb300_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -84,6 +84,7 @@ def qwen3_235b_a22b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -106,9 +107,15 @@ def qwen3_235b_a22b_b200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+
+    if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
+        cfg.comm_overlap.overlap_param_gather = False
+        cfg.ddp.overlap_param_gather = False
+        cfg.optimizer.overlap_param_gather = False
 
     return cfg
 
@@ -125,7 +132,8 @@ def qwen3_235b_a22b_h100_config(precision: str = "bf16") -> ConfigContainer:
     cfg = qwen3_235b_a22b_pretrain_config(
         mock=True,
         precision_config=precision_config,
-        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        comm_overlap_config=CommOverlapConfig(tp_comm_overlap=False),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -148,6 +156,7 @@ def qwen3_30b_a3b_gb300_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -170,6 +179,7 @@ def qwen3_30b_a3b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -192,6 +202,7 @@ def qwen3_30b_a3b_b200_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
@@ -212,6 +223,7 @@ def qwen3_30b_a3b_h100_config(precision: str = "bf16") -> ConfigContainer:
         mock=True,
         precision_config=precision_config,
         comm_overlap_config=CommOverlapConfig(tp_comm_overlap=True),
+        moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
     )
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
