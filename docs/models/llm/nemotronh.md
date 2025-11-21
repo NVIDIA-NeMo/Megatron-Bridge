@@ -249,7 +249,7 @@ cfg = nemotronh_47b_finetune_config(
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
-)
+) 
 ```
 
 ### Nemotron H 56B Finetuning
@@ -443,6 +443,5 @@ Nemotron H models support several PP configurations with pre-defined layouts:
 - Recipe usage and customization: [Recipe usage](../../recipe-usage.md)
 - Training configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-- PEFT methods (LoRA, DoRA): [PEFT Guide](../../peft-guide.md)
-- Hybrid models overview: [Hybrid Models](../../hybrid-models.md)
+- PEFT methods (LoRA, DoRA): [PEFT Guide](../../training/peft.md)
 
