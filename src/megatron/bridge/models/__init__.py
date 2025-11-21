@@ -32,6 +32,14 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.falcon_h1 import (
+    FalconH1Bridge,
+    FalconH1ModelProvider,
+    FalconH1ModelProvider500M,
+    FalconH1ModelProvider1P5BDeep,
+    FalconH1ModelProvider7B,
+    FalconH1ModelProvider34B,
+)
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
     CodeGemmaModelProvider7B,
@@ -173,6 +181,12 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    "FalconH1Bridge",
+    "FalconH1ModelProvider",
+    "FalconH1ModelProvider500M",
+    "FalconH1ModelProvider1P5BDeep",
+    "FalconH1ModelProvider7B",
+    "FalconH1ModelProvider34B",
     "Gemma3ModelProvider",
     "Gemma3ModelProvider1B",
     "Gemma3ModelProvider4B",
