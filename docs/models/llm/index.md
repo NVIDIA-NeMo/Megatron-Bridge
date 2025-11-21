@@ -5,6 +5,7 @@ This section documents Large Language Models supported by Megatron Bridge, with 
 ```{toctree}
 :hidden:
 
+gemma2.md
 gemma3.md
 glm45.md
 llama3.md
