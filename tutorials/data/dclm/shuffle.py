@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import argparse
+import glob
 import os
-import shlex
 import subprocess
 import time
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
@@ -53,6 +54,18 @@ def arguments():
     return parser
 
 
+def _shuffle_chunk(chunk_file: str, output_dir: str) -> None:
+    """Helper function to shuffle a single chunk file.
+
+    Args:
+        chunk_file (str): path to chunk file to shuffle.
+        output_dir (str): directory where to save shuffled chunk.
+    """
+    basename = os.path.basename(chunk_file)
+    output_file = os.path.join(output_dir, f"{basename}_shuf")
+    subprocess.run(["shuf", chunk_file, "-o", output_file], check=True)
+
+
 def shuffle_data(
     path_to_save: str,
     source_file: str,
@@ -76,24 +89,34 @@ def shuffle_data(
     shuffle_chunks_dir = os.path.join(source_dir, "shuffled_chunks")
     os.makedirs(shuffle_chunks_dir, exist_ok=True)
 
-    # Properly escape all user inputs to prevent shell injection
-    source_file_escaped = shlex.quote(source_file)
-    path_to_save_escaped = shlex.quote(path_to_save)
-    chunks_dir_escaped = shlex.quote(chunks_dir)
-    shuffle_chunks_dir_escaped = shlex.quote(shuffle_chunks_dir)
-    # Validate numeric inputs to ensure they're actually integers
-    lines_per_split = int(lines_per_split)
-    num_workers = int(num_workers)
+    try:
+        # Split the file into chunks
+        subprocess.run(
+            ["split", "-l", str(lines_per_split), source_file, os.path.join(chunks_dir, "chunk_")], check=True
+        )
 
-    cmd = (
-        f"split -l {lines_per_split} {source_file_escaped} {chunks_dir_escaped}/chunk_ && "
-        f"ls {chunks_dir_escaped}/chunk_* | parallel -j{num_workers} "
-        f"'shuf {{}} -o {shuffle_chunks_dir_escaped}/$(basename {{}})_shuf' && "
-        f"rm -rf {chunks_dir_escaped} && "
-        f"awk '1' {shuffle_chunks_dir_escaped}/chunk_* > {path_to_save_escaped} && "
-        f"rm -rf {shuffle_chunks_dir_escaped}"
-    )
-    subprocess.run(cmd, shell=True, check=True)
+        # Shuffle chunks in parallel
+        chunk_files = sorted(glob.glob(os.path.join(chunks_dir, "chunk_*")))
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            executor.map(_shuffle_chunk, chunk_files, [shuffle_chunks_dir] * len(chunk_files))
+
+        # Merge shuffled chunks
+        shuffled_chunks = sorted(glob.glob(os.path.join(shuffle_chunks_dir, "chunk_*")))
+        awk_cmd = ["awk", "1"] + shuffled_chunks
+        with open(path_to_save, "w") as output_file:
+            subprocess.run(awk_cmd, stdout=output_file, check=True)
+
+    finally:
+        # Cleanup temporary directories
+        for chunk_file in glob.glob(os.path.join(chunks_dir, "chunk_*")):
+            os.remove(chunk_file)
+        if os.path.exists(chunks_dir):
+            os.rmdir(chunks_dir)
+
+        for shuffled_file in glob.glob(os.path.join(shuffle_chunks_dir, "chunk_*")):
+            os.remove(shuffled_file)
+        if os.path.exists(shuffle_chunks_dir):
+            os.rmdir(shuffle_chunks_dir)
 
     end_time = time.time()
     elapsed_minutes = np.round((end_time - start_time) / 60, 0)

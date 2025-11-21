@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import argparse
+import glob
 import os
-import shlex
 import subprocess
 import time
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
@@ -42,6 +43,20 @@ def arguments():
     return parser
 
 
+def _decompress_file(zst_file: str, output_dir: str) -> None:
+    """Helper function to decompress a single .zst file.
+
+    Args:
+        zst_file (str): path to .zst file to decompress.
+        output_dir (str): directory where to save decompressed file.
+    """
+    basename = os.path.basename(zst_file)
+    # Remove .zst extension
+    output_name = basename[:-4] if basename.endswith(".zst") else basename
+    output_file = os.path.join(output_dir, output_name)
+    subprocess.run(["zstd", "-d", zst_file, "-o", output_file], check=True)
+
+
 def decompress_data(path_to_save: str, source_dir: str, num_workers: int = 1) -> None:
     """Decompresses downloaded dataset
 
@@ -53,18 +68,18 @@ def decompress_data(path_to_save: str, source_dir: str, num_workers: int = 1) ->
     start_time = time.time()
     print("Decompressing files...")
 
-    path_to_save_escaped = shlex.quote(path_to_save)
-    source_dir_escaped = shlex.quote(source_dir)
-
     os.makedirs(path_to_save, exist_ok=True)
-    cmd = (
-        f"mkdir -p {path_to_save_escaped} && "
-        f"cd {source_dir_escaped} && "
-        f'find . -name "*.zst" | '
-        f"parallel -j{num_workers} "
-        f'"zstd -d {{}} -o {path_to_save_escaped}/{{.}}"'
-    )
-    subprocess.run(cmd, shell=True, check=True)
+
+    # Find all .zst files recursively
+    zst_files = glob.glob(os.path.join(source_dir, "**", "*.zst"), recursive=True)
+
+    if not zst_files:
+        print("No .zst files found")
+        return
+
+    # Decompress files in parallel
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        executor.map(_decompress_file, zst_files, [path_to_save] * len(zst_files))
 
     end_time = time.time()
     elapsed_minutes = np.round((end_time - start_time) / 60, 0)
