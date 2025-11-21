@@ -84,8 +84,8 @@ def main(
         trust_remote_code=is_safe_repo(
             trust_remote_code=trust_remote_code,
             hf_path=hf_model_id,
-            torch_dtype=torch.bfloat16,
         ),
+        torch_dtype=torch.bfloat16,
     )
 
     if megatron_load_path:
