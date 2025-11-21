@@ -380,7 +380,7 @@ class CommOverlapConfig:
 
     tp_comm_overlap: bool
     tp_comm_overlap_cfg: Optional[TransformerLayerTPOverlapCfg] = None
-    tp_comm_bootstrap_backend: Optional[str] = None
+    tp_comm_bootstrap_backend: Optional[str] = "nccl"
     overlap_p2p_comm: Optional[bool] = None
     batch_p2p_comm: Optional[bool] = None
     overlap_grad_reduce: Optional[bool] = None
@@ -415,8 +415,6 @@ class CommOverlapConfig:
             overlap_moe_expert_parallel_comm=self.overlap_moe_expert_parallel_comm,
             delay_wgrad_compute=self.delay_wgrad_compute,
         )
-        self.tp_comm_overlap_cfg = None
-        self.tp_comm_bootstrap_backend = None
 
     def _get_model_comm_overlap_cfgs(
         self,
@@ -432,7 +430,6 @@ class CommOverlapConfig:
         # Optimizations disabled by default, can be overriden by user
         comm_overlap_cfg.tp_comm_overlap = False
         comm_overlap_cfg.tp_comm_overlap_cfg = None
-        comm_overlap_cfg.tp_comm_bootstrap_backend = None
         comm_overlap_cfg.defer_embedding_wgrad_compute = False
         comm_overlap_cfg.wgrad_deferral_limit = -1
         comm_overlap_cfg.overlap_moe_expert_parallel_comm = False

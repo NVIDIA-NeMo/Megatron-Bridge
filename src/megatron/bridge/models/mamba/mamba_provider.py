@@ -88,6 +88,8 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     mamba_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_mamba_stack_spec
     vocab_size: Optional[int] = None
     should_pad_vocab: bool = False
+    hf_model_id: Optional[str] = None
+    """Optional HuggingFace model identifier associated with this provider."""
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreMambaModel:
         """Configure and instantiate a Megatron Core Mamba model based on this configuration.
@@ -139,7 +141,11 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
 
 @dataclass
 class MambaModelProvider130M(MambaModelProvider):
-    """Configuration for a 130M parameter Mamba model."""
+    """Configuration for a 130M parameter Mamba model.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M" * 24
     num_layers: int = 24
@@ -149,10 +155,18 @@ class MambaModelProvider130M(MambaModelProvider):
     ffn_hidden_size: int = 768
     make_vocab_size_divisible_by: int = 16
 
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("MambaModelProvider130M")
+
 
 @dataclass
 class MambaModelProvider370M(MambaModelProvider):
-    """Configuration for a 370M parameter Mamba model."""
+    """Configuration for a 370M parameter Mamba model.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M" * 48
     num_layers: int = 48
@@ -162,10 +176,18 @@ class MambaModelProvider370M(MambaModelProvider):
     ffn_hidden_size: int = 1024
     make_vocab_size_divisible_by: int = 16
 
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("MambaModelProvider370M")
+
 
 @dataclass
 class MambaModelProvider780M(MambaModelProvider):
-    """Configuration for a 780M parameter Mamba model."""
+    """Configuration for a 780M parameter Mamba model.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M" * 48
     num_layers: int = 48
@@ -175,10 +197,18 @@ class MambaModelProvider780M(MambaModelProvider):
     ffn_hidden_size: int = 1536
     make_vocab_size_divisible_by: int = 16
 
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("MambaModelProvider780M")
+
 
 @dataclass
 class MambaModelProvider1P3B(MambaModelProvider):
-    """Configuration for a 1.3B parameter Mamba model."""
+    """Configuration for a 1.3B parameter Mamba model.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M" * 48
     num_layers: int = 48
@@ -188,10 +218,18 @@ class MambaModelProvider1P3B(MambaModelProvider):
     ffn_hidden_size: int = 2048
     make_vocab_size_divisible_by: int = 16
 
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("MambaModelProvider1P3B")
+
 
 @dataclass
 class MambaModelProvider2P7B(MambaModelProvider):
-    """Configuration for a 2.7B parameter Mamba model."""
+    """Configuration for a 2.7B parameter Mamba model.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M" * 64
     num_layers: int = 64
@@ -201,10 +239,18 @@ class MambaModelProvider2P7B(MambaModelProvider):
     ffn_hidden_size: int = 2560
     make_vocab_size_divisible_by: int = 16
 
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("MambaModelProvider2P7B")
+
 
 @dataclass
 class NVIDIAMambaModelProvider8B(MambaModelProvider):
-    """Configuration for a 8B parameter Mamba model used in NVIDIA research."""
+    """Configuration for a 8B parameter Mamba model used in NVIDIA research.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M" * 56
     num_attention_heads: int = 32
@@ -215,10 +261,18 @@ class NVIDIAMambaModelProvider8B(MambaModelProvider):
     ffn_hidden_size: int = 4096
     make_vocab_size_divisible_by: int = 128
 
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("NVIDIAMambaModelProvider8B")
+
 
 @dataclass
 class NVIDIAMambaHybridModelProvider8B(MambaModelProvider):
-    """Configuration for a 8B parameter hybrid Mamba model used in NVIDIA research."""
+    """Configuration for a 8B parameter hybrid Mamba model used in NVIDIA research.
+
+    Deprecated:
+        This class is deprecated and will be removed in a future release.
+    """
 
     hybrid_override_pattern: str = "M-M-M--M-M*-M-M-M-M--M*-M-M-M-M-M*--M-M-M-M-M*-M--M-M-M-"
     num_layers: int = 56
@@ -229,6 +283,10 @@ class NVIDIAMambaHybridModelProvider8B(MambaModelProvider):
     num_attention_heads: int = 32
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
+
+    def finalize(self) -> None:
+        super().finalize()
+        _warn_class_deprecated("NVIDIAMambaHybridModelProvider8B")
 
 
 # -----------------------------------------------------------------------------
@@ -242,6 +300,20 @@ def _warn_deprecated(old_cls: str, new_cls: str) -> None:
             f"{old_cls} is deprecated and will be removed in a future release. Use {new_cls} instead.",
             DeprecationWarning,
             stacklevel=2,
+        )
+
+
+def _warn_class_deprecated(cls_name: str) -> None:
+    """Log a deprecation warning for a class.
+
+    Args:
+        cls_name: The name of the deprecated class.
+    """
+    if get_rank_safe() == 0:
+        warnings.warn(
+            f"{cls_name} is deprecated and will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
         )
 
 

@@ -15,6 +15,7 @@
 """Tests for train module utility functions."""
 
 import time
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
@@ -24,9 +25,142 @@ from megatron.bridge.training.train import (
     _handle_mxfp8_param_buffer_copy,
     _should_skip_and_handle_iteration,
     checkpoint_and_decide_exit,
+    force_param_sync,
+    maybe_check_weight_hash_across_dp_replicas,
+    maybe_report_stragglers,
+    maybe_run_manual_gc,
+    maybe_synchronize_training_step,
+    save_checkpoint_and_time,
     should_disable_forward_pre_hook,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
+
+
+class TestPostTrainingStepHelpers:
+    """Unit tests for helper utilities extracted from the post-training callback."""
+
+    @patch("megatron.bridge.training.train.torch.cuda.synchronize")
+    def test_maybe_synchronize_training_step_triggers_on_interval(self, mock_sync):
+        maybe_synchronize_training_step(5, iteration=10)
+
+        mock_sync.assert_called_once()
+
+    @patch("megatron.bridge.training.train.torch.cuda.synchronize")
+    def test_maybe_synchronize_training_step_skips_when_not_due(self, mock_sync):
+        maybe_synchronize_training_step(5, iteration=7)
+        maybe_synchronize_training_step(None, iteration=10)
+
+        mock_sync.assert_not_called()
+
+    def test_maybe_report_stragglers_resets_counter_when_logging(self):
+        log_interval = 5
+        mock_timer = Mock()
+
+        updated = maybe_report_stragglers(
+            log_interval,
+            True,
+            mock_timer,
+            iteration=10,
+            num_floating_point_operations_since_last_log_event=123.0,
+        )
+
+        mock_timer.report.assert_called_once_with(123.0, log_interval)
+        assert updated == 0.0
+
+    def test_maybe_report_stragglers_noop_when_disabled(self):
+        mock_timer = Mock()
+
+        updated = maybe_report_stragglers(
+            7,
+            False,
+            mock_timer,
+            iteration=14,
+            num_floating_point_operations_since_last_log_event=321.0,
+        )
+
+        mock_timer.report.assert_not_called()
+        assert updated == 321.0
+
+    def test_maybe_report_stragglers_noop_when_interval_missing(self):
+        mock_timer = Mock()
+
+        updated = maybe_report_stragglers(
+            None,
+            True,
+            mock_timer,
+            iteration=21,
+            num_floating_point_operations_since_last_log_event=42.0,
+        )
+
+        mock_timer.report.assert_not_called()
+        assert updated == 42.0
+
+    @patch("megatron.bridge.training.train.print_rank_0")
+    @patch("megatron.bridge.training.train.torch.distributed.barrier")
+    @patch("megatron.bridge.training.train.check_param_hashes_across_dp_replicas", return_value=True)
+    @patch("megatron.bridge.training.train.enable_forward_pre_hook")
+    @patch("megatron.bridge.training.train.disable_forward_pre_hook")
+    def test_maybe_check_weight_hash_across_dp_replicas_runs_on_interval(
+        self,
+        mock_disable,
+        mock_enable,
+        mock_check,
+        mock_barrier,
+        mock_print,
+    ):
+        model = [Mock()]
+
+        maybe_check_weight_hash_across_dp_replicas(
+            model,
+            3,
+            iteration=6,
+            should_toggle_forward_pre_hook=True,
+        )
+
+        mock_disable.assert_called_once_with(model)
+        mock_check.assert_called_once_with(model, cross_check=True)
+        mock_barrier.assert_called_once()
+        mock_enable.assert_called_once_with(model)
+        mock_print.assert_called_once()
+
+    @patch("megatron.bridge.training.train.check_param_hashes_across_dp_replicas")
+    @patch("megatron.bridge.training.train.disable_forward_pre_hook")
+    @patch("megatron.bridge.training.train.enable_forward_pre_hook")
+    @patch("megatron.bridge.training.train.torch.distributed.barrier")
+    def test_maybe_check_weight_hash_across_dp_replicas_skips_when_interval_missing(
+        self,
+        mock_barrier,
+        mock_enable,
+        mock_disable,
+        mock_check,
+    ):
+        model = [Mock()]
+
+        maybe_check_weight_hash_across_dp_replicas(
+            model,
+            None,
+            iteration=4,
+            should_toggle_forward_pre_hook=False,
+        )
+
+        mock_disable.assert_not_called()
+        mock_check.assert_not_called()
+        mock_barrier.assert_not_called()
+        mock_enable.assert_not_called()
+
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_maybe_run_manual_gc_invokes_on_interval(self, mock_collect):
+        maybe_run_manual_gc(True, 4, iteration=8)
+
+        mock_collect.assert_called_once()
+
+    @patch("megatron.bridge.training.train.gc.collect")
+    def test_maybe_run_manual_gc_skips_when_disabled(self, mock_collect):
+        maybe_run_manual_gc(False, 4, iteration=8)
+        maybe_run_manual_gc(True, 0, iteration=8)
+        maybe_run_manual_gc(True, 5, iteration=8)
+
+        mock_collect.assert_not_called()
 
 
 class TestMxfp8ParamBufferCopy:
@@ -204,6 +338,105 @@ class TestShouldDisableForwardPreHook:
             use_megatron_fsdp=True, use_distributed_optimizer=True, overlap_param_gather=True
         )
         assert result is False
+
+
+class TestForceParamSync:
+    """Unit tests for force_param_sync helper."""
+
+    def test_force_param_sync_invokes_ddp_start_param_sync(self):
+        """Ensure param synchronization is forced on each DDP chunk."""
+
+        class DummyDDP:
+            def __init__(self):
+                self.start_param_sync = Mock()
+
+        with patch("megatron.bridge.training.train.DDP", new=DummyDDP):
+            chunk1 = DummyDDP()
+            chunk2 = DummyDDP()
+
+            force_param_sync([chunk1, chunk2])
+
+            chunk1.start_param_sync.assert_called_once_with(force_sync=True)
+            chunk2.start_param_sync.assert_called_once_with(force_sync=True)
+
+
+class TestSaveCheckpointAndTime:
+    """Unit tests for save_checkpoint_and_time behavior."""
+
+    def _make_state(self) -> tuple[SimpleNamespace, Mock]:
+        timer_handle = Mock()
+        timers = Mock(return_value=timer_handle)
+        timers.log = Mock()
+
+        state = SimpleNamespace(
+            timers=timers,
+            energy_monitor=Mock(),
+            cfg=SimpleNamespace(
+                ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=True),
+                optimizer=SimpleNamespace(use_distributed_optimizer=True),
+                model=SimpleNamespace(fp8=None, seq_length=1),
+                logger=SimpleNamespace(log_progress=False),
+                checkpoint=SimpleNamespace(async_save=False),
+            ),
+            train_state=SimpleNamespace(
+                floating_point_operations_so_far=0,
+                consumed_train_samples=0,
+                step=1,
+            ),
+            start_time=0,
+        )
+
+        return state, timer_handle
+
+    @patch("megatron.bridge.training.train.force_param_sync")
+    @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=True)
+    @patch("megatron.bridge.training.train.save_checkpoint")
+    def test_param_sync_forced_when_overlap_enabled(
+        self,
+        mock_save_checkpoint,
+        mock_should_disable,
+        mock_force_param_sync,
+    ):
+        state, _ = self._make_state()
+        model = [Mock()]
+
+        save_checkpoint_and_time(
+            state=state,
+            model=model,
+            optimizer=Mock(),
+            opt_param_scheduler=Mock(),
+            num_floating_point_operations_so_far=123.0,
+            checkpointing_context={},
+        )
+
+        mock_should_disable.assert_called_once_with(False, True, True)
+        mock_force_param_sync.assert_called_once_with(model)
+        mock_save_checkpoint.assert_called_once()
+
+    @patch("megatron.bridge.training.train.force_param_sync")
+    @patch("megatron.bridge.training.train.should_disable_forward_pre_hook", return_value=False)
+    @patch("megatron.bridge.training.train.save_checkpoint")
+    def test_param_sync_skipped_when_not_required(
+        self,
+        mock_save_checkpoint,
+        mock_should_disable,
+        mock_force_param_sync,
+    ):
+        state, _ = self._make_state()
+        model = [Mock()]
+
+        save_checkpoint_and_time(
+            state=state,
+            model=model,
+            optimizer=Mock(),
+            opt_param_scheduler=Mock(),
+            num_floating_point_operations_so_far=123.0,
+            checkpointing_context={},
+        )
+
+        mock_should_disable.assert_called_once_with(False, True, True)
+        mock_force_param_sync.assert_not_called()
+        mock_save_checkpoint.assert_called_once()
 
 
 class TestCheckpointAndDecideExit:
@@ -805,6 +1038,20 @@ class TestIterationSkipping:
 
         return mock_state
 
+    def _make_fake_pg(self, dp_size: int):
+        class _DP:
+            def __init__(self, size: int) -> None:
+                self._size = size
+
+            def size(self) -> int:
+                return self._size
+
+        class _PG:
+            def __init__(self, size: int) -> None:
+                self.dp = _DP(size)
+
+        return _PG(dp_size)
+
     @patch("megatron.bridge.training.train._dummy_train_step")
     @patch("megatron.bridge.training.train.parallel_state.get_data_parallel_world_size", return_value=2)
     @patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
@@ -817,7 +1064,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(2)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is True
@@ -837,7 +1085,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(1)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is False
@@ -856,7 +1105,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(1)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is False
@@ -874,7 +1124,8 @@ class TestIterationSkipping:
         train_data_iterator = Mock()
 
         # Call function
-        result = _should_skip_and_handle_iteration(global_state, train_data_iterator)
+        fake_pg = self._make_fake_pg(8)
+        result = _should_skip_and_handle_iteration(global_state, train_data_iterator, fake_pg)
 
         # Verify
         assert result is True

@@ -34,6 +34,10 @@ try:
     HAVE_NVINSPECT = True
 except (ImportError, ModuleNotFoundError):
     HAVE_NVINSPECT = False
+    nvinspect_api = None
+    BaseLogger = None
+    MetricLogger = None
+    wrap_tensorboard_writer = None
 
 
 def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: TensorInspectConfig | None) -> None:
