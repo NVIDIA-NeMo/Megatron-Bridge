@@ -271,6 +271,14 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--moe_flex_dispatcher_backend",
+        type=str,
+        choices=["deepep", "hybridep"],
+        help="MoE flex dispatcher backend to use. Defaults to None",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--use_megatron_fsdp",
         help="Use Megatron FSDP. Disabled by default.",
         type=bool_arg,
@@ -425,14 +433,12 @@ def parse_cli_args():
     parser.add_argument(
         "--profiling_stop_step", type=int, help="Defines stop step for profiling", required=False, default=11
     )
-
     parser.add_argument(
         "-pgm",
         "--profiling_gpu_metrics",
         help="Enable nsys gpu metrics. Disabled by default.",
         action="store_true",
     )
-
     parser.add_argument(
         "--additional_slurm_params",
         type=str,
