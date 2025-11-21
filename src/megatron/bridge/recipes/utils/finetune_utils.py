@@ -50,7 +50,7 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def default_squad_config(seq_length: int, packed_sequence: bool = False, **dataset_kwargs) -> HFDatasetConfig:
+def default_squad_config(seq_length: int, packed_sequence: bool = False) -> HFDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
@@ -69,10 +69,11 @@ def default_squad_config(seq_length: int, packed_sequence: bool = False, **datas
     """
     if packed_sequence:
         # Packed sequence configuration
-        dataset_kwargs = {"pad_to_max_length": True, **dataset_kwargs}
+        dataset_kwargs = {"pad_to_max_length": True}
         packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
     else:
         # Standard configuration
+        dataset_kwargs = {}
         packed_sequence_specs = None
 
     # Use 'batch' sampler for variable-length finetuning
