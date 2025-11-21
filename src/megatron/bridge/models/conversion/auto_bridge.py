@@ -274,7 +274,7 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         model: list[MegatronModelT],
         hf_path: str | Path | None = None,
-        mismatch_params_whitelist: list[str] | None = None,
+        allowed_mismatched_params: list[str] | None = None,
     ) -> None:
         """
         Load HuggingFace weights into a Megatron model.
@@ -287,7 +287,7 @@ class AutoBridge(Generic[MegatronModelT]):
             model: List of Megatron model instances (one per virtual pipeline stage)
             hf_path: Optional path to load weights from. If None, uses weights
                 from the bridge's hf_pretrained instance
-            mismatch_params_whitelist: Optional list of parameter names or patterns
+            allowed_mismatched_params: Optional list of parameter names or patterns
                 to allow mismatch (skip instead of raise error).
 
         Returns:
@@ -304,6 +304,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
             >>> # Load weights from a different checkpoint
             >>> bridge.load_hf_weights(megatron_model, "./finetuned_model")
+
+            >>> # Load weights with allowed mismatched parameters
+            >>> bridge.load_hf_weights(
+            ...     megatron_model,
+            ...     allowed_mismatched_params=["*.bias", "decoder.layers.0.*"]
+            ... )
         """
         if hf_path is None:
             if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
@@ -314,7 +320,7 @@ class AutoBridge(Generic[MegatronModelT]):
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
             pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
         self._model_bridge.load_weights_hf_to_megatron(
-            pre_trained, model, mismatch_params_whitelist=mismatch_params_whitelist
+            pre_trained, model, allowed_mismatched_params=allowed_mismatched_params
         )
 
         return model

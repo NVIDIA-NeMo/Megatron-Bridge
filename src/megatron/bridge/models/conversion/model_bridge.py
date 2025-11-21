@@ -419,7 +419,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
         self,
         hf_pretrained: HFPreTrained,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
-        mismatch_params_whitelist: Optional[List[str]] = None,
+        allowed_mismatched_params: Optional[List[str]] = None,
     ) -> List[MegatronModel]:
         """Load HuggingFace weights into Megatron models.
 
@@ -435,7 +435,7 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 weights to load.
             megatron_model (Union[MegatronModel, List[MegatronModel]]): Megatron model instance
                 or list of model instances (one per virtual pipeline stage).
-            mismatch_params_whitelist (Optional[List[str]]): List of parameter names or patterns
+            allowed_mismatched_params (Optional[List[str]]): List of parameter names or patterns
                 to allow mismatch (skip instead of raise error).
 
         Returns:
@@ -490,8 +490,8 @@ class MegatronModelBridge(Generic[HFPreTrained, ModelProviderTarget, MegatronMod
                 if converted_weights.shape != task.param_weight.shape:
                     # Check whitelist
                     is_whitelisted = False
-                    if mismatch_params_whitelist:
-                        for pattern in mismatch_params_whitelist:
+                    if allowed_mismatched_params:
+                        for pattern in allowed_mismatched_params:
                             if fnmatch.fnmatch(task.mapping.megatron_param, pattern) or fnmatch.fnmatch(
                                 task.param_name, pattern
                             ):
