@@ -56,6 +56,8 @@ def llama31_405b_gb300_config(precision: str = "bf16") -> ConfigContainer:
         base_cfg = base_cfgs.LLAMA31_405B_GB300_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA31_405B_GB300_FP8_MX_BASE_CONFIG
+        elif precision == "nvfp4":
+            base_cfg = base_cfgs.LLAMA31_405B_GB300_NVFP4_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
@@ -68,6 +70,7 @@ def llama31_405b_gb300_config(precision: str = "bf16") -> ConfigContainer:
         cfg.model.gradient_accumulation_fusion = False  # Disabled to avoid functional errors
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
         cfg.comm_overlap.overlap_param_gather = False
@@ -87,6 +90,8 @@ def llama31_405b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         base_cfg = base_cfgs.LLAMA31_405B_GB200_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA31_405B_GB200_FP8_MX_BASE_CONFIG
+        elif precision == "nvfp4":
+            base_cfg = base_cfgs.LLAMA31_405B_GB200_NVFP4_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
@@ -98,6 +103,7 @@ def llama31_405b_gb200_config(precision: str = "bf16") -> ConfigContainer:
         cfg.ddp.fsdp_double_buffer = True
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
         cfg.comm_overlap.overlap_param_gather = False
@@ -117,6 +123,8 @@ def llama31_405b_b200_config(precision: str = "bf16") -> ConfigContainer:
         base_cfg = base_cfgs.LLAMA31_405B_B200_FP8_CS_BASE_CONFIG
         if precision == "fp8_mx":
             base_cfg = base_cfgs.LLAMA31_405B_B200_FP8_MX_BASE_CONFIG
+        elif precision == "nvfp4":
+            base_cfg = base_cfgs.LLAMA31_405B_B200_NVFP4_BASE_CONFIG
         precision_config = get_precision_config(precision)
         comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
@@ -125,6 +133,7 @@ def llama31_405b_b200_config(precision: str = "bf16") -> ConfigContainer:
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
+    cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
     if precision == "fp8_mx":  # keeping this eanbled causes NaN grad norm
         cfg.comm_overlap.overlap_param_gather = False

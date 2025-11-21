@@ -134,7 +134,7 @@ def parse_cli_args():
         "-c",
         "--compute_dtype",
         type=str,
-        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc"],
+        choices=["bf16", "fp8_cs", "fp8_mx", "fp8_sc", "nvfp4"],
         help="Compute precision. Options- bf16 or fp8. Defaults to bf16",
         required=False,
         default="bf16",
