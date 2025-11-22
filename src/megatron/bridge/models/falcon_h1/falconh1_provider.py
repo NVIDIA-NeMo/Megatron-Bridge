@@ -22,8 +22,8 @@ from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.falcon_h1.falconh1_model import FalconH1Model, FalconH1Config
-from megatron.bridge.models.falcon_h1.falconh1_layer_specs import falconh1_stack_spec as default_falconh1_stack_spec
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Model, FalconH1Config
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec as default_falconh1_stack_spec
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -52,6 +52,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     """
 
     # Model configuration
+    seq_length: int = 4096
     fp16_lm_cross_entropy: bool = False
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = False
@@ -70,7 +71,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     rotary_percent: float = 1.0
     rotary_base: int = 100000000000  # FalconH1 uses 1e11 base
     seq_len_interpolation_factor: Optional[float] = None
-    apply_rope_fusion: bool = True
+    apply_rope_fusion: bool = False
 
     # Vocabulary configuration
     make_vocab_size_divisible_by: int = 128
@@ -84,10 +85,23 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
     layernorm_epsilon: float = 1e-5
-    attention_backend: AttnBackend = AttnBackend.flash
+    attention_backend: AttnBackend = AttnBackend.unfused
     deallocate_pipeline_outputs: bool = True
-    bias_dropout_fusion: bool = True
-    cross_entropy_loss_fusion: bool = True
+    bias_dropout_fusion: bool = False
+    cross_entropy_loss_fusion: bool = False
+    transformer_impl: str = "local"
+
+    #Falcon H1 Mup Fwd Multpliers
+    embedding_multiplier: float = 1.0
+    lm_head_multiplier: float = 1.0
+    key_multiplier: float = 1.0
+    attention_in_multiplier: float = 1.0
+    attention_out_multiplier: float = 1.0
+    ssm_in_multiplier: float = 1.0
+    ssm_out_multiplier: float = 1.0
+    mlp_multipliers: tuple = (1.0, 1.0)
+    ssm_multipliers: tuple = (1.0, 1.0, 1.0, 0.5, 1.0)
+
 
     # Stack specification
     falconh1_stack_spec: Union[ModuleSpec, Callable[[], ModuleSpec]] = get_default_falconh1_stack_spec
@@ -140,30 +154,33 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
             post_process=post_process or parallel_state.is_pipeline_last_stage(),
         )
 
+    def finalize(self) -> None:
+        # Call parent class finalize if it exists
+        if hasattr(super(), 'finalize'):
+            super().finalize()
 
 @dataclass
 class FalconH1ModelProvider500M(FalconH1ModelProvider):
     """Configuration for FalconH1 0.5B model.
-
     Based on: https://huggingface.co/tiiuae/Falcon-H1-0.5B-Instruct
     """
-
     # Model architecture from config.json
     num_layers: int = 36
     hidden_size: int = 1024
-    ffn_hidden_size: int = 2048  # intermediate_size
+    ffn_hidden_size: int = 2048
     num_attention_heads: int = 8
-    num_query_groups: int = 2  # num_key_value_heads
-    seq_length: int = 16384  # max_position_embeddings
+    num_query_groups: int = 2
+    seq_length: int = 16384
 
     # Mamba-specific parameters
-    mamba_state_dim: int = 128  # mamba_d_state
-    mamba_head_dim: int = 64  # mamba_d_head
-    mamba_num_heads: int = 24  # mamba_n_heads
-    mamba_num_groups: int = 1  # mamba_n_groups
-    expand: int = 2  # mamba_expand
-    d_conv: int = 4  # mamba_d_conv
-    chunk_size: int = 128  # mamba_chunk_size
+    mamba_state_dim: int = 128
+    mamba_head_dim: int = 64
+    mamba_num_heads: int = 24
+    mamba_num_groups: int = 1
+    expand: int = 2
+    d_conv: int = 4
+    chunk_size: int = 128
+    rmsnorm: bool = False
 
     # Model settings
     vocab_size: int = 32784
@@ -176,73 +193,91 @@ class FalconH1ModelProvider500M(FalconH1ModelProvider):
     use_attention: bool = True
     use_mlp: bool = True
 
+    # MuP multipliers for 0.5B
+    embedding_multiplier: float = 5.656854249492381
+    lm_head_multiplier: float = 0.0390625
+    key_multiplier: float = 0.39062499999999994
+    attention_in_multiplier: float = 1.0
+    attention_out_multiplier: float = 0.9375
+    ssm_in_multiplier: float = 1.25
+    ssm_out_multiplier: float = 0.23570226039551587
+    mlp_multipliers: tuple = (0.8838834764831844, 0.5859375)
+    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.3535533905932738, 0.5, 0.3535533905932738)
+
 
 @dataclass
 class FalconH1ModelProvider1P5BDeep(FalconH1ModelProvider):
     """Configuration for FalconH1 1.5B Deep model.
-
     Based on: https://huggingface.co/tiiuae/Falcon-H1-1.5B-Deep-Instruct
     """
-
     # Model architecture from config.json
-    num_layers: int = 66  # Deep variant
+    num_layers: int = 66
     hidden_size: int = 1280
-    ffn_hidden_size: int = 3072  # intermediate_size
+    ffn_hidden_size: int = 3072
     num_attention_heads: int = 6
-    num_query_groups: int = 2  # num_key_value_heads
-    seq_length: int = 131072  # max_position_embeddings
+    num_query_groups: int = 2
+    seq_length: int = 131072
 
     # Mamba-specific parameters
-    mamba_state_dim: int = 256  # mamba_d_state
-    mamba_head_dim: int = 64  # mamba_d_head
-    mamba_num_heads: int = 24  # mamba_n_heads
-    mamba_num_groups: int = 1  # mamba_n_groups
-    expand: int = 2  # mamba_expand
-    d_conv: int = 4  # mamba_d_conv
-    chunk_size: int = 128  # mamba_chunk_size
-    rmsnorm: bool = True  # mamba_rms_norm
+    mamba_state_dim: int = 256
+    mamba_head_dim: int = 64
+    mamba_num_heads: int = 24
+    mamba_num_groups: int = 1
+    expand: int = 2
+    d_conv: int = 4
+    chunk_size: int = 128
+    rmsnorm: bool = True
 
     # Model settings
     vocab_size: int = 65537
     tie_word_embeddings: bool = False
-    make_vocab_size_divisible_by: int = 1  # Already aligned
+    make_vocab_size_divisible_by: int = 1
 
     # All layers are FalconH1 layers
     falconh1_ratio: float = 1.0
     use_mamba: bool = True
     use_attention: bool = True
     use_mlp: bool = True
+
+    # MuP multipliers for 1.5B Deep
+    embedding_multiplier: float = 5.656854249492381
+    lm_head_multiplier: float = 0.03125
+    key_multiplier: float = 0.17677669529663687
+    attention_in_multiplier: float = 1.0
+    attention_out_multiplier: float = 0.5
+    ssm_in_multiplier: float = 1.0
+    ssm_out_multiplier: float = 0.23570226039551587
+    mlp_multipliers: tuple = (0.7071067811865476, 0.3125)
+    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.1767766952966369, 0.5, 0.3535533905932738)
 
 
 @dataclass
 class FalconH1ModelProvider7B(FalconH1ModelProvider):
     """Configuration for FalconH1 7B model.
-
     Based on: https://huggingface.co/tiiuae/Falcon-H1-7B-Instruct
     """
-
     # Model architecture from config.json
     num_layers: int = 44
     hidden_size: int = 3072
-    ffn_hidden_size: int = 12288  # intermediate_size
+    ffn_hidden_size: int = 12288
     num_attention_heads: int = 12
-    num_query_groups: int = 2  # num_key_value_heads
-    seq_length: int = 262144  # max_position_embeddings
+    num_query_groups: int = 2
+    seq_length: int = 262144
 
     # Mamba-specific parameters
-    mamba_state_dim: int = 256  # mamba_d_state
-    mamba_head_dim: int = 128  # mamba_d_head
-    mamba_num_heads: int = 24  # mamba_n_heads
-    mamba_num_groups: int = 1  # mamba_n_groups
-    expand: int = 2  # mamba_expand
-    d_conv: int = 4  # mamba_d_conv
-    chunk_size: int = 256  # mamba_chunk_size
-    rmsnorm: bool = True  # mamba_rms_norm
+    mamba_state_dim: int = 256
+    mamba_head_dim: int = 128
+    mamba_num_heads: int = 24
+    mamba_num_groups: int = 1
+    expand: int = 2
+    d_conv: int = 4
+    chunk_size: int = 256
+    rmsnorm: bool = True
 
     # Model settings
     vocab_size: int = 130049
     tie_word_embeddings: bool = False
-    make_vocab_size_divisible_by: int = 1  # Already aligned
+    make_vocab_size_divisible_by: int = 1
 
     # All layers are FalconH1 layers
     falconh1_ratio: float = 1.0
@@ -250,31 +285,40 @@ class FalconH1ModelProvider7B(FalconH1ModelProvider):
     use_attention: bool = True
     use_mlp: bool = True
 
+    # MuP multipliers for 7B
+    embedding_multiplier: float = 5.656854249492381
+    lm_head_multiplier: float = 0.013020833333333334
+    key_multiplier: float = 0.030690398488999456
+    attention_in_multiplier: float = 1.0
+    attention_out_multiplier: float = 0.10416666666666667
+    ssm_in_multiplier: float = 0.4166666666666667
+    ssm_out_multiplier: float = 0.11785113019775793
+    mlp_multipliers: tuple = (0.2946278254943948, 0.032552083333333336)
+    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.1767766952966369, 0.5, 0.3535533905932738)
+
 
 @dataclass
 class FalconH1ModelProvider34B(FalconH1ModelProvider):
     """Configuration for FalconH1 34B model.
-
     Based on: https://huggingface.co/tiiuae/Falcon-H1-34B-Instruct
     """
-
     # Model architecture from config.json
     num_layers: int = 72
     hidden_size: int = 5120
-    ffn_hidden_size: int = 21504  # intermediate_size
+    ffn_hidden_size: int = 21504
     num_attention_heads: int = 20
-    num_query_groups: int = 4  # num_key_value_heads
-    seq_length: int = 262144  # max_position_embeddings
+    num_query_groups: int = 4
+    seq_length: int = 262144
 
     # Mamba-specific parameters
-    mamba_state_dim: int = 256  # mamba_d_state
-    mamba_head_dim: int = 128  # mamba_d_head
-    mamba_num_heads: int = 32  # mamba_n_heads
-    mamba_num_groups: int = 2  # mamba_n_groups
-    expand: int = 2  # mamba_expand
-    d_conv: int = 4  # mamba_d_conv
-    chunk_size: int = 128  # mamba_chunk_size
-    rmsnorm: bool = True  # mamba_rms_norm
+    mamba_state_dim: int = 256
+    mamba_head_dim: int = 128
+    mamba_num_heads: int = 32
+    mamba_num_groups: int = 2
+    expand: int = 2
+    d_conv: int = 4
+    chunk_size: int = 128
+    rmsnorm: bool = True
 
     # Model settings
     vocab_size: int = 261120
@@ -286,3 +330,14 @@ class FalconH1ModelProvider34B(FalconH1ModelProvider):
     use_mamba: bool = True
     use_attention: bool = True
     use_mlp: bool = True
+
+    # MuP multipliers for 34B
+    embedding_multiplier: float = 5.656854249492381
+    lm_head_multiplier: float = 0.0078125
+    key_multiplier: float = 0.011048543456039804
+    attention_in_multiplier: float = 1.0
+    attention_out_multiplier: float = 0.0375
+    ssm_in_multiplier: float = 0.25
+    ssm_out_multiplier: float = 0.08838834764831845
+    mlp_multipliers: tuple = (0.1767766952966369, 0.011160714285714284)
+    ssm_multipliers: tuple = (0.3535533905932738, 0.25, 0.1767766952966369, 0.5, 0.3535533905932738)

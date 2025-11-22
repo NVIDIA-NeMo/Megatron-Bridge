@@ -20,10 +20,10 @@ from megatron.bridge.models.falcon_h1.falconh1_provider import (
     FalconH1ModelProvider7B,
     FalconH1ModelProvider34B,
 )
-from megatron.bridge.models.falcon_h1.falconh1_model import FalconH1Model, FalconH1Config
-from megatron.bridge.models.falcon_h1.falconh1_block import FalconH1Stack, FalconH1StackSubmodules
-from megatron.bridge.models.falcon_h1.falconh1_layer import FalconH1Layer, FalconH1Submodules
-from megatron.bridge.models.falcon_h1.falconh1_layer_specs import falconh1_stack_spec
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Model, FalconH1Config
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_block import FalconH1Stack, FalconH1StackSubmodules
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer, FalconH1Submodules
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec
 
 
 __all__ = [

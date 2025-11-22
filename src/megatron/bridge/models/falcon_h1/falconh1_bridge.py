@@ -2,11 +2,12 @@
 
 import logging
 import torch
-from megatron.bridge.models.falcon_h1.falconh1_model import FalconH1Model
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Model
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    GatedMLPMapping,
     ColumnParallelMapping,
     MambaConv1dMapping,
     MambaInProjMapping,
@@ -41,6 +42,7 @@ class FalconH1Bridge(MegatronModelBridge):
             # Basic model dimensions
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
+            seq_length=hf_config.max_position_embeddings,
             ffn_hidden_size=hf_config.intermediate_size,
             num_attention_heads=hf_config.num_attention_heads,
             num_query_groups=hf_config.num_key_value_heads,
@@ -54,22 +56,18 @@ class FalconH1Bridge(MegatronModelBridge):
             expand=hf_config.mamba_expand,
             d_conv=hf_config.mamba_d_conv,
             chunk_size=hf_config.mamba_chunk_size,
-            conv_bias=hf_config.mamba_conv_bias,
             rmsnorm=hf_config.mamba_rms_norm,
-            norm_before_gate=hf_config.mamba_norm_before_gate,
 
             # Model configuration
             vocab_size=hf_config.vocab_size,
-            seq_length=hf_config.max_position_embeddings,
             layernorm_epsilon=hf_config.rms_norm_eps,
-            init_method_std=hf_config.initializer_range,
 
             # Position embeddings
             position_embedding_type="rope",
             rotary_base=int(hf_config.rope_theta),
 
             # Weights and biases
-            tie_word_embeddings=hf_config.tie_word_embeddings,
+            share_embeddings_and_output_weights=hf_config.tie_word_embeddings,
             add_bias_linear=hf_config.projectors_bias,
             attention_dropout=hf_config.attention_dropout,
             hidden_dropout=getattr(hf_config, "hidden_dropout", 0.0),
@@ -87,6 +85,16 @@ class FalconH1Bridge(MegatronModelBridge):
 
             # Make vocab size divisible
             make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
+            # Add all MuP multipliers from HF config
+            embedding_multiplier=getattr(hf_config, 'embedding_multiplier', 1.0),
+            lm_head_multiplier=getattr(hf_config, 'lm_head_multiplier', 1.0),
+            key_multiplier=getattr(hf_config, 'key_multiplier', 1.0),
+            attention_in_multiplier=getattr(hf_config, 'attention_in_multiplier', 1.0),
+            attention_out_multiplier=getattr(hf_config, 'attention_out_multiplier', 1.0),
+            ssm_in_multiplier=getattr(hf_config, 'ssm_in_multiplier', 1.0),
+            ssm_out_multiplier=getattr(hf_config, 'ssm_out_multiplier', 1.0),
+            mlp_multipliers=tuple(getattr(hf_config, 'mlp_multipliers', [1.0, 1.0])),
+            ssm_multipliers=tuple(getattr(hf_config, 'ssm_multipliers', [1.0, 1.0, 1.0, 1.0, 1.0])),
         )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
@@ -95,15 +103,15 @@ class FalconH1Bridge(MegatronModelBridge):
         # Simple 1:1 parameter mappings
         param_mappings = {
             # MLP mappings (FalconH1 uses gate_proj/up_proj combined)
-            "decoder.layers.*.mlp.linear_fc1.weight": "model.layers.*.feed_forward.gate_proj.weight",
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.feed_forward.down_proj.weight",
 
             # Attention output projection
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
 
-            # Layer norms
-            "decoder.layers.*.norm.weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.pre_ff_layernorm.weight",
+            # Layer norms for TELayerNormColumnParallelLinear layers
+            "decoder.layers.*.mamba_mixer.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.pre_ff_layernorm.weight",
             "decoder.final_norm.weight": "model.final_layernorm.weight",
 
             # Embeddings and output
@@ -166,6 +174,15 @@ class FalconH1Bridge(MegatronModelBridge):
             AutoMapping(
                 megatron_param="decoder.layers.*.mlp.linear_fc1_up.weight",
                 hf_param="model.layers.*.feed_forward.up_proj.weight",
+            )
+        )
+
+        # Gated MLP: Combine gate and up projection matrices into single FC1 matrix
+        mapping_list.append(
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                gate="model.layers.*.feed_forward.gate_proj.weight",
+                up="model.layers.*.feed_forward.up_proj.weight",
             )
         )
 
