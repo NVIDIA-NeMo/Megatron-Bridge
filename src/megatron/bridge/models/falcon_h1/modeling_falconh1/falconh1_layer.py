@@ -6,8 +6,8 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from megatron.core.process_groups_config import ModelCommProcessGroups
-from megatron.bridge.models.falcon_h1.falconh1_model import FalconH1Config
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.enums import AttnMaskType
@@ -64,14 +64,13 @@ class FalconH1Layer(MegatronModule):
         self,
         config: FalconH1Config,
         submodules: FalconH1Submodules,
-        layer_number_transformer: int,
-        layer_number_mamba: int,
+        layer_number: int,
         residual_in_fp32: bool = False,
         # Control which components are active
         use_mamba: bool = True,
         use_attention: bool = True,
         use_mlp: bool = True,
-        model_comm_pgs: Optional[ModelCommProcessGroups] = None,
+        pg_collection: Optional[ProcessGroupCollection] = None,
         # SSM specific arguments (passed to MambaMixer)
         d_conv: int = 4,
         conv_init: Optional[float] = 1.0,
@@ -94,17 +93,16 @@ class FalconH1Layer(MegatronModule):
     ):
         super().__init__(config)
         self.config = config
-        self.layer_number_transformer = layer_number_transformer
-        self.layer_number_mamba = layer_number_mamba
+        self.layer_number = layer_number
         self.residual_in_fp32 = residual_in_fp32
         self.use_mamba = use_mamba
         self.use_attention = use_attention
         self.use_mlp = use_mlp
 
         # Get model communication process groups
-        if model_comm_pgs is None:
-            model_comm_pgs = ModelCommProcessGroups.use_mpu_process_groups()
-        self.model_comm_pgs = model_comm_pgs
+        if pg_collection is None:
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        self.pg_collection = pg_collection
 
         # Hidden dropout for BDA
         self.hidden_dropout = config.hidden_dropout
@@ -129,7 +127,7 @@ class FalconH1Layer(MegatronModule):
                 submodules=mamba_submodules,
                 config=self.config,
                 d_model=self.config.hidden_size,
-                layer_number=self.layer_number_mamba,
+                layer_number=self.layer_number,
                 d_conv=d_conv,
                 conv_init=conv_init,
                 expand=expand,
@@ -145,6 +143,7 @@ class FalconH1Layer(MegatronModule):
                 bias=bias,
                 conv_bias=conv_bias,
                 chunk_size=chunk_size,
+                pg_collection=pg_collection,
             )
         else:
             self.mamba_mixer = None
@@ -154,10 +153,10 @@ class FalconH1Layer(MegatronModule):
             attention_optional_kwargs = {}
             if self.config.context_parallel_size > 1 and self.config.cp_comm_type is not None:
                 if isinstance(self.config.cp_comm_type, list):
-                    attention_optional_kwargs["cp_comm_type"] = self.config.cp_comm_type[self.layer_number_transformer]
+                    attention_optional_kwargs["cp_comm_type"] = self.config.cp_comm_type[self.layer_number]
                 else:
                     attention_optional_kwargs["cp_comm_type"] = self.config.cp_comm_type
-            attention_optional_kwargs["model_comm_pgs"] = model_comm_pgs
+            attention_optional_kwargs["pg_collection"] = pg_collection
 
             # Submodules for SelfAttention
             attention_submodules = SelfAttentionSubmodules(
@@ -172,7 +171,7 @@ class FalconH1Layer(MegatronModule):
                 submodules.self_attention.module,
                 submodules=attention_submodules,
                 config=self.config,
-                layer_number=self.layer_number_transformer,
+                layer_number=self.layer_number,
                 attn_mask_type=attn_mask_type,
                 **attention_optional_kwargs,
             )
@@ -191,12 +190,12 @@ class FalconH1Layer(MegatronModule):
 
             if isinstance(submodules.mlp, ModuleSpec):
                 if submodules.mlp.module in (MoELayer, GroupedMLP, TEGroupedMLP, SequentialMLP):
-                    additional_mlp_kwargs["model_comm_pgs"] = model_comm_pgs
+                    additional_mlp_kwargs["pg_collection"] = pg_collection
                 elif submodules.mlp.module == MLP:
                     assert hasattr(
-                        model_comm_pgs, 'tp'
+                        pg_collection, 'tp'
                     ), 'TP process group is required for MLP in FalconH1Layer'
-                    additional_mlp_kwargs["tp_group"] = model_comm_pgs.tp
+                    additional_mlp_kwargs["tp_group"] = pg_collection.tp
                 else:
                     log_single_rank(
                         logger,
@@ -213,7 +212,7 @@ class FalconH1Layer(MegatronModule):
 
             # Set layer number if MLP supports it
             if hasattr(self.mlp, 'set_layer_number'):
-                self.mlp.set_layer_number(self.layer_number_transformer)
+                self.mlp.set_layer_number(self.layer_number)
 
             # Build MLP bias-dropout-add
             self.mlp_bda = build_module(submodules.mlp_bda)
@@ -234,7 +233,6 @@ class FalconH1Layer(MegatronModule):
         attention_bias: Optional[torch.Tensor] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
-        position_ids: Optional[torch.Tensor] = None,
         *,
         inference_params: Optional[BaseInferenceContext] = None,
     ):
@@ -261,10 +259,10 @@ class FalconH1Layer(MegatronModule):
         # SSM Forward: MambaMixer
         if self.use_mamba and self.mamba_mixer is not None:
             mamba_output, mamba_bias = self.mamba_mixer(
-                hidden_states,
+                hidden_states * self.config.ssm_in_multiplier,
                 inference_context=inference_context,
-                position_ids=position_ids,
             )
+            mamba_output = mamba_output * self.config.ssm_out_multiplier
             outputs.append(mamba_output)
             if mamba_bias is not None:
                 biases.append(mamba_bias)
@@ -272,7 +270,7 @@ class FalconH1Layer(MegatronModule):
         # Attention Forward: SelfAttention
         if self.use_attention and self.self_attention is not None:
             attn_output, attn_bias = self.self_attention(
-                hidden_states,
+                hidden_states * self.config.attention_in_multiplier,
                 attention_mask=attention_mask,
                 inference_context=inference_context,
                 rotary_pos_emb=rotary_pos_emb,
@@ -282,6 +280,7 @@ class FalconH1Layer(MegatronModule):
                 packed_seq_params=packed_seq_params,
                 sequence_len_offset=sequence_len_offset,
             )
+            attn_output = self.config.attention_out_multiplier
             outputs.append(attn_output)
             if attn_bias is not None:
                 biases.append(attn_bias)

@@ -21,15 +21,15 @@ from megatron.core.extensions.transformer_engine import TENorm
 from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.bridge.models.falcon_h1.mamba_hybrid_layer_allocation import Symbols as LayerSymbols
-from megatron.bridge.models.falcon_h1.mamba_hybrid_layer_allocation  import allocate_layers
+from megatron.bridge.models.falcon_h1.modeling_falconh1.mamba_hybrid_layer_allocation import Symbols as LayerSymbols
+from megatron.bridge.models.falcon_h1.modeling_falconh1.mamba_hybrid_layer_allocation  import allocate_layers
 from megatron.core.tensor_parallel import get_cuda_rng_tracker
-from megatron.bridge.models.falcon_h1.falconh1_model import FalconH1Config
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_layer import TransformerLayer
-from megatron.bridge.models.falcon_h1.falconh1_layer import FalconH1Layer
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer
 from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 

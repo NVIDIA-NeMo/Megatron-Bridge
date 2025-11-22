@@ -5,14 +5,14 @@ from megatron.core.extensions.transformer_engine import (
     TERowParallelLinear,
 )
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
-from megatron.bridge.models.falcon_h1.falconh1_block import (
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_block import (
      FalconH1Stack,
      FalconH1StackSubmodules,
 )
 from megatron.core.ssm.mamba_layer import MambaLayer, MambaLayerSubmodules
 from megatron.core.ssm.mamba_mixer import MambaMixer, MambaMixerSubmodules
 from megatron.core.ssm.mlp_layer import MLPLayer
-from megatron.bridge.models.falconh1.falconh1_layer import FalconH1Layer, FalconH1Submodules
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer, FalconH1Submodules
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules

@@ -109,6 +109,7 @@ class FalconH1Config(TransformerConfig):
         super().__post_init__()
 
         # Set mamba_num_heads if not provided
+        self.d_inner = self.expand * self.hidden_size
         if self.mamba_num_heads is None:
             self.mamba_num_heads = self.d_inner // self.mamba_head_dim
 
@@ -313,7 +314,7 @@ class FalconH1Model(LanguageModule):
         if decoder_input is not None:
             pass
         elif self.pre_process:
-            decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids)
+            decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids) * self.config.embedding_multiplier
         else:
             # intermediate stage of pipeline
             # decoder will get hidden_states from encoder.input_tensor
@@ -363,7 +364,7 @@ class FalconH1Model(LanguageModule):
 
         logits, _ = self.output_layer(
             hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output
-        )
+        ) * self.config.lm_head_multiplier
 
         if labels is None:
             # [s b h] => [b s h]
