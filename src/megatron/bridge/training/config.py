@@ -1255,6 +1255,11 @@ class ConfigContainer(Container):
             if self.optimizer.use_precision_aware_optimizer:
                 self.ddp.preserve_fp32_weights = False
 
+            # TODO: This can be removed once NVIDIA/TransformerEngine#2371 is available to use
+            if self.model.gradient_accumulation_fusion:
+                print_rank_0("Gradient accumulation fusion is not supported with Megatron FSDP, setting to False")
+                self.model.gradient_accumulation_fusion = False
+
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
             assert not self.model.gradient_accumulation_fusion, (
