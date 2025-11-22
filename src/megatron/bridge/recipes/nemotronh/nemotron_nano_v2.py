@@ -503,7 +503,7 @@ def _nemotron_nano_v2_finetune_common(
             overlap_param_gather=False,
             use_distributed_optimizer=True,
         ),
-        dataset=default_squad_config(seq_length, packed_sequence, add_bos=False),
+        dataset=default_squad_config(seq_length, packed_sequence),
         logger=logger_cfg,
         tokenizer=tokenizer_cfg,
         checkpoint=CheckpointConfig(
