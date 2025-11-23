@@ -17,7 +17,6 @@ from typing import Callable, Optional, Union
 
 import torch
 import torch.nn.functional as F
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.attention import SelfAttention as MCoreSelfAttention
 from megatron.core.transformer.attention import SelfAttentionSubmodules
@@ -105,7 +104,7 @@ class OLMoESelfAttention(MCoreSelfAttention):
         layer_number: int,
         attn_mask_type=AttnMaskType.padding,
         cp_comm_type: str = None,
-        pg_collection: ProcessGroupCollection = None,
+        pg_collection = None,
         **kwargs,
     ):
         super().__init__(
