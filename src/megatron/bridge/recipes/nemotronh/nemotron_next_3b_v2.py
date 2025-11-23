@@ -204,8 +204,8 @@ def _nemotron_next_3b_v2_common(
 
     if enable_deepep:
         model_cfg.moe_token_dispatcher_type = "flex"
-        model_cfg.moe_enable_deepep = True
-        model_cfg.moe_shared_expert_overlap = True
+        model_cfg.moe_shared_expert_overlap = False
+        model_cfg.moe_flex_dispatcher_backend = "deepep"
 
     opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=lr_warmup_iters,
