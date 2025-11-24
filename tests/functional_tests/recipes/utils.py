@@ -72,7 +72,7 @@ def run_pretrain_recipe_test(
         config.scheduler.lr_warmup_iters = 2
         test_seq_length = 512
         config.model.seq_length = test_seq_length
-        config.dataset.sequence_length = test_seq_length
+        config.dataset.seq_length = test_seq_length
         config.train.global_batch_size = 8
         # Keep dataloader light-weight for CI
         if hasattr(config.dataset, "pin_memory"):
@@ -130,7 +130,7 @@ def run_pretrain_config_override_test(config_func: Callable):
     # FIXME:This should not be needed, but in some pretrain_config functions,
     # the default seq_length does *not* match the model seq_length.
     config.model.seq_length = 512
-    config.dataset.sequence_length = 512
+    config.dataset.seq_length = 512
 
     assert config.scheduler.lr_decay_iters is None
 
@@ -187,7 +187,7 @@ def run_pretrain_vl_recipe_test(
         config.scheduler.lr_warmup_iters = 1
         test_seq_length = 1024
         config.model.seq_length = test_seq_length
-        config.dataset.sequence_length = test_seq_length
+        config.dataset.seq_length = test_seq_length
 
         # Disable pin-memory and worker persistence in tests to avoid
         # pin-memory device mismatches under torchrun+pytest environments.

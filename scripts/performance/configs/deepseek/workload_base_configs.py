@@ -35,6 +35,7 @@ DEEPSEEK_V3_GB300_BASE_CONFIG = replace(
     moe_a2a_overlap=False,
     cuda_graph_impl="transformer_engine",
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    recompute_modules=["moe_act"],
 )
 DEEPSEEK_V3_GB300_BF16_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
 DEEPSEEK_V3_GB300_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_GB300_BASE_CONFIG
@@ -51,10 +52,12 @@ DEEPSEEK_V3_GB200_BASE_CONFIG = replace(
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
     recompute_modules=["mla_up_proj"],
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess"],
 )
-DEEPSEEK_V3_GB200_BF16_BASE_CONFIG = BASE_DEEPSEEK_V3_CONFIG
-DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG = BASE_DEEPSEEK_V3_CONFIG
-DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG = BASE_DEEPSEEK_V3_CONFIG
+DEEPSEEK_V3_GB200_BF16_BASE_CONFIG = DEEPSEEK_V3_GB200_BASE_CONFIG
+DEEPSEEK_V3_GB200_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_GB200_BASE_CONFIG
+DEEPSEEK_V3_GB200_FP8_MX_BASE_CONFIG = DEEPSEEK_V3_GB200_BASE_CONFIG
 
 
 DEEPSEEK_V3_B200_BASE_CONFIG = replace(
@@ -64,6 +67,7 @@ DEEPSEEK_V3_B200_BASE_CONFIG = replace(
     expert_model_parallel_size=8,
     global_batch_size=2048,
     recompute_modules=["mla_up_proj"],
+    moe_a2a_overlap=False,
 )
 DEEPSEEK_V3_B200_BF16_BASE_CONFIG = DEEPSEEK_V3_B200_BASE_CONFIG
 DEEPSEEK_V3_B200_FP8_CS_BASE_CONFIG = DEEPSEEK_V3_B200_BASE_CONFIG

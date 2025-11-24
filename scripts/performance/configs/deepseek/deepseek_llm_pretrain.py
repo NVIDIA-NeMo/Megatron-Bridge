@@ -16,7 +16,6 @@ import logging
 
 from utils.helpers import (
     get_precision_config,
-    set_moe_a2a_overlap_overrides,
     set_workload_base_configs,
 )
 
@@ -43,9 +42,6 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
 
     cfg.model.moe_router_force_load_balancing = True
 
-    if moe_a2a_overlap:
-        set_moe_a2a_overlap_overrides(cfg)
-
 
 def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
     """GB300, baseline config."""
@@ -66,7 +62,7 @@ def deepseek_v3_gb300_config(precision: str = "bf16") -> ConfigContainer:
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
-    set_deepseek_v3_common_configs(cfg, base_cfg.moe_a2a_overlap)
+    set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -103,7 +99,7 @@ def deepseek_v3_gb200_config(precision: str = "bf16") -> ConfigContainer:
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
-    set_deepseek_v3_common_configs(cfg, base_cfg.moe_a2a_overlap)
+    set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -140,7 +136,7 @@ def deepseek_v3_b200_config(precision: str = "bf16") -> ConfigContainer:
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout=None,
     )
-    set_deepseek_v3_common_configs(cfg, base_cfg.moe_a2a_overlap)
+    set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -167,7 +163,7 @@ def deepseek_v3_h100_config(precision: str = "bf16") -> ConfigContainer:
         moe_flex_dispatcher_backend=base_cfg.moe_flex_dispatcher_backend,
         layout="Et|(tt|)*30mL",
     )
-    set_deepseek_v3_common_configs(cfg, base_cfg.moe_a2a_overlap)
+    set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.

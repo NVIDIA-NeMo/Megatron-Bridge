@@ -102,13 +102,13 @@ def nemotron_nano_v2_vl_12b_pretrain_config(
 
     if _dataset_choice == "mock":
         dataset_cfg = MockVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=hf_model_path,
             dataloader_type="single",
         )
     elif _dataset_choice == "hf":
         dataset_cfg = HFDatasetConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=hf_model_path,
             maker_name=dataset_maker_name,
             # Dataloader config parameters
