@@ -133,7 +133,7 @@ def create_test_gpt_dataset_config(sequence_length: int) -> GPTDatasetConfig:
     """Creates an instance of GPTDatasetConfig with defaults for testing."""
     return GPTDatasetConfig(
         random_seed=1234,
-        sequence_length=sequence_length,
+        seq_length=sequence_length,
         reset_position_ids=False,
         reset_attention_mask=False,
         eod_mask_loss=False,
@@ -315,7 +315,7 @@ class TestMockGPTDatasetConfig:
         """Test that blend and blend_per_split fields are always None in MockGPTDatasetConfig."""
         config = MockGPTDatasetConfig(
             random_seed=1234,
-            sequence_length=512,
+            seq_length=512,
             reset_position_ids=False,
             reset_attention_mask=False,
             eod_mask_loss=False,
@@ -333,13 +333,14 @@ class TestMockGPTDatasetConfig:
 
         # Should have all the expected fields from parent class
         assert hasattr(config, "random_seed")
-        assert hasattr(config, "sequence_length")
+        assert hasattr(config, "seq_length")
         assert hasattr(config, "path_to_cache")
 
         # Verify blend fields are None and cannot be accessed via __dict__
         assert config.blend is None
         assert config.blend_per_split is None
         assert config.mock  # should be set by BlendedMegatronDatasetConfig post-init
+        print(config.__dict__)
         assert "blend" not in config.__dict__
         assert "blend_per_split" not in config.__dict__
 
@@ -349,7 +350,7 @@ class TestMockGPTDatasetConfig:
         with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend'"):
             MockGPTDatasetConfig(
                 random_seed=1234,
-                sequence_length=512,
+                seq_length=512,
                 reset_position_ids=False,
                 reset_attention_mask=False,
                 eod_mask_loss=False,
@@ -359,7 +360,7 @@ class TestMockGPTDatasetConfig:
         with pytest.raises(TypeError, match="got an unexpected keyword argument 'blend_per_split'"):
             MockGPTDatasetConfig(
                 random_seed=1234,
-                sequence_length=512,
+                seq_length=512,
                 reset_position_ids=False,
                 reset_attention_mask=False,
                 eod_mask_loss=False,
@@ -373,7 +374,7 @@ class TestMockGPTDatasetConfig:
         with pytest.raises(TypeError, match="got an unexpected keyword argument"):
             MockGPTDatasetConfig(
                 random_seed=1234,
-                sequence_length=512,
+                seq_length=512,
                 reset_position_ids=False,
                 reset_attention_mask=False,
                 eod_mask_loss=False,

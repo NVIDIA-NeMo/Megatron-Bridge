@@ -119,6 +119,7 @@ import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
@@ -203,7 +204,7 @@ def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
         return AutoModelForCausalLM
 
 
-def is_vision_language_model(model_path: str) -> bool:
+def is_vision_language_model(model_path: str, trust_remote_code: bool | None = None) -> bool:
     """Check if the model is a vision-language model.
 
     Args:
@@ -213,7 +214,13 @@ def is_vision_language_model(model_path: str) -> bool:
         True if the model supports vision inputs, False otherwise
     """
     try:
-        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(
+            model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=trust_remote_code,
+                hf_path=model_path,
+            ),
+        )
 
         # Check for VL model indicators in config
         model_type = getattr(config, "model_type", "").lower()
@@ -426,7 +433,13 @@ def _load_hf_model(args, is_vl_model: bool):
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
     hf_model = model_class.from_pretrained(
-        args.hf_model_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
+        args.hf_model_path,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
@@ -532,7 +545,13 @@ def _load_megatron_model(args):
         )
     else:
         # Convert from HF to Megatron
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=args.trust_remote_code,
+                hf_path=args.hf_model_path,
+            ),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -565,14 +584,26 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
     Returns:
         Tuple of (tokenizer, processor).
     """
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     processor = None
     if is_vl_model:
         try:
-            processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+            processor = AutoProcessor.from_pretrained(
+                args.hf_model_path,
+                trust_remote_code=is_safe_repo(
+                    trust_remote_code=args.trust_remote_code,
+                    hf_path=args.hf_model_path,
+                ),
+            )
         except Exception as e:
             print_rank_0(f"Warning: Could not load processor for VL model: {e}")
             print_rank_0("Falling back to tokenizer-only mode")
@@ -594,7 +625,7 @@ def compare_models_one_step(args) -> None:
         print_rank_0(f"Set CUDA device to: {torch.cuda.current_device()}")
 
     # Detect model type
-    is_vl_model = is_vision_language_model(args.hf_model_path)
+    is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code)
     print_rank_0(f"Detected model type: {'Vision-Language' if is_vl_model else 'Text-only LLM'}")
 
     # Validate vision requirements
@@ -765,6 +796,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable debug hooks to log forward pass information for both HF and Megatron models to JSONL files",
     )
+    parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
 

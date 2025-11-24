@@ -211,6 +211,7 @@ class TestNemotronVLConversion:
             str(tp),
             "--pp",
             str(pp),
+            "--trust-remote-code",
         ]
 
         result = subprocess.run(
