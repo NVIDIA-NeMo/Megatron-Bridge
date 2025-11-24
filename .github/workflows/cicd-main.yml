@@ -95,6 +95,13 @@ jobs:
           
           echo "✅ MCore submodule updated successfully"
           git -C 3rdparty/Megatron-LM log -1 --oneline
+      
+      - name: Regenerate lockfile (if MCore was updated)
+        if: ${{ github.event.inputs.mcore_commit != '' }}
+        run: |
+          echo "🔄 Regenerating uv.lock for updated MCore dependencies..."
+          uv lock
+          echo "✅ Lockfile regenerated"
 
       - name: Check lint
         run: |
