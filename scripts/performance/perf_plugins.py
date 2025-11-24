@@ -107,6 +107,7 @@ class NsysPlugin(Plugin):
     profile_step_end: int
     profile_ranks: Optional[list[int]] = None
     nsys_trace: Optional[list[str]] = None
+    nsys_extra_args: Optional[list[str]] = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
     script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
@@ -116,6 +117,7 @@ class NsysPlugin(Plugin):
         launcher = executor.get_launcher()
         launcher.nsys_profile = True
         launcher.nsys_trace = self.nsys_trace or ["nvtx", "cuda"]
+        launcher.nsys_extra_args = self.nsys_extra_args or launcher.nsys_extra_args
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -195,6 +197,7 @@ class PerfEnvPlugin(Plugin):
     pp_size: int = 1
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
     moe_a2a_overlap: bool = False
+    moe_flex_dispatcher_backend: str
     model_name: str
     model_size: str
     gpu: str
