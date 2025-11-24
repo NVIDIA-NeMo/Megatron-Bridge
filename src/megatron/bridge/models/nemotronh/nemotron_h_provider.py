@@ -15,6 +15,7 @@
 import logging
 import warnings
 from dataclasses import dataclass
+from typing import Callable
 
 from megatron.core.activations import squared_relu
 
@@ -34,7 +35,7 @@ class NemotronHModelProvider(MambaModelProvider):
     mamba_head_dim: int = 64
     num_query_groups: int = 8
     make_vocab_size_divisible_by: int = 128
-    activation_func: callable = squared_relu
+    activation_func: Callable = squared_relu
     masked_softmax_fusion: bool = True
     apply_query_key_layer_scaling: bool = False
     persist_layer_norm: bool = True

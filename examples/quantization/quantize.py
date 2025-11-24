@@ -168,6 +168,9 @@ def main(
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = torch.bfloat16
+    # Disable MoE permute fusion for SequentialMLP (used by quantization_layer_spec)
+    # The fused kernels are optimized for TEGroupedMLP and cause issues with SequentialMLP
+    model_provider.moe_permute_fusion = False
     model_provider.transformer_layer_spec = quantization_layer_spec
     # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
     model_provider.finalize()

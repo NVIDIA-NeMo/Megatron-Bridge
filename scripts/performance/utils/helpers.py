@@ -24,6 +24,7 @@ from megatron.bridge.training.mixed_precision import (
     bf16_with_fp8_current_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
     bf16_with_mxfp8_mixed,
+    bf16_with_nvfp4_mixed,
 )
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 
@@ -44,6 +45,9 @@ def get_precision_config(compute_dtype: str):
         return bf16_with_fp8_subchannel_scaling_mixed()
     elif compute_dtype == "bf16":
         return bf16_mixed()
+    elif compute_dtype == "nvfp4":
+        fp4_precision_cfg = bf16_with_nvfp4_mixed()
+        return fp4_precision_cfg
     else:
         raise ValueError(f"Invalid compute dtype: {compute_dtype}")
 
@@ -69,6 +73,8 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
             cuda_graph_impl=settings.cuda_graph_impl,
             cuda_graph_scope=settings.cuda_graph_scope,
         )
+    if settings.moe_a2a_overlap:
+        set_moe_a2a_overlap_overrides(cfg)
     set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,
@@ -100,6 +106,11 @@ def set_common_perf_overrides(recipe: ConfigContainer) -> None:
         recipe.model.use_transformer_engine_op_fuser = False
     recipe.model.apply_rope_fusion = True
     recipe.model.cross_entropy_fusion_impl = "te"
+
+    # TODO: This needs to be adjusted when overlapping HybridEP with computation or
+    # the number of SMs for HybridEP is reduced.
+    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+        recipe.model.moe_hybridep_num_sms = 32
 
 
 def set_megatron_fsdp_overrides(recipe: ConfigContainer) -> None:
@@ -224,6 +235,7 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
 
     if kwargs.get("tensor_model_parallel_size") is not None:
         recipe.model.tensor_model_parallel_size = kwargs.get("tensor_model_parallel_size")
+        recipe.model.sequence_parallel = bool(kwargs.get("tensor_model_parallel_size") > 1)
     if kwargs.get("pipeline_model_parallel_size") is not None:
         recipe.model.pipeline_model_parallel_size = kwargs.get("pipeline_model_parallel_size")
     if kwargs.get("context_parallel_size") is not None:
@@ -242,6 +254,9 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     if kwargs.get("compute_dtype") == "bf16":
         recipe.optimizer.use_precision_aware_optimizer = True
 
+    if kwargs.get("megatron_ckpt") is not None:
+        recipe.checkpoint.pretrained_checkpoint = "/mnt/megatron_ckpt"
+
     tp = recipe.model.tensor_model_parallel_size
     pp = recipe.model.pipeline_model_parallel_size
     cp = recipe.model.context_parallel_size
@@ -251,7 +266,8 @@ def set_user_overrides(recipe: ConfigContainer, kwargs: Dict[str, Any]) -> None:
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
     if dp > 1 and pp > 1 and vp > 1:
         recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
+        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
+            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
@@ -262,12 +278,15 @@ def get_model_recipe_with_user_overrides(**kwargs) -> ConfigContainer:
     num_gpus = kwargs.get("num_gpus")
     compute_dtype = kwargs.get("compute_dtype")
 
-    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype)
+    domain = kwargs.get("domain")
+    task = kwargs.get("task")
+
+    recipe = get_model_recipe(model_name, model_size, gpu, compute_dtype, domain, task)
     set_common_perf_overrides(recipe)
     set_user_overrides(recipe, kwargs)
 
     # Scale global batch size based on the number of GPUs IF GBS is not specified by the use 0 r
-    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype)
+    workload_base_config = get_workload_base_config(model_name, model_size, gpu, compute_dtype, domain, task)
     default_num_gpus = workload_base_config.num_gpus
     user_gbs = kwargs.get("global_batch_size")
     if user_gbs is None:

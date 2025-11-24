@@ -19,15 +19,18 @@ Tests LoRA adapters, LinearAdapter, TELinearAdapter, and patch_linear_module
 functionality for Parameter-Efficient Fine-Tuning.
 """
 
+import os
 from copy import deepcopy
 
+import megatron.core.parallel_state as parallel_state
 import pytest
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
 
 from megatron.bridge.peft.lora import TELinearAdapter
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, patch_linear_module
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TEFusedLoRALinear, patch_linear_module
 
 
 class MockLinearWithTupleReturn(nn.Module):
@@ -327,6 +330,239 @@ class TestPatchLinearModule:
         assert patched_linear.scale == alpha / dim
         assert patched_linear.lora_a.out_features == dim
         assert patched_linear.lora_b.in_features == dim
+
+
+class TestTEFusedLoRALinear:
+    """Test the TEFusedLoRALinear adapter wrapper with fused operations."""
+
+    @pytest.fixture(autouse=True)
+    def setup_and_teardown_parallel_state(self):
+        """Setup and teardown parallel state for Megatron tests."""
+
+        if not dist.is_initialized():
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+            os.environ["MASTER_PORT"] = "29500"
+            os.environ["RANK"] = "0"
+            os.environ["LOCAL_RANK"] = "0"
+            os.environ["WORLD_SIZE"] = "1"
+
+            device_count = torch.cuda.device_count()
+            if device_count > 0:
+                torch.cuda.set_device(0)
+
+            init_process_group_kwargs = {
+                "backend": "nccl" if device_count > 0 else "gloo",
+                "world_size": 1,
+                "rank": 0,
+            }
+
+            dist.init_process_group(**init_process_group_kwargs)
+
+        assert dist.is_initialized(), "Distributed backend not initialized"
+        if not parallel_state.model_parallel_is_initialized():
+            parallel_state.initialize_model_parallel(
+                tensor_model_parallel_size=1,
+                pipeline_model_parallel_size=1,
+                virtual_pipeline_model_parallel_size=None,
+                context_parallel_size=1,
+            )
+
+        assert parallel_state.model_parallel_is_initialized(), "Model parallel not initialized"
+
+        from megatron.bridge.training.initialize import _set_random_seed
+
+        _set_random_seed(
+            seed_=1234,
+            data_parallel_random_init=False,
+            te_rng_tracker=True,
+            inference_rng_tracker=False,
+        )
+
+        yield
+
+        try:
+            if parallel_state.model_parallel_is_initialized():
+                parallel_state.destroy_model_parallel()
+            if dist.is_initialized():
+                dist.destroy_process_group()
+                # Clean up environment variables
+                for key in ["MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE"]:
+                    os.environ.pop(key, None)
+        except (NameError, AttributeError, RuntimeError):
+            pass
+
+    @pytest.fixture
+    def te_layer_norm_linear_layernorm(self):
+        """Create a TELayerNormLinear with LayerNorm."""
+        return te.LayerNormLinear(in_features=10, out_features=5, bias=True, normalization="LayerNorm", device="cuda")
+
+    @pytest.fixture
+    def te_layer_norm_linear_rmsnorm(self):
+        """Create a TELayerNormLinear with RMSNorm."""
+        return te.LayerNormLinear(in_features=10, out_features=5, bias=True, normalization="RMSNorm", device="cuda")
+
+    @pytest.fixture
+    def te_linear(self):
+        """Create a basic TE linear layer."""
+        return te.Linear(10, 5, device="cuda")
+
+    @pytest.fixture
+    def linear_adapter(self):
+        """Create a LinearAdapter for LoRA."""
+        linear = nn.Linear(10, 5, device="cuda")
+        return LinearAdapter(linear, dim=4, alpha=8)
+
+    @pytest.fixture
+    def parallel_linear_adapter(self):
+        """Create a ParallelLinearAdapter for LoRA."""
+        from megatron.bridge.peft.utils import ParallelLinearAdapter
+
+        return ParallelLinearAdapter(
+            in_features=10,
+            out_features=5,
+            dim=4,
+            base_linear_name="test_linear",
+            alpha=8,
+            dropout=0.0,
+        ).cuda()
+
+    def test_fused_lora_linear_with_layernorm(self, te_layer_norm_linear_layernorm, linear_adapter):
+        """Test TEFusedLoRALinear with LayerNormLinear (LayerNorm variant)."""
+        fused_lora = TEFusedLoRALinear(te_layer_norm_linear_layernorm, linear_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, bias = fused_lora(x)
+
+        assert output.shape == (3, 5)
+        assert bias is None
+
+    def test_fused_lora_linear_with_rmsnorm(self, te_layer_norm_linear_rmsnorm, linear_adapter):
+        """Test TEFusedLoRALinear with LayerNormLinear (RMSNorm variant)."""
+        fused_lora = TEFusedLoRALinear(te_layer_norm_linear_rmsnorm, linear_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, bias = fused_lora(x)
+
+        assert output.shape == (3, 5)
+        assert bias is None
+
+    def test_fused_lora_linear_with_te_linear(self, te_linear, linear_adapter):
+        """Test TEFusedLoRALinear with basic TELinear."""
+        fused_lora = TEFusedLoRALinear(te_linear, linear_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, bias = fused_lora(x)
+
+        assert output.shape == (3, 5)
+        assert bias is None
+
+    def test_fused_lora_linear_with_parallel_adapter(self, te_linear, parallel_linear_adapter):
+        """Test TEFusedLoRALinear with ParallelLinearAdapter."""
+        fused_lora = TEFusedLoRALinear(te_linear, parallel_linear_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, bias = fused_lora(x)
+
+        assert output.shape == (3, 5)
+        assert bias is None
+
+    def test_fused_lora_linear_with_te_linear_adapter(self, te_linear):
+        """Test TEFusedLoRALinear with TELinearAdapter."""
+        te_adapter = TELinearAdapter(te_linear, dim=4, alpha=8)
+        fused_lora = TEFusedLoRALinear(te_linear, te_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, bias = fused_lora(x)
+
+        assert output.shape == (3, 5)
+        assert bias is None
+
+    def test_fused_lora_linear_unsupported_normalization(self, te_linear, linear_adapter):
+        """Test TEFusedLoRALinear with unsupported normalization type."""
+        # Manually create a LayerNormLinear with an unsupported normalization
+        te_layer_norm = te.LayerNormLinear(10, 5, device="cuda", normalization="LayerNorm")
+        # Hack the normalization type to trigger the error
+        te_layer_norm.normalization = "UnsupportedNorm"
+
+        fused_lora = TEFusedLoRALinear(te_layer_norm, linear_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        with pytest.raises(ValueError, match="Unsupported normalization"):
+            fused_lora(x)
+
+    def test_fused_lora_linear_unsupported_adapter(self, te_linear):
+        """Test TEFusedLoRALinear with unsupported adapter type."""
+        # Create an unsupported adapter type
+        unsupported_adapter = nn.Linear(10, 5, device="cuda")
+
+        fused_lora = TEFusedLoRALinear(te_linear, unsupported_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        with pytest.raises(ValueError, match="Unsupported class for LoRA adapter"):
+            fused_lora(x)
+
+    def test_fused_lora_linear_unsupported_wrapped_module(self, linear_adapter):
+        """Test TEFusedLoRALinear with unsupported wrapped module type."""
+        # Create an unsupported wrapped module
+        conv = nn.Conv2d(3, 3, 3).cuda()
+
+        fused_lora = TEFusedLoRALinear(conv, linear_adapter)
+        x = torch.randn(1, 3, 5, 5, device="cuda")
+
+        with pytest.raises(ValueError, match="Unsupported class for wrapped linear"):
+            fused_lora(x)
+
+    def test_fused_lora_linear_multiple_forward_passes(self, te_linear, linear_adapter):
+        """Test that fused branches are reused across forward passes."""
+        fused_lora = TEFusedLoRALinear(te_linear, linear_adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        # First forward pass initializes fused branches
+        output1, _ = fused_lora(x)
+        assert fused_lora._fused_branches is not None
+
+        # Store reference to fused branches
+        fused_branches_ref = fused_lora._fused_branches
+
+        # Second forward pass should reuse the same fused branches
+        output2, _ = fused_lora(x)
+        assert fused_lora._fused_branches is fused_branches_ref
+
+    def test_fused_lora_linear_with_dropout(self, te_linear):
+        """Test TEFusedLoRALinear with dropout in adapter."""
+        adapter = LinearAdapter(nn.Linear(10, 5, device="cuda"), dim=4, dropout=0.5)
+        fused_lora = TEFusedLoRALinear(te_linear, adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        # Train mode
+        fused_lora.train()
+        output_train, _ = fused_lora(x)
+
+        # Eval mode
+        fused_lora.eval()
+        output_eval, _ = fused_lora(x)
+
+        assert output_train.shape == output_eval.shape == (3, 5)
+
+    def test_fused_lora_linear_with_dropout_pre(self, te_linear):
+        """Test TEFusedLoRALinear with pre-dropout position."""
+        adapter = LinearAdapter(nn.Linear(10, 5, device="cuda"), dim=4, dropout=0.3, dropout_position="pre")
+        fused_lora = TEFusedLoRALinear(te_linear, adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, _ = fused_lora(x)
+        assert output.shape == (3, 5)
+
+    def test_fused_lora_linear_with_scale(self, te_linear):
+        """Test TEFusedLoRALinear with different scale values."""
+        adapter = LinearAdapter(nn.Linear(10, 5, device="cuda"), dim=4, alpha=16)
+        fused_lora = TEFusedLoRALinear(te_linear, adapter)
+        x = torch.randn(3, 10, device="cuda")
+
+        output, _ = fused_lora(x)
+        assert output.shape == (3, 5)
+        # Verify scale is correctly set (alpha/dim = 16/4 = 4)
+        assert adapter.scale == 4.0
 
 
 class TestTELinearAdapter:
