@@ -256,8 +256,10 @@ def train(
             forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
         )
 
-    # Run training iterations till done.
     start_iteration = global_state.train_state.step
+    print_rank_0(f"Starting training loop at iteration {start_iteration}")
+
+    # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
@@ -515,6 +517,10 @@ def train(
         )
         if should_exit:
             break
+    # Explicitly delete the training CUDA graph because of
+    # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
+    if "training" in FullCudaGraphWrapper.cuda_graph:
+        del FullCudaGraphWrapper.cuda_graph["training"]
 
     # Flush TensorBoard, WandB writers and one-logger.
     writer = global_state.tensorboard_logger
@@ -641,10 +647,6 @@ def train_step(
 
         # Forward pass.
         p2p_comm = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
-        forward_backward_func = get_forward_backward_func(
-            pp_size=pg_collection.pp.size(),
-            vp_size=model_config.virtual_pipeline_model_parallel_size,
-        )
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
@@ -857,6 +859,17 @@ def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
+def force_param_sync(model: list[DDP]) -> None:
+    """Force parameter synchronization for all model chunks.
+
+    Args:
+        model: list of model chunks wrapped in DDP.
+    """
+    for model_chunk in model:
+        assert isinstance(model_chunk, DDP)
+        model_chunk.start_param_sync(force_sync=True)
+
+
 def get_start_time_from_progress_log(cfg: ConfigContainer) -> tuple[datetime, float]:
     """
     Gets start time of earliest job with same world size. Also returns the number
@@ -955,9 +968,9 @@ def save_checkpoint_and_time(
 ) -> None:
     """Saves a checkpoint and logs the timing.
 
-    Wraps the `save_checkpoint` function with timers and potentially disables/
-    enables forward pre-hooks if distributed optimizer with overlapped parameter
-    gather is used.
+    Wraps the `save_checkpoint` function with timers and forces parameter
+    synchronization when using distributed optimizer with overlapped parameter
+    gather to ensure checkpoint correctness.
 
     Args:
         state: The global state object.
@@ -984,13 +997,13 @@ def save_checkpoint_and_time(
     timer_key = "save-checkpoint-non-persistent" if non_persistent_ckpt else "save-checkpoint"
     timers(timer_key, log_level=0).start(barrier=True)
 
-    should_disable_pre_hook = should_disable_forward_pre_hook(
+    should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
         state.cfg.optimizer.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
     )
-    if should_disable_pre_hook:
-        disable_forward_pre_hook(model)
+    if should_force_param_sync:
+        force_param_sync(model)
     save_checkpoint(
         state,
         model,
@@ -1006,8 +1019,6 @@ def save_checkpoint_and_time(
         # dequantized bf16 tensors that were temporarily created during fp8
         # model checkpoint saving.
         gc.collect()
-    if should_disable_pre_hook:
-        enable_forward_pre_hook(model)
     timers(timer_key).stop(barrier=True)
     timers.log([timer_key])
 

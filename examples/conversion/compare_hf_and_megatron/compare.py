@@ -119,6 +119,7 @@ import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
@@ -203,7 +204,7 @@ def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
         return AutoModelForCausalLM
 
 
-def is_vision_language_model(model_path: str) -> bool:
+def is_vision_language_model(model_path: str, trust_remote_code: bool | None = None) -> bool:
     """Check if the model is a vision-language model.
 
     Args:
@@ -213,7 +214,13 @@ def is_vision_language_model(model_path: str) -> bool:
         True if the model supports vision inputs, False otherwise
     """
     try:
-        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(
+            model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=trust_remote_code,
+                hf_path=model_path,
+            ),
+        )
 
         # Check for VL model indicators in config
         model_type = getattr(config, "model_type", "").lower()
@@ -327,7 +334,32 @@ def load_image(image_path: str) -> Image.Image:
         return Image.open(image_path)
 
 
-def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str, is_vl_model: bool):
+def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
+    """Pad input_ids so sequence length is divisible by tp_size.
+
+    this is needed for sequence parallel, which is required for moe models
+    when using tensor parallel and expert parallel together.
+
+    Args:
+        input_ids: Input token IDs tensor
+        tp_size: Tensor parallel size
+        pad_token_id: Token ID to use for padding
+
+    Returns:
+        Padded input_ids tensor
+    """
+    seq_len = input_ids.shape[1]
+    remainder = seq_len % tp_size
+    if remainder != 0:
+        pad_len = tp_size - remainder
+        padding = torch.full(
+            (input_ids.shape[0], pad_len), pad_token_id, dtype=input_ids.dtype, device=input_ids.device
+        )
+        input_ids = torch.cat([input_ids, padding], dim=1)
+    return input_ids
+
+
+def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str, is_vl_model: bool, tp_size: int = 1):
     """Process inputs for both vision-language and regular LLM models.
 
     Args:
@@ -336,6 +368,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         image_path: Path or URL to the image (optional)
         prompt: Text prompt
         is_vl_model: Whether the model is a vision-language model
+        tp_size: Tensor parallel size for padding sequence length
 
     Returns:
         Tuple of (input_ids, pixel_values, image_grid_thw, messages)
@@ -370,7 +403,8 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             return_tensors="pt",
         )
 
-        return inputs.input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
+        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -379,7 +413,8 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         else:
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
-        return inputs.input_ids, None, None, None
+        input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
+        return input_ids, None, None, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -398,7 +433,13 @@ def _load_hf_model(args, is_vl_model: bool):
     print_rank_0("Loading HuggingFace model...")
     model_class = get_model_class(args.model_class, is_vl_model)
     hf_model = model_class.from_pretrained(
-        args.hf_model_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
+        args.hf_model_path,
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
@@ -504,7 +545,13 @@ def _load_megatron_model(args):
         )
     else:
         # Convert from HF to Megatron
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=args.trust_remote_code,
+                hf_path=args.hf_model_path,
+            ),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -515,7 +562,7 @@ def _load_megatron_model(args):
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
-    model_components = [m.cuda().eval() for m in megatron_model]
+    model_components = [m.eval() for m in megatron_model]
 
     # Register debug hooks if enabled
     if args.enable_debug_hooks:
@@ -537,14 +584,26 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
     Returns:
         Tuple of (tokenizer, processor).
     """
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=is_safe_repo(
+            trust_remote_code=args.trust_remote_code,
+            hf_path=args.hf_model_path,
+        ),
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     processor = None
     if is_vl_model:
         try:
-            processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
+            processor = AutoProcessor.from_pretrained(
+                args.hf_model_path,
+                trust_remote_code=is_safe_repo(
+                    trust_remote_code=args.trust_remote_code,
+                    hf_path=args.hf_model_path,
+                ),
+            )
         except Exception as e:
             print_rank_0(f"Warning: Could not load processor for VL model: {e}")
             print_rank_0("Falling back to tokenizer-only mode")
@@ -560,8 +619,13 @@ def compare_models_one_step(args) -> None:
     """
     print_rank_0("=== STARTING MODEL COMPARISON (1-STEP) ===")
 
+    if torch.cuda.is_available():
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+        print_rank_0(f"Set CUDA device to: {torch.cuda.current_device()}")
+
     # Detect model type
-    is_vl_model = is_vision_language_model(args.hf_model_path)
+    is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code)
     print_rank_0(f"Detected model type: {'Vision-Language' if is_vl_model else 'Text-only LLM'}")
 
     # Validate vision requirements
@@ -572,16 +636,13 @@ def compare_models_one_step(args) -> None:
     # Load HF model
     hf_model = _load_hf_model(args, is_vl_model)
 
-    # Load Megatron model
-    megatron_model = _load_megatron_model(args)
-
     # Setup tokenizer and processor
     tokenizer, processor = _setup_tokenizer_and_processor(args, is_vl_model)
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
     input_ids, pixel_values, image_grid_thw, messages = process_inputs(
-        tokenizer, processor, args.image_path, args.prompt, is_vl_model
+        tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
     # Move to GPU
@@ -598,6 +659,10 @@ def compare_models_one_step(args) -> None:
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
         hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
     )
+
+    del hf_model
+    # Load Megatron model
+    megatron_model = _load_megatron_model(args)
 
     # Broadcast HF results to all ranks after Megatron initialization
     # (following the pattern from generate_from_hf.py)
@@ -731,6 +796,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Enable debug hooks to log forward pass information for both HF and Megatron models to JSONL files",
     )
+    parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
 
     args = parser.parse_args()
 

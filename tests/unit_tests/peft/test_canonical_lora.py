@@ -217,7 +217,7 @@ class TestCanonicalLoRA:
         lora = CanonicalLoRA(target_modules=["linear_q", "linear_k", "linear_v", "linear_fc1_up", "linear_fc1_gate"])
 
         # Mock the get_adapter_attributes_from_linear function
-        def mock_get_attrs(module):
+        def mock_get_attrs(module, is_expert=False):
             if hasattr(module, "out_features"):
                 if module.out_features == 1536:  # linear_qkv
                     return (False, 512, 1536, False, True)

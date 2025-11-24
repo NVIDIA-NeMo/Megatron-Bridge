@@ -244,6 +244,8 @@ def apply_args_to_config(config, args):
 
     # Logging configuration
     config.logger.log_timers_to_tensorboard = args.tensorboard is True
+    if args.save_config_filepath:
+        config.logger.save_config_filepath = args.save_config_filepath
 
     # WandB configuration
     if args.wandb_project:
@@ -342,6 +344,7 @@ def setup_argument_parser():
     parser.add_argument("--save-interval", type=int, help="Number of iterations between checkpoint saves")
     parser.add_argument("--async-save", action="store_true", help="Enable async checkpoint saving", default=False)
     parser.add_argument("--most-recent-k", type=int, help="Number of latest checkpoints to keep")
+    parser.add_argument("--save-config-filepath", type=str, help="Path to save the task configuration file")
 
     # Data
     parser.add_argument(
