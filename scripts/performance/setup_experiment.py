@@ -67,7 +67,7 @@ if __name__ == "__main__":
         logger.error("Ensure the path passed to --config_file is correct.")
         sys.exit(1)
 
-    enable_deepep = bool(args.gpu.lower() in ["h100"])
+    enable_deepep = bool(args.gpu.lower() in ["h100", "b200"])
     plugins = (
         [
             PerfEnvPlugin(

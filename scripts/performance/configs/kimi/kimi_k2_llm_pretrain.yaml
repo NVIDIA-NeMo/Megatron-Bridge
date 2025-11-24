@@ -97,7 +97,7 @@ perf_matrix:
       fp8_cs:
       fp8_ss:
   b200:
-    num_gpus_512:
+    num_gpus_256:
       common:
         num_gpus_per_node: 8
         seq_length: 4096
@@ -107,7 +107,7 @@ perf_matrix:
         pp: 8
         cp: 1
         vp: 4
-        ep: 64
+        ep: 32
         etp: 1
         use_megatron_fsdp: false
       bf16:

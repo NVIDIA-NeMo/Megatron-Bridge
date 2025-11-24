@@ -52,7 +52,9 @@ def main():
     args, cli_overrides = parse_cli_args()
 
     precision_config = get_precision_config(args.compute_dtype, args.fp8_recipe)
-    optimizer_type = "muon" if not args.adam else "adam"
+    #optimizer_type = "muon" if not args.adam else "adam"
+    optimizer_type = "adam"
+    #optimizer_type = "muon"
 
     if args.model_name == "llama3" and args.model_size == "8b":
         recipe = llama3_8b_pretrain_config(mock=True, precision_config=precision_config)
@@ -120,7 +122,8 @@ def main():
         enable_deepep = bool(args.gpu.lower() in ["h100", "b200"])
         use_tokendrop = bool(args.gpu.lower() in [ "gb200"])
         
-        pp, vp = 1, 1
+        #pp, vp = 1, 1
+        pp, vp = 8, 4
         recipe = kimi_k2_llm_pretrain_config(
             mock=True,
             precision_config=precision_config,
@@ -131,8 +134,8 @@ def main():
             optimizer_type=optimizer_type,
         )
         # Disable qk_clip for muon optimizer for now to avoid the memory leaking issue
-        if optimizer_type == "muon" and args.qkclip:
-            recipe.model.qk_clip = True
+        #if optimizer_type == "muon":
+        #    recipe.model.qk_clip = True
         if enable_deepep:
             recipe.model.moe_router_force_load_balancing = True
         if enable_deepep:
@@ -157,9 +160,9 @@ def main():
             recipe.model.recompute_modules = ["mla_up_proj", "mlp"]
         
         
-        recipe.model.num_layers=3
-        recipe.model.num_moe_experts=8
-        recipe.model.moe_layer_freq=[0] + [1] * 2
+        #recipe.model.num_layers=3
+        #recipe.model.num_moe_experts=32
+        #recipe.model.moe_layer_freq=[0] + [1] * 2
         # recipe.model.overlap_grad_reduce=False
 
     else:
