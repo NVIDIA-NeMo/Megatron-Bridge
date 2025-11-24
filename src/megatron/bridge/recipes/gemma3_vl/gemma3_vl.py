@@ -253,7 +253,7 @@ def _gemma3_vl_common(
 
     if _dataset_choice == "mock":
         dataset_cfg: DatasetProvider = MockVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             prompt="Describe this image.",
             random_seed=0,
@@ -265,7 +265,7 @@ def _gemma3_vl_common(
         )
     elif _dataset_choice == "hf":
         dataset_cfg = HFDatasetConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             maker_name="make_cord_v2_dataset",
             num_workers=2,
@@ -276,7 +276,7 @@ def _gemma3_vl_common(
         )
     elif _dataset_choice == "preloaded":
         dataset_cfg = PreloadedVLMConversationProvider(
-            sequence_length=seq_length,
+            seq_length=seq_length,
             hf_processor_path=_processor_model,
             train_data_path=train_data_path[0] if isinstance(train_data_path, list) else train_data_path,
             valid_data_path=valid_data_path[0] if isinstance(valid_data_path, list) else valid_data_path,

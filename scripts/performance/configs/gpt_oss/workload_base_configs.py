@@ -43,8 +43,6 @@ GPT_OSS_120B_GB200_BF16_BASE_CONFIG = replace(
     BASE_GPT_OSS_120B_CONFIG,
     expert_model_parallel_size=64,
     micro_batch_size=4,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     recompute_modules=["layernorm", "moe_act"],
 )
 
