@@ -6,8 +6,8 @@ Generic launcher and training scripts that work with any GPT-based model family 
 
 These scripts provide a generic interface for training GPT-based models in Megatron Bridge:
 
-- `pretrain_gpt.py` - Generic pretraining for GPT-based models.
-- `finetune_gpt.py` - Generic finetuning for GPT-based models.
+- `pretrain_decoder.py` - Generic pretraining for GPT- and Mamba-based models.
+- `finetune_decoder.py` - Generic finetuning for GPT- and Mamba-based models.
 - `launch_with_nemo_run.py` - NeMo-Run launcher (local or Slurm)
 - `launch_with_sbatch.sh` - Direct sbatch launcher
 - `conf/template_overrides.yaml` - Template for YAML overrides
@@ -19,13 +19,13 @@ All scripts dynamically import recipes from `megatron.bridge.recipes`, apply use
 ### Pretrain
 
 ```bash
-torchrun --nproc_per_node=8 pretrain_gpt.py --recipe llama32_1b_pretrain_config
+torchrun --nproc_per_node=8 pretrain_decoder.py --recipe llama32_1b_pretrain_config
 ```
 
 ### Finetune
 
 ```bash
-torchrun --nproc_per_node=8 finetune_gpt.py --recipe llama32_1b_finetune_config
+torchrun --nproc_per_node=8 finetune_decoder.py --recipe llama32_1b_finetune_config
 ```
 
 ## Usage with Different Models
@@ -34,16 +34,16 @@ Same scripts work across all model families:
 
 ```bash
 # Llama
-torchrun --nproc_per_node=8 pretrain_gpt.py --recipe llama32_1b_pretrain_config
+torchrun --nproc_per_node=8 pretrain_decoder.py --recipe llama32_1b_pretrain_config
 
 # Gemma
-torchrun --nproc_per_node=8 pretrain_gpt.py --recipe gemma3_1b_pretrain_config
+torchrun --nproc_per_node=8 pretrain_decoder.py --recipe gemma3_1b_pretrain_config
 
 # Qwen
-torchrun --nproc_per_node=8 pretrain_gpt.py --recipe qwen3_8b_pretrain_config
+torchrun --nproc_per_node=8 pretrain_decoder.py --recipe qwen3_8b_pretrain_config
 
 # GPT
-torchrun --nproc_per_node=8 pretrain_gpt.py --recipe gpt_126m_pretrain_config
+torchrun --nproc_per_node=8 pretrain_decoder.py --recipe gpt_126m_pretrain_config
 ```
 
 ## Configuration with YAML
@@ -51,7 +51,7 @@ torchrun --nproc_per_node=8 pretrain_gpt.py --recipe gpt_126m_pretrain_config
 Use YAML files for complex configurations:
 
 ```bash
-torchrun --nproc_per_node=8 pretrain_gpt.py \
+torchrun --nproc_per_node=8 pretrain_decoder.py \
     --recipe llama3_8b_pretrain_config \
     --config-file conf/my_config.yaml
 ```
@@ -63,14 +63,14 @@ YAML structure mirrors ConfigContainer:
 ```yaml
 data:
   data_path: /path/to/dataset
-  sequence_length: 4096
+  seq_length: 4096
 
 train:
   train_iters: 1000
   global_batch_size: 256
 
 model:
-  seq_length: 4096  # Must match data.sequence_length
+  seq_length: 4096  # Must match data.seq_length
   tensor_model_parallel_size: 2
 
 optimizer:
@@ -92,7 +92,7 @@ peft:
 Override any config field using dot notation:
 
 ```bash
-torchrun --nproc_per_node=8 pretrain_gpt.py \
+torchrun --nproc_per_node=8 pretrain_decoder.py \
     --recipe llama32_1b_pretrain_config \
     train.train_iters=5000 \
     optimizer.lr=0.0002 \
@@ -123,7 +123,7 @@ Before launching on Slurm, test your configuration locally:
 ```bash
 python launch_with_nemo_run.py \
     --local \
-    --script pretrain_gpt.py \
+    --script pretrain_decoder.py \
     --recipe llama32_1b_pretrain_config \
     --devices 2 \
     train.train_iters=10
@@ -138,7 +138,7 @@ Once tested, scale to Slurm by removing `--local` and adding Slurm parameters:
 ```bash
 # From the cluster (LocalTunnel)
 python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
+    --script pretrain_decoder.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
     --devices 8 \
@@ -147,7 +147,7 @@ python launch_with_nemo_run.py \
 
 # From your local machine (SSHTunnel)
 python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
+    --script pretrain_decoder.py \
     --recipe llama32_1b_pretrain_config \
     --nodes 2 \
     --devices 8 \
@@ -165,7 +165,7 @@ When using containers, scripts are automatically packaged using `PatternPackager
 
 ```bash
 python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
+    --script pretrain_decoder.py \
     --recipe qwen3_8b_pretrain_config \
     --nodes 4 \
     --devices 8 \
@@ -175,11 +175,31 @@ python launch_with_nemo_run.py \
     --mount /data:/data
 ```
 
+> **Note:** PatternPackager only includes `scripts/training/*.py`. Local changes in
+> `src/megatron/bridge/` stay on your workstation unless you mount the repo into
+> the container.
+
+```bash
+python launch_with_nemo_run.py \
+    --script pretrain_decoder.py \
+    --recipe llama32_1b_pretrain_config \
+    --nodes 2 \
+    --partition gpu \
+    --account my_account \
+    --container-image /path/to/container.sqsh \
+    --mount /path/to/your/Megatron-Bridge:/opt/Megatron-Bridge \
+    train.train_iters=10
+```
+
+Mounting onto `/opt/Megatron-Bridge` shadows the container's built-in source so
+your edited `src/megatron/bridge/` files are used while packaged scripts still
+run from the container workspace.
+
 For git-based packaging:
 
 ```bash
 python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
+    --script pretrain_decoder.py \
     --recipe llama3_8b_pretrain_config \
     --nodes 2 \
     --partition gpu \
@@ -194,7 +214,7 @@ Use the fault-tolerant launcher for better resiliency:
 
 ```bash
 python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
+    --script pretrain_decoder.py \
     --recipe llama32_1b_pretrain_config \
     --launcher ft \
     --nodes 2 \
@@ -210,7 +230,7 @@ Edit the configuration section in `launch_with_sbatch.sh`:
 
 ```bash
 # Training script to run
-TRAINING_SCRIPT="pretrain_gpt.py"
+TRAINING_SCRIPT="pretrain_decoder.py"
 
 # Recipe name
 RECIPE="llama32_1b_pretrain_config"
@@ -251,104 +271,13 @@ The script automatically:
 
 ## Recipe Arguments
 
-Generic scripts call recipes with **no arguments**: `recipe()`.
+Generic scripts call recipes with no arguments passed to the recipe function.
 
-All customization happens through YAML and CLI overrides after the config is built. This covers 99% of use cases.
+All customization happens through YAML and CLI overrides after the config is built.
 
-If you need to pass arguments to the recipe constructor itself (e.g., custom parallelism at recipe build time), use model-specific examples:
-- See `examples/recipes/llama/` for Llama-specific examples
-- See `examples/recipes/<family>/` for other model families
-- Or create a custom script
+If you need to pass arguments to the recipe constructor itself (e.g., custom parallelism at recipe build time), use model-specific examples, create a custom script.
 
-## Available Recipes
-
-To see all available recipes:
-
-```python
-from megatron.bridge.recipes import *
-import megatron.bridge.recipes as recipes
-
-# List all pretrain configs
-pretrain_recipes = [x for x in dir(recipes) if 'pretrain_config' in x]
-print(pretrain_recipes)
-
-# List all finetune configs
-finetune_recipes = [x for x in dir(recipes) if 'finetune_config' in x]
-print(finetune_recipes)
-```
-
-Or check the recipe source code:
-- `src/megatron/bridge/recipes/llama/`
-- `src/megatron/bridge/recipes/gemma/`
-- `src/megatron/bridge/recipes/qwen/`
-- etc.
-
-## Example Workflows
-
-### Workflow 1: Test Locally, Then Scale to Slurm
-
-```bash
-# Step 1: Test locally
-python launch_with_nemo_run.py \
-    --local \
-    --script pretrain_gpt.py \
-    --recipe llama32_1b_pretrain_config \
-    --devices 2 \
-    train.train_iters=10
-
-# Step 2: Scale to Slurm
-python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
-    --recipe llama32_1b_pretrain_config \
-    --nodes 2 \
-    --devices 8 \
-    --partition gpu \
-    --account my_account \
-    train.train_iters=10000
-```
-
-### Workflow 2: Multi-Node with Container
-
-```bash
-python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
-    --recipe qwen3_8b_pretrain_config \
-    --nodes 4 \
-    --devices 8 \
-    --partition gpu \
-    --account my_account \
-    --container-image /path/to/nemo-container.sqsh \
-    --mount /data:/data \
-    train.train_iters=100000
-```
-
-**Important for containers:**
-- By default, PatternPackager only packages `scripts/training/*.py` files
-- Your local changes in `src/megatron/bridge/` are **NOT packaged**
-- The container uses its installed version at `/opt/Megatron-Bridge`
-
-**To use your local changes in a container:**
-
-Mount your local repo over the container's installation path. This shadows the built-in version:
-
-```bash
-python launch_with_nemo_run.py \
-    --script pretrain_gpt.py \
-    --recipe llama32_1b_pretrain_config \
-    --nodes 2 \
-    --partition gpu \
-    --account my_account \
-    --container-image /path/to/container.sqsh \
-    --mount /home/ansubramania/dev/Megatron-Bridge:/opt/Megatron-Bridge \
-    train.train_iters=10
-```
-
-Notes:
-- Mounting to `/opt/Megatron-Bridge` replaces the container's built-in source code
-- Scripts are packaged into the container's working directory (PatternPackager)
-- The mounted repo provides your local changes to `src/megatron/bridge/`
-
-### Workflow 3: Finetune with Custom YAML
+## Finetune with Custom YAML
 
 ```bash
 # Create config
@@ -359,7 +288,7 @@ checkpoint:
 train:
   train_iters: 1000
 
-data:
+dataset:
   data_path: /path/to/my/dataset.jsonl
 
 peft:
@@ -369,7 +298,7 @@ peft:
 EOF
 
 # Run finetuning
-torchrun --nproc_per_node=2 finetune_gpt.py \
+torchrun --nproc_per_node=2 finetune_decoder.py \
     --recipe gemma3_1b_finetune_config \
     --config-file conf/my_finetune.yaml
 ```

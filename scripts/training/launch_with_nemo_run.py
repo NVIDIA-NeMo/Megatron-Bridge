@@ -24,13 +24,13 @@ Usage:
     # Test locally (single node)
     python launch_with_nemo_run.py \
         --local \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe llama32_1b_pretrain_config \
         --devices 2
 
     # Launch on Slurm from the cluster (LocalTunnel)
     python launch_with_nemo_run.py \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe llama32_1b_pretrain_config \
         --nodes 2 \
         --partition gpu \
@@ -38,7 +38,7 @@ Usage:
 
     # Launch on Slurm from your local machine (SSHTunnel)
     python launch_with_nemo_run.py \
-        --script finetune_gpt.py \
+        --script finetune_decoder.py \
         --recipe llama32_1b_finetune_config \
         --nodes 1 \
         --partition gpu \
@@ -50,7 +50,7 @@ Usage:
 
     # With YAML config and CLI overrides
     python launch_with_nemo_run.py \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe gemma3_1b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -61,7 +61,7 @@ Usage:
 
     # With containers (uses PatternPackager by default)
     python launch_with_nemo_run.py \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe qwen3_8b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -71,7 +71,7 @@ Usage:
 
     # With custom packager (git archive)
     python launch_with_nemo_run.py \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe llama3_8b_pretrain_config \
         --nodes 2 \
         --partition gpu \
@@ -81,7 +81,7 @@ Usage:
 
     # With environment variables (HF token, W&B key, etc.)
     python launch_with_nemo_run.py \
-        --script /opt/Megatron-Bridge/scripts/training/pretrain_gpt.py \
+        --script /opt/Megatron-Bridge/scripts/training/pretrain_decoder.py \
         --recipe llama32_1b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -93,7 +93,7 @@ Usage:
 
     # With fault-tolerant launcher
     python launch_with_nemo_run.py \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe llama32_1b_pretrain_config \
         --launcher ft \
         --nodes 2 \
@@ -102,7 +102,7 @@ Usage:
 
     # Wait for completion and tail logs
     python launch_with_nemo_run.py \
-        --script pretrain_gpt.py \
+        --script pretrain_decoder.py \
         --recipe llama32_1b_pretrain_config \
         --nodes 1 \
         --partition gpu \
@@ -147,7 +147,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "--script",
         type=str,
         required=True,
-        help="Training script to run (e.g., pretrain_gpt.py, finetune_gpt.py, pretrain_vlm.py)",
+        help="Training script to run (e.g., pretrain_decoder.py, finetune_decoder.py, pretrain_vlm.py)",
     )
     parser.add_argument(
         "--recipe",

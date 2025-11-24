@@ -44,7 +44,7 @@
 # ==============================================================================
 
 # Training script to run
-TRAINING_SCRIPT="pretrain_gpt.py"
+TRAINING_SCRIPT="pretrain_decoder.py"
 # Options:
 # TRAINING_SCRIPT="finetune_gpt.py"
 # TRAINING_SCRIPT="pretrain_vlm.py"  # For VLM models
